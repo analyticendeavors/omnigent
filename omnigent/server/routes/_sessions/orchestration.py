@@ -116,6 +116,7 @@ from omnigent.server.background_session_titles import (
 )
 from omnigent.server.bundles import bundle_location, validate_agent_bundle
 from omnigent.server.host_registry import HostConnection, HostRegistry, RunnerExitReports
+from omnigent.server.item_observers import notify_items_persisted
 from omnigent.server.managed_hosts import (
     ManagedHostLaunch,
     ManagedLaunchTracker,
@@ -2336,6 +2337,7 @@ async def _persist_external_conversation_item(
             if entry is not None:
                 pending_inputs.restore(session_id, entry)
         return persisted.id
+    notify_items_persisted(session_id, [it for it in persisted_items if not it.deduplicated])
     # Not a duplicate: publish side effects for each skipped Kiro pair.
     # Items are [user0, error0, user1, error1, ...]; 2 per skipped entry.
     for i, skipped in enumerate(skipped_kiro_pending):

@@ -96,6 +96,7 @@ from omnigent.server.auth import (
     RESERVED_USER_PUBLIC,
 )
 from omnigent.server.host_registry import HostConnection, HostRegistry, RunnerExitReports
+from omnigent.server.item_observers import notify_items_persisted
 from omnigent.server.managed_hosts import (
     MANAGED_SANDBOX_LABEL_NAMESPACE,
     ManagedHostLaunch,
@@ -7453,6 +7454,7 @@ async def _flush_relay_text(
     # stale replay together.
     text_acc.clear()
     inflight_text.reset_text(session_id)
+    notify_items_persisted(session_id, persisted)
     # Publish the persisted item so live clients learn its store-assigned
     # id and stamp it onto the already-rendered streamed text (see the
     # docstring). Ordered before the boundary item / terminal event the
