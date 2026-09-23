@@ -132,6 +132,7 @@ from omnigent.server.background_session_titles import (
 from omnigent.server.bundles import bundle_location, validate_agent_bundle
 from omnigent.server.creation_logging import creation_metadata, creation_stage, session_created
 from omnigent.server.host_registry import HostConnection, HostRegistry, RunnerExitReports
+from omnigent.server.item_observers import notify_items_persisted
 from omnigent.server.managed_hosts import (
     MANAGED_REPO_LABEL_KEY,
     ManagedHostLaunch,
@@ -2828,6 +2829,7 @@ async def _persist_external_conversation_item_unlocked(
             session_id, [*skipped_pending, *uncertain_pending, *held_older], drained
         )
         return persisted.id
+    notify_items_persisted(session_id, [it for it in persisted_items if not it.deduplicated])
     # Landed: the drained entries are settled (uncertain ones leave without a
     # record — their mirror may already have been attributed by position);
     # older messages a slash command jumped over are still on their way and
