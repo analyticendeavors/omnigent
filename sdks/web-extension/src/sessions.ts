@@ -11,6 +11,9 @@ export interface ExtensionSessionSummary {
   gitBranch: string | null;
   /** Owning project, or null for sessions outside any project. */
   projectId: string | null;
+  /** The session's `ae.*` labels only; every other label key is withheld by the host. */
+  labels: Record<string, string>;
+  archived: boolean;
   createdAt: number;
   updatedAt: number;
 }

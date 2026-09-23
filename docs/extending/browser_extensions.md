@@ -58,7 +58,15 @@ Available V1 methods:
   `sessions.pullRequest` (the PR filed from a session's branch, via the same
   GitHub lookup as the shell's GitHub tab) with the `sessions.read` permission;
 - `projects.list` with the `projects.read` permission and `projects.create`
-  with the `projects.write` permission.
+  with the `projects.write` permission;
+- `server.request` with the `server.request` permission: an allowlisted HTTP
+  call over the host's authenticated fetch. Allowed are `GET` and `POST` under
+  `/v1/ae/`, `PATCH /v1/sessions/{id}` with a body of only `labels` whose keys
+  all start with `ae.`, and `POST /v1/sessions/{id}/events` carrying one user
+  message. Anything else is refused before any network call. The result is
+  `{status, ok, body}`, the server's own status and JSON body, so a page reads
+  the server's error shape itself. A labels write refreshes the shell's session
+  list. (Added by omnigent-ae, patch P2, 2026-09-23.)
 
 The sessions API exposes only top-level, non-archived sessions the current user
 can already read. Because operator-installed extension bundles are trusted code,
@@ -67,7 +75,8 @@ directory paths visible to that user. Summaries contain ID, title, status, an `u
 current user has not viewed yet, using the sidebar's unread rule), a
 `titleProvisional` flag (the title is the shell's first-message placeholder
 until the server names the session), working
-directory, worktree branch, project ID, and created/updated timestamps. Pages default to 25 rows and accept up to
+directory, worktree branch, project ID, the session's `ae.*` labels (no other
+label key), an `archived` flag, and created/updated timestamps. Pages default to 25 rows and accept up to
 1,000; the host shortens unusually large pages to stay within the RPC response budget. The SDK drains at most
 200 pages or 5,000 sessions. Extensions receive neither raw
 authenticated fetch nor the internal session WebSocket.

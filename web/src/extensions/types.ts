@@ -25,6 +25,9 @@ export interface ExtensionSessionSummary {
   workspace: string | null;
   gitBranch: string | null;
   projectId: string | null;
+  /** The session's `ae.*` labels only (the AE layer's vocabulary); other keys are withheld. */
+  labels: Record<string, string>;
+  archived: boolean;
   createdAt: number;
   updatedAt: number;
 }

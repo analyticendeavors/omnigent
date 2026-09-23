@@ -3,6 +3,7 @@ import { authenticatedFetch } from "@/lib/identity";
 import type { ConversationsPage } from "@/hooks/useConversations";
 import { isConversationUnseen } from "@/hooks/useUnseenConversations";
 import { getOptimisticTitle } from "@/lib/optimisticTitles";
+import { pickAeLabels } from "@/lib/aeLabels";
 import type { ExtensionSessionPage, ExtensionSessionSummary } from "../types";
 import { isExtensionSessionPageWithinBudget } from "../rpc/validation";
 import { ExtensionHostServiceError } from "./errors";
@@ -136,6 +137,8 @@ function projectSession(value: unknown): ExtensionSessionSummary {
     workspace: optionalBoundedString(row.workspace, "workspace", SESSION_WORKSPACE_MAX_LENGTH),
     gitBranch: optionalBoundedString(row.git_branch, "git_branch", SESSION_TITLE_MAX_LENGTH),
     projectId: optionalBoundedString(row.project_id, "project_id", SESSION_ID_MAX_LENGTH),
+    labels: pickAeLabels(row.labels),
+    archived: row.archived === true,
     createdAt,
     updatedAt,
   };
