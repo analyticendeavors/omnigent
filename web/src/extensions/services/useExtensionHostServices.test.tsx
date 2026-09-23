@@ -31,7 +31,14 @@ const extension: ExtensionCatalogItem = {
   version: "1.0.0",
   extension_api: 1,
   status: "enabled",
-  permissions: ["navigation", "projects.read", "projects.write", "sessions.read", "storage.user"],
+  permissions: [
+    "navigation",
+    "projects.read",
+    "projects.write",
+    "server.request",
+    "sessions.read",
+    "storage.user",
+  ],
   pages: [
     {
       id: "acme.review.dashboard",
@@ -142,6 +149,8 @@ describe("useExtensionHostServices", () => {
           workspace: "/workspace",
           gitBranch: null,
           projectId: null,
+          labels: {},
+          archived: false,
           createdAt: 1,
           updatedAt: 2,
         },
@@ -395,6 +404,52 @@ describe("useExtensionHostServices", () => {
     invalidate.mockRestore();
   });
 
+  it("bridges only allowlisted server requests and refreshes sessions after a labels write", async () => {
+    authenticatedFetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ id: "conv_1", labels: { "ae.status": "parked" } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue(undefined);
+    const { result } = renderHook(() => useExtensionHostServices(extension), { wrapper });
+
+    await expect(
+      result.current.methods["server.request"]?.(
+        { method: "DELETE", path: "/v1/sessions/conv_1" },
+        signal(),
+      ),
+    ).rejects.toMatchObject({ code: "PermissionDenied" });
+    await expect(
+      result.current.methods["server.request"]?.(
+        { method: "PATCH", path: "/v1/sessions/conv_1", body: { labels: { title: "x" } } },
+        signal(),
+      ),
+    ).rejects.toMatchObject({ code: "PermissionDenied" });
+    expect(authenticatedFetchMock).not.toHaveBeenCalled();
+
+    await expect(
+      result.current.methods["server.request"]?.(
+        {
+          method: "PATCH",
+          path: "/v1/sessions/conv_1",
+          body: { labels: { "ae.status": "parked" } },
+        },
+        signal(),
+      ),
+    ).resolves.toEqual({
+      status: 200,
+      ok: true,
+      body: { id: "conv_1", labels: { "ae.status": "parked" } },
+    });
+    const [url, init] = authenticatedFetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/v1/sessions/conv_1");
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(String(init.body))).toEqual({ labels: { "ae.status": "parked" } });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["conversations"] });
+    invalidate.mockRestore();
+  });
+
   it("keeps sessions methods absent for existing extension permissions", () => {
     const existing = { ...extension, permissions: ["navigation", "storage.user"] };
     const { result } = renderHook(() => useExtensionHostServices(existing), { wrapper });
@@ -403,6 +458,7 @@ describe("useExtensionHostServices", () => {
     expect(result.current.methods["sessions.listPage"]).toBeUndefined();
     expect(result.current.methods["projects.list"]).toBeUndefined();
     expect(result.current.methods["projects.create"]).toBeUndefined();
+    expect(result.current.methods["server.request"]).toBeUndefined();
     expect(result.current.methods["navigation.openSession"]).toBeDefined();
     expect(result.current.methods["storage.user.get"]).toBeDefined();
   });

@@ -18,6 +18,8 @@ function session(id: string): ExtensionSessionSummary {
     workspace: null,
     gitBranch: null,
     projectId: null,
+    labels: {},
+    archived: false,
     createdAt: 1,
     updatedAt: 1,
   };

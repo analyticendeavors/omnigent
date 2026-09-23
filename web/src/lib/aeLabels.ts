@@ -119,6 +119,21 @@ export function isAeSlot(
   );
 }
 
+/**
+ * The `ae.*` labels of a row and nothing else, for the extension host's
+ * session summaries (patch P2): an extension page sees the AE vocabulary and
+ * never another label key. Values are strings already; anything else is
+ * dropped rather than coerced.
+ */
+export function pickAeLabels(labels: unknown): Record<string, string> {
+  if (!labels || typeof labels !== "object" || Array.isArray(labels)) return {};
+  const picked: Record<string, string> = {};
+  for (const [key, value] of Object.entries(labels as Record<string, unknown>)) {
+    if (key.startsWith(AE_NAMESPACE) && typeof value === "string") picked[key] = value;
+  }
+  return picked;
+}
+
 /** Count the slots held across rows, each session counted once by id. */
 export function countAeSlots(
   conversations: Iterable<Pick<Conversation, "id" | "labels" | "archived" | "parent_session_id">>,
