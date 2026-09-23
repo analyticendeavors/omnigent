@@ -20,6 +20,7 @@ class ExtensionPermission(StrEnum):
     PROJECTS_READ = "projects.read"
     PROJECTS_WRITE = "projects.write"
     SESSIONS_READ = "sessions.read"
+    SERVER_REQUEST = "server.request"
     STORAGE_USER = "storage.user"
 
 
