@@ -1,4 +1,5 @@
 import type { Conversation } from "@/hooks/useConversations";
+import { stripLeadingGlyph } from "@/lib/aeLabels";
 import { nativeCodingAgentForWrapper, WRAPPER_LABEL_KEY } from "@/lib/nativeCodingAgents";
 import { getOptimisticTitle } from "@/lib/optimisticTitles";
 import { PROJECT_LABEL_KEY, PINNED_LABEL_KEY } from "@/lib/sessionListCache";
@@ -187,7 +188,7 @@ export function sessionBelongsToProject(
 }
 
 export function conversationDisplayLabel(conversation: Conversation): string {
-  if (conversation.title) return conversation.title;
+  if (conversation.title) return stripLeadingGlyph(conversation.title);
   // Just-created session: its first prompt stands in until a real title lands.
   const optimistic = getOptimisticTitle(conversation.id);
   if (optimistic !== undefined) return optimistic;

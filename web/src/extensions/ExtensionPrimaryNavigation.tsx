@@ -1,4 +1,6 @@
 import {
+  CircleParkingIcon,
+  GaugeIcon,
   LayoutDashboardIcon,
   PanelsTopLeftIcon,
   PuzzleIcon,
@@ -10,7 +12,9 @@ import { PrimaryNavLink } from "@/shell/PrimaryNavLink";
 import { useExtensions } from "./ExtensionProvider";
 
 const ICONS: Record<string, LucideIcon> = {
+  "circle-parking": CircleParkingIcon,
   dashboard: LayoutDashboardIcon,
+  gauge: GaugeIcon,
   "panels-top-left": PanelsTopLeftIcon,
   puzzle: PuzzleIcon,
   search: SearchIcon,

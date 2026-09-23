@@ -176,6 +176,8 @@ import {
   writeSessionFilter,
 } from "@/lib/sessionFilterPreferences";
 import { ExtensionPrimaryNavigation } from "@/extensions/ExtensionPrimaryNavigation";
+import { AeConversationStatusIcon } from "@/components/AeStatusIcon";
+import { AeSlotsPill } from "@/components/AeSlotsPill";
 import { PrimaryNavLink } from "@/shell/PrimaryNavLink";
 import { useViewerId } from "@/hooks/useViewerId";
 import { useExtensions } from "@/extensions/ExtensionProvider";
@@ -1195,6 +1197,7 @@ function SidebarImpl({
                 activePageId={activeExtensionPageId}
                 onNavigate={onNavClick}
               />
+              <AeSlotsPill onNavigate={onNavClick} />
               {usagePageEnabled && (
                 <Button
                   asChild
@@ -3936,6 +3939,7 @@ function ConversationRowImpl({
       {/* Row 1: the session name. Working, needs-approval, unseen, and draft
           markers render in the shared trailing indicator slot below. */}
       <div className="flex w-full items-center">
+        <AeConversationStatusIcon conversation={conversation} className="mr-1.5" />
         <span
           className={cn(
             "relative min-w-0 truncate",
