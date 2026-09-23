@@ -112,9 +112,11 @@ describe("projectSessionPage", () => {
     );
 
     expect(Object.keys(result.sessions[0]).sort()).toEqual([
+      "archived",
       "createdAt",
       "gitBranch",
       "id",
+      "labels",
       "projectId",
       "status",
       "title",
@@ -127,6 +129,20 @@ describe("projectSessionPage", () => {
     expect(result.sessions[0].projectId).toBe("project-secret");
     expect(result.sessions[0].workspace).toHaveLength(512);
     expect(result.nextCursor).toBeNull();
+  });
+
+  it("carries only the ae.* labels and the archived flag", () => {
+    const row = {
+      ...wireRow,
+      labels: { "ae.status": "working", "ae.next": "run the suite", secret: "value", "ae.n": 1 },
+    };
+    const page = { data: [row], has_more: false, last_id: null };
+    expect(projectSessionPage(page, 25).sessions[0]).toMatchObject({
+      labels: { "ae.status": "working", "ae.next": "run the suite" },
+      archived: false,
+    });
+    const bare = { data: [{ ...wireRow, labels: undefined, archived: true }], has_more: false };
+    expect(projectSessionPage(bare, 25).sessions[0]).toMatchObject({ labels: {}, archived: true });
   });
 
   it("flags a finished session unread with the sidebar's read-state rule", () => {

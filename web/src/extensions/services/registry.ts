@@ -15,6 +15,7 @@ export const HOST_METHOD_PERMISSIONS = {
   "sessions.pullRequest": "sessions.read",
   "projects.list": "projects.read",
   "projects.create": "projects.write",
+  "server.request": "server.request",
 } as const satisfies Record<string, string | null>;
 
 export function grantedHostMethods<T extends Record<string, unknown>>(

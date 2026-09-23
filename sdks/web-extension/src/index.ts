@@ -40,6 +40,20 @@ export interface ExtensionProjectSummary {
   icon: string | null;
 }
 
+/** What `server.request` may send: the host refuses anything else before it reaches the network. */
+export interface ExtensionServerRequest {
+  method: "GET" | "POST" | "PATCH";
+  path: string;
+  body?: unknown;
+}
+
+/** The server's answer, status and all; `body` is parsed JSON when the server sent JSON. */
+export interface ExtensionServerResponse {
+  status: number;
+  ok: boolean;
+  body: unknown;
+}
+
 export class ExtensionApiError extends Error {
   constructor(
     readonly code: string,
@@ -96,6 +110,15 @@ export interface ExtensionContext {
   projects: {
     list(): Promise<ExtensionProjectSummary[]>;
     create(options: { name: string }): Promise<ExtensionProjectSummary>;
+  };
+  server: {
+    /**
+     * An allowlisted HTTP request through the host's authenticated fetch
+     * (`server.request` permission): `GET` or `POST` under `/v1/ae/`, a
+     * `PATCH /v1/sessions/{id}` carrying only `ae.*` labels, or a
+     * `POST /v1/sessions/{id}/events` with one user message.
+     */
+    request(options: ExtensionServerRequest): Promise<ExtensionServerResponse>;
   };
 }
 
@@ -295,6 +318,16 @@ export function defineExtension(lifecycle: ExtensionLifecycle): void {
       create: (options) =>
         request<ExtensionProjectSummary>("projects.create", {
           name: options.name,
+        }),
+    },
+    server: {
+      // An absent body is left out, not sent as undefined: the host's
+      // payload budget rejects undefined values and drops the message.
+      request: (options) =>
+        request<ExtensionServerResponse>("server.request", {
+          method: options.method,
+          path: options.path,
+          ...(options.body === undefined ? {} : { body: options.body }),
         }),
     },
   });

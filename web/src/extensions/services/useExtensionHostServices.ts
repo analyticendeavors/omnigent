@@ -14,6 +14,7 @@ import {
   listProjectSummaries,
   parseCreateProjectParams,
 } from "./projects";
+import { parseServerRequest, performServerRequest } from "./serverRequest";
 import { cachedSessionSummaries, listSessionPage, SessionReadLimiter } from "./sessions";
 import {
   ExtensionStorageError,
@@ -200,6 +201,15 @@ export function useExtensionHostServices(extension: ExtensionCatalogItem) {
         // The sidebar caches its project list; refresh it so the new project shows there too.
         void queryClient.invalidateQueries({ queryKey: ["projects"] });
         return project;
+      },
+      "server.request": async (params: unknown, signal: AbortSignal) => {
+        const request = parseServerRequest(params);
+        const result = await performServerRequest(request, signal);
+        // A labels write changes what the sidebar shows; refresh its cache.
+        if (request.kind === "labels" && result.ok) {
+          void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+        }
+        return result;
       },
     };
     return grantedHostMethods(extension, implementations);

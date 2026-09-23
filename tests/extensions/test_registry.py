@@ -148,11 +148,15 @@ def test_extension_permission_values_include_read_only_sessions() -> None:
         "navigation",
         "projects.read",
         "projects.write",
+        "server.request",
         "sessions.read",
         "storage.user",
     }
     registry.validate_manifest(
         replace(_manifest(), permissions=frozenset({ExtensionPermission.SESSIONS_READ}))
+    )
+    registry.validate_manifest(
+        replace(_manifest(), permissions=frozenset({ExtensionPermission.SERVER_REQUEST}))
     )
 
 
