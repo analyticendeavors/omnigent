@@ -43,6 +43,7 @@ import {
 } from "@/hooks/useNativeServerSwitcher";
 import { isIOSShell, onNativeSidebarDrag, setNativeServerSwitcherHidden } from "@/lib/nativeBridge";
 import { type Agent, useSessionAgent, useAgents } from "@/hooks/useAgents";
+import { AePlanLimitsPopover } from "@/components/AePlanLimits";
 import { agentDisplayLabel } from "@/components/AgentInfo";
 import {
   BRAIN_HARNESS_LABELS,
@@ -2284,7 +2285,11 @@ function ComposerStatusLine({
           </span>
         )}
         {showGoal && goal && <GoalStatusPill goal={goal} />}
-        {showRing && <ContextRing contextWindow={contextWindow} tokensUsed={tokensUsed} />}
+        {showRing && (
+          <AePlanLimitsPopover>
+            <ContextRing contextWindow={contextWindow} tokensUsed={tokensUsed} />
+          </AePlanLimitsPopover>
+        )}
       </div>
     </div>
   );
