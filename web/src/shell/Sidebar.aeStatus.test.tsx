@@ -7,6 +7,8 @@
 //   3. `AeSlotsPill` sits in the primary navigation beside the extension
 //      slot, counts the working rows in the `["conversations"]` cache, and
 //      turns red at the limit.
+//   4. The row's kebab and right-click menus carry the Status submenu
+//      (`AeStatusMenu`, patch P4) for the owner, and not for a shared row.
 // The mock scaffold is the one `Sidebar.rowActions.test.tsx` uses, so the
 // sidebar renders with the same stubs.
 
@@ -386,5 +388,60 @@ describe("slots pill", () => {
     expect(screen.getByRole("link", { name: "Slots 1/3" })).toBeInTheDocument();
     const row = screen.getByRole("link", { name: /Session w/ });
     expect(within(row).getByRole("img", { name: "Working" })).toBeInTheDocument();
+  });
+});
+
+describe("Status submenu in the row menus", () => {
+  it("sits in the owner's kebab before the lifecycle actions", () => {
+    mockConversations([conv("w", { labels: { "ae.status": "working" } })]);
+    renderSidebar();
+    fireEvent.pointerDown(screen.getByTestId("conversation-actions"), { button: 0 });
+    const trigger = screen.getByTestId("ae-status-menu");
+    expect(trigger).toHaveTextContent("Status");
+    expect(trigger).toHaveAttribute("aria-haspopup", "menu");
+    const archive = screen.getByTestId("archive-conversation");
+    expect(
+      trigger.compareDocumentPosition(archive) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("sits in the right-click menu too", () => {
+    mockConversations([conv("w", { labels: { "ae.status": "working" } })]);
+    renderSidebar();
+    fireEvent.contextMenu(screen.getByRole("link", { name: /Session w/ }));
+    expect(screen.getByTestId("ae-status-menu")).toBeInTheDocument();
+  });
+
+  it("lists the five values inline with the stored one checked on mobile", () => {
+    mocks.isMobile = true;
+    mockConversations([conv("p", { labels: { "ae.status": "parked" } })]);
+    renderSidebar();
+    fireEvent.pointerDown(screen.getByTestId("conversation-actions"), { button: 0 });
+    const items = screen.getAllByRole("menuitemradio");
+    expect(items.map((item) => item.textContent)).toEqual([
+      "Working",
+      "Blocked",
+      "Review",
+      "Parked",
+      "Reference",
+    ]);
+    expect(screen.getByRole("menuitemradio", { name: /Parked/ })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
+
+  it("is not offered on a session shared with the viewer", () => {
+    mockConversations([conv("s", { owner: "other@example.com" })]);
+    renderSidebar();
+    fireEvent.pointerDown(screen.getByTestId("session-filter"), {
+      button: 0,
+      ctrlKey: false,
+      pointerType: "mouse",
+    });
+    fireEvent.click(screen.getByTestId("session-filter-shared"));
+    fireEvent.contextMenu(screen.getByRole("link", { name: /Session s/ }));
+    expect(screen.getByTestId("fork-conversation")).toBeInTheDocument();
+    expect(screen.queryByTestId("ae-status-menu")).toBeNull();
   });
 });
