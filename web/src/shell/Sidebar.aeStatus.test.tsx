@@ -349,13 +349,13 @@ describe("ae.status icon on session rows", () => {
 });
 
 describe("slots pill", () => {
-  it("sits in the primary navigation and links to the Parking Lot page", () => {
+  it("sits in the primary navigation as Dashboard n/3 and links to the Dashboard", () => {
     renderSidebar();
     const nav = screen.getByTestId("sidebar-primary-nav");
     // `asChild` merges the test id onto the anchor itself.
     const pill = within(nav).getByTestId("ae-slots-pill");
     expect(pill.tagName).toBe("A");
-    expect(pill).toHaveAccessibleName("Slots 0/3");
+    expect(pill).toHaveAccessibleName("Dashboard 0/3");
     expect(pill).toHaveAttribute("href", "/extensions/analyticendeavors.parking-lot/lot");
     expect(within(pill).getByTestId("ae-slots-count")).toHaveAttribute("data-full", "false");
   });
@@ -368,7 +368,7 @@ describe("slots pill", () => {
       conv("sub", { labels: { "ae.status": "working" }, parent_session_id: "a" }),
       conv("old", { labels: { "ae.status": "working" }, archived: true }),
     ]);
-    expect(screen.getByRole("link", { name: "Slots 2/3" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Dashboard 2/3" })).toBeInTheDocument();
     expect(screen.getByTestId("ae-slots-count")).not.toHaveClass("text-destructive");
   });
 
@@ -378,7 +378,7 @@ describe("slots pill", () => {
       conv("b", { labels: { "ae.status": "working" } }),
       conv("c", { labels: { "ae.status": "working" } }),
     ]);
-    expect(screen.getByRole("link", { name: "Slots 3/3" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Dashboard 3/3" })).toBeInTheDocument();
     const count = screen.getByTestId("ae-slots-count");
     expect(count).toHaveAttribute("data-full", "true");
     expect(count).toHaveClass("text-destructive");
@@ -388,7 +388,7 @@ describe("slots pill", () => {
     mocks.isMobile = true;
     mockConversations([conv("w", { labels: { "ae.status": "working" } })]);
     renderSidebar([conv("w", { labels: { "ae.status": "working" } })]);
-    expect(screen.getByRole("link", { name: "Slots 1/3" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Dashboard 1/3" })).toBeInTheDocument();
     const row = screen.getByRole("link", { name: /Session w/ });
     expect(within(row).getByRole("img", { name: "Working" })).toBeInTheDocument();
   });
