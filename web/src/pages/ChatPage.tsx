@@ -59,6 +59,7 @@ import {
 } from "@/hooks/useNativeServerSwitcher";
 import { isIOSShell, onNativeSidebarDrag, setNativeServerSwitcherHidden } from "@/lib/nativeBridge";
 import { type Agent, useSessionAgent, useAgents } from "@/hooks/useAgents";
+import { AePlanLimitsPopover } from "@/components/AePlanLimits";
 import { agentDisplayLabel } from "@/components/AgentInfo";
 import {
   BRAIN_HARNESS_LABELS,
@@ -3584,6 +3585,7 @@ function ComposerImpl(
               contextWindow={composerContextWindow}
               tokensUsed={composerTokensUsed}
             />
+            <AePlanLimitsPopover />
           </div>
         </ComposerWorkspaceBar>
       </div>
