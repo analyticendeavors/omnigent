@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Conversation } from "@/hooks/useConversations";
 import { AE_PARKING_LOT_PATH } from "@/lib/aeLabels";
 import type { ConversationsInfiniteData } from "@/lib/sessionListCache";
@@ -128,5 +128,24 @@ describe("AeSlotsPill", () => {
     cleanup();
     renderPill(qc, "/c/abc");
     expect(screen.getByRole("link", { name: "Dashboard 0/3" })).not.toHaveAttribute("aria-current");
+  });
+
+  it("keeps the installed app's icon badge on the slot count", () => {
+    const setAppBadge = vi.fn(async () => undefined);
+    const clearAppBadge = vi.fn(async () => undefined);
+    Object.assign(navigator, { setAppBadge, clearAppBadge });
+    try {
+      const qc = new QueryClient();
+      qc.setQueryData(["conversations", "", false], pages([row("a"), row("b")]));
+      renderPill(qc);
+      expect(setAppBadge).toHaveBeenLastCalledWith(2);
+      act(() => {
+        qc.setQueryData(["conversations", "", false], pages([]));
+      });
+      expect(clearAppBadge).toHaveBeenCalled();
+    } finally {
+      Reflect.deleteProperty(navigator, "setAppBadge");
+      Reflect.deleteProperty(navigator, "clearAppBadge");
+    }
   });
 });

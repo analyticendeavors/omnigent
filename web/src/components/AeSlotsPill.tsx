@@ -14,13 +14,14 @@
 
 import { LayoutDashboardIcon } from "lucide-react";
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
-import { type MouseEvent, useCallback, useSyncExternalStore } from "react";
+import { type MouseEvent, useCallback, useEffect, useSyncExternalStore } from "react";
 import {
   AE_DASHBOARD_PREFIX,
   AE_PARKING_LOT_PATH,
   AE_SLOT_LIMIT,
   countAeSlots,
 } from "@/lib/aeLabels";
+import { syncAeAppBadge } from "@/lib/aeAppBadge";
 import { useLocation } from "@/lib/routing";
 import type { ConversationsInfiniteData } from "@/lib/sessionListCache";
 import { cn } from "@/lib/utils";
@@ -53,6 +54,9 @@ export function AeSlotsPill({ onNavigate }: AeSlotsPillProps) {
   const count = useAeSlotCount();
   const full = count >= AE_SLOT_LIMIT;
   const { pathname } = useLocation();
+  // The sidebar is mounted on every page (open or not), so this row keeps the
+  // installed app's icon badge in step with the count.
+  useEffect(() => syncAeAppBadge(count), [count]);
   return (
     <PrimaryNavLink
       to={AE_PARKING_LOT_PATH}
