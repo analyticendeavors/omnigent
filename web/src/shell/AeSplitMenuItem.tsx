@@ -1,6 +1,7 @@
 // "Open in split view" on a sidebar session's action menu (omnigent-ae patch
 // P5, 2026-09-24): adds the session to the remembered split layout (seeded
-// with the session being viewed when there is none) and opens `/split`.
+// with the session being viewed when there is none) and opens `/split`. With
+// layout presets (P10), adding grows the remembered preset as "Add pane" does.
 // Desktop only; the split route itself falls back to one session below
 // 1024px, so the item is not offered there, nor inside a pane.
 
@@ -51,7 +52,7 @@ export function AeSplitMenuItem({
         );
         writeStoredLayout(layout);
         onDone();
-        navigate(splitHref(layout.panes));
+        navigate(splitHref(layout.panes, layout.preset));
       }}
     >
       <Columns2Icon className="size-3.5" />
