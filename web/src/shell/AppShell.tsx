@@ -119,6 +119,7 @@ import { resolveDefaultShell } from "./preferredShell";
 import { WorkspacePanel } from "./WorkspacePanel";
 import { SessionRail } from "./SessionRail";
 import type { RightRailTab } from "./railTabs";
+import { isAeSplitPane } from "@/lib/aeSplitLayout";
 
 /**
  * Top-level layout. The sidebar and right panels are responsive:
@@ -2325,6 +2326,6 @@ export function AppShell() {
  * classes.
  */
 function initialSidebarOpen(): boolean {
-  if (typeof window === "undefined") return false;
+  if (typeof window === "undefined" || isAeSplitPane()) return false;
   return window.matchMedia("(min-width: 768px)").matches;
 }

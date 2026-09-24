@@ -179,6 +179,7 @@ import { ExtensionPrimaryNavigation } from "@/extensions/ExtensionPrimaryNavigat
 import { AeConversationStatusIcon } from "@/components/AeStatusIcon";
 import { AeSlotsPill } from "@/components/AeSlotsPill";
 import { AeStatusMenu } from "@/shell/AeStatusMenu";
+import { AeSplitMenuItem } from "@/shell/AeSplitMenuItem";
 import { PrimaryNavLink } from "@/shell/PrimaryNavLink";
 import { useViewerId } from "@/hooks/useViewerId";
 import { useExtensions } from "@/extensions/ExtensionProvider";
@@ -3355,6 +3356,11 @@ function ConversationMenuItems({
           onDone={() => setMenuOpen(false)}
         />
       )}
+      <AeSplitMenuItem
+        components={C}
+        sessionId={conversation.id}
+        onDone={() => setMenuOpen(false)}
+      />
       {/* Stop / Archive / Delete are grouped at the bottom, below a
           divider: lifecycle-ending actions separated from the everyday
           ones above. */}
