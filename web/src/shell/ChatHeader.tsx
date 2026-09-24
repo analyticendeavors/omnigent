@@ -48,6 +48,7 @@ import { MOBILE_GLASS_SURFACE } from "./mobileGlass";
 import { TAB_BADGE_BASE } from "./railTabs";
 import { ViewModeMenuItems, ViewModeToggle } from "./ViewModeToggle";
 import { SidebarOpenButton } from "./SidebarOpenButton";
+import { AeSessionChip } from "@/components/AeSessionChip";
 
 const RIGHT_PANEL_KEYS = [MOD_KEY, ALT_KEY, "]"] as const;
 
@@ -605,6 +606,7 @@ export function ChatHeader({
       </div>
 
       <div className="flex items-center gap-2 max-md:gap-0 max-md:empty:hidden">
+        {conversationId && <AeSessionChip conversationId={conversationId} />}
         {/* Other users currently viewing this session (presence).
             Self-contained — reads the chat store directly, renders
             nothing when the user is alone. */}
