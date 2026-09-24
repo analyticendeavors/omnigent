@@ -9,6 +9,8 @@
 //      turns red at the limit.
 //   4. The row's kebab and right-click menus carry the Status submenu
 //      (`AeStatusMenu`, patch P4) for the owner, and not for a shared row.
+//   5. The same menus carry "Open in split view" (`AeSplitMenuItem`, patch
+//      P5) on a desktop viewport, for any row, and not below 1024px.
 // The mock scaffold is the one `Sidebar.rowActions.test.tsx` uses, so the
 // sidebar renders with the same stubs.
 
@@ -25,6 +27,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { MemoryRouter } from "react-router-dom";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type * as IdentityModule from "@/lib/identity";
+import { readStoredLayout } from "@/lib/aeSplitLayout";
 
 // Controllable rename mutation so the double-click test can assert the
 // committed title was forwarded to the PATCH. `isMobile` toggles the mocked
@@ -443,5 +446,53 @@ describe("Status submenu in the row menus", () => {
     fireEvent.contextMenu(screen.getByRole("link", { name: /Session s/ }));
     expect(screen.getByTestId("fork-conversation")).toBeInTheDocument();
     expect(screen.queryByTestId("ae-status-menu")).toBeNull();
+  });
+});
+
+describe("Open in split view in the row menus", () => {
+  const realMatchMedia = window.matchMedia;
+  function setWide(wide: boolean) {
+    window.matchMedia = ((query: string) => ({
+      ...realMatchMedia(query),
+      matches: wide,
+    })) as typeof window.matchMedia;
+  }
+  afterEach(() => {
+    window.matchMedia = realMatchMedia;
+    window.localStorage.clear();
+  });
+
+  it("opens the session in the split layout from the kebab", () => {
+    setWide(true);
+    mockConversations([conv("w")]);
+    renderSidebar();
+    fireEvent.pointerDown(screen.getByTestId("conversation-actions"), { button: 0 });
+    const item = screen.getByTestId("ae-split-open");
+    expect(item).toHaveTextContent("Open in split view");
+    fireEvent.click(item);
+    expect(readStoredLayout()?.panes).toEqual(["w"]);
+  });
+
+  it("sits in the right-click menu of a shared row too", () => {
+    setWide(true);
+    mockConversations([conv("s", { owner: "other@example.com" })]);
+    renderSidebar();
+    fireEvent.pointerDown(screen.getByTestId("session-filter"), {
+      button: 0,
+      ctrlKey: false,
+      pointerType: "mouse",
+    });
+    fireEvent.click(screen.getByTestId("session-filter-shared"));
+    fireEvent.contextMenu(screen.getByRole("link", { name: /Session s/ }));
+    expect(screen.getByTestId("ae-split-open")).toBeInTheDocument();
+  });
+
+  it("is not offered below 1024px", () => {
+    setWide(false);
+    mockConversations([conv("w")]);
+    renderSidebar();
+    fireEvent.pointerDown(screen.getByTestId("conversation-actions"), { button: 0 });
+    expect(screen.getByTestId("fork-conversation")).toBeInTheDocument();
+    expect(screen.queryByTestId("ae-split-open")).toBeNull();
   });
 });
