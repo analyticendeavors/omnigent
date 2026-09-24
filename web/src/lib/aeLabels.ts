@@ -35,6 +35,9 @@ export const AE_SLOT_LIMIT = 3;
 /** Where the slots pill links: the Parking Lot page (an extension, Phase 3). */
 export const AE_PARKING_LOT_PATH = "/extensions/analyticendeavors.parking-lot/lot";
 
+/** Every route of the Dashboard extension (both its pages render the Dashboard). */
+export const AE_DASHBOARD_PREFIX = "/extensions/analyticendeavors.parking-lot/";
+
 /**
  * The legacy session-title glyphs from the branch-discipline rules, one per
  * status. Imported Claude Code sessions carry them; nothing here ever writes

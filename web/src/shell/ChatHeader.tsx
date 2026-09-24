@@ -42,6 +42,7 @@ import { MOBILE_GLASS_PILL, MOBILE_GLASS_SURFACE } from "./mobileGlass";
 import { TAB_BADGE_BASE } from "./railTabs";
 import { ViewModeMenuItems, ViewModeToggle } from "./ViewModeToggle";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AeSessionChip } from "@/components/AeSessionChip";
 
 /**
  * Gating flags + handlers for the mobile workspace-rail entries (Files ·
@@ -633,6 +634,7 @@ export function ChatHeader({
           MOBILE_GLASS_PILL,
         )}
       >
+        {conversationId && <AeSessionChip conversationId={conversationId} />}
         {/* Other users currently viewing this session (presence).
             Self-contained — reads the chat store directly, renders
             nothing when the user is alone. */}

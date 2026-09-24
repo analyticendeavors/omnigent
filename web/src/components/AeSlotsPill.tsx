@@ -1,4 +1,7 @@
-// The "Slots n/3" pill in the sidebar's primary navigation: how many sessions
+// The "Dashboard n/3" row in the sidebar's primary navigation (the "Slots
+// n/3" pill until 2026-09-24, when omnigent-ae merged its Parking Lot and Your
+// move pages into one Dashboard and this row became the one nav entry for it,
+// docs/design/dashboard-review.md in omnigent-ae): how many sessions
 // hold a slot (`ae.status=working`, top-level, not archived), read from the
 // `["conversations"]` query cache the sidebar already keeps warm, so it costs
 // no request and repaints with every list delta. Red at the limit. Links to
@@ -9,10 +12,16 @@
 // (`ae_omni_policies.slot_cap`, and `GET /v1/ae/capacity`) is the authority;
 // this pill is the glanceable copy of it.
 
-import { GaugeIcon } from "lucide-react";
+import { LayoutDashboardIcon } from "lucide-react";
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { type MouseEvent, useCallback, useSyncExternalStore } from "react";
-import { AE_PARKING_LOT_PATH, AE_SLOT_LIMIT, countAeSlots } from "@/lib/aeLabels";
+import {
+  AE_DASHBOARD_PREFIX,
+  AE_PARKING_LOT_PATH,
+  AE_SLOT_LIMIT,
+  countAeSlots,
+} from "@/lib/aeLabels";
+import { useLocation } from "@/lib/routing";
 import type { ConversationsInfiniteData } from "@/lib/sessionListCache";
 import { cn } from "@/lib/utils";
 import { PrimaryNavLink } from "@/shell/PrimaryNavLink";
@@ -43,17 +52,18 @@ export interface AeSlotsPillProps {
 export function AeSlotsPill({ onNavigate }: AeSlotsPillProps) {
   const count = useAeSlotCount();
   const full = count >= AE_SLOT_LIMIT;
+  const { pathname } = useLocation();
   return (
     <PrimaryNavLink
       to={AE_PARKING_LOT_PATH}
-      label="Slots"
-      icon={GaugeIcon}
-      active={false}
+      label="Dashboard"
+      icon={LayoutDashboardIcon}
+      active={pathname.startsWith(AE_DASHBOARD_PREFIX)}
       onClick={onNavigate}
       componentId="sidebar.ae-slots"
       testId="ae-slots-pill"
       trailing={
-        // The space keeps the link's accessible name reading "Slots n/3";
+        // The space keeps the link's accessible name reading "Dashboard n/3";
         // a bare text node in the flex row takes no room.
         <>
           {" "}

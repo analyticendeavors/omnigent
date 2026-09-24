@@ -36,10 +36,10 @@ function pages(rows: Conversation[]): ConversationsInfiniteData {
   };
 }
 
-function renderPill(qc: QueryClient) {
+function renderPill(qc: QueryClient, path = "/") {
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[path]}>
         <AeSlotsPill />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -71,11 +71,11 @@ describe("readAeSlotCount", () => {
 });
 
 describe("AeSlotsPill", () => {
-  it("reads Slots n/3 and links to the Parking Lot page", () => {
+  it("reads Dashboard n/3 and links to the Dashboard", () => {
     const qc = new QueryClient();
     qc.setQueryData(["conversations", "", false], pages([row("a")]));
     renderPill(qc);
-    const link = screen.getByRole("link", { name: "Slots 1/3" });
+    const link = screen.getByRole("link", { name: "Dashboard 1/3" });
     expect(link).toHaveAttribute("href", AE_PARKING_LOT_PATH);
     expect(screen.getByTestId("ae-slots-count")).toHaveAttribute("data-full", "false");
     expect(screen.getByTestId("ae-slots-count")).not.toHaveClass("text-destructive");
@@ -85,7 +85,7 @@ describe("AeSlotsPill", () => {
     const qc = new QueryClient();
     qc.setQueryData(["conversations", "", false], pages([row("a"), row("b"), row("c")]));
     renderPill(qc);
-    expect(screen.getByRole("link", { name: "Slots 3/3" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Dashboard 3/3" })).toBeInTheDocument();
     expect(screen.getByTestId("ae-slots-count")).toHaveAttribute("data-full", "true");
     expect(screen.getByTestId("ae-slots-count")).toHaveClass("text-destructive");
 
@@ -95,19 +95,19 @@ describe("AeSlotsPill", () => {
         pages([row("a"), row("b"), row("c"), row("d")]),
       );
     });
-    expect(screen.getByRole("link", { name: "Slots 4/3" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Dashboard 4/3" })).toBeInTheDocument();
     expect(screen.getByTestId("ae-slots-count")).toHaveAttribute("data-full", "true");
   });
 
   it("repaints when the cache changes", () => {
     const qc = new QueryClient();
     renderPill(qc);
-    expect(screen.getByRole("link", { name: "Slots 0/3" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Dashboard 0/3" })).toBeInTheDocument();
 
     act(() => {
       qc.setQueryData(["conversations", "", false], pages([row("a"), row("b")]));
     });
-    expect(screen.getByRole("link", { name: "Slots 2/3" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Dashboard 2/3" })).toBeInTheDocument();
 
     act(() => {
       qc.setQueryData(
@@ -115,6 +115,18 @@ describe("AeSlotsPill", () => {
         pages([row("a", { labels: { "ae.status": "parked" } })]),
       );
     });
-    expect(screen.getByRole("link", { name: "Slots 0/3" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Dashboard 0/3" })).toBeInTheDocument();
+  });
+
+  it("is the active row on either Dashboard route and nowhere else", () => {
+    const qc = new QueryClient();
+    renderPill(qc, "/extensions/analyticendeavors.parking-lot/your-move");
+    expect(screen.getByRole("link", { name: "Dashboard 0/3" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    cleanup();
+    renderPill(qc, "/c/abc");
+    expect(screen.getByRole("link", { name: "Dashboard 0/3" })).not.toHaveAttribute("aria-current");
   });
 });
