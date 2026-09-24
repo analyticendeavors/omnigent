@@ -133,6 +133,7 @@ import { resolveDefaultShell } from "./preferredShell";
 import { WorkspacePanel } from "./WorkspacePanel";
 import { SessionRail } from "./SessionRail";
 import type { RightRailTab } from "./railTabs";
+import { isAeSplitPane } from "@/lib/aeSplitLayout";
 
 // Dev-only preview; lazy so the sample data never ships in production bundles.
 const ImportContextPreview = import.meta.env.DEV
@@ -2521,6 +2522,6 @@ export function AppShell() {
  * classes.
  */
 function initialSidebarOpen(): boolean {
-  if (typeof window === "undefined") return false;
+  if (typeof window === "undefined" || isAeSplitPane()) return false;
   return window.matchMedia("(min-width: 768px)").matches;
 }
