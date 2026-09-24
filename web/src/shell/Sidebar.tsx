@@ -200,6 +200,7 @@ import {
 import { ExtensionPrimaryNavigation } from "@/extensions/ExtensionPrimaryNavigation";
 import { AeConversationStatusIcon } from "@/components/AeStatusIcon";
 import { AeSlotsPill } from "@/components/AeSlotsPill";
+import { AeStatusMenu } from "@/shell/AeStatusMenu";
 import { PrimaryNavLink } from "@/shell/PrimaryNavLink";
 import { useViewerId } from "@/hooks/useViewerId";
 import { useExtensions } from "@/extensions/ExtensionProvider";
@@ -3546,6 +3547,13 @@ function ConversationMenuItems({
             </C.SubContent>
           </C.Sub>
         ))}
+      {isOwner && (
+        <AeStatusMenu
+          components={C}
+          conversation={conversation}
+          onDone={() => setMenuOpen(false)}
+        />
+      )}
       {/* Stop / Archive / Delete are grouped at the bottom, below a
           divider: lifecycle-ending actions separated from the everyday
           ones above. */}
