@@ -122,6 +122,30 @@ describe("AeInlinePrCards", () => {
       method: "squash",
       session_id: "s1",
     });
-    expect(screen.getByTestId("ae-pr-set-review")).toBeTruthy();
+    expect(await screen.findByTestId("ae-pr-set-review")).toBeTruthy();
+  });
+
+  it("does not offer review while another tracked pull request is open (2026-09-25)", async () => {
+    vi.mocked(authenticatedFetch).mockImplementation((input) => {
+      if (String(input).endsWith("/merge")) {
+        return json({
+          merged: true,
+          repo: REPO,
+          number: 41,
+          method: "squash",
+          sha: "abcdef1234",
+          message: "Pull Request successfully merged",
+          session: { id: "s1", status: "working", offer_review: true },
+        });
+      }
+      return json(card(Number(String(input).split("/").pop())));
+    });
+    renderText(`Opened ${url(41)}`, [url(41), url(42)]);
+    fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm merge" }));
+    expect((await screen.findByTestId("ae-pr-more-open")).textContent).toBe(
+      "1 more open pull request in this session.",
+    );
+    expect(screen.queryByTestId("ae-pr-set-review")).toBeNull();
   });
 });

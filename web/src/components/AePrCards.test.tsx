@@ -162,6 +162,51 @@ describe("AePrCards", () => {
     expect(JSON.parse(String(patch.init?.body))).toEqual({ labels: { "ae.status": "review" } });
   });
 
+  // 2026-09-25: a session with four pull requests offered review after the
+  // first merge. Review waits for the session's last open one (patch P20).
+  function serveMerge(states: Record<number, AePrCard["state"]>) {
+    serve((path) => {
+      const merged = /\/(\d+)\/merge$/.exec(path);
+      if (merged) {
+        return json({
+          merged: true,
+          repo: REPO,
+          number: Number(merged[1]),
+          method: "squash",
+          sha: "m3rg3d0000",
+          message: "Pull Request successfully merged",
+          session: { id: "s1", status: "working", offer_review: true },
+        });
+      }
+      const number = Number(path.split("/").pop());
+      return json(card(number, { state: states[number] ?? "open" }));
+    });
+  }
+
+  it("holds review back while other tracked pull requests are open", async () => {
+    serveMerge({});
+    renderCards([{ url: url(11) }, { url: url(12) }, { url: url(13) }, { url: url(14) }]);
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Merge" })).toHaveLength(4));
+    const first = screen.getAllByTestId("ae-pr-card")[0];
+    fireEvent.click(within(first).getByRole("button", { name: "Merge" }));
+    fireEvent.click(within(first).getByRole("button", { name: "Confirm merge" }));
+    expect((await within(first).findByRole("status")).textContent).toContain("Merged #11");
+    expect((await within(first).findByTestId("ae-pr-more-open")).textContent).toBe(
+      "3 more open pull requests in this session.",
+    );
+    expect(screen.queryByTestId("ae-pr-set-review")).toBeNull();
+  });
+
+  it("offers review after the last open tracked pull request merges", async () => {
+    serveMerge({ 11: "merged", 12: "closed" });
+    renderCards([{ url: url(11) }, { url: url(12) }, { url: url(13) }]);
+    const last = (await screen.findAllByTestId("ae-pr-card"))[2];
+    fireEvent.click(await within(last).findByRole("button", { name: "Merge" }));
+    fireEvent.click(within(last).getByRole("button", { name: "Confirm merge" }));
+    expect(await within(last).findByTestId("ae-pr-set-review")).toBeTruthy();
+    expect(screen.queryByTestId("ae-pr-more-open")).toBeNull();
+  });
+
   it("Cancel closes the confirm step without a request", async () => {
     serve(() => json(card(9)));
     renderCards([{ url: url(9) }]);
