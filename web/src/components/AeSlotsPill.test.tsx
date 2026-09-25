@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Conversation } from "@/hooks/useConversations";
 import { AE_PARKING_LOT_PATH } from "@/lib/aeLabels";
+import { AE_SLOT_LIMIT_QUERY_KEY } from "@/lib/aeSlotLimit";
 import type { ConversationsInfiniteData } from "@/lib/sessionListCache";
 import { AeSlotsPill, readAeSlotCount } from "./AeSlotsPill";
 
@@ -96,6 +97,24 @@ describe("AeSlotsPill", () => {
       );
     });
     expect(screen.getByRole("link", { name: "Dashboard 4/3" })).toBeInTheDocument();
+    expect(screen.getByTestId("ae-slots-count")).toHaveAttribute("data-full", "true");
+  });
+
+  it("counts against the server's limit once it is known", () => {
+    const qc = new QueryClient();
+    qc.setQueryData(AE_SLOT_LIMIT_QUERY_KEY, 4);
+    qc.setQueryData(["conversations", "", false], pages([row("a"), row("b"), row("c")]));
+    renderPill(qc);
+    expect(screen.getByRole("link", { name: "Dashboard 3/4" })).toBeInTheDocument();
+    expect(screen.getByTestId("ae-slots-count")).toHaveAttribute("data-full", "false");
+
+    act(() => {
+      qc.setQueryData(
+        ["conversations", "", false],
+        pages([row("a"), row("b"), row("c"), row("d")]),
+      );
+    });
+    expect(screen.getByRole("link", { name: "Dashboard 4/4" })).toBeInTheDocument();
     expect(screen.getByTestId("ae-slots-count")).toHaveAttribute("data-full", "true");
   });
 
