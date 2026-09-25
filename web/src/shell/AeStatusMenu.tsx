@@ -15,13 +15,13 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import type { Conversation } from "@/hooks/useConversations";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import {
-  AE_SLOT_LIMIT,
   AE_STATUS_KEY,
   AE_STATUS_VALUES,
   type AeStatus,
   aeStatusOf,
   isAeSlot,
 } from "@/lib/aeLabels";
+import { readAeSlotLimit, rememberAeSlotLimit } from "@/lib/aeSlotLimit";
 import { authenticatedFetch } from "@/lib/identity";
 import type { ConversationsInfiniteData } from "@/lib/sessionListCache";
 
@@ -100,7 +100,7 @@ interface CapacityRow {
 }
 
 interface CapacityAnswer {
-  limit?: number;
+  limit?: unknown;
   slots_used?: number;
   working?: CapacityRow[];
 }
@@ -128,7 +128,7 @@ export async function checkAeSlotRoom(
     if (res.ok) {
       const answer = (await res.json()) as CapacityAnswer;
       const working = (answer.working ?? []).filter((row) => row.id !== sessionId);
-      const limit = answer.limit ?? AE_SLOT_LIMIT;
+      const limit = rememberAeSlotLimit(queryClient, answer.limit) ?? readAeSlotLimit(queryClient);
       const used = working.length;
       if (used < limit) return { ok: true };
       return {
@@ -149,11 +149,12 @@ export async function checkAeSlotRoom(
     seen.add(row.id);
     if (isAeSlot(row)) working.push(row);
   }
-  if (working.length < AE_SLOT_LIMIT) return { ok: true };
+  const limit = readAeSlotLimit(queryClient);
+  if (working.length < limit) return { ok: true };
   return {
     ok: false,
     used: working.length,
-    limit: AE_SLOT_LIMIT,
+    limit,
     titles: working.map((row) => row.title || row.id),
     source: "sidebar",
   };
@@ -166,7 +167,7 @@ export function slotsFullMessage(room: Extract<AeSlotRoom, { ok: false }>): stri
   return (
     `Status not changed: all ${room.limit} slots are working${counted}${who}. ` +
     `Park or finish one first, or start the next prompt in this session with ` +
-    `"ride unparked" to run it as a fourth.`
+    `"ride unparked" to run it as one more.`
   );
 }
 
