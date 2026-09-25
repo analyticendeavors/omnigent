@@ -26,6 +26,7 @@ import type { RenderItem } from "@/lib/renderItems";
 import type { SessionStatus } from "@/lib/types";
 import type { ActiveResponse } from "@/store/types";
 import { cn } from "@/lib/utils";
+import { AeInlinePrCards } from "@/components/AeInlinePrCards";
 import { FilePathAwareMessageResponse } from "./ChatMarkdown";
 import { ElicitationCard } from "./ApprovalCard";
 import { ReasoningView } from "./ReasoningView";
@@ -753,6 +754,7 @@ function renderItem(
               Live output interrupted. Full response will appear when complete.
             </div>
           )}
+          {!isTextStreaming && <AeInlinePrCards text={item.text} />}
         </div>
       );
     case "reasoning":
