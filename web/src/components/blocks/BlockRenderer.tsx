@@ -34,6 +34,7 @@ import type { RenderItem } from "@/lib/renderItems";
 import type { SessionStatus } from "@/lib/types";
 import type { ActiveResponse } from "@/store/types";
 import { cn } from "@/lib/utils";
+import { AeInlinePrCards } from "@/components/AeInlinePrCards";
 import { FilePathAwareMessageResponse } from "./ChatMarkdown";
 import { ElicitationCard } from "./ApprovalCard";
 import { ReasoningView } from "./ReasoningView";
@@ -781,6 +782,7 @@ function renderItem(
           <FilePathAwareMessageResponse mode={isTextStreaming ? "streaming" : "static"}>
             {item.text}
           </FilePathAwareMessageResponse>
+          {!isTextStreaming && <AeInlinePrCards text={item.text} />}
         </div>
       );
     case "reasoning":
