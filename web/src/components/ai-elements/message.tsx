@@ -32,6 +32,7 @@ import {
   type StreamdownProps,
 } from "streamdown";
 
+import { AeRunCodeButton } from "@/components/AeRunCodeButton";
 import { MarkdownErrorBoundary } from "./MarkdownErrorBoundary";
 import { mermaidOptionsForTheme } from "./MermaidError";
 
@@ -745,6 +746,7 @@ function ChatCodeBlockPre({ children }: ComponentProps<"pre">) {
       {/* Match Streamdown's action-pill height and reserve its rightmost slot
           for download. All controls stay anchored to the header. */}
       <div className="absolute top-2 right-12 z-10 -mr-1.5 flex items-center gap-0.5 border-y border-transparent py-1">
+        <AeRunCodeButton block={children} code={code} />
         <ChatCodeBlockWrapToggle onToggle={toggleWrap} wrap={wrap} />
         <ChatCodeBlockCopyButton getCode={getCode} />
       </div>
