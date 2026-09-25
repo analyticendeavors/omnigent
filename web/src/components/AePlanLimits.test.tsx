@@ -203,6 +203,36 @@ describe("AePlanLimitsPanel", () => {
     expect(screen.queryByTestId("ae-limits-hint")).toBeNull();
   });
 
+  it("tones the context bar with the ring's steps, not the plan limit steps", () => {
+    const contextBar = (tokensUsed: number) => {
+      cleanup();
+      render(<AePlanLimitsPanel now={NOW} contextWindow={1_000_000} tokensUsed={tokensUsed} />);
+      const bar = within(screen.getByTestId("ae-limits-context")).getByRole("progressbar");
+      return (bar.firstChild as HTMLElement).className;
+    };
+    expect(contextBar(500_000)).toContain("bg-foreground/60");
+    // 65% is still grey on a plan limit bar (limitTone warns from 70).
+    expect(contextBar(650_000)).toContain("bg-warning");
+    expect(contextBar(850_000)).toContain("bg-destructive");
+  });
+
+  it("captions the prompt cache bar and gives each part its own colour", () => {
+    render(<AePlanLimitsPanel data={FULL} now={NOW} conversationId="conv_a" />);
+    const breakdown = screen.getByTestId("ae-context-breakdown");
+    const caption = within(breakdown).getByTestId("ae-context-breakdown-caption");
+    expect(caption.textContent).toBe("How those tokens were billed (prompt cache)");
+    // The caption sits above the thin bar, so it is read before the bar.
+    expect(breakdown.firstElementChild).toBe(caption);
+    const dots = Array.from(breakdown.querySelectorAll("span.rounded-full"));
+    expect(dots.map((dot) => dot.className.match(/bg-\S+/)?.[0])).toEqual([
+      "bg-chart-1",
+      "bg-chart-3",
+      "bg-chart-5",
+    ]);
+    // Never the colours the bars use for "nearly full".
+    expect(breakdown.innerHTML).not.toMatch(/bg-(warning|destructive)/);
+  });
+
   it("shows another session's breakdown only for that session", () => {
     render(<AePlanLimitsPanel data={FULL} now={NOW} conversationId="conv_other" />);
     expect(screen.queryByTestId("ae-context-breakdown")).toBeNull();

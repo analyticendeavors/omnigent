@@ -55,9 +55,9 @@ describe("ComposerContextRing", () => {
     expect(screen.getByTestId("composer-context-ring")).not.toHaveTextContent("100%");
   });
 
-  it("stays grayscale — never warning/destructive — even at high usage", () => {
-    // WHY: the bar is ambient status, not an alarm (#7024). A near-full
-    // context must not paint the old warning/destructive colors.
+  it("keeps the button grayscale at high usage (omnigent-ae P18 tones only the arc)", () => {
+    // WHY: the bar is ambient status, not an alarm (#7024). The AE build colors
+    // the used arc near full (src/lib/aeContextTone.test.tsx); the button stays muted.
     renderRing(1000, 950);
     const ring = screen.getByTestId("composer-context-ring");
     expect(ring).toHaveClass("text-muted-foreground");
