@@ -759,8 +759,11 @@ export function TerminalView({
         style={{ backgroundColor: terminalBackground }}
       >
         <div key={connectAttempt} ref={attachSession} className="h-full w-full overflow-hidden" />
-        {!readOnly && state.kind === "connected" && (
-          <AeTerminalPaste getSink={() => sessionRef.current} />
+        {!readOnly && (
+          <AeTerminalPaste
+            getSink={() => sessionRef.current}
+            connected={state.kind === "connected"}
+          />
         )}
         {state.kind !== "connected" && (
           <StatusOverlay
