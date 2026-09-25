@@ -2,6 +2,7 @@ import { useState } from "react";
 import { CheckIcon, FolderIcon, PlusIcon, SearchIcon } from "lucide-react";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { useProjects } from "@/hooks/useConversations";
+import { AeTablerRowIcon, aeTablerName } from "@/lib/aeTablerIcon";
 import { cn } from "@/lib/utils";
 
 /**
@@ -14,6 +15,7 @@ import { cn } from "@/lib/utils";
  * folder's box and centers, so a resized icon column stays aligned.
  */
 export function ProjectRowIcon({ icon, className }: { icon?: string | null; className?: string }) {
+  if (icon && aeTablerName(icon)) return <AeTablerRowIcon icon={icon} className={className} />;
   return icon ? (
     // Emoji advance-widths vary per glyph; a fixed centered box keeps the
     // trailing label's left edge aligned with the folder-fallback rows.

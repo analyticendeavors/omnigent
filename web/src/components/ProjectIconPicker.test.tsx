@@ -19,17 +19,15 @@ vi.mock("@/lib/projectsApi", () => ({
   createProject: vi.fn(),
 }));
 vi.mock("next-themes", () => ({ useTheme: () => ({ resolvedTheme: "light" }) }));
-// The real emoji-mart picker fetches a large JSON dataset that Node rejects
-// under vitest; stub it to one button that reports a chosen emoji, so the
-// open → select → save path is exercised without the dataset.
-vi.mock("@emoji-mart/react", () => ({
-  default: ({ onEmojiSelect }: { onEmojiSelect: (e: { native: string }) => void }) => (
-    <button type="button" data-testid="pick-fire" onClick={() => onEmojiSelect({ native: "🔥" })}>
+// The Tabler picker (omnigent-ae) has its own suite; stub it to one button that
+// reports a chosen icon, so the open → select → save path runs without the set.
+vi.mock("@/components/AeTablerIconPicker", () => ({
+  AeTablerIconPicker: ({ onSelect }: { onSelect: (value: string) => void }) => (
+    <button type="button" data-testid="pick-fire" onClick={() => onSelect("🔥")}>
       🔥
     </button>
   ),
 }));
-vi.mock("@emoji-mart/data", () => ({ default: {} }));
 
 const updateMock = vi.mocked(updateProjectConfig);
 const createMock = vi.mocked(createProject);

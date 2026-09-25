@@ -12,6 +12,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { EmojiPicker } from "@/components/ProjectIconPicker";
+import { AeProjectIconGlyph } from "@/lib/aeTablerIcon";
 import { useCreateProject } from "@/hooks/useConversations";
 import { cn } from "@/lib/utils";
 
@@ -106,7 +107,9 @@ export function NewProjectButton({ onCreated }: { onCreated: (name: string) => v
                   )}
                 >
                   {icon ? (
-                    <span className="text-xl leading-none">{icon}</span>
+                    <span className="text-xl leading-none">
+                      <AeProjectIconGlyph icon={icon} />
+                    </span>
                   ) : (
                     <SmilePlusIcon className="size-4 text-brand-accent" />
                   )}

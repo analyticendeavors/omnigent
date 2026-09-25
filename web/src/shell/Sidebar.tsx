@@ -165,6 +165,7 @@ import { PermissionsModal } from "@/components/PermissionsModal";
 import { ProjectSettingsDialog } from "./ProjectSettingsDialog";
 import { ProjectRowIcon } from "./ProjectPicker";
 import { EmojiPicker } from "@/components/ProjectIconPicker";
+import { AeProjectIconGlyph } from "@/lib/aeTablerIcon";
 import { SessionStateBadge } from "@/components/SessionStateBadge";
 import { useSessionRunnerOnline } from "@/hooks/RunnerHealthProvider";
 import { useActiveRootSessionId } from "@/hooks/useSession";
@@ -1451,7 +1452,9 @@ function ProjectFolder({
         title={name}
         icon={
           icon ? (
-            <span className="text-[14px] leading-none">{icon}</span>
+            <span className="text-[14px] leading-none">
+              <AeProjectIconGlyph icon={icon} />
+            </span>
           ) : expanded ? (
             <FolderOpenIcon
               className={cn(
@@ -5044,7 +5047,9 @@ function useProjectFolderMenu(
                     )}
                   >
                     {displayIcon ? (
-                      <span className="text-xl leading-none">{displayIcon}</span>
+                      <span className="text-xl leading-none">
+                        <AeProjectIconGlyph icon={displayIcon} />
+                      </span>
                     ) : (
                       <SmilePlusIcon className="size-4 text-brand-accent" />
                     )}
