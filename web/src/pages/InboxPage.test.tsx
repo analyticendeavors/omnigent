@@ -236,6 +236,26 @@ describe("InboxPage approval items", () => {
     expect(screen.queryByTestId("approval-card")).not.toBeInTheDocument();
   });
 
+  it("lets a long title shrink and truncate so it fits a phone-width header", async () => {
+    // WHY (omnigent-ae P19, 2026-09-25): with shrink-0 the title never shrank,
+    // so truncate never applied; on a 375 px iPhone a long title ran over the
+    // timestamp and "Open session", and the agent label past the card's edge.
+    const title = "System information and personal memory";
+    const row = conversation({ id: "sess_1", title });
+    vi.mocked(conversationsHook.useConversations).mockReturnValue(conversationsStub([row]));
+    vi.mocked(sessionsApi.getSession).mockResolvedValue({
+      pendingElicitations: [rawElicitation("eli_1", "Approve this?")],
+    } as unknown as Awaited<ReturnType<typeof sessionsApi.getSession>>);
+    renderPage();
+
+    const item = await screen.findByTestId("inbox-item");
+    const toggle = within(item).getByRole("button", { name: new RegExp(title) });
+    expect(toggle).toHaveClass("min-w-0", "flex-1");
+    const titleSpan = within(toggle).getByText(title);
+    expect(titleSpan).toHaveClass("min-w-0", "truncate");
+    expect(titleSpan).not.toHaveClass("shrink-0");
+  });
+
   it("submits an approve verdict via approve() and flips the card to responded", async () => {
     // WHY: clicking Accept optimistically marks responded then POSTs the
     // verdict through `approve()` to the resolve-target session.
