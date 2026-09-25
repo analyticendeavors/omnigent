@@ -8,7 +8,15 @@
 //   - the block sits in an assistant text section of the main chat (not a
 //     user bubble, not a side chat, not a plan or a PR body),
 //   - the block is a shell fence or an untagged block that reads as commands
-//     (`aeRunCommand.ts`).
+//     (`aeRunCommand.ts`), and the session declares a shell of its kind (a
+//     powershell block needs a PowerShell shell; hosts are Linux, macOS, WSL),
+//   - the message has finished streaming (Streamdown's own context carries the
+//     mode upstream's MessageResponse passes): a block still arriving is a
+//     partial command.
+//
+// After a Run the terminal gets the focus once the sheet has closed (while it
+// is open its focus trap would take it back), so a sudo password prompt can be
+// answered by typing.
 //
 // Nothing is sent until the sheet's Run: the sheet shows the exact text, says
 // plainly when the block uses sudo, rm -rf, curl | sh or dd, and says when
@@ -17,6 +25,7 @@
 import { PlayIcon, TriangleAlertIcon } from "lucide-react";
 import { isValidElement, useContext, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { StreamdownContext } from "streamdown";
 import { ConversationScopeContext } from "@/components/chat/conversationScope";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,7 +37,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { showToast } from "@/components/ui/toast";
-import { codeBlockLanguage, isRunnableBlock, planRun, type AeRunPlan } from "@/lib/aeRunCommand";
+import {
+  blockShellKind,
+  codeBlockLanguage,
+  isRunnableBlock,
+  planRun,
+  type AeRunPlan,
+} from "@/lib/aeRunCommand";
 import { useAeRunTarget } from "@/lib/aeTerminalInput";
 
 /** Marker upstream's BlockRenderer puts on every assistant text section. */
@@ -46,6 +61,8 @@ export function AeRunCodeButton({ block, code }: { block: ReactNode; code: strin
   const [inAssistantText, setInAssistantText] = useState(false);
   const [plan, setPlan] = useState<AeRunPlan | null>(null);
   const [running, setRunning] = useState(false);
+  const focusAfterClose = useRef<(() => void) | null>(null);
+  const streaming = useContext(StreamdownContext).mode === "streaming";
   const language = blockLanguage(block);
 
   useLayoutEffect(() => {
@@ -53,12 +70,18 @@ export function AeRunCodeButton({ block, code }: { block: ReactNode; code: strin
   }, []);
 
   const visible =
-    target !== null && !inSideChat && inAssistantText && isRunnableBlock(language, code);
+    target !== null &&
+    !streaming &&
+    !inSideChat &&
+    inAssistantText &&
+    target.shells.has(blockShellKind(language)) &&
+    isRunnableBlock(language, code);
 
   const confirm = async () => {
     if (!plan || !target) return;
     setRunning(true);
-    const result = await target.run(plan.text, plan.submit);
+    const result = await target.run(plan.text, plan.submit, plan.shell);
+    focusAfterClose.current = result.ok ? result.focus : null;
     setRunning(false);
     setPlan(null);
     if (!result.ok) showToast(result.error);
@@ -85,7 +108,17 @@ export function AeRunCodeButton({ block, code }: { block: ReactNode; code: strin
       )}
       <Dialog open={plan !== null} onOpenChange={(open) => !open && !running && setPlan(null)}>
         {plan && (
-          <DialogContent className="sm:max-w-lg" data-testid="ae-run-sheet">
+          <DialogContent
+            className="max-h-[85vh] overflow-y-auto sm:max-w-lg"
+            data-testid="ae-run-sheet"
+            onCloseAutoFocus={(event) => {
+              const focus = focusAfterClose.current;
+              focusAfterClose.current = null;
+              if (focus === null) return;
+              event.preventDefault();
+              focus();
+            }}
+          >
             <DialogHeader>
               <DialogTitle>Run in the terminal?</DialogTitle>
               <DialogDescription>

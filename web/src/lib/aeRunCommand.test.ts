@@ -9,6 +9,7 @@ import {
   openPowerShellConstruct,
   openShellConstruct,
   planRun,
+  terminalShellKind,
 } from "./aeRunCommand";
 
 describe("codeBlockLanguage", () => {
@@ -21,12 +22,19 @@ describe("codeBlockLanguage", () => {
 });
 
 describe("isRunnableBlock", () => {
-  it.each(["bash", "sh", "shell", "zsh", "console", "powershell"])("runs a %s fence", (lang) => {
+  it.each(["bash", "sh", "shell", "zsh", "powershell"])("runs a %s fence", (lang) => {
     expect(isRunnableBlock(lang, "anything at all")).toBe(true);
   });
 
   it.each(["python", "json", "yaml", "ts", "text", "diff"])("never runs a %s fence", (lang) => {
     expect(isRunnableBlock(lang, "ls -la")).toBe(false);
+  });
+
+  it("never runs a console block without a `$ ` prompt (output cannot be told apart)", () => {
+    expect(isRunnableBlock("console", "# apt-get update\nReading package lists... Done")).toBe(
+      false,
+    );
+    expect(isRunnableBlock("console", "$ uptime\n 10:00 up 3 days")).toBe(true);
   });
 
   it("never runs an empty block", () => {
@@ -72,6 +80,18 @@ describe("commandText", () => {
   it("keeps only prompted lines of a transcript, without the prompt", () => {
     const transcript = "$ df -h\nFilesystem Size\n/dev/sda1 100G\n$ free -m\n       total";
     expect(commandText(transcript)).toBe("df -h\nfree -m");
+  });
+
+  it("never treats a script as a transcript because of a `$ ` line in a heredoc", () => {
+    const script = "cat > NOTES <<'EOF'\nTo build:\n$ make\nEOF";
+    expect(commandText(script, "bash")).toBe(script);
+  });
+
+  it("keeps the heredoc body of a prompted command, with or without `> ` prompts", () => {
+    expect(commandText("$ cat <<EOF\n> one\n> EOF\n$ ls\nfile", "console")).toBe(
+      "cat <<EOF\none\nEOF\nls",
+    );
+    expect(commandText("$ cat <<EOF\none\nEOF\none", "console")).toBe("cat <<EOF\none\nEOF");
   });
 
   it("keeps the continuation lines of a prompted command", () => {
@@ -196,6 +216,7 @@ describe("stripHiddenChars", () => {
 describe("planRun", () => {
   it("submits a closed block", () => {
     expect(planRun("ls -la\n", "bash")).toEqual({
+      shell: "posix",
       text: "ls -la",
       removedHidden: 0,
       submit: true,
@@ -221,5 +242,20 @@ describe("planRun", () => {
     expect(planRun("Write-Host 'it''s'", "powershell").submit).toBe(true);
     expect(planRun("Write-Host 'it''s'", "bash").submit).toBe(true);
     expect(planRun("$s = @'\nx", "powershell").submit).toBe(false);
+  });
+
+  it("marks a powershell fence for a PowerShell shell and everything else for POSIX", () => {
+    expect(planRun("Get-Process", "powershell").shell).toBe("powershell");
+    expect(planRun("ls", "bash").shell).toBe("posix");
+    expect(planRun("ls", null).shell).toBe("posix");
+  });
+});
+
+describe("terminalShellKind", () => {
+  it("reads PowerShell from the terminal's spec name only", () => {
+    expect(terminalShellKind("pwsh")).toBe("powershell");
+    expect(terminalShellKind("PowerShell")).toBe("powershell");
+    expect(terminalShellKind("bash")).toBe("posix");
+    expect(terminalShellKind("shell")).toBe("posix");
   });
 });
