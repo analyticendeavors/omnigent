@@ -191,33 +191,65 @@ function lineStartsWithCommand(line: string): boolean {
   return COMMAND_WORDS.has(word);
 }
 
+/** Which kind of shell a block is written for. */
+export type AeShellKind = "posix" | "powershell";
+
+/** The shell kind a fence language asks for: PowerShell only for a powershell fence. */
+export function blockShellKind(language: string | null): AeShellKind {
+  return language === "powershell" ? "powershell" : "posix";
+}
+
+/**
+ * The shell kind of a declared terminal, from its spec name (`bash`, `shell`,
+ * `pwsh`, ...). Hosts are Linux, macOS or WSL, so everything that is not named
+ * for PowerShell is a POSIX shell.
+ */
+export function terminalShellKind(name: string): AeShellKind {
+  return /pwsh|powershell/i.test(name) ? "powershell" : "posix";
+}
+
+/**
+ * Whether a block reads as a transcript (commands behind `$ ` prompts, output
+ * between them): a `console` fence, or a block whose first line is prompted.
+ * Only the first line decides for other fences, so a `$ ` line inside a
+ * heredoc body or an echo never turns a script into a transcript.
+ */
+function isTranscript(lines: readonly string[], language: string | null): boolean {
+  if (language === "console") return true;
+  const first = lines.find((line) => line.trim() !== "");
+  return first !== undefined && first.startsWith("$ ");
+}
+
 /** Whether a code block gets a Run button: a shell fence, or untagged and command-like. */
 export function isRunnableBlock(language: string | null, code: string): boolean {
   if (code.trim() === "") return false;
-  if (language !== null) return AE_RUN_SHELL_LANGUAGES.has(language);
+  if (language !== null) {
+    if (!AE_RUN_SHELL_LANGUAGES.has(language)) return false;
+    // A console block with no `$ ` prompt cannot tell commands from output.
+    return language !== "console" || commandText(code, language) !== "";
+  }
   return looksLikeCommand(code);
 }
 
 /**
  * The exact text Run sends. Trailing whitespace goes (Enter is sent
- * separately). When a block is a transcript (`console`, or lines prompted
- * with `$ `), only the prompted lines and their `\` continuations are kept,
- * without the prompt, so output lines are never replayed as commands.
+ * separately). When a block is a transcript, only the prompted lines are kept,
+ * without the prompt, so output lines are never replayed as commands; the
+ * lines after a prompted command that leaves a heredoc, a quote or a `\`
+ * continuation open are kept too (their `> ` prompt stripped), up to where it
+ * closes.
  */
-export function commandText(code: string): string {
+export function commandText(code: string, language: string | null = null): string {
   const trimmed = code.replace(/\s+$/, "");
   const lines = trimmed.split("\n");
-  if (!lines.some((line) => line.startsWith("$ "))) return trimmed;
+  if (!isTranscript(lines, language)) return trimmed;
   const kept: string[] = [];
-  let continued = false;
+  let open = false;
   for (const line of lines) {
-    if (line.startsWith("$ ")) {
-      kept.push(line.slice(2));
-      continued = line.endsWith("\\");
-    } else if (continued) {
-      kept.push(line);
-      continued = line.endsWith("\\");
-    }
+    if (open) kept.push(line.startsWith("> ") ? line.slice(2) : line === ">" ? "" : line);
+    else if (line.startsWith("$ ")) kept.push(line.slice(2));
+    else continue;
+    open = openShellConstruct(kept.join("\n")) !== null;
   }
   return kept.join("\n");
 }
@@ -508,6 +540,8 @@ export function stripHiddenChars(code: string): { text: string; removed: number 
 
 /** Everything the confirm sheet shows and the Run sends. */
 export interface AeRunPlan {
+  /** The kind of shell the text is pasted into. */
+  shell: AeShellKind;
   /** The exact text pasted into the terminal. */
   text: string;
   /** How many hidden characters were removed from the block before sending. */
@@ -522,9 +556,13 @@ export interface AeRunPlan {
 /** Build the plan for one code block. */
 export function planRun(code: string, language: string | null): AeRunPlan {
   const { text: visible, removed } = stripHiddenChars(code);
-  const text = commandText(visible);
-  const open = language === "powershell" ? openPowerShellConstruct(text) : openShellConstruct(text);
+  const text = commandText(visible, language);
+  const open =
+    blockShellKind(language) === "powershell"
+      ? openPowerShellConstruct(text)
+      : openShellConstruct(text);
   return {
+    shell: blockShellKind(language),
     text,
     removedHidden: removed,
     submit: open === null,
