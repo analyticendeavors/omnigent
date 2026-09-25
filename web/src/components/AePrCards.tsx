@@ -4,7 +4,9 @@
 // is disabled with the server's reason when CI is red or running, the branch
 // conflicts, or protection blocks it. After a merge the card shows the result
 // and offers to set this session to review (`ae.status`, through upstream's
-// labels PATCH, the same write the sidebar's Status submenu makes).
+// labels PATCH, the same write the sidebar's Status submenu makes), only when
+// no other tracked pull request of the session is still open (patch P20,
+// 2026-09-25, lib/aeReviewOffer.ts).
 //
 // Which pull requests: upstream's per-session tracking
 // (https://github.com/omnigent-ai/omnigent/pull/6935), the `prs` list the
@@ -32,6 +34,7 @@ import {
   parseAePrUrl,
 } from "@/lib/aePrs";
 import { cn } from "@/lib/utils";
+import { aeMoreOpenText, useAeReviewOffer } from "@/lib/aeReviewOffer";
 import { patchAeStatus } from "@/shell/AeStatusMenu";
 
 /** How often an open card re-reads (the server caches GitHub for a minute). */
@@ -82,8 +85,17 @@ function Chip({ tone, children }: { tone: Tone; children: string }) {
 
 const TOUCH = "h-11 md:h-8";
 
-function MergedNote({ result, sessionId }: { result: AeMergeResult; sessionId?: string }) {
+function MergedNote({
+  result,
+  sessionId,
+  tracked,
+}: {
+  result: AeMergeResult;
+  sessionId?: string;
+  tracked?: readonly { url: string }[];
+}) {
   const queryClient = useQueryClient();
+  const offer = useAeReviewOffer(sessionId, result, tracked);
   const review = useMutation({
     mutationFn: () => patchAeStatus(sessionId!, "review"),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["conversations"] }),
@@ -95,8 +107,14 @@ function MergedNote({ result, sessionId }: { result: AeMergeResult; sessionId?: 
         Merged #{result.number} ({how}){result.sha ? `, ${result.sha.slice(0, 7)}` : ""}.{" "}
         {result.message}
       </p>
+      {offer.kind === "open" && (
+        <p className="text-muted-foreground" data-testid="ae-pr-more-open">
+          {aeMoreOpenText(offer.count)}.
+        </p>
+      )}
       {sessionId &&
         result.session?.offer_review &&
+        offer.kind === "offer" &&
         (review.isSuccess ? (
           <p className="text-muted-foreground">This session is in review.</p>
         ) : (
@@ -210,6 +228,7 @@ export function AePrCardView({
   number,
   url,
   sessionId,
+  tracked,
   first = false,
   variant = "panel",
 }: {
@@ -217,6 +236,8 @@ export function AePrCardView({
   number: number;
   url: string;
   sessionId?: string;
+  /** The session's tracked pull requests, when the caller holds the list. */
+  tracked?: readonly { url: string }[];
   first?: boolean;
   variant?: "panel" | "inline";
 }) {
@@ -286,7 +307,7 @@ export function AePrCardView({
             <Chip tone={reviewTone(card.review.state)}>{AE_REVIEW_TEXT[card.review.state]}</Chip>
           </div>
           {result ? (
-            <MergedNote result={result} sessionId={sessionId} />
+            <MergedNote result={result} sessionId={sessionId} tracked={tracked} />
           ) : confirming ? (
             <ConfirmMerge
               card={card}
@@ -353,7 +374,13 @@ export function AePrCards({
       className="flex max-h-[45%] shrink-0 flex-col gap-2 overflow-y-auto border-b border-border p-2"
     >
       {refs.map((ref, index) => (
-        <AePrCardView key={ref.url} sessionId={sessionId} first={index === 0} {...ref} />
+        <AePrCardView
+          key={ref.url}
+          sessionId={sessionId}
+          tracked={prs}
+          first={index === 0}
+          {...ref}
+        />
       ))}
     </section>
   );

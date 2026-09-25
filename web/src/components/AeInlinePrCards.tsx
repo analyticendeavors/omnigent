@@ -38,6 +38,7 @@ function Cards({ urls, sessionId }: { urls: string[]; sessionId?: string }) {
             repo={parsed.repo}
             number={parsed.number}
             sessionId={sessionId}
+            tracked={tracked}
             variant="inline"
           />
         );
