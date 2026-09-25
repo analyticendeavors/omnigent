@@ -758,8 +758,11 @@ export function TerminalView({
           grid by a row and `overflow-hidden` clips the footer. */}
       <div className="relative min-h-0 flex-1 overflow-hidden p-1">
         <div key={connectAttempt} ref={attachSession} className="h-full w-full overflow-hidden" />
-        {!readOnly && state.kind === "connected" && (
-          <AeTerminalPaste getSink={() => sessionRef.current} />
+        {!readOnly && (
+          <AeTerminalPaste
+            getSink={() => sessionRef.current}
+            connected={state.kind === "connected"}
+          />
         )}
         {state.kind !== "connected" && (
           <StatusOverlay
