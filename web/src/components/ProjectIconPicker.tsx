@@ -5,40 +5,20 @@
 //     — pink folder by default, the chosen emoji in a gray tile once set, with
 //     hover-revealed edit/remove affordances (the OMNI-3742 design).
 
-import { type CSSProperties, lazy, Suspense, useState } from "react";
+import { type CSSProperties, useState } from "react";
 import { FolderIcon, Loader2Icon, PencilIcon, Trash2Icon } from "lucide-react";
 
+import { AeTablerIconPicker } from "@/components/AeTablerIconPicker";
 import { Button } from "@/components/ui/button";
-import { useResolvedThemeMode } from "@/components/theme/useResolvedThemeMode";
+import { AeProjectIconGlyph } from "@/lib/aeTablerIcon";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { useUpdateProjectConfig } from "@/hooks/useConversations";
 import type { ProjectConfig } from "@/lib/projectsApi";
 import { cn } from "@/lib/utils";
 
-// Both the picker component and its dataset are dynamically imported so they
-// stay out of the initial bundle and off the static graph (tests that render a
-// closed picker never touch the emoji JSON, which Node refuses under vitest).
-const Picker = lazy(() => import("@emoji-mart/react"));
-const loadEmojiData = async () => (await import("@emoji-mart/data")).default;
-
-/** A themed emoji-mart picker. Calls `onSelect` with the chosen unicode glyph. */
+/** The project icon picker: Tabler icons (omnigent-ae). Calls `onSelect` with `tabler:<name>`. */
 export function EmojiPicker({ onSelect }: { onSelect: (native: string) => void }) {
-  const mode = useResolvedThemeMode();
-  return (
-    <Suspense fallback={<div className="h-[420px] w-[352px]" aria-hidden />}>
-      <Picker
-        data={loadEmojiData}
-        onEmojiSelect={(emoji: { native: string }) => onSelect(emoji.native)}
-        theme={mode}
-        navPosition="top"
-        previewPosition="none"
-        skinTonePosition="none"
-        maxFrequentRows={2}
-        perLine={8}
-        autoFocus
-      />
-    </Suspense>
-  );
+  return <AeTablerIconPicker onSelect={onSelect} />;
 }
 
 /**
@@ -131,7 +111,9 @@ export function ProjectLandingIcon({
             {update.isPending ? (
               <Loader2Icon className="size-6 animate-spin text-muted-foreground" />
             ) : icon ? (
-              <span className="text-[30px] leading-none">{icon}</span>
+              <span className="text-[30px] leading-none">
+                <AeProjectIconGlyph icon={icon} />
+              </span>
             ) : (
               <FolderIcon className="size-6 text-brand-accent" />
             )}
@@ -148,7 +130,7 @@ export function ProjectLandingIcon({
               "--emoji-picker-height": "min(420px, var(--radix-popover-content-available-height))",
             } as CSSProperties
           }
-          className="emoji-picker-popover w-auto border-0 bg-transparent p-0 shadow-none ring-0"
+          className="emoji-picker-popover w-auto p-0"
         >
           <EmojiPicker onSelect={save} />
         </PopoverContent>
