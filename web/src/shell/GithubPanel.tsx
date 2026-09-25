@@ -50,6 +50,7 @@ import {
 import { FileDiff } from "@pierre/diffs/react";
 import { parsePatchFiles, type FileDiffMetadata } from "@pierre/diffs";
 import { cn } from "@/lib/utils";
+import { AePrCards } from "@/components/AePrCards";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -977,6 +978,7 @@ export function GithubPanel({ conversationId }: { conversationId: string }) {
           {linkControls}
         </div>
       )}
+      <AePrCards sessionId={conversationId} prs={associations?.prs} />
       <div className="min-h-0 flex-1">
         <GithubPanelDetails
           key={`${conversationId}:${selected ?? ""}`}
