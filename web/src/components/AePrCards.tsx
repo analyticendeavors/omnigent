@@ -13,7 +13,8 @@
 // panel already reads. What is on a card: omnigent-ae's `/v1/ae/prs` routes
 // (lib/aePrs.ts). Reid merges from his phone while travelling, so every
 // target is 44 px below the `md` breakpoint. omnigent-ae patch P11,
-// 2026-09-24.
+// 2026-09-24. In a card under 30rem wide (a phone) the buttons span the card
+// and the method is a segmented control (2026-09-25).
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLinkIcon, GitMergeIcon, Loader2Icon } from "lucide-react";
@@ -35,6 +36,8 @@ import {
 } from "@/lib/aePrs";
 import { cn } from "@/lib/utils";
 import { aeMoreOpenText, useAeReviewOffer } from "@/lib/aeReviewOffer";
+import { AeTablerSvg } from "@/lib/aeTablerIcon";
+import type { AeTablerIconNode } from "@/lib/aeTablerIconData";
 import { patchAeStatus } from "@/shell/AeStatusMenu";
 
 /** How often an open card re-reads (the server caches GitHub for a minute). */
@@ -85,6 +88,12 @@ function Chip({ tone, children }: { tone: Tone; children: string }) {
 
 const TOUCH = "h-11 md:h-8";
 
+/** Full width in a card narrower than 30rem (a phone), content width otherwise. */
+const WIDE_ON_PHONE = "w-full @[30rem]/aepr:w-auto";
+
+/** Tabler's `check` outline icon, inlined so the confirm step loads no icon set. */
+const CHECK: AeTablerIconNode = [["path", { d: "M5 12l5 5l10 -10" }]];
+
 function MergedNote({
   result,
   sessionId,
@@ -120,7 +129,7 @@ function MergedNote({
         ) : (
           <div className="flex flex-col gap-1">
             <Button
-              className={cn(TOUCH, "self-start")}
+              className={cn(TOUCH, WIDE_ON_PHONE, "self-start")}
               disabled={review.isPending}
               onClick={() => review.mutate()}
               data-testid="ae-pr-set-review"
@@ -176,24 +185,46 @@ function ConfirmMerge({
         <span className="font-mono">{card.base_ref ?? "the base branch"}</span>?
       </p>
       {methods.length > 1 && (
-        <div role="radiogroup" aria-label="Merge method" className="flex flex-wrap gap-2">
-          {methods.map((option) => (
-            <Button
-              key={option}
-              role="radio"
-              aria-checked={option === method}
-              variant={option === method ? "secondary" : "outline"}
-              className={TOUCH}
-              onClick={() => setMethod(option)}
-            >
-              {AE_METHOD_TEXT[option]}
-            </Button>
-          ))}
+        // A segmented control, not buttons: one track, the chosen method filled
+        // and ticked, so it cannot be mistaken for Confirm or Cancel.
+        <div
+          role="radiogroup"
+          aria-label="Merge method"
+          className="flex gap-0.5 rounded-lg border border-border bg-muted p-0.5 @[30rem]/aepr:self-start"
+        >
+          {methods.map((option) => {
+            const checked = option === method;
+            return (
+              <button
+                key={option}
+                type="button"
+                role="radio"
+                aria-checked={checked}
+                className={cn(
+                  "inline-flex h-11 min-w-0 flex-auto cursor-pointer items-center justify-center gap-1 rounded-md px-1.5 text-ui whitespace-nowrap @[30rem]/aepr:px-3 outline-none focus-visible:ring-3 focus-visible:ring-ring/50 md:h-7",
+                  checked
+                    ? "bg-background font-semibold text-foreground shadow-sm ring-1 ring-foreground/20 dark:bg-foreground/20"
+                    : "font-medium text-muted-foreground hover:text-foreground",
+                )}
+                onClick={() => setMethod(option)}
+              >
+                {/* Unticked: gone on a phone, a blank on wider cards (steady width). */}
+                <AeTablerSvg
+                  node={CHECK}
+                  className={cn(
+                    "size-3.5 shrink-0",
+                    !checked && "hidden @[30rem]/aepr:invisible @[30rem]/aepr:block",
+                  )}
+                />
+                <span className="truncate">{AE_METHOD_TEXT[option]}</span>
+              </button>
+            );
+          })}
         </div>
       )}
-      <div className="flex gap-2">
+      <div className="flex flex-col gap-1 @[30rem]/aepr:flex-row @[30rem]/aepr:gap-2">
         <Button
-          className={cn(TOUCH, "flex-1 md:flex-none")}
+          className={cn(TOUCH, WIDE_ON_PHONE)}
           disabled={merge.isPending}
           onClick={() => merge.mutate()}
         >
@@ -201,8 +232,8 @@ function ConfirmMerge({
           Confirm merge
         </Button>
         <Button
-          variant="outline"
-          className={cn(TOUCH, "flex-1 md:flex-none")}
+          variant="ghost"
+          className={cn(TOUCH, WIDE_ON_PHONE, "text-muted-foreground")}
           disabled={merge.isPending}
           onClick={onCancel}
         >
@@ -265,7 +296,7 @@ export function AePrCardView({
       data-testid={inline ? "ae-pr-inline" : "ae-pr-card"}
       data-pr={url}
       className={cn(
-        "flex flex-col gap-1.5 rounded-lg border border-border bg-background p-2",
+        "@container/aepr flex flex-col gap-1.5 rounded-lg border border-border bg-background p-2",
         inline && "mt-2 max-w-xl",
       )}
     >
@@ -327,7 +358,7 @@ export function AePrCardView({
               )}
               {card.state === "open" && (
                 <Button
-                  className={cn(TOUCH, "self-start")}
+                  className={cn(TOUCH, WIDE_ON_PHONE, "self-start")}
                   disabled={!card.merge.allowed}
                   title={card.merge.allowed ? `Merge #${number}` : (card.merge.reason ?? undefined)}
                   onClick={() => setConfirming(true)}
