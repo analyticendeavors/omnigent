@@ -12,7 +12,8 @@
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useSyncExternalStore } from "react";
 import type { Conversation } from "@/hooks/useConversations";
-import { AE_PARKING_LOT_PATH, AE_SLOT_LIMIT, aeDisplayStatus, type AeStatus } from "@/lib/aeLabels";
+import { AE_PARKING_LOT_PATH, aeDisplayStatus, type AeStatus } from "@/lib/aeLabels";
+import { useAeSlotLimit } from "@/lib/aeSlotLimit";
 import { Link } from "@/lib/routing";
 import type { ConversationsInfiniteData } from "@/lib/sessionListCache";
 import { cn } from "@/lib/utils";
@@ -45,11 +46,12 @@ function useAeSessionStatus(id: string): AeStatus | null {
 export function AeSessionChip({ conversationId }: { conversationId: string }) {
   const status = useAeSessionStatus(conversationId);
   const count = useAeSlotCount();
-  const full = count >= AE_SLOT_LIMIT;
+  const limit = useAeSlotLimit();
+  const full = count >= limit;
   const Icon = status ? AE_STATUS_ICONS[status] : null;
   // The link's label carries the status word, so the icon is decorative (no
   // AeStatusIcon tooltip nested inside a link).
-  const label = `${status ? `${AE_STATUS_WORDS[status]}; ` : ""}slots ${count} of ${AE_SLOT_LIMIT}; open the Dashboard`;
+  const label = `${status ? `${AE_STATUS_WORDS[status]}; ` : ""}slots ${count} of ${limit}; open the Dashboard`;
   return (
     <Link
       to={AE_PARKING_LOT_PATH}
@@ -67,7 +69,7 @@ export function AeSessionChip({ conversationId }: { conversationId: string }) {
     >
       {Icon && <Icon aria-hidden="true" className="size-3.5 max-md:size-4" />}
       <span>
-        {count}/{AE_SLOT_LIMIT}
+        {count}/{limit}
       </span>
     </Link>
   );

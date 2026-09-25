@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Conversation } from "@/hooks/useConversations";
 import { AE_PARKING_LOT_PATH } from "@/lib/aeLabels";
+import { AE_SLOT_LIMIT_QUERY_KEY } from "@/lib/aeSlotLimit";
 import type { ConversationsInfiniteData } from "@/lib/sessionListCache";
 import { AeSessionChip, readAeSessionStatus } from "./AeSessionChip";
 
@@ -86,5 +87,16 @@ describe("AeSessionChip", () => {
     expect(chip).toHaveTextContent("3/3");
     expect(chip).toHaveAttribute("data-full", "true");
     expect(chip).toHaveClass("text-destructive");
+  });
+
+  it("counts against the server's limit once it is known", () => {
+    const qc = new QueryClient();
+    qc.setQueryData(AE_SLOT_LIMIT_QUERY_KEY, 4);
+    qc.setQueryData(["conversations", "", false], pages([row("a"), row("b"), row("c")]));
+    renderChip(qc, "a");
+    const chip = screen.getByTestId("ae-session-chip");
+    expect(chip).toHaveAccessibleName("Working; slots 3 of 4; open the Dashboard");
+    expect(chip).toHaveTextContent("3/4");
+    expect(chip).toHaveAttribute("data-full", "false");
   });
 });

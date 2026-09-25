@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { Conversation } from "@/hooks/useConversations";
+import { AE_SLOT_LIMIT_QUERY_KEY } from "@/lib/aeSlotLimit";
 import type { ConversationsInfiniteData } from "@/lib/sessionListCache";
 
 const mocks = vi.hoisted(() => ({
@@ -240,6 +241,20 @@ describe("applyAeStatus", () => {
     });
   });
 
+  it("follows the server's limit and keeps it for the other counts", async () => {
+    serve({
+      capacity: json(200, {
+        limit: 4,
+        slots_used: 3,
+        working: [{ id: "a" }, { id: "b" }, { id: "c" }],
+      }),
+    });
+    const qc = new QueryClient();
+    expect(await applyAeStatus(qc, conv("s1"), "working")).toBe(true);
+    expect(patchCalls()).toHaveLength(1);
+    expect(qc.getQueryData(AE_SLOT_LIMIT_QUERY_KEY)).toBe(4);
+  });
+
   it("falls back to the sidebar's count when the capacity route cannot answer", async () => {
     serve({ capacity: new TypeError("Failed to fetch") });
     const qc = new QueryClient();
@@ -256,6 +271,22 @@ describe("applyAeStatus", () => {
     expect(await applyAeStatus(qc, conv("s1"), "working")).toBe(false);
     expect(mocks.toast.mock.calls[0][0]).toContain("by the sidebar's count");
     expect(patchCalls()).toHaveLength(0);
+  });
+
+  it("uses the last limit the server gave when it cannot answer now", async () => {
+    serve({ capacity: new TypeError("Failed to fetch") });
+    const qc = new QueryClient();
+    qc.setQueryData(AE_SLOT_LIMIT_QUERY_KEY, 4);
+    const working = { "ae.status": "working" };
+    qc.setQueryData(
+      ["conversations", "", false],
+      pages([
+        conv("a", { labels: working }),
+        conv("b", { labels: working }),
+        conv("c", { labels: working }),
+      ]),
+    );
+    expect(await checkAeSlotRoom(qc, "s1")).toEqual({ ok: true });
   });
 
   it("does not count archived or sub-agent rows in the fallback", async () => {

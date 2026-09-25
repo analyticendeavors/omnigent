@@ -29,7 +29,11 @@ export const AE_OVERFLOW_KEY = "ae.overflow";
 export const AE_STATUS_VALUES = ["working", "blocked", "review", "parked", "reference"] as const;
 export type AeStatus = (typeof AE_STATUS_VALUES)[number];
 
-/** Three slots (branch-discipline rules, "Slots: 3"); `SLOT_LIMIT` in labels.py. */
+/**
+ * The fallback slot limit, until `GET /v1/ae/capacity` answers: the server's
+ * `AE_SLOT_LIMIT` is the one setting (2026-09-24), read through
+ * `useAeSlotLimit` in `aeSlotLimit.ts`. Three is its default in labels.py.
+ */
 export const AE_SLOT_LIMIT = 3;
 
 /** Where the slots pill links: the Parking Lot page (an extension, Phase 3). */
