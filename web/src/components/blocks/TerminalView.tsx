@@ -29,6 +29,7 @@ import { subscribeCodeFont } from "@/lib/codeFontPreferences";
 import { useFileViewer, useWorkspacePaths } from "@/shell/FileViewerContext";
 import { resolveInitialAttachUrl, watchDirectUpgrade, withAttachParams } from "@/lib/terminals";
 import { registerAeTerminalInput } from "@/lib/aeTerminalInput";
+import { AeTerminalPaste } from "@/components/AeTerminalPaste";
 import {
   readTerminalThemeMode,
   resolveTerminalIsDark,
@@ -757,6 +758,9 @@ export function TerminalView({
           grid by a row and `overflow-hidden` clips the footer. */}
       <div className="relative min-h-0 flex-1 overflow-hidden p-1">
         <div key={connectAttempt} ref={attachSession} className="h-full w-full overflow-hidden" />
+        {!readOnly && state.kind === "connected" && (
+          <AeTerminalPaste getSink={() => sessionRef.current} />
+        )}
         {state.kind !== "connected" && (
           <StatusOverlay
             state={state}
