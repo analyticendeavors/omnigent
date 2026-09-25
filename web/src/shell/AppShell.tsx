@@ -120,6 +120,7 @@ import { ForkSessionDialog } from "./ForkSessionDialog";
 import { ForkDialogContextProvider, type ForkDialogContextValue } from "./ForkDialogContext";
 import { InlineTerminalsSection } from "./InlineTerminalsSection";
 import { resolveDefaultShell } from "./preferredShell";
+import { useAeRunInTerminal } from "./useAeRunInTerminal";
 import { WorkspacePanel } from "./WorkspacePanel";
 import { SessionRail } from "./SessionRail";
 import type { RightRailTab } from "./railTabs";
@@ -1674,6 +1675,14 @@ export function AppShell() {
     openTerminalTab,
   ]);
   useNewShellHotkey(launchDefaultShell, shellLaunchable);
+  useAeRunInTerminal(conversationId, {
+    canRun: isOwnerLevel(permissionLevel) && !hideTerminalsTab,
+    declaredShells: boundAgent?.terminals ?? [],
+    terminals: railTerminals,
+    selectedTerminalKey,
+    openTerminalTab,
+    openTerminalsPanel,
+  });
 
   // Focus a shell the user just created ("+"→Shell) as soon as its tab appears
   // — a new non-agent terminal key that wasn't present when the create started.

@@ -987,6 +987,19 @@ export class TerminalSession {
     this.term.focus();
   }
 
+  /** [ae] Run-on-box input state and paste; see `lib/aeTerminalInput.ts`. */
+  aeInputState(): "open" | "connecting" | "gone" {
+    if (this.disposed || this.ws.readyState > WebSocket.OPEN) return "gone";
+    return this.ws.readyState === WebSocket.OPEN ? "open" : "connecting";
+  }
+
+  aePaste(text: string, submit: boolean): boolean {
+    if (this.aeInputState() !== "open") return false;
+    this.term.paste(text);
+    if (submit) this.term.input("\r", true);
+    return true;
+  }
+
   /**
    * Update the terminal's code font without reconnecting —
    * mirrors {@link setTheme}, mutating options in place. A new glyph size

@@ -28,6 +28,7 @@ import {
 import { subscribeCodeFont } from "@/lib/codeFontPreferences";
 import { useFileViewer, useWorkspacePaths } from "@/shell/FileViewerContext";
 import { resolveInitialAttachUrl, watchDirectUpgrade, withAttachParams } from "@/lib/terminals";
+import { registerAeTerminalInput } from "@/lib/aeTerminalInput";
 import {
   readTerminalThemeMode,
   resolveTerminalIsDark,
@@ -526,6 +527,7 @@ export function TerminalView({
       // open is a no-op. The second attach's microtask proceeds and
       // is the one that actually opens the WS.
       let terminalSession: TerminalSession | null = null;
+      let aeUnregister: (() => void) | undefined;
       let cancelled = false;
       const upgradeCtl = new AbortController();
       upgradeCtlRef.current = upgradeCtl;
@@ -571,6 +573,8 @@ export function TerminalView({
           notifyFileLink,
         );
         sessionRef.current = terminalSession;
+        if (!readOnly)
+          aeUnregister = registerAeTerminalInput(sessionId, terminalId, terminalSession);
         // Relay-connected with a direct URL on offer: negotiate the
         // loopback upgrade in the background. In Chrome this is what
         // raises the Local Network Access prompt; the probe socket
@@ -587,6 +591,7 @@ export function TerminalView({
       return () => {
         cancelled = true;
         upgradeCtl.abort();
+        aeUnregister?.();
         terminalSession?.dispose();
         sessionRef.current = null;
         onStateChangeRef.current?.(null);
