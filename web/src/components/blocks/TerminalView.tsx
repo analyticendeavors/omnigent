@@ -34,6 +34,7 @@ import { subscribeCodeFont } from "@/lib/codeFontPreferences";
 import { useFileViewer, useWorkspacePaths } from "@/shell/FileViewerContext";
 import { resolveInitialAttachUrl, watchDirectUpgrade, withAttachParams } from "@/lib/terminals";
 import { registerAeTerminalInput } from "@/lib/aeTerminalInput";
+import { AeTerminalPaste } from "@/components/AeTerminalPaste";
 import {
   readTerminalThemeMode,
   resolveTerminalIsDark,
@@ -769,6 +770,9 @@ export function TerminalView({
         style={{ backgroundColor: terminalBackground }}
       >
         <div key={connectAttempt} ref={attachSession} className="h-full w-full overflow-hidden" />
+        {!readOnly && state.kind === "connected" && (
+          <AeTerminalPaste getSink={() => sessionRef.current} />
+        )}
         {state.kind !== "connected" && (
           <StatusOverlay
             state={state}
