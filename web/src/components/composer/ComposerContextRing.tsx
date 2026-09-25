@@ -1,6 +1,7 @@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatTokenCount } from "@/lib/formatCost";
 import { cn } from "@/lib/utils";
+import { aeContextRingClass } from "@/lib/aeContextTone";
 
 /** Circumference of the progress ring (r=5.5). */
 const RING_CIRCUMFERENCE = 2 * Math.PI * 5.5;
@@ -8,8 +9,8 @@ const RING_CIRCUMFERENCE = 2 * Math.PI * 5.5;
 /**
  * Compact context-usage ring for the composer workspace bar.
  *
- * Grayscale by design — a near-full context window is a neutral fact, not an
- * error, so the ring never escalates to warning/destructive colors. Self-nulls
+ * Upstream keeps it grayscale; the omnigent-ae build (P18) colors the used arc
+ * warning, then destructive, near full, as Claude Code desktop does. Self-nulls
  * when there is nothing to show, so the landing/pre-session window (no context
  * figures) renders nothing.
  *
@@ -56,6 +57,7 @@ export function ComposerContextRing({
                 cx="8"
                 cy="8"
                 r="5.5"
+                className={aeContextRingClass(usedPct)}
                 stroke="currentColor"
                 strokeWidth="2"
                 strokeLinecap="round"

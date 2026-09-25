@@ -11,6 +11,7 @@
 
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
+import { type AeTone, contextTone } from "@/lib/aeContextTone";
 import { authenticatedFetch } from "@/lib/identity";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chatStore";
@@ -133,8 +134,11 @@ export function formatMoney(minor: number, currency: string): string {
   return format.format(minor / 10 ** digits);
 }
 
-/** Bar colour: the ring's own thresholds, a little later because a limit is not a context. */
-export function limitTone(pct: number): "normal" | "warning" | "critical" {
+/**
+ * Bar colour: the ring's own steps (`contextTone`, 60 and 80), a little later
+ * because a limit is not a context.
+ */
+export function limitTone(pct: number): AeTone {
   if (pct >= 90) return "critical";
   if (pct >= 70) return "warning";
   return "normal";
@@ -146,7 +150,7 @@ export async function fetchAeLimits(): Promise<AeLimitsAnswer> {
   return (await res.json()) as AeLimitsAnswer;
 }
 
-const TONE_BAR: Record<ReturnType<typeof limitTone>, string> = {
+const TONE_BAR: Record<AeTone, string> = {
   normal: "bg-foreground/60",
   warning: "bg-warning",
   critical: "bg-destructive",
@@ -160,6 +164,7 @@ function UsageRow({
   pct,
   detail,
   muted = false,
+  tone = limitTone(pct),
   children,
 }: {
   id: string;
@@ -168,10 +173,11 @@ function UsageRow({
   pct: number;
   detail?: string | null;
   muted?: boolean;
+  /** Defaults to the plan limit steps; the context row passes `contextTone`. */
+  tone?: AeTone;
   children?: ReactNode;
 }) {
   const rounded = Math.round(pct);
-  const tone = limitTone(pct);
   return (
     <li className="flex flex-col gap-1" data-testid="ae-limit-window" data-window={id}>
       <div className="flex items-baseline justify-between gap-2">
@@ -249,12 +255,22 @@ function CreditsRow({ credits, now }: { credits: AeCredits; now: number }) {
   );
 }
 
-/** The thin per-kind bar under the context row: cache read, cache write, new input. */
+/**
+ * The thin bar under the context row: how the used tokens were sent on the
+ * session's last request (read from the prompt cache, written to it, or new).
+ * Three greys read as a second meter (Reid, 2026-09-24), so since P18 each part
+ * has its own chart colour (blue, green, grey; never the warning or destructive
+ * colours the bars above use for "nearly full") and a caption says what it is.
+ * It is not a /context-style breakdown by system prompt, tools and messages:
+ * the status line the relay reads carries only these three counts.
+ */
 const CONTEXT_PARTS = [
-  { key: "cache_read_tokens", label: "Cached", className: "bg-foreground/60" },
-  { key: "cache_write_tokens", label: "Cache write", className: "bg-foreground/40" },
-  { key: "input_tokens", label: "New input", className: "bg-foreground/25" },
+  { key: "cache_read_tokens", label: "Cached", className: "bg-chart-1" },
+  { key: "cache_write_tokens", label: "Cache write", className: "bg-chart-3" },
+  { key: "input_tokens", label: "New input", className: "bg-chart-5" },
 ] as const;
+
+const CONTEXT_BREAKDOWN_CAPTION = "How those tokens were billed (prompt cache)";
 
 function ContextBreakdown({ context, now }: { context: AeSessionContext; now: number }) {
   const parts = CONTEXT_PARTS.filter((part) => context[part.key] > 0);
@@ -265,6 +281,9 @@ function ContextBreakdown({ context, now }: { context: AeSessionContext; now: nu
       data-testid="ae-context-breakdown"
       title={`From the session's status line, ${formatAgo(context.observed_at, now)}`}
     >
+      <span className="text-xs text-muted-foreground" data-testid="ae-context-breakdown-caption">
+        {CONTEXT_BREAKDOWN_CAPTION}
+      </span>
       <div className="flex h-1 w-full overflow-hidden rounded-full bg-foreground/10">
         {parts.map((part) => (
           <div
@@ -310,6 +329,7 @@ function ContextRow({
         label="Context window"
         value={`${formatTokens(used)} / ${formatTokens(size)} · ${Math.round(pct)}%`}
         pct={pct}
+        tone={contextTone(pct)}
       >
         {context && <ContextBreakdown context={context} now={now} />}
       </UsageRow>
