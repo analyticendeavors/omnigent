@@ -207,6 +207,33 @@ describe("AePrCards", () => {
     expect(screen.queryByTestId("ae-pr-more-open")).toBeNull();
   });
 
+  it("exposes the chosen method as the checked radio of one group", async () => {
+    serve(() => json(card(15)));
+    renderCards([{ url: url(15) }]);
+    fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
+    const group = screen.getByRole("radiogroup", { name: "Merge method" });
+    const radios = within(group).getAllByRole("radio");
+    expect(radios.map((radio) => radio.textContent)).toEqual(["Squash and merge", "Merge commit"]);
+    const checked = () =>
+      within(group)
+        .getAllByRole("radio", { checked: true })
+        .map((radio) => radio.textContent);
+    expect(checked()).toEqual(["Squash and merge"]);
+    fireEvent.click(within(group).getByRole("radio", { name: "Merge commit" }));
+    expect(checked()).toEqual(["Merge commit"]);
+    expect(
+      within(group).getByRole("radio", { name: "Squash and merge" }).getAttribute("aria-checked"),
+    ).toBe("false");
+  });
+
+  it("hides the method choice when the repository allows one method", async () => {
+    serve(() => json(card(16, { merge: { ...card(16).merge, methods: ["squash"] } })));
+    renderCards([{ url: url(16) }]);
+    fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
+    expect(screen.getByRole("group", { name: "Confirm merge" })).toBeTruthy();
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+  });
+
   it("Cancel closes the confirm step without a request", async () => {
     serve(() => json(card(9)));
     renderCards([{ url: url(9) }]);
