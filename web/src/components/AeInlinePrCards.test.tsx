@@ -122,7 +122,7 @@ describe("AeInlinePrCards", () => {
       method: "squash",
       session_id: "s1",
     });
-    expect(await screen.findByTestId("ae-pr-set-review")).toBeTruthy();
+    expect((await screen.findByTestId("ae-pr-set-review")).textContent).toBe("Mark session done");
   });
 
   it("does not offer review while another tracked pull request is open (2026-09-25)", async () => {

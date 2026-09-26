@@ -3,22 +3,27 @@
 // review state, and a Merge button that asks once (method, then Confirm) and
 // is disabled with the server's reason when CI is red or running, the branch
 // conflicts, or protection blocks it. After a merge the card shows the result
-// and offers to set this session to review (`ae.status`, through upstream's
-// labels PATCH, the same write the sidebar's Status submenu makes), only when
-// no other tracked pull request of the session is still open (patch P20,
-// 2026-09-25, lib/aeReviewOffer.ts).
+// and offers "Mark session done" (sets `ae.status` to review, through
+// upstream's labels PATCH, the same write the sidebar's Status submenu makes),
+// only when no other tracked pull request of the session is still open (patch
+// P20, 2026-09-25, lib/aeReviewOffer.ts).
 //
 // Which pull requests: upstream's per-session tracking
 // (https://github.com/omnigent-ai/omnigent/pull/6935), the `prs` list the
 // panel already reads. What is on a card: omnigent-ae's `/v1/ae/prs` routes
 // (lib/aePrs.ts). Reid merges from his phone while travelling, so every
 // target is 44 px below the `md` breakpoint. omnigent-ae patch P11,
-// 2026-09-24. In a card under 30rem wide (a phone) the buttons span the card
-// and the method is a segmented control (2026-09-25).
+// 2026-09-24. In a card under 30rem wide (a phone) the Merge button spans the
+// card and the method is a segmented control (2026-09-25).
+//
+// 2026-09-26, from Reid's screenshots of a 1100 px card: the confirm step is one
+// row (the method toggle, Confirm merge, Cancel) that wraps to two only when it
+// does not fit, and the offer after a merge reads "Mark session done" with a
+// "frees a slot" hint; "Set this session to review" did not say what it does.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLinkIcon, GitMergeIcon, Loader2Icon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   AE_MERGEABLE_TEXT,
@@ -91,6 +96,12 @@ const TOUCH = "h-11 md:h-8";
 /** Full width in a card narrower than 30rem (a phone), content width otherwise. */
 const WIDE_ON_PHONE = "w-full @[30rem]/aepr:w-auto";
 
+/** The method toggle's short labels; the question line keeps the full text. */
+const METHOD_SHORT: Record<AeMergeMethod, string> = { squash: "Squash", merge: "Merge commit" };
+
+/** What the offer after a merge does, for its tooltip and the hint beside it. */
+const DONE_TITLE = "Set this session's status to Review (done), which frees one of your slots";
+
 /** Tabler's `check` outline icon, inlined so the confirm step loads no icon set. */
 const CHECK: AeTablerIconNode = [["path", { d: "M5 12l5 5l10 -10" }]];
 
@@ -104,6 +115,7 @@ function MergedNote({
   tracked?: readonly { url: string }[];
 }) {
   const queryClient = useQueryClient();
+  const hintId = useId();
   const offer = useAeReviewOffer(sessionId, result, tracked);
   const review = useMutation({
     mutationFn: () => patchAeStatus(sessionId!, "review"),
@@ -125,17 +137,26 @@ function MergedNote({
         result.session?.offer_review &&
         offer.kind === "offer" &&
         (review.isSuccess ? (
-          <p className="text-muted-foreground">This session is in review.</p>
+          <p className="text-muted-foreground">Session marked done. Its slot is free.</p>
         ) : (
           <div className="flex flex-col gap-1">
-            <Button
-              className={cn(TOUCH, WIDE_ON_PHONE, "self-start")}
-              disabled={review.isPending}
-              onClick={() => review.mutate()}
-              data-testid="ae-pr-set-review"
-            >
-              Set this session to review
-            </Button>
+            {/* Optional, so an outline button, with the hint on screen for touch. */}
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <Button
+                variant="outline"
+                className={TOUCH}
+                disabled={review.isPending}
+                onClick={() => review.mutate()}
+                title={DONE_TITLE}
+                aria-describedby={hintId}
+                data-testid="ae-pr-set-review"
+              >
+                Mark session done
+              </Button>
+              <span id={hintId} className="text-xs text-muted-foreground">
+                frees a slot
+              </span>
+            </div>
             {review.isError && (
               <p role="alert" className="text-destructive">
                 {review.error.message}
@@ -184,47 +205,49 @@ function ConfirmMerge({
         {AE_METHOD_TEXT[method]} #{card.number} into{" "}
         <span className="font-mono">{card.base_ref ?? "the base branch"}</span>?
       </p>
-      {methods.length > 1 && (
-        // A segmented control, not buttons: one track, the chosen method filled
-        // and ticked, so it cannot be mistaken for Confirm or Cancel.
-        <div
-          role="radiogroup"
-          aria-label="Merge method"
-          className="flex gap-0.5 rounded-lg border border-border bg-muted p-0.5 @[30rem]/aepr:self-start"
-        >
-          {methods.map((option) => {
-            const checked = option === method;
-            return (
-              <button
-                key={option}
-                type="button"
-                role="radio"
-                aria-checked={checked}
-                className={cn(
-                  "inline-flex h-11 min-w-0 flex-auto cursor-pointer items-center justify-center gap-1 rounded-md px-1.5 text-ui whitespace-nowrap @[30rem]/aepr:px-3 outline-none focus-visible:ring-3 focus-visible:ring-ring/50 md:h-7",
-                  checked
-                    ? "bg-background font-semibold text-foreground shadow-sm ring-1 ring-foreground/20 dark:bg-foreground/20"
-                    : "font-medium text-muted-foreground hover:text-foreground",
-                )}
-                onClick={() => setMethod(option)}
-              >
-                {/* Unticked: gone on a phone, a blank on wider cards (steady width). */}
-                <AeTablerSvg
-                  node={CHECK}
+      {/* One row: toggle, Confirm, Cancel. Under 30rem the toggle takes its own
+          row and the two buttons share the next (2026-09-26). */}
+      <div className="flex flex-wrap items-center gap-2" data-testid="ae-pr-confirm-row">
+        {methods.length > 1 && (
+          // A segmented control, not buttons: one track, the chosen method filled
+          // and ticked, so it cannot be mistaken for Confirm or Cancel.
+          <div
+            role="radiogroup"
+            aria-label="Merge method"
+            className="flex basis-full gap-0.5 rounded-lg border border-border bg-muted p-0.5 @[30rem]/aepr:basis-auto"
+          >
+            {methods.map((option) => {
+              const checked = option === method;
+              return (
+                <button
+                  key={option}
+                  type="button"
+                  role="radio"
+                  aria-checked={checked}
                   className={cn(
-                    "size-3.5 shrink-0",
-                    !checked && "hidden @[30rem]/aepr:invisible @[30rem]/aepr:block",
+                    "inline-flex h-11 min-w-0 flex-auto cursor-pointer items-center justify-center gap-1 rounded-md px-1.5 text-ui whitespace-nowrap @[30rem]/aepr:px-2.5 outline-none focus-visible:ring-3 focus-visible:ring-ring/50 md:h-[1.625rem]",
+                    checked
+                      ? "bg-background font-semibold text-foreground shadow-sm ring-1 ring-foreground/20 dark:bg-foreground/20"
+                      : "font-medium text-muted-foreground hover:text-foreground",
                   )}
-                />
-                <span className="truncate">{AE_METHOD_TEXT[option]}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-      <div className="flex flex-col gap-1 @[30rem]/aepr:flex-row @[30rem]/aepr:gap-2">
+                  onClick={() => setMethod(option)}
+                >
+                  {/* Unticked: gone on a phone, a blank on wider cards (steady width). */}
+                  <AeTablerSvg
+                    node={CHECK}
+                    className={cn(
+                      "size-3.5 shrink-0",
+                      !checked && "hidden @[30rem]/aepr:invisible @[30rem]/aepr:block",
+                    )}
+                  />
+                  <span className="truncate">{METHOD_SHORT[option]}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
         <Button
-          className={cn(TOUCH, WIDE_ON_PHONE)}
+          className={cn(TOUCH, "flex-1 @[30rem]/aepr:flex-none")}
           disabled={merge.isPending}
           onClick={() => merge.mutate()}
         >
@@ -232,8 +255,8 @@ function ConfirmMerge({
           Confirm merge
         </Button>
         <Button
-          variant="ghost"
-          className={cn(TOUCH, WIDE_ON_PHONE, "text-muted-foreground")}
+          variant="outline"
+          className={cn(TOUCH, "flex-1 @[30rem]/aepr:flex-none")}
           disabled={merge.isPending}
           onClick={onCancel}
         >
