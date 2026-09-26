@@ -155,8 +155,12 @@ describe("AePrCards", () => {
       method: "merge",
       session_id: "s1",
     });
-    fireEvent.click(screen.getByTestId("ae-pr-set-review"));
-    await screen.findByText("This session is in review.");
+    const markDone = screen.getByRole("button", { name: "Mark session done" });
+    expect(markDone.getAttribute("title")).toBe(
+      "Set this session's status to Review (done), which frees one of your slots",
+    );
+    fireEvent.click(markDone);
+    await screen.findByText("Session marked done. Its slot is free.");
     const patch = calls.find((call) => call.path === "/v1/sessions/s1")!;
     expect(patch.init?.method).toBe("PATCH");
     expect(JSON.parse(String(patch.init?.body))).toEqual({ labels: { "ae.status": "review" } });
@@ -203,7 +207,14 @@ describe("AePrCards", () => {
     const last = (await screen.findAllByTestId("ae-pr-card"))[2];
     fireEvent.click(await within(last).findByRole("button", { name: "Merge" }));
     fireEvent.click(within(last).getByRole("button", { name: "Confirm merge" }));
-    expect(await within(last).findByTestId("ae-pr-set-review")).toBeTruthy();
+    const offer = await within(last).findByTestId("ae-pr-set-review");
+    // 2026-09-26: plain words, an outline button (it is optional), and the
+    // hint on screen for a phone, where the tooltip never shows.
+    expect(offer.textContent).toBe("Mark session done");
+    expect(offer.className).toContain("border-border");
+    expect(offer.className).not.toContain("bg-primary");
+    const hint = document.getElementById(offer.getAttribute("aria-describedby")!);
+    expect(hint?.textContent).toBe("frees a slot");
     expect(screen.queryByTestId("ae-pr-more-open")).toBeNull();
   });
 
@@ -213,17 +224,36 @@ describe("AePrCards", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
     const group = screen.getByRole("radiogroup", { name: "Merge method" });
     const radios = within(group).getAllByRole("radio");
-    expect(radios.map((radio) => radio.textContent)).toEqual(["Squash and merge", "Merge commit"]);
+    // Short labels on the toggle (2026-09-26); the question line keeps the full text.
+    expect(radios.map((radio) => radio.textContent)).toEqual(["Squash", "Merge commit"]);
     const checked = () =>
       within(group)
         .getAllByRole("radio", { checked: true })
         .map((radio) => radio.textContent);
-    expect(checked()).toEqual(["Squash and merge"]);
+    expect(checked()).toEqual(["Squash"]);
     fireEvent.click(within(group).getByRole("radio", { name: "Merge commit" }));
     expect(checked()).toEqual(["Merge commit"]);
-    expect(
-      within(group).getByRole("radio", { name: "Squash and merge" }).getAttribute("aria-checked"),
-    ).toBe("false");
+    expect(within(group).getByRole("radio", { name: "Squash" }).getAttribute("aria-checked")).toBe(
+      "false",
+    );
+  });
+
+  // 2026-09-26: Reid saw the method buttons on one row and Confirm and Cancel
+  // on a second, on a 1100 px card. Now all three sit in one wrapping row.
+  it("puts the method toggle, Confirm merge and Cancel in one row", async () => {
+    serve(() => json(card(17)));
+    renderCards([{ url: url(17) }]);
+    fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
+    const group = screen.getByRole("group", { name: "Confirm merge" });
+    expect(group.textContent).toContain("Squash and merge #17 into main?");
+    const row = within(group).getByTestId("ae-pr-confirm-row");
+    expect(row.className).toContain("flex-wrap");
+    expect(row.className).not.toContain("flex-col");
+    const children = [...row.children];
+    expect(children).toHaveLength(3);
+    expect(children[0].getAttribute("role")).toBe("radiogroup");
+    expect(children[1].textContent).toBe("Confirm merge");
+    expect(children[2].textContent).toBe("Cancel");
   });
 
   it("hides the method choice when the repository allows one method", async () => {
@@ -232,6 +262,11 @@ describe("AePrCards", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
     expect(screen.getByRole("group", { name: "Confirm merge" })).toBeTruthy();
     expect(screen.queryByRole("radiogroup")).toBeNull();
+    const row = screen.getByTestId("ae-pr-confirm-row");
+    expect([...row.children].map((child) => child.textContent)).toEqual([
+      "Confirm merge",
+      "Cancel",
+    ]);
   });
 
   it("Cancel closes the confirm step without a request", async () => {
