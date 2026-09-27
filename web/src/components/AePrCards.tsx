@@ -224,8 +224,9 @@ function ConfirmMerge({
                   type="button"
                   role="radio"
                   aria-checked={checked}
+                  disabled={merge.isPending}
                   className={cn(
-                    "inline-flex h-11 min-w-0 flex-auto cursor-pointer items-center justify-center gap-1 rounded-md px-1.5 text-ui whitespace-nowrap @[30rem]/aepr:px-2.5 outline-none focus-visible:ring-3 focus-visible:ring-ring/50 md:h-[1.625rem]",
+                    "inline-flex h-11 min-w-0 flex-auto cursor-pointer items-center justify-center gap-1 rounded-md px-1.5 text-ui whitespace-nowrap @[30rem]/aepr:px-2.5 outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-default disabled:opacity-50 md:h-[1.625rem]",
                     checked
                       ? "bg-background font-semibold text-foreground shadow-sm ring-1 ring-foreground/20 dark:bg-foreground/20"
                       : "font-medium text-muted-foreground hover:text-foreground",
@@ -320,7 +321,9 @@ export function AePrCardView({
       data-pr={url}
       className={cn(
         "@container/aepr flex flex-col gap-1.5 rounded-lg border border-border bg-background p-2",
-        inline && "mt-2 max-w-xl",
+        // A set width, not max-w only: the container ignores its content, so
+        // the chat's w-fit bubble would shrink the card to the message text.
+        inline && "mt-2 w-xl max-w-full",
       )}
     >
       <div className="flex min-w-0 items-center gap-2">
