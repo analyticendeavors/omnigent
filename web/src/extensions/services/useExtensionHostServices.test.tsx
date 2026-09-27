@@ -290,7 +290,7 @@ describe("useExtensionHostServices", () => {
             number: 42,
             title: "Add canvas",
             state: "OPEN",
-            url: "https://github.com/acme/repo/pull/42",
+            url: "https://git.example.com/acme/repo/pull/42",
             is_draft: false,
             author: "me",
             base_ref: "main",
@@ -306,7 +306,7 @@ describe("useExtensionHostServices", () => {
 
     await expect(
       result.current.methods["navigation.openExternal"]?.(
-        { url: "https://github.com/acme/repo/pull/42" },
+        { url: "https://git.example.com/acme/repo/pull/42" },
         signal(),
       ),
     ).rejects.toMatchObject({ code: "PermissionDenied" });
@@ -317,16 +317,16 @@ describe("useExtensionHostServices", () => {
       number: 42,
       title: "Add canvas",
       state: "OPEN",
-      url: "https://github.com/acme/repo/pull/42",
+      url: "https://git.example.com/acme/repo/pull/42",
     });
     expect(authenticatedFetchMock.mock.calls[0][0]).toBe("/v1/sessions/conv_1/resources/github");
 
     await result.current.methods["navigation.openExternal"]?.(
-      { url: "https://github.com/acme/repo/pull/42" },
+      { url: "https://git.example.com/acme/repo/pull/42" },
       signal(),
     );
     expect(open).toHaveBeenCalledWith(
-      "https://github.com/acme/repo/pull/42",
+      "https://git.example.com/acme/repo/pull/42",
       "_blank",
       "noopener,noreferrer",
     );

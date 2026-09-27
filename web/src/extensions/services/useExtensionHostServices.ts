@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useTheme } from "next-themes";
 import { resolveIdentity } from "@/lib/identity";
 import { getOmnigentServerIdentity } from "@/lib/host";
+import { isAeGithubLinkUrl } from "@/lib/aeExternalUrls";
 import { fetchGithubInfo } from "@/hooks/useGithub";
 import { useNavigate } from "@/lib/routing";
 import type { ExtensionCatalogItem, ExtensionPullRequest } from "../types";
@@ -115,7 +116,10 @@ export function useExtensionHostServices(extension: ExtensionCatalogItem) {
       "navigation.openExternal": async (params: unknown, signal: AbortSignal) => {
         throwIfAborted(signal);
         const url = objectParams(params).url;
-        if (typeof url !== "string" || !externalUrlsRef.current.has(url)) {
+        if (
+          typeof url !== "string" ||
+          (!externalUrlsRef.current.has(url) && !isAeGithubLinkUrl(url))
+        ) {
           throw new ExtensionHostServiceError(
             "PermissionDenied",
             "URL was not provided by the host",
