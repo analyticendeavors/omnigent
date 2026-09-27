@@ -115,7 +115,9 @@ describe("AeInlinePrCards", () => {
     renderText(`Opened ${url(41)}`, [url(41)]);
     fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
     fireEvent.click(screen.getByRole("button", { name: "Confirm merge" }));
-    expect((await screen.findByRole("status")).textContent).toContain("Merged #41 (squashed)");
+    const done = await screen.findByRole("status");
+    expect(done.textContent).toContain("Merged (squashed) abcdef1");
+    expect(done.textContent).not.toContain("Pull Request successfully merged");
     const merge = calls.find((call) => call.path.endsWith("/merge"))!;
     expect(JSON.parse(String(merge.init?.body))).toEqual({
       sha: SHA,
