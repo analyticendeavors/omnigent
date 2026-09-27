@@ -256,6 +256,32 @@ describe("AePrCards", () => {
     expect(children[2].textContent).toBe("Cancel");
   });
 
+  it("locks the method while the merge is in flight", async () => {
+    let finish: (response: Response) => void = () => undefined;
+    serve((path) =>
+      path.endsWith("/merge")
+        ? new Promise<Response>((resolve) => {
+            finish = resolve;
+          })
+        : json(card(18)),
+    );
+    renderCards([{ url: url(18) }]);
+    fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
+    const group = screen.getByRole("radiogroup", { name: "Merge method" });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm merge" }));
+    await waitFor(() =>
+      expect(within(group).getByRole("radio", { name: "Merge commit" })).toBeDisabled(),
+    );
+    expect(within(group).getByRole("radio", { name: "Squash" })).toBeDisabled();
+    fireEvent.click(within(group).getByRole("radio", { name: "Merge commit" }));
+    expect(within(group).getByRole("radio", { name: "Squash" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    finish(new Response(JSON.stringify({ error: { message: "stop" } }), { status: 409 }));
+    await waitFor(() => expect(within(group).getByRole("radio", { name: "Squash" })).toBeEnabled());
+  });
+
   it("hides the method choice when the repository allows one method", async () => {
     serve(() => json(card(16, { merge: { ...card(16).merge, methods: ["squash"] } })));
     renderCards([{ url: url(16) }]);
