@@ -12,14 +12,23 @@
 // (https://github.com/omnigent-ai/omnigent/pull/6935), the `prs` list the
 // panel already reads. What is on a card: omnigent-ae's `/v1/ae/prs` routes
 // (lib/aePrs.ts). Reid merges from his phone while travelling, so every
-// target is 44 px below the `md` breakpoint. omnigent-ae patch P11,
-// 2026-09-24. In a card under 30rem wide (a phone) the Merge button spans the
-// card and the method is a segmented control (2026-09-25).
+// target was 44 px below the `md` breakpoint (40 px on a touch screen since
+// P26). omnigent-ae patch P11, 2026-09-24. In a card under 30rem wide (a
+// phone) the method is a segmented control (2026-09-25); the Merge button
+// spanned such a card until P26 put it at the end of the status row.
 //
 // 2026-09-26, from Reid's screenshots of a 1100 px card: the confirm step is one
 // row (the method toggle, Confirm merge, Cancel) that wraps to two only when it
 // does not fit, and the offer after a merge reads "Mark session done" with a
 // "frees a slot" hint; "Set this session to review" did not say what it does.
+//
+// 2026-09-27 (patch P26), Reid's second note that the cards waste space: at
+// 1200 px every piece sat on its own full-width row. The chips, the outcome or
+// the reason, and the action now share one status row
+// (`data-testid="ae-pr-status-row"`) that wraps only when it does not fit, with
+// the action at its right end; the merged line drops GitHub's "Pull Request
+// successfully merged" echo; buttons are 32 px with a mouse and 40 px on a
+// touch screen, as on the Dashboard; the card's padding and gaps are tighter.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLinkIcon, GitMergeIcon, Loader2Icon } from "lucide-react";
@@ -91,10 +100,14 @@ function Chip({ tone, children }: { tone: Tone; children: string }) {
   );
 }
 
-const TOUCH = "h-11 md:h-8";
+/** 32 px with a mouse, 40 px on a touch screen (the Dashboard's .btn, 2026-09-27). */
+const TOUCH = "h-8 pointer-coarse:h-10";
 
-/** Full width in a card narrower than 30rem (a phone), content width otherwise. */
-const WIDE_ON_PHONE = "w-full @[30rem]/aepr:w-auto";
+/**
+ * A status row item that stays beside the chips when it fits and takes a row
+ * of its own when it does not (flex 1 1 auto, so it never squeezes to nothing).
+ */
+const ROW_PART = "flex min-w-0 flex-auto flex-wrap items-center gap-x-2 gap-y-1";
 
 /** The method toggle's short labels; the question line keeps the full text. */
 const METHOD_SHORT: Record<AeMergeMethod, string> = { squash: "Squash", merge: "Merge commit" };
@@ -122,26 +135,27 @@ function MergedNote({
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["conversations"] }),
   });
   const how = result.method === "squash" ? "squashed" : "merge commit";
+  // GitHub's own message ("Pull Request successfully merged") only repeats
+  // this line, so it is not shown (2026-09-27).
   return (
-    <div role="status" className="flex flex-col gap-2 text-ui">
-      <p className="text-emerald-700 dark:text-emerald-400">
-        Merged #{result.number} ({how}){result.sha ? `, ${result.sha.slice(0, 7)}` : ""}.{" "}
-        {result.message}
-      </p>
+    <div role="status" className={cn(ROW_PART, "text-ui")}>
+      <span className="text-emerald-700 dark:text-emerald-400" data-testid="ae-pr-merged">
+        Merged ({how}){result.sha ? ` ${result.sha.slice(0, 7)}` : ""}
+      </span>
       {offer.kind === "open" && (
-        <p className="text-muted-foreground" data-testid="ae-pr-more-open">
+        <span className="text-muted-foreground" data-testid="ae-pr-more-open">
           {aeMoreOpenText(offer.count)}.
-        </p>
+        </span>
       )}
       {sessionId &&
         result.session?.offer_review &&
         offer.kind === "offer" &&
         (review.isSuccess ? (
-          <p className="text-muted-foreground">Session marked done. Its slot is free.</p>
+          <span className="text-muted-foreground">Session marked done. Its slot is free.</span>
         ) : (
-          <div className="flex flex-col gap-1">
+          <>
             {/* Optional, so an outline button, with the hint on screen for touch. */}
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="ml-auto flex items-center gap-x-2">
               <Button
                 variant="outline"
                 className={TOUCH}
@@ -156,13 +170,13 @@ function MergedNote({
               <span id={hintId} className="text-xs text-muted-foreground">
                 frees a slot
               </span>
-            </div>
+            </span>
             {review.isError && (
-              <p role="alert" className="text-destructive">
+              <p role="alert" className="basis-full text-destructive">
                 {review.error.message}
               </p>
             )}
-          </div>
+          </>
         ))}
     </div>
   );
@@ -320,7 +334,7 @@ export function AePrCardView({
       data-testid={inline ? "ae-pr-inline" : "ae-pr-card"}
       data-pr={url}
       className={cn(
-        "@container/aepr flex flex-col gap-1.5 rounded-lg border border-border bg-background p-2",
+        "@container/aepr flex flex-col gap-1 rounded-lg border border-border bg-background px-2 py-1.5",
         // A set width, not max-w only: the container ignores its content, so
         // the chat's w-fit bubble would shrink the card to the message text.
         inline && "mt-2 w-xl max-w-full",
@@ -356,16 +370,49 @@ export function AePrCardView({
       )}
       {card && (
         <>
-          <div className="flex flex-wrap gap-1.5" data-testid="ae-pr-chips">
-            <Chip tone={ciTone(card.ci.state)}>{aeCiText(card.ci)}</Chip>
-            <Chip tone={mergeableTone(card.mergeable.state)}>
-              {AE_MERGEABLE_TEXT[card.mergeable.state]}
-            </Chip>
-            <Chip tone={reviewTone(card.review.state)}>{AE_REVIEW_TEXT[card.review.state]}</Chip>
+          <div
+            className="flex flex-wrap items-center gap-x-3 gap-y-1"
+            data-testid="ae-pr-status-row"
+          >
+            <div className="flex flex-wrap gap-1.5" data-testid="ae-pr-chips">
+              <Chip tone={ciTone(card.ci.state)}>{aeCiText(card.ci)}</Chip>
+              <Chip tone={mergeableTone(card.mergeable.state)}>
+                {AE_MERGEABLE_TEXT[card.mergeable.state]}
+              </Chip>
+              <Chip tone={reviewTone(card.review.state)}>{AE_REVIEW_TEXT[card.review.state]}</Chip>
+            </div>
+            {result ? (
+              <MergedNote result={result} sessionId={sessionId} tracked={tracked} />
+            ) : (
+              !confirming &&
+              ((!card.merge.allowed && card.merge.reason) || card.state === "open") && (
+                <div className={ROW_PART}>
+                  {!card.merge.allowed && card.merge.reason && (
+                    <p
+                      className="text-ui text-amber-700 dark:text-amber-400"
+                      data-testid="ae-pr-why"
+                    >
+                      {card.merge.reason}
+                    </p>
+                  )}
+                  {card.state === "open" && (
+                    <Button
+                      className={cn(TOUCH, "ml-auto")}
+                      disabled={!card.merge.allowed}
+                      title={
+                        card.merge.allowed ? `Merge #${number}` : (card.merge.reason ?? undefined)
+                      }
+                      onClick={() => setConfirming(true)}
+                    >
+                      <GitMergeIcon className="size-3.5" aria-hidden />
+                      Merge
+                    </Button>
+                  )}
+                </div>
+              )
+            )}
           </div>
-          {result ? (
-            <MergedNote result={result} sessionId={sessionId} tracked={tracked} />
-          ) : confirming ? (
+          {!result && confirming && (
             <ConfirmMerge
               card={card}
               sessionId={sessionId}
@@ -375,25 +422,6 @@ export function AePrCardView({
                 setConfirming(false);
               }}
             />
-          ) : (
-            <>
-              {!card.merge.allowed && card.merge.reason && (
-                <p className="text-ui text-amber-700 dark:text-amber-400" data-testid="ae-pr-why">
-                  {card.merge.reason}
-                </p>
-              )}
-              {card.state === "open" && (
-                <Button
-                  className={cn(TOUCH, WIDE_ON_PHONE, "self-start")}
-                  disabled={!card.merge.allowed}
-                  title={card.merge.allowed ? `Merge #${number}` : (card.merge.reason ?? undefined)}
-                  onClick={() => setConfirming(true)}
-                >
-                  <GitMergeIcon className="size-3.5" aria-hidden />
-                  Merge
-                </Button>
-              )}
-            </>
           )}
         </>
       )}

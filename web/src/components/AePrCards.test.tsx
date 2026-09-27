@@ -118,6 +118,17 @@ describe("AePrCards", () => {
     const merge = await screen.findByRole("button", { name: "Merge" });
     expect((merge as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByTestId("ae-pr-why").textContent).toBe("CI is failing: 1 of 6 checks.");
+    // P26: the chips, the reason and the disabled Merge share one status row,
+    // the button compact (32 px, 40 px on touch) at the row's end.
+    const row = screen.getByTestId("ae-pr-status-row");
+    expect(row.contains(screen.getByTestId("ae-pr-chips"))).toBe(true);
+    expect(row.contains(screen.getByTestId("ae-pr-why"))).toBe(true);
+    expect(row.contains(merge)).toBe(true);
+    expect(merge.className).toContain("h-8");
+    expect(merge.className).toContain("pointer-coarse:h-10");
+    expect(merge.className).toContain("ml-auto");
+    expect(merge.className).not.toContain("h-11");
+    expect(merge.className).not.toContain("w-full");
   });
 
   it("confirms with the method, merges pinned to the SHA, then offers review", async () => {
@@ -146,7 +157,10 @@ describe("AePrCards", () => {
     expect(group.textContent).toContain("Merge commit #8 into main?");
     fireEvent.click(within(group).getByRole("button", { name: "Confirm merge" }));
     const done = await screen.findByRole("status");
-    expect(done.textContent).toContain("Merged #8 (merge commit), m3rg3d0.");
+    // P26: short and on the chips' row, without GitHub's echo.
+    expect(screen.getByTestId("ae-pr-merged").textContent).toBe("Merged (merge commit) m3rg3d0");
+    expect(done.textContent).not.toContain("successfully merged");
+    expect(screen.getByTestId("ae-pr-status-row").contains(done)).toBe(true);
     const merge = calls.find((call) => call.path.endsWith("/merge"))!;
     expect(merge.path).toBe(`/v1/ae/prs/${REPO}/8/merge`);
     expect(merge.init?.method).toBe("POST");
@@ -194,10 +208,12 @@ describe("AePrCards", () => {
     const first = screen.getAllByTestId("ae-pr-card")[0];
     fireEvent.click(within(first).getByRole("button", { name: "Merge" }));
     fireEvent.click(within(first).getByRole("button", { name: "Confirm merge" }));
-    expect((await within(first).findByRole("status")).textContent).toContain("Merged #11");
-    expect((await within(first).findByTestId("ae-pr-more-open")).textContent).toBe(
-      "3 more open pull requests in this session.",
-    );
+    expect((await within(first).findByRole("status")).textContent).toContain("Merged (squashed)");
+    const more = await within(first).findByTestId("ae-pr-more-open");
+    expect(more.textContent).toBe("3 more open pull requests in this session.");
+    // P26: the note sits inline on the status row, not on a row of its own.
+    expect(more.tagName).toBe("SPAN");
+    expect(within(first).getByTestId("ae-pr-status-row").contains(more)).toBe(true);
     expect(screen.queryByTestId("ae-pr-set-review")).toBeNull();
   });
 
