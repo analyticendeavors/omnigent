@@ -2,8 +2,10 @@
 // tag, pick by click or keyboard, and `onSelect` gets `tabler:<name>`.
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AeTablerIconPicker, searchAeTablerIcons } from "./AeTablerIconPicker";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 vi.mock("@/lib/aeTablerIconData", () => {
   const path = [["path", { d: "M4 4h16v16h-16z" }]];
@@ -20,6 +22,7 @@ vi.mock("@/lib/aeTablerIconData", () => {
   return {
     aeTablerIconsIfLoaded: () => null,
     loadAeTablerIcons: () => Promise.resolve(Object.fromEntries(names.map((n) => [n, path]))),
+    subscribeAeTablerIcons: () => () => undefined,
     loadAeTablerIconTags: () =>
       Promise.resolve({
         rocket: { category: "Map", tags: ["galaxy", "spaceship"] },
@@ -98,6 +101,39 @@ describe("AeTablerIconPicker", () => {
     fireEvent.change(search, { target: { value: "code" } });
     fireEvent.keyDown(search, { key: "Enter" });
     expect(onSelect).toHaveBeenCalledWith("tabler:code");
+  });
+
+  it("picks nothing with Enter in an empty search box", async () => {
+    const onSelect = await renderPicker();
+    const search = screen.getByTestId("ae-tabler-search");
+    fireEvent.keyDown(search, { key: "Enter" });
+    fireEvent.change(search, { target: { value: "   " } });
+    fireEvent.keyDown(search, { key: "Enter" });
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("focuses the search box when opened in a popover with a button above it", async () => {
+    // The rename popover's shape: "Remove icon" first, then the picker.
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return (
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <button type="button">Change project icon</button>
+          </PopoverTrigger>
+          <PopoverContent>
+            <button type="button">Remove icon</button>
+            <AeTablerIconPicker onSelect={vi.fn()} />
+          </PopoverContent>
+        </Popover>
+      );
+    }
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "Change project icon" }));
+    const search = await screen.findByTestId("ae-tabler-search");
+    await screen.findByTestId("ae-tabler-icon-rocket");
+    expect(search).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Remove icon" })).not.toHaveFocus();
   });
 
   it("moves through the grid with the arrow keys and back to the search box", async () => {

@@ -11,6 +11,7 @@ import {
   type AeTablerIconSet,
   aeTablerIconsIfLoaded,
   loadAeTablerIcons,
+  subscribeAeTablerIcons,
 } from "@/lib/aeTablerIconData";
 import { cn } from "@/lib/utils";
 
@@ -29,21 +30,36 @@ export function aeTablerValue(name: string): string {
   return `${AE_TABLER_PREFIX}${name}`;
 }
 
-/** The outline set once loaded; `"error"` when the chunk failed to load. */
+/**
+ * The outline set once loaded; `"error"` when the load failed, until any later
+ * load (the picker's Try again) succeeds.
+ */
 export function useAeTablerIcons(): AeTablerIconSet | "error" | null {
   const [set, setSet] = useState<AeTablerIconSet | "error" | null>(aeTablerIconsIfLoaded);
   useEffect(() => {
-    if (set !== null) return undefined;
+    if (set !== null && set !== "error") return undefined;
     let live = true;
-    loadAeTablerIcons().then(
-      (loaded) => live && setSet(loaded),
-      () => live && setSet("error"),
-    );
+    const unsubscribe = subscribeAeTablerIcons((loaded) => live && setSet(loaded));
+    // A load that succeeded between the failure and this subscription.
+    const already = aeTablerIconsIfLoaded();
+    if (already) setSet(already);
+    else if (set === null) {
+      loadAeTablerIcons().then(
+        (loaded) => live && setSet(loaded),
+        () => live && setSet("error"),
+      );
+    }
     return () => {
       live = false;
+      unsubscribe();
     };
   }, [set]);
   return set;
+}
+
+/** The icon's paths, or `undefined`; an own-key check, so `constructor` is not an icon. */
+function iconNode(set: AeTablerIconSet | "error" | null, name: string | null) {
+  return name && set && set !== "error" && Object.hasOwn(set, name) ? set[name] : undefined;
 }
 
 /** One Tabler outline icon as an inline SVG, drawn in `currentColor`. */
@@ -82,7 +98,7 @@ export function AeTablerSvg({ node, className }: { node: AeTablerIconNode; class
 export function AeTablerRowIcon({ icon, className }: { icon: string; className?: string }) {
   const set = useAeTablerIcons();
   const name = aeTablerName(icon);
-  const node = name && set && set !== "error" ? set[name] : undefined;
+  const node = iconNode(set, name);
   if (set === "error" || (set && !node)) {
     return (
       <FolderIcon
@@ -119,7 +135,7 @@ export function AeProjectIconGlyph({ icon }: { icon: string }) {
 
 function AeTablerGlyph({ name }: { name: string }) {
   const set = useAeTablerIcons();
-  const node = set && set !== "error" ? set[name] : undefined;
+  const node = iconNode(set, name);
   if (set === "error" || (set && !node)) {
     return <FolderIcon aria-hidden="true" className="size-[1em]" />;
   }

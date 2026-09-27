@@ -3,19 +3,38 @@
 // no icon and an unknown name both fall back to the folder.
 
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AE_TABLER_PREFIX, AeProjectIconGlyph, aeTablerName, aeTablerValue } from "./aeTablerIcon";
 import { ProjectRowIcon } from "@/shell/ProjectPicker";
 
 const ROCKET_D = "M4 13a8 8 0 0 1 7 7";
 
-vi.mock("@/lib/aeTablerIconData", () => {
-  const set = { rocket: [["path", { d: "M4 13a8 8 0 0 1 7 7" }]] };
-  return {
-    aeTablerIconsIfLoaded: () => null,
-    loadAeTablerIcons: () => Promise.resolve(set),
-    loadAeTablerIconTags: () => Promise.resolve({}),
-  };
+// A loader that can fail on demand and tells subscribers on success, like the real one.
+const data = vi.hoisted(() => ({
+  set: { rocket: [["path", { d: "M4 13a8 8 0 0 1 7 7" }]] },
+  loaded: null as object | null,
+  failing: false,
+  listeners: new Set<(set: object) => void>(),
+}));
+
+vi.mock("@/lib/aeTablerIconData", () => ({
+  aeTablerIconsIfLoaded: () => data.loaded,
+  loadAeTablerIcons: () => {
+    if (data.failing) return Promise.reject(new Error("offline"));
+    data.loaded = data.set;
+    for (const listener of [...data.listeners]) listener(data.set);
+    return Promise.resolve(data.set);
+  },
+  subscribeAeTablerIcons: (listener: (set: object) => void) => {
+    data.listeners.add(listener);
+    return () => data.listeners.delete(listener);
+  },
+  loadAeTablerIconTags: () => Promise.resolve({}),
+}));
+
+beforeEach(() => {
+  data.loaded = null;
+  data.failing = false;
 });
 
 afterEach(cleanup);
@@ -76,5 +95,43 @@ describe("AeProjectIconGlyph", () => {
     rerender(<AeProjectIconGlyph icon="tabler:rocket" />);
     await vi.waitFor(() => expect(container.querySelector("svg path")).not.toBeNull());
     expect(container.querySelector("svg")?.getAttribute("class")).toContain("size-[1em]");
+  });
+});
+
+describe("icon names that are Object.prototype keys", () => {
+  it("draws the folder for tabler:constructor and tabler:__proto__ instead of throwing", async () => {
+    const { container } = render(
+      <>
+        <ProjectRowIcon icon="tabler:constructor" />
+        <ProjectRowIcon icon="tabler:__proto__" />
+        <AeProjectIconGlyph icon="tabler:constructor" />
+      </>,
+    );
+    await vi.waitFor(() => expect(container.querySelectorAll("svg.lucide-folder")).toHaveLength(2));
+    expect(container.querySelector("[data-tabler-icon]")).toBeNull();
+  });
+});
+
+describe("recovery after a failed load", () => {
+  it("redraws icons that saw the failure once a later load succeeds", async () => {
+    data.failing = true;
+    const rows = render(
+      <>
+        <ProjectRowIcon icon="tabler:rocket" />
+        <ProjectRowIcon icon="tabler:rocket" />
+      </>,
+    );
+    await vi.waitFor(() =>
+      expect(rows.container.querySelectorAll("svg.lucide-folder")).toHaveLength(2),
+    );
+    // The picker's Try again: another hook instance loads, this time successfully.
+    data.failing = false;
+    render(<AeProjectIconGlyph icon="tabler:rocket" />);
+    await vi.waitFor(() =>
+      expect(rows.container.querySelectorAll('[data-tabler-icon="rocket"] svg path')).toHaveLength(
+        2,
+      ),
+    );
+    expect(rows.container.querySelector("svg.lucide-folder")).toBeNull();
   });
 });

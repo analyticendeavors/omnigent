@@ -5,7 +5,8 @@ import type { ExtensionProjectSummary } from "../types";
 import { ExtensionHostServiceError } from "./errors";
 
 export const PROJECT_NAME_MAX_LENGTH = 100;
-export const PROJECT_ICON_MAX_LENGTH = 16;
+// Room for a `tabler:<name>` project icon: 41 characters at most in @tabler/icons 3.46.
+export const PROJECT_ICON_MAX_LENGTH = 48;
 const PROJECT_ID_MAX_LENGTH = 256;
 const PROJECT_ERROR_MAX_LENGTH = 200;
 

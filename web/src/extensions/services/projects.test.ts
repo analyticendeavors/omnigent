@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { QueryClient } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -5,6 +6,7 @@ import {
   createProjectSummary,
   listProjectSummaries,
   parseCreateProjectParams,
+  PROJECT_ICON_MAX_LENGTH,
   projectSummary,
 } from "./projects";
 
@@ -20,12 +22,24 @@ describe("projectSummary", () => {
       name: "n".repeat(300),
       user_id: "private@example.com",
       created_at: 1,
-      config: { icon: "🔥".repeat(20) },
+      config: { icon: "🔥".repeat(40) },
     });
     expect(Object.keys(summary).sort()).toEqual(["icon", "id", "name"]);
     expect(summary.name).toHaveLength(100);
-    expect(summary.icon).toHaveLength(16);
+    expect(summary.icon).toHaveLength(PROJECT_ICON_MAX_LENGTH);
     expect(projectSummary({ id: "proj_2", name: "Plain" }).icon).toBeNull();
+  });
+
+  it("passes the longest tabler icon name through intact", () => {
+    const icon = "tabler:device-ipad-horizontal-exclamation";
+    expect(projectSummary({ id: "proj_3", name: "Long", config: { icon } }).icon).toBe(icon);
+  });
+
+  it("fits every name in the installed @tabler/icons", () => {
+    const file = "node_modules/@tabler/icons/tabler-nodes-outline.json";
+    const names = Object.keys(JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>);
+    const longest = Math.max(...names.map((name) => name.length));
+    expect("tabler:".length + longest).toBeLessThanOrEqual(PROJECT_ICON_MAX_LENGTH);
   });
 });
 

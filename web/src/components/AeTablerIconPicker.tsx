@@ -94,6 +94,11 @@ function PickerBody({
   const gridRef = useRef<HTMLDivElement>(null);
   const focusPending = useRef(false);
 
+  // The search box takes focus on open, as emoji-mart's autoFocus did; this
+  // runs before the popover's own open auto-focus, which then leaves it there
+  // instead of landing on a button above the picker such as "Remove icon".
+  useEffect(() => inputRef.current?.focus({ preventScroll: true }), []);
+
   useEffect(() => {
     let live = true;
     // Tags only widen the search; names still match while they load or if they fail.
@@ -140,7 +145,9 @@ function PickerBody({
     if (e.key === "ArrowDown" && results.length > 0) {
       e.preventDefault();
       focusCell(0);
-    } else if (e.key === "Enter" && results.length > 0) {
+    } else if (e.key === "Enter" && query.trim() && results.length > 0) {
+      // Only a typed search picks: the landing tile saves on select, so Enter
+      // in an empty box must not overwrite the icon with the first suggestion.
       e.preventDefault();
       pick(results[0]);
     }
