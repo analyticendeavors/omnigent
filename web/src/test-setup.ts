@@ -140,3 +140,6 @@ Object.defineProperty(window, "matchMedia", {
     dispatchEvent: () => false,
   }),
 });
+
+// omnigent-ae: the Tabler icon set is read from disk, never the global fetch.
+vi.mock("@/lib/aeTablerAssetFetch", () => import("@/lib/aeTablerAssetFetch.disk"));

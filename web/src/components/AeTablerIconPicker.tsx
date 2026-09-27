@@ -10,7 +10,11 @@ import { type KeyboardEvent, type UIEvent, useEffect, useMemo, useRef, useState 
 import { Loader2Icon, SearchIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AeTablerSvg, aeTablerValue, useAeTablerIcons } from "@/lib/aeTablerIcon";
-import { type AeTablerIconTags, loadAeTablerIconTags } from "@/lib/aeTablerIconData";
+import {
+  type AeTablerIconTags,
+  loadAeTablerIconTags,
+  loadAeTablerIcons,
+} from "@/lib/aeTablerIconData";
 import { cn } from "@/lib/utils";
 
 const COLUMNS = 8;
@@ -64,15 +68,20 @@ export function searchAeTablerIcons(
 
 /** A themed Tabler icon picker. Calls `onSelect` with `tabler:<name>`. */
 export function AeTablerIconPicker({ onSelect }: { onSelect: (value: string) => void }) {
-  // Remounting the body retries a failed load; the loader forgets a failure.
+  // Try again loads now (past the loader's backoff) and remounts the body,
+  // which retries the tags too.
   const [attempt, setAttempt] = useState(0);
+  const retry = () => {
+    loadAeTablerIcons().catch(() => undefined);
+    setAttempt((n) => n + 1);
+  };
   return (
     <div
       data-testid="ae-tabler-picker"
       className="flex w-[min(352px,calc(100vw-16px))] flex-col overflow-hidden rounded-lg bg-popover text-popover-foreground"
       style={{ height: "var(--emoji-picker-height, 420px)" }}
     >
-      <PickerBody key={attempt} onSelect={onSelect} onRetry={() => setAttempt((n) => n + 1)} />
+      <PickerBody key={attempt} onSelect={onSelect} onRetry={retry} />
     </div>
   );
 }

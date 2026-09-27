@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { QueryClient } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -36,7 +38,8 @@ describe("projectSummary", () => {
   });
 
   it("fits every name in the installed @tabler/icons", () => {
-    const file = "node_modules/@tabler/icons/tabler-nodes-outline.json";
+    const here = dirname(fileURLToPath(import.meta.url));
+    const file = resolve(here, "../../../node_modules/@tabler/icons/tabler-nodes-outline.json");
     const names = Object.keys(JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>);
     const longest = Math.max(...names.map((name) => name.length));
     expect("tabler:".length + longest).toBeLessThanOrEqual(PROJECT_ICON_MAX_LENGTH);

@@ -3,12 +3,13 @@
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AeTablerIconPicker, searchAeTablerIcons } from "./AeTablerIconPicker";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
-vi.mock("@/lib/aeTablerIconData", () => {
-  const path = [["path", { d: "M4 4h16v16h-16z" }]];
+const fake = await vi.hoisted(async () => {
+  const { createFakeAeTablerIconData } = await import("@/lib/aeTablerIconData.fake");
+  const path: [string, Record<string, string>][] = [["path", { d: "M4 4h16v16h-16z" }]];
   const names = [
     "folder",
     "rocket",
@@ -19,18 +20,16 @@ vi.mock("@/lib/aeTablerIconData", () => {
     "flame",
     "zoom",
   ];
-  return {
-    aeTablerIconsIfLoaded: () => null,
-    loadAeTablerIcons: () => Promise.resolve(Object.fromEntries(names.map((n) => [n, path]))),
-    subscribeAeTablerIcons: () => () => undefined,
-    loadAeTablerIconTags: () =>
-      Promise.resolve({
-        rocket: { category: "Map", tags: ["galaxy", "spaceship"] },
-        flame: { category: "Nature", tags: ["fire", "hot"] },
-        zoom: { tags: ["magnifier"] },
-      }),
-  };
+  return createFakeAeTablerIconData(Object.fromEntries(names.map((n) => [n, path])), {
+    rocket: { category: "Map", tags: ["galaxy", "spaceship"] },
+    flame: { category: "Nature", tags: ["fire", "hot"] },
+    zoom: { tags: ["magnifier"] },
+  });
 });
+
+vi.mock("@/lib/aeTablerIconData", () => fake.module);
+
+beforeEach(() => fake.reset());
 
 afterEach(cleanup);
 
@@ -154,11 +153,10 @@ describe("AeTablerIconPicker", () => {
   });
 
   it("offers a retry when the icon set fails to load", async () => {
-    const data = await import("@/lib/aeTablerIconData");
-    const load = vi.spyOn(data, "loadAeTablerIcons");
-    load.mockRejectedValueOnce(new Error("offline"));
+    fake.store.failing = true;
     render(<AeTablerIconPicker onSelect={vi.fn()} />);
     expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load the icon set");
+    fake.store.failing = false;
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByTestId("ae-tabler-icon-rocket")).toBeInTheDocument();
   });

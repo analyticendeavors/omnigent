@@ -9,33 +9,15 @@ import { ProjectRowIcon } from "@/shell/ProjectPicker";
 
 const ROCKET_D = "M4 13a8 8 0 0 1 7 7";
 
-// A loader that can fail on demand and tells subscribers on success, like the real one.
-const data = vi.hoisted(() => ({
-  set: { rocket: [["path", { d: "M4 13a8 8 0 0 1 7 7" }]] },
-  loaded: null as object | null,
-  failing: false,
-  listeners: new Set<(set: object) => void>(),
-}));
-
-vi.mock("@/lib/aeTablerIconData", () => ({
-  aeTablerIconsIfLoaded: () => data.loaded,
-  loadAeTablerIcons: () => {
-    if (data.failing) return Promise.reject(new Error("offline"));
-    data.loaded = data.set;
-    for (const listener of [...data.listeners]) listener(data.set);
-    return Promise.resolve(data.set);
-  },
-  subscribeAeTablerIcons: (listener: (set: object) => void) => {
-    data.listeners.add(listener);
-    return () => data.listeners.delete(listener);
-  },
-  loadAeTablerIconTags: () => Promise.resolve({}),
-}));
-
-beforeEach(() => {
-  data.loaded = null;
-  data.failing = false;
+// The store contract with a one-icon set; loads fail while `failing` is set.
+const fake = await vi.hoisted(async () => {
+  const { createFakeAeTablerIconData } = await import("@/lib/aeTablerIconData.fake");
+  return createFakeAeTablerIconData({ rocket: [["path", { d: "M4 13a8 8 0 0 1 7 7" }]] });
 });
+
+vi.mock("@/lib/aeTablerIconData", () => fake.module);
+
+beforeEach(() => fake.reset());
 
 afterEach(cleanup);
 
@@ -114,7 +96,7 @@ describe("icon names that are Object.prototype keys", () => {
 
 describe("recovery after a failed load", () => {
   it("redraws icons that saw the failure once a later load succeeds", async () => {
-    data.failing = true;
+    fake.store.failing = true;
     const rows = render(
       <>
         <ProjectRowIcon icon="tabler:rocket" />
@@ -124,14 +106,17 @@ describe("recovery after a failed load", () => {
     await vi.waitFor(() =>
       expect(rows.container.querySelectorAll("svg.lucide-folder")).toHaveLength(2),
     );
-    // The picker's Try again: another hook instance loads, this time successfully.
-    data.failing = false;
-    render(<AeProjectIconGlyph icon="tabler:rocket" />);
+    // One failed load for both rows, not one each.
+    expect(fake.store.loads).toBe(1);
+    // A later load (the loader's own retry, or the picker's Try again) succeeds.
+    fake.store.failing = false;
+    await fake.module.loadAeTablerIcons();
     await vi.waitFor(() =>
       expect(rows.container.querySelectorAll('[data-tabler-icon="rocket"] svg path')).toHaveLength(
         2,
       ),
     );
     expect(rows.container.querySelector("svg.lucide-folder")).toBeNull();
+    expect(fake.store.loads).toBe(2);
   });
 });
