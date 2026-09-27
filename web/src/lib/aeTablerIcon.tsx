@@ -4,13 +4,12 @@
 // The shapes load lazily (`aeTablerIconData`), so a same-size empty box holds
 // the place until they arrive; a name the set does not know is the folder.
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import { FolderIcon } from "lucide-react";
 import {
   type AeTablerIconNode,
-  type AeTablerIconSet,
-  aeTablerIconsIfLoaded,
-  loadAeTablerIcons,
+  type AeTablerIconsState,
+  aeTablerIconsState,
   subscribeAeTablerIcons,
 } from "@/lib/aeTablerIconData";
 import { cn } from "@/lib/utils";
@@ -31,35 +30,19 @@ export function aeTablerValue(name: string): string {
 }
 
 /**
- * The outline set once loaded; `"error"` when the load failed, until any later
- * load (the picker's Try again) succeeds.
+ * The outline set once loaded; `"error"` after a failed load, until a later
+ * one (a retry, the picker's Try again) succeeds. Subscribing starts the load.
  */
-export function useAeTablerIcons(): AeTablerIconSet | "error" | null {
-  const [set, setSet] = useState<AeTablerIconSet | "error" | null>(aeTablerIconsIfLoaded);
-  useEffect(() => {
-    if (set !== null && set !== "error") return undefined;
-    let live = true;
-    const unsubscribe = subscribeAeTablerIcons((loaded) => live && setSet(loaded));
-    // A load that succeeded between the failure and this subscription.
-    const already = aeTablerIconsIfLoaded();
-    if (already) setSet(already);
-    else if (set === null) {
-      loadAeTablerIcons().then(
-        (loaded) => live && setSet(loaded),
-        () => live && setSet("error"),
-      );
-    }
-    return () => {
-      live = false;
-      unsubscribe();
-    };
-  }, [set]);
-  return set;
+export function useAeTablerIcons(): AeTablerIconsState {
+  return useSyncExternalStore(subscribeAeTablerIcons, aeTablerIconsState);
 }
 
 /** The icon's paths, or `undefined`; an own-key check, so `constructor` is not an icon. */
-function iconNode(set: AeTablerIconSet | "error" | null, name: string | null) {
-  return name && set && set !== "error" && Object.hasOwn(set, name) ? set[name] : undefined;
+function iconNode(set: AeTablerIconsState, name: string | null) {
+  if (!name || !set || set === "error") return undefined;
+  // Not Object.hasOwn: Safari and iOS 15.0 to 15.3, still in build.target, lack it.
+  // oxlint-disable-next-line prefer-object-has-own
+  return Object.prototype.hasOwnProperty.call(set, name) ? set[name] : undefined;
 }
 
 /** One Tabler outline icon as an inline SVG, drawn in `currentColor`. */
