@@ -29,6 +29,13 @@
 // the action at its right end; the merged line drops GitHub's "Pull Request
 // successfully merged" echo; buttons are 32 px with a mouse and 40 px on a
 // touch screen, as on the Dashboard; the card's padding and gaps are tighter.
+//
+// 2026-09-28, Reid: the confirm step says which method to use. The server
+// recommends one (a merge commit when the head is a long-lived branch such as
+// dev or release/x, else squash; `recommend_merge_method` in omnigent-ae's
+// ae_omni_policies.prs); the toggle opens on it, its segment carries a small
+// "Recommended" tag and the reason as its title, and the reason is one muted
+// line under the question. The other method stays one tap away.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLinkIcon, GitMergeIcon, Loader2Icon } from "lucide-react";
@@ -195,7 +202,12 @@ function ConfirmMerge({
 }) {
   const queryClient = useQueryClient();
   const methods = card.merge.methods;
-  const [method, setMethod] = useState<AeMergeMethod>(card.merge.default_method ?? methods[0]);
+  const { recommended_method: recommended, recommended_reason: why } = card.merge;
+  const [method, setMethod] = useState<AeMergeMethod>(
+    recommended && methods.includes(recommended)
+      ? recommended
+      : (card.merge.default_method ?? methods[0]),
+  );
   const merge = useMutation({
     mutationFn: () => mergeAePr(card, method, sessionId),
     onSuccess: (result) => {
@@ -219,6 +231,14 @@ function ConfirmMerge({
         {AE_METHOD_TEXT[method]} #{card.number} into{" "}
         <span className="font-mono">{card.base_ref ?? "the base branch"}</span>?
       </p>
+      {why && (
+        <p
+          className="-mt-1 text-xs text-muted-foreground wrap-anywhere"
+          data-testid="ae-pr-recommended-why"
+        >
+          {why}
+        </p>
+      )}
       {/* One row: toggle, Confirm, Cancel. Under 30rem the toggle takes its own
           row and the two buttons share the next (2026-09-26). */}
       <div className="flex flex-wrap items-center gap-2" data-testid="ae-pr-confirm-row">
@@ -245,6 +265,7 @@ function ConfirmMerge({
                       ? "bg-background font-semibold text-foreground shadow-sm ring-1 ring-foreground/20 dark:bg-foreground/20"
                       : "font-medium text-muted-foreground hover:text-foreground",
                   )}
+                  title={option === recommended && why ? why : undefined}
                   onClick={() => setMethod(option)}
                 >
                   {/* Unticked: gone on a phone, a blank on wider cards (steady width). */}
@@ -256,6 +277,14 @@ function ConfirmMerge({
                     )}
                   />
                   <span className="truncate">{METHOD_SHORT[option]}</span>
+                  {option === recommended && (
+                    <span
+                      className="shrink-0 rounded-full border border-border px-1.5 text-xs leading-4 font-medium text-muted-foreground"
+                      data-testid="ae-pr-recommended-tag"
+                    >
+                      Recommended
+                    </span>
+                  )}
                 </button>
               );
             })}
