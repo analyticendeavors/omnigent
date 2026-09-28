@@ -12,12 +12,16 @@
 // issue page on github.com, written exactly the way GitHub's API returns it.
 //
 // Why this is safe to open for any extension holding the navigation
-// permission: the host opens it with `noopener,noreferrer` in a new browsing
-// context, the scheme is https, the host is exactly github.com (no userinfo,
+// permission: the host opens it in a new browsing context with no opener
+// (`noopener,noreferrer` until P27, which clears `opener` itself so a blocked
+// tab can be told apart; see `aeOpenExternalWindow`), the scheme is https, the host is exactly github.com (no userinfo,
 // no port, so no lookalike authority), the path has a fixed shape with no
 // encoded characters, and there is no query string, so the link cannot carry
 // parameters to a GitHub endpoint. The worst an extension can do with it is
 // open a GitHub pull request or issue page in a new tab.
+
+import { ExtensionHostServiceError } from "@/extensions/services/errors";
+import { isNativeShell } from "@/lib/nativeBridge";
 
 const OWNER_OR_REPO = "[A-Za-z0-9._-]{1,100}";
 const NUMBER = "[1-9][0-9]{0,9}";
@@ -45,4 +49,34 @@ export function isAeGithubLinkUrl(url: unknown): url is string {
   } catch {
     return false;
   }
+}
+
+/** The error code `navigation.openExternal` rejects with when no tab opened. */
+export const AE_POPUP_BLOCKED = "PopupBlocked";
+
+/**
+ * Open *url* in a new tab for `navigation.openExternal`, and throw when the
+ * browser blocked it (patch P27, 2026-09-27). Upstream opened with
+ * `noopener,noreferrer`, which makes `window.open` return null even on
+ * success, so a tab that iOS Safari blocked (the open runs one MessagePort
+ * hop after the tap) looked like success and the extension never offered its
+ * fallback. Now the tab opens without `noopener`, and its `opener` is cleared
+ * at once, which keeps noopener's protection; a null window means blocked.
+ * Native shells keep upstream's call: their window-open policy routes the
+ * link to the system browser and reports null regardless (see
+ * `followLinkWithPopupFallback` in ChatMarkdown.tsx).
+ */
+export function aeOpenExternalWindow(url: string): void {
+  if (isNativeShell()) {
+    window.open(url, "_blank", "noopener,noreferrer");
+    return;
+  }
+  const opened = window.open(url, "_blank");
+  if (!opened) {
+    throw new ExtensionHostServiceError(
+      AE_POPUP_BLOCKED,
+      "The browser blocked the new tab; allow pop-ups for this site or copy the link",
+    );
+  }
+  opened.opener = null;
 }
