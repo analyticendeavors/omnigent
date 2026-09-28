@@ -1,6 +1,7 @@
 // omnigent-ae patch P25 (2026-09-27): `navigation.openExternal` opens a GitHub
 // pull request or issue URL the host never handed out (`lib/aeExternalUrls.ts`),
-// and still refuses every other URL it did not hand out.
+// and still refuses every other URL it did not hand out. P27 (2026-09-27): a
+// tab the browser blocked rejects with PopupBlocked instead of passing as opened.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
@@ -54,9 +55,11 @@ function openExternal(permissions: ExtensionCatalogItem["permissions"] = ["navig
 
 describe("navigation.openExternal and GitHub links (P25)", () => {
   let open: ReturnType<typeof vi.spyOn>;
+  let tab: Window;
 
   beforeEach(() => {
-    open = vi.spyOn(window, "open").mockReturnValue(null);
+    tab = { opener: window } as unknown as Window;
+    open = vi.spyOn(window, "open").mockReturnValue(tab);
   });
 
   afterEach(() => {
@@ -69,7 +72,33 @@ describe("navigation.openExternal and GitHub links (P25)", () => {
     "https://github.com/omnigent-ai/omnigent/pull/6935/files",
   ])("opens %s without the host handing it out", async (url) => {
     await expect(openExternal()?.({ url }, signal())).resolves.toBeNull();
-    expect(open).toHaveBeenCalledWith(url, "_blank", "noopener,noreferrer");
+    // P27: opened without noopener so a block is visible, then the opener cut.
+    expect(open).toHaveBeenCalledWith(url, "_blank");
+    expect(tab.opener).toBeNull();
+  });
+
+  it("rejects with PopupBlocked when the browser blocks the new tab (P27)", async () => {
+    open.mockReturnValue(null);
+    await expect(
+      openExternal()?.({ url: "https://github.com/acme/repo/pull/1" }, signal()),
+    ).rejects.toMatchObject({ code: "PopupBlocked" });
+  });
+
+  it("keeps upstream's noopener open in a native shell, whose policy reports null (P27)", async () => {
+    open.mockReturnValue(null);
+    Object.assign(window, { omnigentDesktop: { kind: "electron" } });
+    try {
+      await expect(
+        openExternal()?.({ url: "https://github.com/acme/repo/pull/1" }, signal()),
+      ).resolves.toBeNull();
+      expect(open).toHaveBeenCalledWith(
+        "https://github.com/acme/repo/pull/1",
+        "_blank",
+        "noopener,noreferrer",
+      );
+    } finally {
+      Reflect.deleteProperty(window, "omnigentDesktop");
+    }
   });
 
   it.each([
