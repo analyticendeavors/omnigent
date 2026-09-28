@@ -43,6 +43,10 @@ export interface AePrCard {
   merge: {
     methods: AeMergeMethod[];
     default_method: AeMergeMethod | null;
+    /** The method the confirm step preselects and tags, and why (2026-09-28).
+     * Optional: a server from before sends neither. */
+    recommended_method?: AeMergeMethod | null;
+    recommended_reason?: string | null;
     allowed: boolean;
     reason: string | null;
   };

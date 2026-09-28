@@ -254,6 +254,90 @@ describe("AePrCards", () => {
     );
   });
 
+  // 2026-09-28: Reid asked the confirm step to say which method to use.
+  describe("the recommended method", () => {
+    const PROMOTE =
+      "Merge commit keeps dev and main in step; a squash would make the next promotion conflict.";
+    const promotion = (number: number) =>
+      card(number, {
+        head_ref: "dev",
+        merge: {
+          methods: ["squash", "merge"],
+          default_method: "merge",
+          recommended_method: "merge",
+          recommended_reason: PROMOTE,
+          allowed: true,
+          reason: null,
+        },
+      });
+
+    it("opens on it, tags its segment and says why under the question", async () => {
+      serve(() => json(promotion(21)));
+      renderCards([{ url: url(21) }]);
+      fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
+      const group = screen.getByRole("group", { name: "Confirm merge" });
+      expect(group.textContent).toContain("Merge commit #21 into main?");
+      const methods = within(group).getByRole("radiogroup", { name: "Merge method" });
+      const chosen = within(methods).getByRole("radio", { checked: true });
+      expect(chosen.textContent).toBe("Merge commitRecommended");
+      expect(chosen.getAttribute("title")).toBe(PROMOTE);
+      const tags = within(group).getAllByTestId("ae-pr-recommended-tag");
+      expect(tags).toHaveLength(1);
+      expect(chosen.contains(tags[0])).toBe(true);
+      const why = within(group).getByTestId("ae-pr-recommended-why");
+      expect(why.textContent).toBe(PROMOTE);
+      expect(why.className).toContain("text-muted-foreground");
+      expect(why.previousElementSibling?.textContent).toBe("Merge commit #21 into main?");
+    });
+
+    it("still merges with the other method when it is picked", async () => {
+      const calls: { path: string; init?: RequestInit }[] = [];
+      serve((path, init) => {
+        calls.push({ path, init });
+        if (path.endsWith("/merge")) {
+          return json({
+            merged: true,
+            repo: REPO,
+            number: 22,
+            method: "squash",
+            sha: "5qu45h0000",
+            message: "Pull Request successfully merged",
+            session: null,
+          });
+        }
+        return json(promotion(22));
+      });
+      renderCards([{ url: url(22) }]);
+      fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
+      const group = screen.getByRole("group", { name: "Confirm merge" });
+      fireEvent.click(within(group).getByRole("radio", { name: "Squash" }));
+      expect(within(group).getByRole("radio", { checked: true }).textContent).toBe("Squash");
+      expect(group.textContent).toContain("Squash and merge #22 into main?");
+      // The tag and the reason stay on the recommendation.
+      expect(within(group).getByTestId("ae-pr-recommended-why").textContent).toBe(PROMOTE);
+      expect(
+        within(group).getByRole("radio", { name: /Merge commit/ }).textContent,
+      ).toContain("Recommended");
+      fireEvent.click(within(group).getByRole("button", { name: "Confirm merge" }));
+      await screen.findByRole("status");
+      const merge = calls.find((call) => call.path.endsWith("/merge"))!;
+      expect(JSON.parse(String(merge.init?.body))).toEqual({
+        sha: SHA,
+        method: "squash",
+        session_id: "s1",
+      });
+    });
+
+    it("shows no tag or reason for a card without a recommendation", async () => {
+      serve(() => json(card(23)));
+      renderCards([{ url: url(23) }]);
+      fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
+      expect(screen.getByRole("radio", { checked: true }).textContent).toBe("Squash");
+      expect(screen.queryByTestId("ae-pr-recommended-tag")).toBeNull();
+      expect(screen.queryByTestId("ae-pr-recommended-why")).toBeNull();
+    });
+  });
+
   // 2026-09-26: Reid saw the method buttons on one row and Confirm and Cancel
   // on a second, on a 1100 px card. Now all three sit in one wrapping row.
   it("puts the method toggle, Confirm merge and Cancel in one row", async () => {
