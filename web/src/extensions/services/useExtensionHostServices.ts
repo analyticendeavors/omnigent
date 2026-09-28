@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useTheme } from "next-themes";
 import { resolveIdentity } from "@/lib/identity";
 import { getOmnigentServerIdentity } from "@/lib/host";
-import { isAeGithubLinkUrl } from "@/lib/aeExternalUrls";
+import { aeOpenExternalWindow, isAeGithubLinkUrl } from "@/lib/aeExternalUrls";
 import { fetchGithubInfo } from "@/hooks/useGithub";
 import { useNavigate } from "@/lib/routing";
 import type { ExtensionCatalogItem, ExtensionPullRequest } from "../types";
@@ -125,7 +125,7 @@ export function useExtensionHostServices(extension: ExtensionCatalogItem) {
             "URL was not provided by the host",
           );
         }
-        window.open(url, "_blank", "noopener,noreferrer");
+        aeOpenExternalWindow(url);
         return null;
       },
       "navigation.openNewSession": async (params: unknown, signal: AbortSignal) => {

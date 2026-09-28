@@ -301,7 +301,7 @@ describe("useExtensionHostServices", () => {
         { status: 200 },
       ),
     );
-    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const open = vi.spyOn(window, "open").mockReturnValue({ opener: window } as unknown as Window);
     const { result } = renderHook(() => useExtensionHostServices(extension), { wrapper });
 
     await expect(
@@ -325,11 +325,7 @@ describe("useExtensionHostServices", () => {
       { url: "https://git.example.com/acme/repo/pull/42" },
       signal(),
     );
-    expect(open).toHaveBeenCalledWith(
-      "https://git.example.com/acme/repo/pull/42",
-      "_blank",
-      "noopener,noreferrer",
-    );
+    expect(open).toHaveBeenCalledWith("https://git.example.com/acme/repo/pull/42", "_blank");
     open.mockRestore();
   });
 
