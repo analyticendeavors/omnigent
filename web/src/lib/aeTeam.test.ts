@@ -29,24 +29,34 @@ const claude: AeTeamMember = {
   displayName: "Claude",
   model: null,
 };
+const parent: Awaited<ReturnType<typeof getSessionSlim>> = {
+  id: "parent",
+  agentId: "ag_codex",
+  agentName: "codex-native",
+  status: "idle",
+  createdAt: 0,
+  title: null,
+  items: [],
+  permissionLevel: 4,
+  parentSessionId: null,
+  subAgentName: null,
+  kind: "default",
+  subagentRoutingOverride: "off",
+};
 
 describe("team persistence", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.mocked(fetchChildSessions).mockResolvedValue([]);
-    vi.mocked(getSessionSlim).mockResolvedValue({ subagentRoutingOverride: "off" } as Awaited<
-      ReturnType<typeof getSessionSlim>
-    >);
-    vi.mocked(createSession).mockResolvedValue({ id: "new-child" } as Awaited<
-      ReturnType<typeof createSession>
-    >);
+    vi.mocked(getSessionSlim).mockResolvedValue(parent);
+    vi.mocked(createSession).mockResolvedValue({ ...parent, id: "new-child", kind: "sub_agent" });
   });
 
   it("ignores malformed and oversized rosters", () => {
     for (const raw of ["{", "null", JSON.stringify({ version: 9 }), " ".repeat(20_000)]) {
       expect(readAeTeam({ [AE_TEAM_LABEL]: raw })).toEqual({
         version: 1,
-        mode: "solo",
+        mode: "auto",
         members: [],
       });
     }
@@ -70,6 +80,7 @@ describe("team persistence", () => {
           version: 1,
           mode: "team",
           members: [{ ...codex, sessionId: "new-child" }],
+          routingBeforeTeam: "off",
         }),
       },
     });
@@ -111,19 +122,91 @@ describe("team persistence", () => {
     expect(updateSession).not.toHaveBeenCalled();
   });
 
-  it("switches to Solo without starting or deleting children", async () => {
-    await saveAeTeam("parent", { version: 1, mode: "solo", members: [codex] });
+  it.each(["auto", "solo"] as const)("saves %s without provisioning children", async (mode) => {
+    await saveAeTeam("parent", { version: 1, mode, members: [codex] });
     expect(fetchChildSessions).not.toHaveBeenCalled();
     expect(createSession).not.toHaveBeenCalled();
     expect(updateSession).toHaveBeenCalledWith("parent", {
-      labels: { [AE_TEAM_LABEL]: '{"version":1,"mode":"solo","members":[]}' },
+      labels: { [AE_TEAM_LABEL]: JSON.stringify({ version: 1, mode, members: [] }) },
+    });
+  });
+
+  it("defaults to Auto while retaining an explicitly saved Solo preference", () => {
+    expect(readAeTeam().mode).toBe("auto");
+    expect(readAeTeam({ [AE_TEAM_LABEL]: '{"version":1,"mode":"solo","members":[]}' }).mode).toBe(
+      "solo",
+    );
+  });
+
+  it.each(["auto", "solo"] as const)(
+    "restores the original routing when leaving a selected team for %s",
+    async (mode) => {
+      vi.mocked(getSessionSlim).mockResolvedValue({
+        ...parent,
+        subagentRoutingOverride: "off",
+        labels: {
+          [AE_TEAM_LABEL]: JSON.stringify({
+            version: 1,
+            mode: "team",
+            members: [codex],
+            routingBeforeTeam: "on",
+          }),
+        },
+      });
+      await saveAeTeam("parent", { version: 1, mode, members: [] });
+      expect(createSession).not.toHaveBeenCalled();
+      expect(updateSession).toHaveBeenCalledExactlyOnceWith("parent", {
+        subagentRoutingOverride: "on",
+        labels: { [AE_TEAM_LABEL]: JSON.stringify({ version: 1, mode, members: [] }) },
+      });
+    },
+  );
+
+  it("preserves the original routing across edits to an existing team", async () => {
+    vi.mocked(getSessionSlim).mockResolvedValue({
+      ...parent,
+      subagentRoutingOverride: "off",
+      labels: {
+        [AE_TEAM_LABEL]: JSON.stringify({
+          version: 1,
+          mode: "team",
+          members: [codex],
+          routingBeforeTeam: "on",
+        }),
+      },
+    });
+    await saveAeTeam("parent", { version: 1, mode: "team", members: [claude] });
+    const saved = readAeTeam(vi.mocked(updateSession).mock.calls.at(-1)![1].labels!);
+    expect(saved.routingBeforeTeam).toBe("on");
+  });
+
+  it("clears the legacy Team routing override when returning to Auto", async () => {
+    vi.mocked(getSessionSlim).mockResolvedValue({
+      ...parent,
+      subagentRoutingOverride: "off",
+      labels: { [AE_TEAM_LABEL]: '{"version":1,"mode":"team","members":[]}' },
+    });
+    await saveAeTeam("parent", { version: 1, mode: "auto", members: [] });
+    expect(updateSession).toHaveBeenCalledWith(
+      "parent",
+      expect.objectContaining({ subagentRoutingOverride: null }),
+    );
+  });
+
+  it("keeps a manual routing change made after selecting Team", async () => {
+    vi.mocked(getSessionSlim).mockResolvedValue({
+      ...parent,
+      subagentRoutingOverride: "on",
+      labels: { [AE_TEAM_LABEL]: '{"version":1,"mode":"team","members":[]}' },
+    });
+    await saveAeTeam("parent", { version: 1, mode: "auto", members: [] });
+    expect(updateSession).toHaveBeenCalledWith("parent", {
+      labels: { [AE_TEAM_LABEL]: '{"version":1,"mode":"auto","members":[]}' },
     });
   });
 
   it("turns off automatic collaborator routing before creating pinned teammates", async () => {
-    vi.mocked(getSessionSlim).mockResolvedValue({ subagentRoutingOverride: "on" } as Awaited<
-      ReturnType<typeof getSessionSlim>
-    >);
+    vi.mocked(getSessionSlim).mockResolvedValue({ ...parent, subagentRoutingOverride: "on" });
     await saveAeTeam("parent", { version: 1, mode: "team", members: [codex] });
     expect(updateSession).toHaveBeenNthCalledWith(1, "parent", { subagentRoutingOverride: "off" });
     expect(vi.mocked(updateSession).mock.invocationCallOrder[0]).toBeLessThan(
@@ -132,9 +215,7 @@ describe("team persistence", () => {
   });
 
   it("restores routing if a team cannot be provisioned", async () => {
-    vi.mocked(getSessionSlim).mockResolvedValue({ subagentRoutingOverride: "on" } as Awaited<
-      ReturnType<typeof getSessionSlim>
-    >);
+    vi.mocked(getSessionSlim).mockResolvedValue({ ...parent, subagentRoutingOverride: "on" });
     vi.mocked(createSession).mockRejectedValue(new Error("Unavailable"));
     await expect(
       saveAeTeam("parent", { version: 1, mode: "team", members: [codex] }),

@@ -4,6 +4,7 @@ Run against a built Storybook, or set AE_UI_STORYBOOK_URL to its local dev URL.
 """
 
 import os
+import re
 import threading
 from collections.abc import Iterator
 from functools import partial
@@ -48,12 +49,17 @@ def test_team_selection_and_model_choices(
     expect(page.get_by_role("checkbox", name="Claude")).to_be_checked()
     page.get_by_role("combobox", name="Model for Codex").select_option("example-model")
     expect(page.get_by_role("combobox", name="Model for Codex")).to_have_value("example-model")
-    expect(
-        page.get_by_role("checkbox", name="Another agent Authentication required")
-    ).to_be_disabled()
-    page.get_by_role("button", name="Solo One agent handles the work").click()
+    expect(page.get_by_role("checkbox", name="Another agent")).to_have_count(0)
+    page.get_by_role("button", name=re.compile("Show agents needing setup")).click()
+    expect(page.get_by_role("checkbox", name="Another agent")).to_be_disabled()
+    page.get_by_role("button", name=re.compile("Hide agents needing setup")).click()
+    page.get_by_role("button", name="Solo", exact=True).click()
     expect(page.get_by_role("checkbox")).to_have_count(0)
-    page.get_by_role("button", name="Team A lead with collaborators").click()
+    expect(page.get_by_text("Native subagents remain available in every mode.")).to_be_visible()
+    page.get_by_role("button", name="Auto Recommended", exact=True).click()
+    expect(page.get_by_role("checkbox")).to_have_count(0)
+    expect(page.get_by_text("The lead chooses useful collaborators", exact=False)).to_be_visible()
+    page.get_by_role("button", name="Team", exact=True).click()
     expect(page.get_by_role("checkbox", name="Claude")).to_be_checked()
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 

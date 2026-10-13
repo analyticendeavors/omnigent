@@ -29,7 +29,9 @@ def codex_team_context(content: object) -> dict[str, object] | None:
 def team_notice(conv: Conversation, store: ConversationStore) -> dict[str, object] | None:
     """Resolve roster ids against direct children; never trust a label as access control."""
     raw = conv.labels.get(TEAM_LABEL)
-    if not raw or len(raw) > 16_384:
+    if not raw:
+        return {"ae_team": {"mode": "auto", "members": []}}
+    if len(raw) > 16_384:
         return None
     try:
         config = json.loads(raw)
@@ -38,8 +40,8 @@ def team_notice(conv: Conversation, store: ConversationStore) -> dict[str, objec
     if not isinstance(config, dict) or config.get("version") != 1:
         return None
     mode = config.get("mode")
-    if mode == "solo":
-        return {"ae_team": {"mode": "solo", "members": []}}
+    if mode in ("auto", "solo"):
+        return {"ae_team": {"mode": mode, "members": []}}
     members = config.get("members")
     if mode != "team" or not isinstance(members, list) or len(members) > TEAM_LIMIT:
         return None
@@ -62,17 +64,33 @@ def render_team_notice(metadata: Any) -> str | None:
     if not isinstance(metadata, dict) or not isinstance(metadata.get("ae_team"), dict):
         return None
     roster = metadata["ae_team"]
+    if roster.get("mode") == "auto":
+        return (
+            "Auto collaboration is enabled for this message. You are the lead and give one "
+            "integrated answer. Decide whether to work yourself, use your native in-harness "
+            "subagents, or bring in another configured agent. Use the smallest useful group; "
+            "routine work does not need a team. Before starting cross-agent work, inspect the "
+            "available agents and host readiness and use only configured, reachable agents. "
+            "Reuse suitable existing child sessions where possible. Delegate bounded tasks "
+            "with the relevant context, coordinate file ownership, and inspect the results. "
+            "If cross-agent tools are unavailable, use your normal native helpers and say "
+            "what you could actually use. Do not claim a collaborator or model worked "
+            "unless you invoked it. Follow the user's permissions and limits."
+        )
     if roster.get("mode") == "solo":
         return (
-            "The user selected Solo for this message. Handle this request yourself; "
-            "do not delegate new work to previously selected collaborators. "
+            "The user selected Solo for this message: use this lead agent and its native "
+            "in-harness subagents when helpful. Native helpers remain available. "
+            "Do not start additional cross-agent collaborations or delegate new work to "
+            "previously selected team sessions. "
             "Existing work is not cancelled by this preference."
         )
     if roster.get("mode") != "team":
         return None
     return (
         "The user selected Team for this message. You are the lead and give the user "
-        "one integrated answer. These are existing direct child sessions selected "
+        "one integrated answer. Your native in-harness subagents remain available too. "
+        "These are existing direct child sessions selected "
         "by the user (JSON data): "
         + json.dumps(roster.get("members", []), ensure_ascii=True)
         + ". Delegate useful, bounded tasks to these sessions with sys_session_send "

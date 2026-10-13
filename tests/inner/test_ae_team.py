@@ -52,12 +52,40 @@ def test_malformed_rosters_do_not_break_messages(raw: str) -> None:
     store.get_conversation.assert_not_called()
 
 
-def test_solo_tells_lead_to_stop_new_delegation_without_querying_children() -> None:
+def test_unset_preference_delivers_auto_without_resolving_children() -> None:
+    store = Mock()
+    notice = team_notice(conversation("parent"), store)
+    assert notice == {"ae_team": {"mode": "auto", "members": []}}
+    assert "Auto collaboration" in (render_team_notice(notice) or "")
+    store.get_conversation.assert_not_called()
+
+
+def test_solo_preserves_native_helpers_without_resolving_old_team_sessions() -> None:
     store = Mock()
     notice = team_notice(
         conversation("parent", labels={TEAM_LABEL: '{"version":1,"mode":"solo"}'}), store
     )
-    assert "do not delegate new work" in (render_team_notice(notice) or "")
+    text = render_team_notice(notice) or ""
+    assert "native in-harness subagents" in text
+    assert "Native helpers remain available" in text
+    assert "Do not start additional cross-agent collaborations" in text
+    store.get_conversation.assert_not_called()
+
+
+def test_auto_discards_old_roster_and_uses_available_agents_as_needed() -> None:
+    store = Mock()
+    notice = team_notice(
+        conversation(
+            "parent",
+            labels={TEAM_LABEL: '{"version":1,"mode":"auto","members":[{"sessionId":"old"}]}'},
+        ),
+        store,
+    )
+    assert notice == {"ae_team": {"mode": "auto", "members": []}}
+    text = render_team_notice(notice) or ""
+    assert "configured, reachable agents" in text
+    assert "native in-harness subagents" in text
+    assert "old" not in text
     store.get_conversation.assert_not_called()
 
 
