@@ -3902,6 +3902,7 @@ def create_app(
     # except (a hidden failure). No host_store = host support is simply
     # not enabled (host connects get 404), rather than silently broken.
     if host_store is not None:
+        from omnigent.server.host_connect_observers import notify_host_connected
         from omnigent.server.routes.harness_startup import create_harness_startup_router
         from omnigent.server.routes.host_tunnel import create_host_tunnel_router
         from omnigent.server.routes.hosts import create_hosts_router
@@ -3914,6 +3915,10 @@ def create_app(
         async def _on_hosts_changed(_host_id: str, owner: str | None) -> None:
             announce_hosts_changed(owner)
 
+        async def _on_host_connected(host_id: str, owner: str | None) -> None:
+            announce_hosts_changed(owner)
+            notify_host_connected(app.state, conversation_store, host_id, owner)
+
         app.include_router(
             create_host_tunnel_router(
                 host_registry,
@@ -3921,7 +3926,7 @@ def create_app(
                 auth_provider=auth_provider,
                 runner_exit_reports=runner_exit_reports,
                 on_runner_exited=_on_runner_exited,
-                on_host_connect=_on_hosts_changed,
+                on_host_connect=_on_host_connected,
                 on_host_disconnect=_on_hosts_changed,
                 on_host_update=_on_hosts_changed,
             ),

@@ -545,6 +545,7 @@ async def _recover_retry_session(
     session_id: str,
     conversation_store: ConversationStore,
     runner_router: RunnerRouter | None,
+    resume_interrupted_turn: bool = False,
 ) -> dict[str, bool | str]:
     """Recover runner/terminal readiness without creating transcript input."""
     conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
@@ -580,6 +581,7 @@ async def _recover_retry_session(
         initializer=getattr(request.app.state, "runner_session_initializer", None),
         suppress_recovery_turn=was_connected,
         require_success=True,
+        resume_interrupted_turn=resume_interrupted_turn and not was_connected,
     )
 
     if _is_native_terminal_session(conv):
