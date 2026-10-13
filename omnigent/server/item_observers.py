@@ -35,6 +35,7 @@ ItemObserver = Callable[[str, Sequence[ConversationItem]], Any]
 _observers: list[ItemObserver] = []
 # Strong references to in-flight observer tasks: the loop keeps only weak
 # ones, so a task referenced nowhere else could be collected mid-flight.
+# custom-lint: disable-next=workspace-scoped-cache -- task objects are globally unique
 _pending: set[asyncio.Task[None]] = set()
 
 

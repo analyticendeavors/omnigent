@@ -206,6 +206,8 @@ _INSTANCE_SCOPED_LABEL_KEYS = frozenset(
 # fails loudly here.
 _SANDBOX_REPO_LABEL_KEY = "omnigent.sandbox.repo"
 _FORK_ONLY_DROPPED_LABEL_KEYS = IMPORT_PROVENANCE_LABEL_KEYS | {
+    "ae.team",
+    "ae.team.member",
     ARCHIVED_AT_LABEL_KEY,
     _SANDBOX_REPO_LABEL_KEY,
 }

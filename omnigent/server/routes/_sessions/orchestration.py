@@ -5268,6 +5268,7 @@ async def _forward_native_terminal_message(
     file_store: FileStore | None = None,
     artifact_store: ArtifactStore | None = None,
     model_override: str | None = None,
+    conversation_store: ConversationStore | None = None,
 ) -> None:
     """
     Forward one Omnigent web-chat message to the native terminal harness.
@@ -5297,6 +5298,13 @@ async def _forward_native_terminal_message(
     """
     display_name, _, harness = _native_terminal_runtime(conv)
     event = _build_native_terminal_message_event(conv, body, model_override=model_override)
+    if conversation_store is not None:
+        from omnigent.inner.ae_team import team_notice
+        from omnigent.inner.native_attachments import framework_notice_block
+
+        notice = await asyncio.to_thread(team_notice, conv, conversation_store)
+        if notice is not None:
+            event["content"] = [*event["content"], framework_notice_block(notice)]
     _logger.info(
         "%s terminal message forward starting: session=%s block_types=%s model_override=%s",
         display_name,
@@ -5903,6 +5911,16 @@ async def _forward_event_to_runner(
     # harness don't have access to the server's file store — the
     # LLM endpoint needs the actual content, not an internal ID.
     forwarded_data = dict(body.data)
+    if body.type == "message" and body.data.get("role") == "user":
+        from omnigent.inner.ae_team import team_notice
+        from omnigent.inner.native_attachments import framework_notice_block
+
+        notice = await asyncio.to_thread(team_notice, conv, conversation_store)
+        if notice is not None:
+            forwarded_data["content"] = [
+                *forwarded_data.get("content", []),
+                framework_notice_block(notice),
+            ]
     if (
         file_store is not None
         and artifact_store is not None
@@ -6980,6 +6998,7 @@ async def _dispatch_session_event_to_runner_impl(
                 model_override=(
                     _native_routed_model if _native_applied_model is not None else None
                 ),
+                conversation_store=conversation_store,
             )
             forwarded = True
         finally:

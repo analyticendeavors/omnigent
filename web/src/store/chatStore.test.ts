@@ -6007,7 +6007,13 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
       const pending = [
         { tempId: "pend_keep", content: [{ type: "input_text" as const, text: "queued" }] },
       ];
-      useChatStore.setState({ pendingUserMessages: pending });
+      useChatStore.setState({
+        pendingUserMessages: pending,
+        contextWindow: 258_400,
+        tokensUsed: 189_600,
+        llmModel: "previous-model",
+        sessionHarness: "codex-native",
+      });
       const spy = vi.spyOn(client, "invalidateQueries");
 
       serveNativeSnapshot();
@@ -6022,6 +6028,10 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
       // header to show the new agent.
       expect(useChatStore.getState().boundAgentId).toBe("ag_clone");
       expect(useChatStore.getState().boundAgentName).toBe("Claude Code (switch ag_clone)");
+      expect(useChatStore.getState().contextWindow).toBeNull();
+      expect(useChatStore.getState().tokensUsed).toBeNull();
+      expect(useChatStore.getState().llmModel).toBeNull();
+      expect(useChatStore.getState().sessionHarness).toBeNull();
       // Observers (other tabs/users) learn about the switch only via this
       // event — the header card and sidebar row must refetch.
       expect(spy).toHaveBeenCalledWith({ queryKey: ["session-agent", "conv_sw"] });

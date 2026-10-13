@@ -6417,6 +6417,11 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
       applyToNamedConversation(event.conversationId, {
         boundAgentId: event.agentId,
         boundAgentName: event.agentName,
+        // The previous agent's context is not a reading for the new provider.
+        contextWindow: null,
+        tokensUsed: null,
+        llmModel: null,
+        sessionHarness: null,
       });
       void refreshSessionBinding(event.conversationId);
       // Refresh the header's agent card and the sidebar row for every

@@ -37,6 +37,7 @@ from omnigent.harnesses.codex_native.bridge import (
     write_codex_config_effort,
     write_codex_config_model,
 )
+from omnigent.inner.ae_team import codex_team_context
 from omnigent.inner.codex_goal_command import (
     goal_objective_from_content,
     goal_objective_length_error,
@@ -168,6 +169,7 @@ async def _start_codex_turn(
     state: CodexNativeBridgeState,
     input_items: list[dict[str, object]],
     settings_overrides: Mapping[str, object],
+    additional_context: dict[str, object] | None = None,
 ) -> None:
     """Apply optional settings and start one Codex turn on an idle thread."""
     if settings_overrides:
@@ -203,6 +205,7 @@ async def _start_codex_turn(
         {
             "threadId": state.thread_id,
             "input": input_items,
+            **({"additionalContext": additional_context} if additional_context else {}),
             "environments": [
                 {
                     "environmentId": "local",
@@ -225,6 +228,7 @@ async def _steer_codex_turn(
     bridge_dir: Path,
     state: CodexNativeBridgeState,
     input_items: list[dict[str, object]],
+    additional_context: dict[str, object] | None = None,
 ) -> None:
     """Steer one bridge-recorded active Codex turn."""
     assert state.active_turn_id is not None
@@ -234,6 +238,7 @@ async def _steer_codex_turn(
             "threadId": state.thread_id,
             "expectedTurnId": state.active_turn_id,
             "input": input_items,
+            **({"additionalContext": additional_context} if additional_context else {}),
         },
     )
     result = _json_object(response.get("result"))
@@ -250,6 +255,7 @@ async def _inject_codex_turn(
     state: CodexNativeBridgeState,
     input_items: list[dict[str, object]],
     settings_overrides: Mapping[str, object],
+    additional_context: dict[str, object] | None = None,
 ) -> None:
     """Steer an active turn or start one, recovering one proven stale steer."""
     if state.active_turn_id is None:
@@ -259,6 +265,7 @@ async def _inject_codex_turn(
             state=state,
             input_items=input_items,
             settings_overrides=settings_overrides,
+            additional_context=additional_context,
         )
         return
 
@@ -269,6 +276,7 @@ async def _inject_codex_turn(
             bridge_dir=bridge_dir,
             state=state,
             input_items=input_items,
+            additional_context=additional_context,
         )
         return
     except CodexAppServerResponseError as error:
@@ -292,6 +300,7 @@ async def _inject_codex_turn(
             bridge_dir=bridge_dir,
             state=recovered_state,
             input_items=input_items,
+            additional_context=additional_context,
         )
         return
     _logger.info("Codex native reconciled completed stale turn: turn_id=%s", expected_turn_id)
@@ -301,6 +310,7 @@ async def _inject_codex_turn(
         state=recovered_state,
         input_items=input_items,
         settings_overrides=settings_overrides,
+        additional_context=additional_context,
     )
 
 
@@ -370,6 +380,7 @@ class CodexNativeExecutor(Executor):
                     state=state,
                     input_items=input_items,
                     settings_overrides={},
+                    additional_context=codex_team_context(content),
                 )
             except Exception:  # noqa: BLE001 - steering is best-effort from the runner facade.
                 _logger.warning("Codex native turn/steer failed", exc_info=True)
@@ -612,6 +623,7 @@ class CodexNativeExecutor(Executor):
                                 state=state,
                                 input_items=input_items,
                                 settings_overrides=settings_overrides,
+                                additional_context=codex_team_context(latest_user_content),
                             )
                     except Exception as exc:
                         _logger.exception(
