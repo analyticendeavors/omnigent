@@ -221,6 +221,39 @@ async def test_external_conversation_items_reach_observers(client: httpx.AsyncCl
     assert delivered[1].data.content[0]["text"] == "FORK: build the testimonials section"
 
 
+async def test_a_batched_external_run_reaches_observers(client: httpx.AsyncClient) -> None:
+    # The claude-native forwarder posts a sub-agent transcript as one array.
+    seen = _Recorder()
+    register_item_observer(seen)
+    session_id = await _create_session(client, "observed-batch")
+    texts = ["FORK: build the testimonials section", "Absorbed: fixed the padding, same file."]
+    body = [
+        {
+            "type": "external_conversation_item",
+            "data": {
+                "item_type": "message",
+                "item_data": {
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": text}],
+                    "agent": "worker",
+                },
+                "response_id": "resp_claude_batch",
+            },
+        }
+        for text in texts
+    ]
+
+    resp = await client.post(f"/v1/sessions/{session_id}/events", json=body)
+    assert resp.status_code in (200, 201, 202), resp.text
+    await drain_item_observers()
+
+    assert len(seen.calls) == 1
+    observed_session, items = seen.calls[0]
+    assert observed_session == session_id
+    assert [item.id for item in items] == [ack["item_id"] for ack in resp.json()]
+    assert [item.data.content[0]["text"] for item in items] == texts
+
+
 async def test_a_deduplicated_repost_notifies_nobody(client: httpx.AsyncClient) -> None:
     seen = _Recorder()
     register_item_observer(seen)
