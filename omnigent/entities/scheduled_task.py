@@ -78,6 +78,8 @@ class ScheduledTask:
     :param keep_runs: How many of the task's newest run sessions survive a
         firing; ``None`` keeps them all. Not a ``scheduled_tasks`` column: it is
         resolved from :mod:`omnigent.server.scheduled.retention`.
+    :param project_id: The project each run session is filed into, or ``None``.
+        Resolved from :mod:`omnigent.server.scheduled.task_project`.
     """
 
     id: str
@@ -103,6 +105,7 @@ class ScheduledTask:
     updated_at: int | None = None
     account_generation: str | None = None
     keep_runs: int | None = DEFAULT_KEEP_RUNS
+    project_id: str | None = None
 
 
 @dataclass

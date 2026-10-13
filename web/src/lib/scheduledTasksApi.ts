@@ -57,6 +57,8 @@ export interface ScheduledTask {
   hostId: string | null;
   /** Where firings run — a connected host, or a fresh managed sandbox per fire. */
   executionTarget: ScheduledTaskExecutionTarget;
+  /** Project each run session is filed into, or `null` for unfiled runs. */
+  projectId?: string | null;
   state: ScheduledTaskState;
   /** Epoch seconds of the last fire, or `null` if it has never fired. */
   lastRunAt: number | null;
@@ -111,6 +113,11 @@ export interface CreateScheduledTaskInput {
    * NOT be combined with `hostId` / `workspace`.
    */
   executionTarget?: ScheduledTaskExecutionTarget;
+  /**
+   * Project each run session is filed into. Omit for the server's default
+   * project; `null` leaves runs unfiled.
+   */
+  projectId?: string | null;
 }
 
 /**
@@ -140,6 +147,8 @@ export interface UpdateScheduledTaskInput {
    * also set `hostId` / `workspace` in the same update.
    */
   executionTarget?: ScheduledTaskExecutionTarget;
+  /** New project for run sessions; `null` leaves runs unfiled. */
+  projectId?: string | null;
   state?: ScheduledTaskState;
 }
 
@@ -160,6 +169,7 @@ interface ScheduledTaskWire {
   workspace: string | null;
   host_id: string | null;
   execution_target: ScheduledTaskExecutionTarget;
+  project_id?: string | null;
   state: ScheduledTaskState;
   last_run_at: number | null;
   last_run_status: ScheduledTaskRunStatus | null;
@@ -236,6 +246,7 @@ function taskFromWire(wire: ScheduledTaskWire): ScheduledTask {
     workspace: wire.workspace,
     hostId: wire.host_id,
     executionTarget: wire.execution_target,
+    projectId: wire.project_id ?? null,
     state: wire.state,
     lastRunAt: wire.last_run_at,
     lastRunStatus: wire.last_run_status,
@@ -297,6 +308,7 @@ export async function createScheduledTask(input: CreateScheduledTaskInput): Prom
   if (input.workspace != null) body.workspace = input.workspace;
   if (input.hostId != null) body.host_id = input.hostId;
   if (input.executionTarget !== undefined) body.execution_target = input.executionTarget;
+  if (input.projectId !== undefined) body.project_id = input.projectId;
   const res = await authenticatedFetch("/v1/scheduled-tasks", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -326,6 +338,7 @@ export async function updateScheduledTask(
   if (input.workspace !== undefined) body.workspace = input.workspace;
   if (input.hostId !== undefined) body.host_id = input.hostId;
   if (input.executionTarget !== undefined) body.execution_target = input.executionTarget;
+  if (input.projectId !== undefined) body.project_id = input.projectId ?? "";
   if (input.state !== undefined) body.state = input.state;
   const res = await authenticatedFetch(`/v1/scheduled-tasks/${encodeURIComponent(id)}`, {
     method: "PATCH",

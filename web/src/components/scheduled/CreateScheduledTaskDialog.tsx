@@ -24,6 +24,12 @@ import {
 import { Label } from "@/components/scheduled/Label";
 import { ScheduleFields } from "@/components/scheduled/ScheduleFields";
 import { ModelEffortFields } from "@/components/scheduled/ModelEffortFields";
+import {
+  AeTaskProjectField,
+  DEFAULT_PROJECT,
+  initialProjectChoice,
+  projectIdInput,
+} from "@/components/scheduled/AeTaskProjectField";
 import { WorkspacePickerDialog } from "@/shell/WorkspacePickerDialog";
 import { AgentHarnessPicker } from "@/shell/NewChatDialog";
 import { useAvailableAgents, type AvailableAgent } from "@/hooks/useAvailableAgents";
@@ -211,6 +217,7 @@ export function CreateScheduledTaskDialog({
   // "managed_sandbox") instead of a connected host; hides the host/workspace
   // pickers. Only offered when the server advertises managed sandboxes.
   const [sandboxMode, setSandboxMode] = useState(false);
+  const [projectChoice, setProjectChoice] = useState<string>(DEFAULT_PROJECT);
   const [error, setError] = useState<string | null>(null);
   const [scheduleUnsupported, setScheduleUnsupported] = useState(false);
 
@@ -237,6 +244,7 @@ export function CreateScheduledTaskDialog({
         setHostId(editingTask.hostId ?? "");
         setWorkspace(editingTask.workspace ?? "");
         setSandboxMode(editingTask.executionTarget === "managed_sandbox");
+        setProjectChoice(initialProjectChoice(editingTask.projectId, true));
       } else {
         setName(initialName ?? "");
         setPrompt(initialPrompt ?? "");
@@ -249,6 +257,7 @@ export function CreateScheduledTaskDialog({
         setHostId("");
         setWorkspace("");
         setSandboxMode(false);
+        setProjectChoice(DEFAULT_PROJECT);
       }
       setError(null);
     }
@@ -330,6 +339,7 @@ export function CreateScheduledTaskDialog({
         ...(!sandboxMode && hostId !== "" && workspace.trim() !== ""
           ? { workspace: workspace.trim() }
           : {}),
+        ...projectIdInput(projectChoice, editingTask ? (editingTask.projectId ?? null) : undefined),
       };
       if (editingTask) {
         // Thread model/effort ONLY when the agent supports them. Each control's
@@ -625,6 +635,13 @@ export function CreateScheduledTaskDialog({
               Pick a host before pinning a workspace.
             </p>
           )}
+
+          <AeTaskProjectField
+            value={projectChoice}
+            onValueChange={setProjectChoice}
+            isEdit={isEdit}
+            onSelectOpenChange={handleSelectOpenChange}
+          />
 
           {error && (
             <div

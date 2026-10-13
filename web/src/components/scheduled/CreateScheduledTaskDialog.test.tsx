@@ -37,6 +37,10 @@ vi.mock("@/hooks/useScheduledTasks", () => ({
   useUpdateScheduledTask: vi.fn(),
 }));
 vi.mock("@/lib/agentLabels", () => ({ useBrainHarnessLabels: () => ({}) }));
+vi.mock("@/hooks/useConversations", async (orig) => ({
+  ...(await orig<object>()),
+  useProjects: () => ({ data: [{ id: "p1", name: "Automation Notes" }] }),
+}));
 vi.mock("@/shell/WorkspacePicker", () => ({
   isNavigablePath: (path: string) => path.startsWith("/"),
   WorkspacePicker: ({ onSelect }: { onSelect?: (p: string) => void }) => (
@@ -436,6 +440,21 @@ describe("CreateScheduledTaskDialog edit mode", () => {
     });
   });
 
+  it("seeds the task's project and leaves it out of an unchanged update", async () => {
+    render(
+      <CreateScheduledTaskDialog
+        open
+        onOpenChange={vi.fn()}
+        editingTask={scheduledTask({ projectId: "p1" })}
+      />,
+    );
+    expect(screen.getByTestId("task-project-trigger")).toHaveTextContent("Automation Notes");
+    fireEvent.click(screen.getByTestId("create-scheduled-task-submit"));
+
+    await waitFor(() => expect(updateMutateAsync).toHaveBeenCalledTimes(1));
+    expect(updateMutateAsync.mock.calls[0][0].input).not.toHaveProperty("projectId");
+  });
+
   it("keeps the task's settings when the pick lands back on its own agent", async () => {
     // Switching away and back is not a rebind, so the stored model/effort/
     // permission must survive it — the clear is only justified by a real switch.
@@ -566,6 +585,8 @@ describe("CreateScheduledTaskDialog submit", () => {
     });
     expect(arg).not.toHaveProperty("hostId");
     expect(arg).not.toHaveProperty("workspace");
+    // Project left on "Default project" is omitted so the server default applies.
+    expect(arg).not.toHaveProperty("projectId");
     // Timezone has no visible control but is still inferred + sent: a non-empty
     // IANA-ish string (whatever the test env's local zone resolves to).
     expect(typeof arg.timezone).toBe("string");

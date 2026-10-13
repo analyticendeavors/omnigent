@@ -119,6 +119,13 @@ class SysScheduledTaskCreateTool(Tool):
                                 "idle ones are deleted. Omit for 5; null keeps them all."
                             ),
                         },
+                        "project_id": {
+                            "type": "string",
+                            "description": (
+                                "Project each run session is filed into. Omit for the "
+                                "server's default project; null leaves runs unfiled."
+                            ),
+                        },
                         "workspace": {
                             "type": "string",
                             "description": (
@@ -255,6 +262,13 @@ class SysScheduledTaskUpdateTool(Tool):
                             "description": (
                                 "New number of run sessions kept after each firing. "
                                 "Null keeps them all."
+                            ),
+                        },
+                        "project_id": {
+                            "type": "string",
+                            "description": (
+                                "New project each run session is filed into. Null or an "
+                                "empty string leaves runs unfiled."
                             ),
                         },
                         "workspace": {

@@ -68,6 +68,7 @@ from omnigent.server.routes._session_create_validation import (
     validate_session_permission_mode,
 )
 from omnigent.server.scheduled.retention import notify_fire_observers
+from omnigent.server.scheduled.task_project import file_fired_session
 from omnigent.server.schemas import SessionEventInput
 
 _logger = logging.getLogger(__name__)
@@ -149,6 +150,7 @@ class FireDeps:
     # ``app.state``, read per fire for the default-public-sessions policy.
     # ``None`` (tests, embedders) leaves every fired session private.
     app_state: Any | None = None
+    project_store: Any | None = None
 
 
 @dataclass
@@ -857,6 +859,7 @@ async def _create_session(deps: FireDeps, task: ScheduledTask) -> Conversation:
         workspace=task.workspace,
         terminal_launch_args=await _permission_mode_launch_args(deps, task),
     )
+    await file_fired_session(deps, task, conv.id)
     reasoning_effort = task.reasoning_effort
     if reasoning_effort is None:
         reasoning_effort = await _spec_reasoning_effort(deps, task)

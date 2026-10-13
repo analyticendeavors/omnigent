@@ -36,7 +36,7 @@ from omnigent.server.routes._session_create_validation import (
     validate_session_model_metadata,
     validate_session_permission_mode,
 )
-from omnigent.server.scheduled import retention
+from omnigent.server.scheduled import retention, task_project
 from omnigent.server.scheduled.rrule import RRuleValidationError, validate_rrule
 from omnigent.server.scheduled.run_reconciler import force_fail_stale_runs
 from omnigent.stores import AgentStore, ConversationStore, PermissionStore
@@ -72,6 +72,8 @@ class CreateScheduledTaskRequest(BaseModel):
     max_cost_usd: float | None = Field(default=None, gt=0)
     # Run sessions kept after each firing, newest first; null keeps them all.
     keep_runs: int | None = Field(default=None, ge=1, le=retention.MAX_KEEP_RUNS)
+    # Project each run session is filed into; omitted uses the server default.
+    project_id: str | None = None
     # Optional: no PINNED host/workspace. When both are unset the fire path
     # resolves the owner's online host at fire time and defaults the workspace to
     # that host's home directory (a failed run is recorded if none is online) —
@@ -114,6 +116,7 @@ class UpdateScheduledTaskRequest(BaseModel):
     permission_mode: str | None = None
     max_cost_usd: float | None = Field(default=None, gt=0)  # null clears the cap
     keep_runs: int | None = Field(default=None, ge=1, le=retention.MAX_KEEP_RUNS)  # null keeps all
+    project_id: str | None = None  # null or "" leaves runs unfiled
     workspace: str | None = Field(default=None, min_length=1)
     host_id: str | None = Field(default=None, min_length=1)
     execution_target: str | None = Field(default=None, min_length=1)
@@ -175,6 +178,7 @@ def _to_response(
         "permission_mode": task.permission_mode,
         "max_cost_usd": task.max_cost_usd,
         "keep_runs": task.keep_runs,
+        "project_id": task.project_id,
         "workspace": task.workspace,
         "host_id": task.host_id,
         "execution_target": task.execution_target,
@@ -233,6 +237,7 @@ def create_scheduled_tasks_router(
     agent_cache: Any | None = None,
     auth_provider: AuthProvider | None = None,
     artifact_store: ArtifactStore | None = None,
+    project_store: Any | None = None,
 ) -> APIRouter:
     """Build the scheduled-tasks router.
 
@@ -368,6 +373,20 @@ def create_scheduled_tasks_router(
             raise OmnigentError("Scheduled task not found", code=ErrorCode.NOT_FOUND)
         return task
 
+    def _owned_project_id(project_id: str | None, owner_id: str | None) -> str | None:
+        """The caller's project *project_id* names (``None`` for null or ``""``), else 404."""
+        if not project_id:
+            return None
+        if project_store is None:
+            raise OmnigentError(
+                "Filing runs into a project is not supported by this server",
+                code=ErrorCode.INVALID_INPUT,
+            )
+        project = project_store.get(project_id, user_id=owner_id)
+        if project is None:
+            raise OmnigentError("Project not found", code=ErrorCode.NOT_FOUND)
+        return str(project.id)
+
     @router.post("/scheduled-tasks")
     async def create_scheduled_task(
         request: Request,
@@ -390,6 +409,10 @@ def create_scheduled_tasks_router(
             execution_target=body.execution_target,
         )
         owner_id = None if owner == RESERVED_USER_LOCAL else owner
+        if "project_id" in body.model_fields_set:
+            project_id = _owned_project_id(body.project_id, owner_id)
+        else:
+            project_id = task_project.default_project_id(project_store, owner_id)
         bound = await _bind_agent(agent, owner_id)
         try:
             task = store.create(
@@ -414,7 +437,8 @@ def create_scheduled_tasks_router(
             raise
         if "keep_runs" in body.model_fields_set:
             retention.set_keep_runs(store, task.id, body.keep_runs)
-        task = retention.with_keep_runs(store, [task])[0]
+        task_project.set_project(store, task.id, project_id)
+        task = task_project.with_project(store, retention.with_keep_runs(store, [task]))[0]
         scheduler = _scheduler(request)
         if scheduler is not None:
             scheduler.add(task)
@@ -441,7 +465,7 @@ def create_scheduled_tasks_router(
         owner = _owner(request)
         owner_id = None if owner == RESERVED_USER_LOCAL else owner
         tasks = [t for t in store.list(owner_user_id=owner_id) if _owns_task(t, owner_id)]
-        tasks = retention.with_keep_runs(store, tasks)
+        tasks = task_project.with_project(store, retention.with_keep_runs(store, tasks))
         task_ids = [t.id for t in tasks]
         running = store.list_running_runs_for_tasks(task_ids)
         # Force-fail stale orphans FIRST so the completion badge below reports a
@@ -468,7 +492,8 @@ def create_scheduled_tasks_router(
         """Fetch one of the caller's scheduled tasks."""
         owner = _owner(request)
         owner_id = None if owner == RESERVED_USER_LOCAL else owner
-        task = retention.with_keep_runs(store, [_require_owned(scheduled_task_id, owner_id)])[0]
+        task = _require_owned(scheduled_task_id, owner_id)
+        task = task_project.with_project(store, retention.with_keep_runs(store, [task]))[0]
         running = store.list_running_runs_for_tasks([task.id])
         force_fail_stale_runs(store, running)
         latest_status = store.list_latest_run_status_for_tasks([task.id])
@@ -577,6 +602,8 @@ def create_scheduled_tasks_router(
         fields = body.model_dump(exclude_unset=True)
         keep_runs_set = "keep_runs" in fields
         keep_runs = fields.pop("keep_runs", None)
+        project_set = "project_id" in fields
+        project_id = _owned_project_id(fields.pop("project_id", None), owner_id)
         target_agent_id = fields.get("agent_id") or existing.agent_id
         agent_changed = target_agent_id != existing.agent_id
         new_copy: Agent | None = None
@@ -672,7 +699,9 @@ def create_scheduled_tasks_router(
             raise
         if keep_runs_set:
             retention.set_keep_runs(store, updated.id, keep_runs)
-        updated = retention.with_keep_runs(store, [updated])[0]
+        if project_set:
+            task_project.set_project(store, updated.id, project_id)
+        updated = task_project.with_project(store, retention.with_keep_runs(store, [updated]))[0]
         scheduler = _scheduler(request)
         if scheduler is not None:
             scheduler.update(updated)
@@ -694,6 +723,7 @@ def create_scheduled_tasks_router(
         _require_owned(scheduled_task_id, owner_id)
         store.delete(scheduled_task_id)
         retention.forget_keep_runs(store, scheduled_task_id)
+        task_project.forget_project(store, scheduled_task_id)
         scheduler = _scheduler(request)
         if scheduler is not None:
             scheduler.remove(scheduled_task_id)
