@@ -1749,3 +1749,70 @@ async def test_run_now_503_when_scheduler_not_running(
     auth_app.state.scheduled_task_run_now = None
     resp = await auth_client.post(f"/v1/scheduled-tasks/{created['id']}/run", headers=_headers())
     assert resp.status_code == 503, resp.text
+
+
+# ── keep_runs ────────────────────────────────────────────────────────────
+
+
+async def test_keep_runs_defaults_and_round_trips(
+    auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    _make_user(db_uri)
+    created = await auth_client.post(
+        "/v1/scheduled-tasks", json=_create_body(), headers=_headers()
+    )
+    assert created.status_code == 200, created.text
+    task_id = created.json()["id"]
+    assert created.json()["keep_runs"] == 5
+
+    patched = await auth_client.patch(
+        f"/v1/scheduled-tasks/{task_id}", json={"keep_runs": 2}, headers=_headers()
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["keep_runs"] == 2
+
+    got = await auth_client.get(f"/v1/scheduled-tasks/{task_id}", headers=_headers())
+    assert got.json()["keep_runs"] == 2
+    listed = await auth_client.get("/v1/scheduled-tasks", headers=_headers())
+    [row] = [t for t in listed.json()["scheduled_tasks"] if t["id"] == task_id]
+    assert row["keep_runs"] == 2
+
+    # Patching another field leaves keep_runs alone; null turns retention off.
+    renamed = await auth_client.patch(
+        f"/v1/scheduled-tasks/{task_id}", json={"name": "renamed"}, headers=_headers()
+    )
+    assert renamed.json()["keep_runs"] == 2
+    off = await auth_client.patch(
+        f"/v1/scheduled-tasks/{task_id}", json={"keep_runs": None}, headers=_headers()
+    )
+    assert off.status_code == 200, off.text
+    assert off.json()["keep_runs"] is None
+
+
+async def test_keep_runs_set_at_create_and_forgotten_on_delete(
+    auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    from omnigent.server.scheduled import retention
+
+    _make_user(db_uri)
+    created = await auth_client.post(
+        "/v1/scheduled-tasks", json=_create_body(keep_runs=9), headers=_headers()
+    )
+    assert created.status_code == 200, created.text
+    task_id = created.json()["id"]
+    assert created.json()["keep_runs"] == 9
+
+    deleted = await auth_client.delete(f"/v1/scheduled-tasks/{task_id}", headers=_headers())
+    assert deleted.status_code == 200
+    store = SqlAlchemyScheduledTaskStore(db_uri)
+    assert retention.keep_runs_for(store, [task_id]) == {task_id: 5}
+
+
+async def test_keep_runs_out_of_range_is_rejected(
+    auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    _make_user(db_uri)
+    zero = await auth_client.post(
+        "/v1/scheduled-tasks", json=_create_body(keep_runs=0), headers=_headers()
+    )
+    assert zero.status_code in (400, 422), zero.text

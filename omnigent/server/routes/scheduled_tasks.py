@@ -35,6 +35,7 @@ from omnigent.server.routes._session_create_validation import (
     validate_session_model_metadata,
     validate_session_permission_mode,
 )
+from omnigent.server.scheduled import retention
 from omnigent.server.scheduled.rrule import RRuleValidationError, validate_rrule
 from omnigent.server.scheduled.run_reconciler import force_fail_stale_runs
 from omnigent.stores import AgentStore, ConversationStore, PermissionStore
@@ -67,6 +68,8 @@ class CreateScheduledTaskRequest(BaseModel):
     # path derives the runner's --permission-mode launch arg from it.
     permission_mode: str | None = None
     max_cost_usd: float | None = Field(default=None, gt=0)
+    # Run sessions kept after each firing, newest first; null keeps them all.
+    keep_runs: int | None = Field(default=None, ge=1, le=retention.MAX_KEEP_RUNS)
     # Optional: no PINNED host/workspace. When both are unset the fire path
     # resolves the owner's online host at fire time and defaults the workspace to
     # that host's home directory (a failed run is recorded if none is online) —
@@ -108,6 +111,7 @@ class UpdateScheduledTaskRequest(BaseModel):
     reasoning_effort: str | None = None
     permission_mode: str | None = None
     max_cost_usd: float | None = Field(default=None, gt=0)  # null clears the cap
+    keep_runs: int | None = Field(default=None, ge=1, le=retention.MAX_KEEP_RUNS)  # null keeps all
     workspace: str | None = Field(default=None, min_length=1)
     host_id: str | None = Field(default=None, min_length=1)
     execution_target: str | None = Field(default=None, min_length=1)
@@ -168,6 +172,7 @@ def _to_response(
         "reasoning_effort": task.reasoning_effort,
         "permission_mode": task.permission_mode,
         "max_cost_usd": task.max_cost_usd,
+        "keep_runs": task.keep_runs,
         "workspace": task.workspace,
         "host_id": task.host_id,
         "execution_target": task.execution_target,
@@ -390,6 +395,9 @@ def create_scheduled_tasks_router(
             host_id=body.host_id,
             execution_target=body.execution_target,
         )
+        if "keep_runs" in body.model_fields_set:
+            retention.set_keep_runs(store, task.id, body.keep_runs)
+        task = retention.with_keep_runs(store, [task])[0]
         scheduler = _scheduler(request)
         if scheduler is not None:
             scheduler.add(task)
@@ -416,6 +424,7 @@ def create_scheduled_tasks_router(
         owner = _owner(request)
         owner_id = None if owner == RESERVED_USER_LOCAL else owner
         tasks = [t for t in store.list(owner_user_id=owner_id) if _owns_task(t, owner_id)]
+        tasks = retention.with_keep_runs(store, tasks)
         task_ids = [t.id for t in tasks]
         running = store.list_running_runs_for_tasks(task_ids)
         # Force-fail stale orphans FIRST so the completion badge below reports a
@@ -442,7 +451,7 @@ def create_scheduled_tasks_router(
         """Fetch one of the caller's scheduled tasks."""
         owner = _owner(request)
         owner_id = None if owner == RESERVED_USER_LOCAL else owner
-        task = _require_owned(scheduled_task_id, owner_id)
+        task = retention.with_keep_runs(store, [_require_owned(scheduled_task_id, owner_id)])[0]
         running = store.list_running_runs_for_tasks([task.id])
         force_fail_stale_runs(store, running)
         latest_status = store.list_latest_run_status_for_tasks([task.id])
@@ -549,6 +558,8 @@ def create_scheduled_tasks_router(
         if body.timezone is not None:
             _validate_timezone_or_400(body.timezone)
         fields = body.model_dump(exclude_unset=True)
+        keep_runs_set = "keep_runs" in fields
+        keep_runs = fields.pop("keep_runs", None)
         target_agent_id = fields.get("agent_id") or existing.agent_id
         agent_changed = target_agent_id != existing.agent_id
         if agent_changed:
@@ -631,6 +642,9 @@ def create_scheduled_tasks_router(
         updated = store.update(scheduled_task_id, **fields)
         if updated is None:
             raise OmnigentError("Scheduled task not found", code=ErrorCode.NOT_FOUND)
+        if keep_runs_set:
+            retention.set_keep_runs(store, updated.id, keep_runs)
+        updated = retention.with_keep_runs(store, [updated])[0]
         scheduler = _scheduler(request)
         if scheduler is not None:
             scheduler.update(updated)
@@ -651,6 +665,7 @@ def create_scheduled_tasks_router(
         owner_id = None if owner == RESERVED_USER_LOCAL else owner
         _require_owned(scheduled_task_id, owner_id)
         store.delete(scheduled_task_id)
+        retention.forget_keep_runs(store, scheduled_task_id)
         scheduler = _scheduler(request)
         if scheduler is not None:
             scheduler.remove(scheduled_task_id)

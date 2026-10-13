@@ -20,6 +20,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# Run sessions a task keeps after each firing (newest first); the fire path's
+# retention observers delete older ones. See omnigent/server/scheduled/retention.py.
+DEFAULT_KEEP_RUNS = 5
+
 
 @dataclass
 class ScheduledTask:
@@ -71,6 +75,9 @@ class ScheduledTask:
         firing, or ``None``.
     :param updated_at: Unix epoch seconds of the last write, or ``None`` if the
         row has never been updated.
+    :param keep_runs: How many of the task's newest run sessions survive a
+        firing; ``None`` keeps them all. Not a ``scheduled_tasks`` column: it is
+        resolved from :mod:`omnigent.server.scheduled.retention`.
     """
 
     id: str
@@ -95,6 +102,7 @@ class ScheduledTask:
     last_run_conversation_id: str | None = None
     updated_at: int | None = None
     account_generation: str | None = None
+    keep_runs: int | None = DEFAULT_KEEP_RUNS
 
 
 @dataclass
