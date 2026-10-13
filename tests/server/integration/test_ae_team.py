@@ -14,8 +14,9 @@ from tests.server.helpers import create_test_agent
 
 
 @pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize("mode", [None, "auto", "solo", "team"])
 async def test_team_forward_preserves_authored_message(
-    client: httpx.AsyncClient, db_uri: str, native: bool
+    client: httpx.AsyncClient, db_uri: str, native: bool, mode: str | None
 ) -> None:
     agent = await create_test_agent(client, name="team-lead")
     created = await client.post("/v1/sessions", json={"agent_id": agent["id"]})
@@ -31,13 +32,15 @@ async def test_team_forward_preserves_authored_message(
         TEAM_LABEL: json.dumps(
             {
                 "version": 1,
-                "mode": "team",
+                "mode": mode,
                 "members": [
                     {"sessionId": child.id},
                 ],
             }
         )
     }
+    if mode is None:
+        labels = {}
     if native:
         labels.update({"omnigent.ui": "terminal", "omnigent.wrapper": "codex-native-ui"})
     store.set_labels(parent_id, labels)
@@ -67,7 +70,12 @@ async def test_team_forward_preserves_authored_message(
     assert event.data["content"] == content
     forwarded = sent[-1]["content"]
     assert forwarded[0] == content[0]
-    assert child.id in framework_notices(forwarded)[0]
+    notice = framework_notices(forwarded)[0]
+    if mode == "team":
+        assert child.id in notice
+    else:
+        assert child.id not in notice
+        assert "native in-harness subagents" in notice
     items = store.list_items(parent_id).data
     if native:
         assert not items  # Native transcript forwarder remains the single writer.

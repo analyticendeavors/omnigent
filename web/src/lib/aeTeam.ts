@@ -15,18 +15,20 @@ export interface AeTeamMember {
 
 export interface AeTeam {
   version: 1;
-  mode: "solo" | "team";
+  mode: "auto" | "solo" | "team";
   members: AeTeamMember[];
+  routingBeforeTeam?: "on" | "off" | null;
 }
 
 export function readAeTeam(labels?: Record<string, string>): AeTeam {
-  const solo: AeTeam = { version: 1, mode: "solo", members: [] };
+  const automatic: AeTeam = { version: 1, mode: "auto", members: [] };
   const raw = labels?.[AE_TEAM_LABEL];
-  if (!raw || raw.length > 16_384) return solo;
+  if (!raw || raw.length > 16_384) return automatic;
   try {
     const value = JSON.parse(raw) as Partial<AeTeam>;
-    if (value?.version !== 1 || !["solo", "team"].includes(value.mode ?? "")) return solo;
-    if (!Array.isArray(value.members) || value.members.length > AE_TEAM_LIMIT) return solo;
+    if (value?.version !== 1 || !["auto", "solo", "team"].includes(value.mode ?? ""))
+      return automatic;
+    if (!Array.isArray(value.members) || value.members.length > AE_TEAM_LIMIT) return automatic;
     const members = value.members.filter(
       (m): m is AeTeamMember =>
         !!m &&
@@ -37,9 +39,18 @@ export function readAeTeam(labels?: Record<string, string>): AeTeam {
         (m.model === null || typeof m.model === "string") &&
         (m.sessionId === undefined || typeof m.sessionId === "string"),
     );
-    return { version: 1, mode: value.mode as AeTeam["mode"], members };
+    return {
+      version: 1,
+      mode: value.mode as AeTeam["mode"],
+      members,
+      ...(value.routingBeforeTeam === "on" ||
+      value.routingBeforeTeam === "off" ||
+      value.routingBeforeTeam === null
+        ? { routingBeforeTeam: value.routingBeforeTeam }
+        : {}),
+    };
   } catch {
-    return solo;
+    return automatic;
   }
 }
 
@@ -47,7 +58,7 @@ export function aeTeamMemberKey(member: AeTeamMember): string {
   return JSON.stringify([member.agentId, member.model]);
 }
 
-/** Provision idle children first; publish the roster only when all are ready.
+/** Save a collaboration preference, provisioning idle children only for Team.
  * Retry reuses children by their durable label, including a partially saved team.
  * No prompts are sent here. The lead sees the roster on its next message.
  */
@@ -55,13 +66,26 @@ export async function saveAeTeam(sessionId: string, draft: AeTeam) {
   if (draft.mode === "team" && (!draft.members.length || draft.members.length > AE_TEAM_LIMIT)) {
     throw new Error(`Choose between 1 and ${AE_TEAM_LIMIT} collaborators.`);
   }
-  if (draft.mode === "solo") return persistAeTeam(sessionId, draft);
   const parent = await getSessionSlim(sessionId);
+  const saved = readAeTeam(parent.labels);
   const routing = parent.subagentRoutingOverride ?? null;
+  if (draft.mode !== "team") {
+    return updateSession(sessionId, {
+      // Restore only the override this picker owns; preserve later manual changes.
+      ...(saved.mode === "team" && routing === "off"
+        ? { subagentRoutingOverride: saved.routingBeforeTeam ?? null }
+        : {}),
+      labels: {
+        [AE_TEAM_LABEL]: JSON.stringify({ version: 1, mode: draft.mode, members: [] }),
+      },
+    });
+  }
+  const routingBeforeTeam =
+    saved.mode === "team" && routing === "off" ? (saved.routingBeforeTeam ?? null) : routing;
   // Manual model choices must not be replaced by the parent's spawn router.
   if (routing !== "off") await updateSession(sessionId, { subagentRoutingOverride: "off" });
   try {
-    return await persistAeTeam(sessionId, draft);
+    return await persistAeTeam(sessionId, { ...draft, routingBeforeTeam });
   } catch (error) {
     if (routing !== "off") {
       try {
@@ -106,6 +130,13 @@ async function persistAeTeam(sessionId: string, draft: AeTeam) {
   }
   return updateSession(sessionId, {
     ...(draft.mode === "team" ? { subagentRoutingOverride: "off" as const } : {}),
-    labels: { [AE_TEAM_LABEL]: JSON.stringify({ version: 1, mode: draft.mode, members }) },
+    labels: {
+      [AE_TEAM_LABEL]: JSON.stringify({
+        version: 1,
+        mode: draft.mode,
+        members,
+        routingBeforeTeam: draft.routingBeforeTeam,
+      }),
+    },
   });
 }
