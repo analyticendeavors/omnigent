@@ -59,10 +59,12 @@ _retention_table = Table(
     # NULL means "keep every run session" (retention off for this task).
     Column("keep_runs", Integer, nullable=True),
 )
+# custom-lint: disable-next=workspace-scoped-cache -- schema readiness is shared per engine
 _ready_engines: set[int] = set()
 _ready_lock = threading.Lock()
 # Stores without a database (test fakes) keep the setting in memory, keyed by
 # store identity, workspace and task.
+# custom-lint: disable-next=workspace-scoped-cache -- each key includes the workspace id
 _memory: dict[tuple[int, int, str], int | None] = {}
 
 

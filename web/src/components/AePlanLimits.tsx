@@ -15,6 +15,15 @@ import { type AeTone, contextTone } from "@/lib/aeContextTone";
 import { authenticatedFetch } from "@/lib/identity";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chatStore";
+import {
+  type AeContextEntry,
+  type AeContextReading,
+  type AeSessionContextsState,
+  aeLimitsHarnessFor,
+  buildActiveContext,
+  buildCollaboratorContext,
+  useAeSessionContexts,
+} from "./aeSessionContext";
 
 export const AE_LIMITS_PATH = "/v1/ae/limits";
 
@@ -163,6 +172,8 @@ function UsageRow({
   value,
   pct,
   detail,
+  sublabel,
+  ariaLabel = label,
   muted = false,
   tone = limitTone(pct),
   children,
@@ -172,6 +183,9 @@ function UsageRow({
   value: string;
   pct: number;
   detail?: string | null;
+  /** Second line under the label: which agent and model the bar belongs to. */
+  sublabel?: string | null;
+  ariaLabel?: string;
   muted?: boolean;
   /** Defaults to the plan limit steps; the context row passes `contextTone`. */
   tone?: AeTone;
@@ -186,10 +200,15 @@ function UsageRow({
           {value}
         </span>
       </div>
+      {sublabel && (
+        <span className="-mt-1 truncate text-xs text-muted-foreground" data-testid="ae-usage-who">
+          {sublabel}
+        </span>
+      )}
       <div
         className="h-1.5 w-full overflow-hidden rounded-full bg-foreground/10"
         role="progressbar"
-        aria-label={`${label}: ${rounded}% used`}
+        aria-label={`${ariaLabel}: ${rounded}% used`}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.min(rounded, 100)}
@@ -305,35 +324,101 @@ function ContextBreakdown({ context, now }: { context: AeSessionContext; now: nu
   );
 }
 
-/** Context window: the ring's live numbers, else the session's last status line. */
-function ContextRow({
-  contextWindow,
-  tokensUsed,
-  context,
+function readingDetail(reading: AeContextReading, now: number): string | null {
+  if (reading.source === "live") return null;
+  if (reading.source === "snapshot") return "As of the session's last reply";
+  const ago = reading.observedAt ? formatAgo(reading.observedAt, now) : "earlier";
+  return `From Claude Code's status line, ${ago}${reading.stale ? " (may be out of date)" : ""}`;
+}
+
+/** One session's own context window, or a plain "unavailable" in place of a bar. */
+function ContextEntryRow({ entry, now }: { entry: AeContextEntry; now: number }) {
+  const who = [entry.agent, entry.model].filter(Boolean).join(" · ") || null;
+  const ariaLabel = `${entry.name} context${entry.agent ? ` (${entry.agent})` : ""}`;
+  const { reading } = entry;
+  if (!reading) {
+    return (
+      <li
+        className="flex flex-col gap-1"
+        data-testid="ae-context-unavailable"
+        data-session={entry.key}
+        data-role={entry.role}
+      >
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="min-w-0 truncate">{entry.name}</span>
+          <span className="shrink-0 text-xs text-muted-foreground">Unavailable</span>
+        </div>
+        {who && (
+          <span className="-mt-1 truncate text-xs text-muted-foreground" data-testid="ae-usage-who">
+            {who}
+          </span>
+        )}
+        <span className="text-xs text-muted-foreground">{entry.unavailable}</span>
+      </li>
+    );
+  }
+  const pct = (reading.used / reading.size) * 100;
+  return (
+    <UsageRow
+      id={`context:${entry.key}`}
+      label={entry.name}
+      sublabel={who}
+      ariaLabel={ariaLabel}
+      value={`${formatTokens(reading.used)} / ${formatTokens(reading.size)} · ${Math.round(pct)}%`}
+      pct={pct}
+      tone={contextTone(pct)}
+      muted={reading.stale}
+      detail={readingDetail(reading, now)}
+    >
+      {entry.breakdown && <ContextBreakdown context={entry.breakdown} now={now} />}
+    </UsageRow>
+  );
+}
+
+/** Context windows: this session first, then each collaborator, never summed. */
+function ContextSection({
+  active,
+  collaborators,
+  hidden = 0,
+  error,
   now,
 }: {
-  contextWindow?: number | null;
-  tokensUsed?: number | null;
-  context?: AeSessionContext;
+  active: AeContextEntry;
+  collaborators: AeContextEntry[];
+  hidden?: number;
+  error?: string | null;
   now: number;
 }) {
-  const live = contextWindow != null && contextWindow > 0 && tokensUsed != null;
-  const size = live ? contextWindow : context?.window_size;
-  const used = live ? tokensUsed : context?.used_tokens;
-  if (!size || used == null) return null;
-  const pct = (used / size) * 100;
   return (
-    <ul className="flex flex-col" data-testid="ae-limits-context">
-      <UsageRow
-        id="context"
-        label="Context window"
-        value={`${formatTokens(used)} / ${formatTokens(size)} · ${Math.round(pct)}%`}
-        pct={pct}
-        tone={contextTone(pct)}
-      >
-        {context && <ContextBreakdown context={context} now={now} />}
-      </UsageRow>
-    </ul>
+    <section className="flex flex-col gap-2" data-testid="ae-limits-context">
+      <div className="flex flex-col">
+        <h3 className="font-medium">Context window</h3>
+        <span className="text-xs text-muted-foreground">
+          Per session and model; one session's window does not include another's.
+        </span>
+      </div>
+      <ul className="flex flex-col gap-2" data-testid="ae-context-active">
+        <ContextEntryRow entry={active} now={now} />
+      </ul>
+      {(collaborators.length > 0 || error || hidden > 0) && (
+        <div className="flex flex-col gap-2" data-testid="ae-context-collaborators">
+          <h4 className="text-xs font-medium text-muted-foreground">Collaborators</h4>
+          <ul className="flex flex-col gap-2">
+            {collaborators.map((c) => (
+              <ContextEntryRow key={c.key} entry={c} now={now} />
+            ))}
+          </ul>
+          {hidden > 0 && (
+            <p className="text-xs text-muted-foreground">
+              {hidden} more {hidden === 1 ? "collaborator" : "collaborators"} not shown.
+            </p>
+          )}
+          {error && (
+            <p className="text-xs text-muted-foreground">Could not list collaborators ({error}).</p>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -352,15 +437,23 @@ function HarnessBlock({
   harness,
   snapshot,
   now,
+  inUse = false,
 }: {
   harness: AeHarness;
   snapshot: AeLimitSnapshot | null | undefined;
   now: number;
+  /** This session runs on this harness's plan. */
+  inUse?: boolean;
 }) {
   return (
-    <section className="flex flex-col gap-2" data-testid="ae-limits-harness" data-harness={harness}>
+    <section
+      className="flex flex-col gap-2"
+      data-testid="ae-limits-harness"
+      data-harness={harness}
+      data-in-use={inUse || undefined}
+    >
       <div className="flex items-baseline justify-between gap-2">
-        <h3 className="font-medium">
+        <h3 className="min-w-0 font-medium">
           {AE_HARNESS_NAMES[harness]}
           {snapshot?.plan && (
             <span
@@ -368,6 +461,14 @@ function HarnessBlock({
               data-testid="ae-limits-plan"
             >
               {snapshot.plan}
+            </span>
+          )}
+          {inUse && (
+            <span
+              className="ml-1.5 rounded bg-foreground/10 px-1 text-xs font-normal"
+              data-testid="ae-limits-in-use"
+            >
+              This session
             </span>
           )}
         </h3>
@@ -404,53 +505,84 @@ function HarnessBlock({
   );
 }
 
+const NO_SESSIONS: AeSessionContextsState = { collaborators: [] };
+
 /** The popover body; exported so tests and stories render it without a click. */
 export function AePlanLimitsPanel({
   data,
   error,
   loading,
   now = Date.now(),
-  conversationId,
-  contextWindow,
-  tokensUsed,
+  conversationId = null,
+  contextWindow = null,
+  tokensUsed = null,
+  harness = null,
+  model = null,
+  sessions = NO_SESSIONS,
 }: {
   data?: AeLimitsAnswer;
   error?: unknown;
   loading?: boolean;
   now?: number;
   conversationId?: string | null;
+  /** The store's live ring figures for the active session. */
   contextWindow?: number | null;
   tokensUsed?: number | null;
+  /** The active session's harness and model, e.g. `"codex-native"`, `"gpt-5.5"`. */
+  harness?: string | null;
+  model?: string | null;
+  /** This session's snapshot and its collaborators', from `useAeSessionContexts`. */
+  sessions?: AeSessionContextsState;
 }) {
-  const context = conversationId
-    ? data?.harnesses.claude?.contexts?.find((c) => c.conversation_id === conversationId)
-    : undefined;
+  const statusLines = data?.harnesses.claude?.contexts;
+  const active = buildActiveContext(
+    { conversationId, harness, model, contextWindow, tokensUsed },
+    sessions.self,
+    statusLines,
+    now,
+  );
+  const collaborators = sessions.collaborators.map((c) =>
+    buildCollaboratorContext(c, statusLines, now),
+  );
+  // The active row's harness, so a stale store harness cannot pick the block.
+  const inUse = aeLimitsHarnessFor(active.harness);
+  const order: AeHarness[] = inUse === "codex" ? ["codex", "claude"] : ["claude", "codex"];
   return (
     <div className="flex flex-col gap-3" data-testid="ae-plan-limits">
       <div className="font-medium">Usage</div>
-      <ContextRow
-        contextWindow={contextWindow}
-        tokensUsed={tokensUsed}
-        context={context}
+      <ContextSection
+        active={active}
+        collaborators={collaborators}
+        hidden={sessions.hidden}
+        error={sessions.error}
         now={now}
       />
-      {error ? (
-        <p className="text-xs text-destructive">
-          Could not load plan limits ({error instanceof Error ? error.message : String(error)}). The
-          /v1/ae/limits route belongs to omnigent-ae; check the server is on a current tag.
-        </p>
-      ) : loading && !data ? (
-        <p className="text-xs text-muted-foreground">Loading…</p>
-      ) : (
-        (["claude", "codex"] as const).map((harness) => (
-          <HarnessBlock
-            key={harness}
-            harness={harness}
-            snapshot={data?.harnesses[harness]}
-            now={now}
-          />
-        ))
-      )}
+      <div className="flex flex-col gap-3 border-t pt-3" data-testid="ae-limits-plans">
+        <div className="flex flex-col">
+          <h3 className="font-medium">Plan limits</h3>
+          <span className="text-xs text-muted-foreground">
+            Account-wide; shared by every session on that plan.
+          </span>
+        </div>
+        {error ? (
+          <p className="text-xs text-destructive">
+            Could not load plan limits ({error instanceof Error ? error.message : String(error)}).
+            The /v1/ae/limits route belongs to omnigent-ae; check the server is on a current tag.
+          </p>
+        ) : loading && !data ? (
+          <p className="text-xs text-muted-foreground">Loading…</p>
+        ) : (
+          order.map((h) => (
+            <HarnessBlock
+              key={h}
+              harness={h}
+              snapshot={data?.harnesses[h]}
+              now={now}
+              inUse={inUse === h}
+            />
+          ))
+        )}
+      </div>
     </div>
   );
 }
@@ -508,17 +640,20 @@ export const AE_CONTEXT_RING_SELECTOR = '[data-testid="composer-context-ring"]';
  * Escape in another pane left the popover open; a window blur is what that
  * click produces here (found 2026-09-24).
  *
- * The context row reads the same chat store fields the ring does
- * (`contextWindow`, `tokensUsed`) and the session id, so ChatPage.tsx passes
- * nothing and the patch stays two lines there.
+ * The context rows read the same chat store fields the ring does
+ * (`contextWindow`, `tokensUsed`, harness, model) and the session id, so
+ * ChatPage.tsx passes nothing and the patch stays two lines there.
  */
 export function AePlanLimitsPopover() {
   const conversationId = useChatStore((s) => s.conversationId);
   const contextWindow = useChatStore((s) => s.contextWindow);
   const tokensUsed = useChatStore((s) => s.tokensUsed);
+  const harness = useChatStore((s) => s.sessionHarness);
+  const model = useChatStore((s) => s.llmModel);
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const open = anchor !== null;
   const { data, error, loading } = useAeLimits(open);
+  const sessions = useAeSessionContexts(open, conversationId, 60_000, `${harness}:${model}`);
   useEffect(() => {
     const onClick = (event: MouseEvent) => {
       const target = event.target instanceof Element ? event.target : null;
@@ -553,7 +688,7 @@ export function AePlanLimitsPopover() {
       <PopoverContent
         side="top"
         align="end"
-        // Nine rows outgrow a phone: cap at the room Radix measured and scroll.
+        // Context rows plus plan limits outgrow a phone: cap at the room Radix measured and scroll.
         className="max-h-(--radix-popover-content-available-height) w-80 max-w-[calc(100vw-2rem)] overflow-y-auto"
         onInteractOutside={keepOpenOnRing}
         onCloseAutoFocus={(event) => {
@@ -570,6 +705,9 @@ export function AePlanLimitsPopover() {
           conversationId={conversationId}
           contextWindow={contextWindow}
           tokensUsed={tokensUsed}
+          harness={harness}
+          model={model}
+          sessions={sessions}
         />
       </PopoverContent>
     </Popover>

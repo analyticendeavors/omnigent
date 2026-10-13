@@ -60,6 +60,7 @@ import {
 import { isIOSShell, onNativeSidebarDrag, setNativeServerSwitcherHidden } from "@/lib/nativeBridge";
 import { type Agent, useSessionAgent, useAgents } from "@/hooks/useAgents";
 import { AePlanLimitsPopover } from "@/components/AePlanLimits";
+import { AeTeamControl } from "@/components/AeTeamControl";
 import { agentDisplayLabel } from "@/components/AgentInfo";
 import {
   BRAIN_HARNESS_LABELS,
@@ -3851,6 +3852,14 @@ function ComposerImpl(
           ),
           trailing: (
             <>
+              {composerSession && (
+                <AeTeamControl
+                  key={composerSession.id}
+                  session={composerSession}
+                  disabled={isReadOnly || unreachable || configBusy}
+                  working={isWorking}
+                />
+              )}
               <div className="flex min-w-0 items-center rounded-lg">
                 <SessionHarnessPicker
                   busy={configBusy}

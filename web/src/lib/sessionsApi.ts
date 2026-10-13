@@ -498,6 +498,8 @@ export async function createSession(
     parentSessionId?: string;
     subAgentName?: string | null;
     title?: string;
+    modelOverride?: string;
+    labels?: Record<string, string>;
   } = {},
 ): Promise<Session> {
   const body: {
@@ -506,6 +508,8 @@ export async function createSession(
     parent_session_id?: string;
     sub_agent_name?: string | null;
     title?: string;
+    model_override?: string;
+    labels?: Record<string, string>;
   } = { agent_id: agentId, initial_items: initialItems };
   if (options.parentSessionId !== undefined) {
     body.parent_session_id = options.parentSessionId;
@@ -516,6 +520,8 @@ export async function createSession(
   if (options.title !== undefined) {
     body.title = options.title;
   }
+  if (options.modelOverride !== undefined) body.model_override = options.modelOverride;
+  if (options.labels !== undefined) body.labels = options.labels;
   const res = await authenticatedFetch("/v1/sessions", {
     method: "POST",
     headers: {

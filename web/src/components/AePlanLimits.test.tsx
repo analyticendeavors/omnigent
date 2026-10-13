@@ -18,6 +18,7 @@ import {
   formatTokens,
   limitTone,
 } from "./AePlanLimits";
+import type { AeSessionContextsState } from "./aeSessionContext";
 
 const NOW = Date.parse("2026-09-24T16:00:00Z");
 const iso = (ms: number) => new Date(ms).toISOString().replace(".000Z", "Z");
@@ -183,11 +184,13 @@ describe("AePlanLimitsPanel", () => {
         conversationId="conv_a"
         contextWindow={1_000_000}
         tokensUsed={216_800}
+        harness="claude-native"
+        model="claude-fable-5-1"
       />,
     );
     const bars = screen.getAllByRole("progressbar");
     expect(bars.map((bar) => bar.getAttribute("aria-label"))).toEqual([
-      "Context window: 22% used",
+      "This session context (Claude Code): 22% used",
       "5-hour limit: 41% used",
       "Weekly, all models: 63% used",
       "Weekly · Fable: 22% used",
@@ -217,7 +220,9 @@ describe("AePlanLimitsPanel", () => {
   });
 
   it("captions the prompt cache bar and gives each part its own colour", () => {
-    render(<AePlanLimitsPanel data={FULL} now={NOW} conversationId="conv_a" />);
+    render(
+      <AePlanLimitsPanel data={FULL} now={NOW} conversationId="conv_a" harness="claude-native" />,
+    );
     const breakdown = screen.getByTestId("ae-context-breakdown");
     const caption = within(breakdown).getByTestId("ae-context-breakdown-caption");
     expect(caption.textContent).toBe("How those tokens were billed (prompt cache)");
@@ -234,15 +239,29 @@ describe("AePlanLimitsPanel", () => {
   });
 
   it("shows another session's breakdown only for that session", () => {
-    render(<AePlanLimitsPanel data={FULL} now={NOW} conversationId="conv_other" />);
+    render(
+      <AePlanLimitsPanel
+        data={FULL}
+        now={NOW}
+        conversationId="conv_other"
+        harness="claude-native"
+      />,
+    );
     expect(screen.queryByTestId("ae-context-breakdown")).toBeNull();
-    // No live ring figures and no capture for this session: no context row at all.
-    expect(screen.queryByTestId("ae-limits-context")).toBeNull();
+    // No live ring figures and no capture for this session: unavailable, never a 0% bar.
+    const context = screen.getByTestId("ae-limits-context");
+    expect(within(context).queryByRole("progressbar")).toBeNull();
+    expect(within(context).getByTestId("ae-context-unavailable").textContent).toContain(
+      "Claude Code has not reported context usage",
+    );
   });
 
   it("falls back to the session's status line when the ring has no figures", () => {
-    render(<AePlanLimitsPanel data={FULL} now={NOW} conversationId="conv_a" />);
+    render(
+      <AePlanLimitsPanel data={FULL} now={NOW} conversationId="conv_a" harness="claude-native" />,
+    );
     expect(screen.getByText("216.8k / 1M · 22%")).toBeTruthy();
+    expect(screen.getByText("From Claude Code's status line, 2m ago")).toBeTruthy();
   });
 
   it("shows the hint when the login lacks the profile scope, and credits turned off", () => {
@@ -273,12 +292,260 @@ describe("AePlanLimitsPanel", () => {
   });
 });
 
+describe("AePlanLimitsPanel session contexts", () => {
+  // FULL's status line for conv_a, plus Claude limits and a Codex weekly window.
+  const WITH_CODEX: AeLimitsAnswer = {
+    now: iso(NOW),
+    harnesses: {
+      claude: FULL.harnesses.claude,
+      codex: {
+        harness: "codex",
+        source: "app-server",
+        observed_at: iso(NOW - 60_000),
+        plan: "Pro",
+        windows: [
+          {
+            id: "weekly",
+            label: "Weekly limit",
+            used_percent: 30,
+            resets_at: iso(NOW + 86_400_000),
+            window_minutes: 10080,
+          },
+        ],
+        note: null,
+      },
+    },
+  };
+  const contextLabels = () =>
+    within(screen.getByTestId("ae-limits-context"))
+      .queryAllByRole("progressbar")
+      .map((bar) => bar.getAttribute("aria-label"));
+  const planOrder = () =>
+    screen.getAllByTestId("ae-limits-harness").map((block) => block.getAttribute("data-harness"));
+
+  it("labels a Codex session's context and puts the Codex plan first", () => {
+    render(
+      <AePlanLimitsPanel
+        data={WITH_CODEX}
+        now={NOW}
+        conversationId="conv_codex"
+        harness="codex-native"
+        model="gpt-5.5"
+        contextWindow={400_000}
+        tokensUsed={120_000}
+      />,
+    );
+    expect(contextLabels()).toEqual(["This session context (Codex): 30% used"]);
+    const active = screen.getByTestId("ae-context-active");
+    expect(within(active).getByTestId("ae-usage-who").textContent).toBe("Codex · gpt-5.5");
+    expect(planOrder()).toEqual(["codex", "claude"]);
+    const inUse = screen.getByTestId("ae-limits-in-use");
+    expect(inUse.closest("[data-harness]")?.getAttribute("data-harness")).toBe("codex");
+    // Context and plan limits are separate sections.
+    expect(
+      within(screen.getByTestId("ae-limits-plans")).queryByText(/This session context/),
+    ).toBeNull();
+  });
+
+  it("never shows a Claude status line for a Codex session, even on the same id", () => {
+    render(
+      <AePlanLimitsPanel
+        data={WITH_CODEX}
+        now={NOW}
+        conversationId="conv_a"
+        harness="codex-native"
+      />,
+    );
+    expect(contextLabels()).toEqual([]);
+    expect(screen.queryByTestId("ae-context-breakdown")).toBeNull();
+    expect(screen.getByTestId("ae-context-unavailable").textContent).toContain(
+      "Codex has not reported context usage for this session yet",
+    );
+  });
+
+  it("labels a Claude Code session and keeps its cache breakdown", () => {
+    render(
+      <AePlanLimitsPanel
+        data={WITH_CODEX}
+        now={NOW}
+        conversationId="conv_a"
+        harness="claude-native"
+        model="claude-fable-5-1"
+        contextWindow={1_000_000}
+        tokensUsed={216_800}
+      />,
+    );
+    expect(contextLabels()).toEqual(["This session context (Claude Code): 22% used"]);
+    expect(screen.getByTestId("ae-context-breakdown")).toBeTruthy();
+    expect(planOrder()).toEqual(["claude", "codex"]);
+    expect(
+      screen
+        .getByTestId("ae-limits-in-use")
+        .closest("[data-harness]")
+        ?.getAttribute("data-harness"),
+    ).toBe("claude");
+  });
+
+  it("gives each collaborator its own row and never sums them", () => {
+    const sessions: AeSessionContextsState = {
+      self: {
+        harness: "codex-native",
+        llmModel: "gpt-5.5",
+        contextWindow: 400_000,
+        lastTotalTokens: 80_000,
+      },
+      collaborators: [
+        {
+          id: "conv_a",
+          name: "Review the diff",
+          // A Claude Code child with no snapshot figures: its status line speaks for it.
+          snapshot: {
+            harness: "claude-native",
+            llmModel: null,
+            contextWindow: null,
+            lastTotalTokens: null,
+          },
+        },
+        {
+          id: "conv_pi",
+          name: "Write tests",
+          snapshot: {
+            harness: "pi",
+            llmModel: "gemini-3-pro",
+            contextWindow: 1_000_000,
+            lastTotalTokens: 100_000,
+          },
+        },
+        {
+          id: "conv_quiet",
+          name: "Draft docs",
+          snapshot: {
+            harness: "codex-native",
+            llmModel: null,
+            contextWindow: null,
+            lastTotalTokens: null,
+          },
+        },
+        { id: "conv_gone", name: "Lost child", snapshot: null, error: "404 Not Found" },
+      ],
+      hidden: 2,
+    };
+    render(
+      <AePlanLimitsPanel
+        data={WITH_CODEX}
+        now={NOW}
+        conversationId="conv_codex"
+        harness="codex-native"
+        model="gpt-5.5"
+        contextWindow={400_000}
+        tokensUsed={120_000}
+        sessions={sessions}
+      />,
+    );
+    // Live store figures win over the snapshot for the active row.
+    expect(contextLabels()).toEqual([
+      "This session context (Codex): 30% used",
+      "Review the diff context (Claude Code): 22% used",
+      "Write tests context (Pi): 10% used",
+    ]);
+    const collaborators = screen.getByTestId("ae-context-collaborators");
+    const missing = within(collaborators).getAllByTestId("ae-context-unavailable");
+    expect(missing.map((row) => row.getAttribute("data-session"))).toEqual([
+      "conv_quiet",
+      "conv_gone",
+    ]);
+    expect(missing[1].textContent).toContain("Could not load this session (404 Not Found)");
+    expect(collaborators.textContent).toContain("2 more collaborators not shown.");
+    // No row reads a combined total of the windows above.
+    expect(screen.queryByText(/2\.4M|336\.8k/)).toBeNull();
+  });
+
+  it("marks an old status line as possibly out of date", () => {
+    render(
+      <AePlanLimitsPanel
+        data={FULL}
+        now={NOW + 3 * 3_600_000}
+        conversationId="conv_a"
+        harness="claude-native"
+      />,
+    );
+    expect(screen.getByText(/status line, 3h 2m ago \(may be out of date\)$/)).toBeTruthy();
+    const bar = within(screen.getByTestId("ae-limits-context")).getByRole("progressbar");
+    expect((bar.firstChild as HTMLElement).className).toContain("bg-foreground/25");
+  });
+
+  it("says unavailable before the session exists rather than showing zero", () => {
+    render(<AePlanLimitsPanel data={WITH_CODEX} now={NOW} harness="codex-native" />);
+    expect(contextLabels()).toEqual([]);
+    expect(screen.getByTestId("ae-context-unavailable").textContent).toContain(
+      "No session yet; the reading appears after the first reply.",
+    );
+  });
+
+  it("trusts the session snapshot when the store still holds the previous agent", () => {
+    // The agent moved from Claude Code to Codex; the store has not rebound yet.
+    render(
+      <AePlanLimitsPanel
+        data={WITH_CODEX}
+        now={NOW}
+        conversationId="conv_a"
+        harness="claude-native"
+        model="claude-fable-5-1"
+        contextWindow={1_000_000}
+        tokensUsed={216_800}
+        sessions={{
+          self: {
+            harness: "codex-native",
+            llmModel: "gpt-5.5",
+            contextWindow: null,
+            lastTotalTokens: null,
+          },
+          collaborators: [],
+        }}
+      />,
+    );
+    expect(contextLabels()).toEqual([]);
+    expect(screen.queryByTestId("ae-context-breakdown")).toBeNull();
+    const active = screen.getByTestId("ae-context-active");
+    expect(within(active).getByTestId("ae-usage-who").textContent).toBe("Codex · gpt-5.5");
+    expect(planOrder()).toEqual(["codex", "claude"]);
+  });
+});
+
+/** Answers the popover's requests by path: limits, session snapshots, child lists. */
+function routeFetch(
+  limits: AeLimitsAnswer,
+  sessions: Record<string, Record<string, unknown>> = {},
+  children: Record<string, Record<string, unknown>[]> = {},
+) {
+  vi.mocked(authenticatedFetch).mockImplementation((input) => {
+    const url = String(input);
+    const json = (body: unknown, status = 200) =>
+      Promise.resolve(new Response(JSON.stringify(body), { status }));
+    if (url === "/v1/ae/limits") return json(limits);
+    const childList = url.match(/^\/v1\/sessions\/([^/?]+)\/child_sessions$/);
+    if (childList) return json({ object: "list", data: children[childList[1]] ?? [] });
+    const snapshot = url.match(/^\/v1\/sessions\/([^/?]+)\?/);
+    const wire = snapshot ? sessions[snapshot[1]] : undefined;
+    if (wire) return json({ agent_id: "agent", status: "idle", created_at: 0, ...wire });
+    return json({ detail: "not found" }, 404);
+  });
+}
+
 describe("AePlanLimitsPopover", () => {
   beforeEach(() => {
     vi.mocked(authenticatedFetch).mockReset();
-    vi.mocked(authenticatedFetch).mockImplementation(() =>
-      Promise.resolve(new Response(JSON.stringify(ANSWER), { status: 200 })),
-    );
+    routeFetch(ANSWER);
+  });
+
+  afterEach(() => {
+    useChatStore.setState({
+      conversationId: null,
+      contextWindow: null,
+      tokensUsed: null,
+      sessionHarness: null,
+      llmModel: null,
+    });
   });
 
   // Upstream's ring, unchanged, with the popover mounted beside it the way
@@ -342,15 +609,80 @@ describe("AePlanLimitsPopover", () => {
   });
 
   it("shows this session's context from the chat store", async () => {
-    vi.mocked(authenticatedFetch).mockImplementation(() =>
-      Promise.resolve(new Response(JSON.stringify(FULL), { status: 200 })),
-    );
-    useChatStore.setState({ conversationId: "conv_a", contextWindow: 100_000, tokensUsed: 12_000 });
+    routeFetch(FULL, { conv_a: { id: "conv_a", harness: "claude-native" } });
+    useChatStore.setState({
+      conversationId: "conv_a",
+      contextWindow: 100_000,
+      tokensUsed: 12_000,
+      sessionHarness: "claude-native",
+    });
     renderRing();
     fireEvent.click(screen.getByTestId("composer-context-ring"));
     await waitFor(() => expect(screen.getByTestId("ae-context-breakdown")).toBeTruthy());
     expect(screen.getByText("12k / 100k · 12%")).toBeTruthy();
-    useChatStore.setState({ conversationId: null, contextWindow: null, tokensUsed: null });
+  });
+
+  it("lists collaborators' own windows only while open", async () => {
+    routeFetch(
+      ANSWER,
+      {
+        conv_codex: { id: "conv_codex", harness: "codex-native", llm_model: "gpt-5.5" },
+        conv_kid: {
+          id: "conv_kid",
+          harness: "claude-native",
+          llm_model: "claude-fable-5-1",
+          context_window: 1_000_000,
+          last_total_tokens: 50_000,
+        },
+      },
+      {
+        conv_codex: [
+          {
+            id: "conv_kid",
+            title: "claude_code:review",
+            task_summary: "Review the diff",
+            tool: null,
+            session_name: null,
+            current_task_status: null,
+            busy: false,
+          },
+        ],
+      },
+    );
+    useChatStore.setState({
+      conversationId: "conv_codex",
+      contextWindow: 400_000,
+      tokensUsed: 100_000,
+      sessionHarness: "codex-native",
+      llmModel: "gpt-5.5",
+    });
+    renderRing();
+    expect(authenticatedFetch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("composer-context-ring"));
+    await waitFor(() => expect(screen.getByTestId("ae-context-collaborators")).toBeTruthy());
+    const context = screen.getByTestId("ae-limits-context");
+    expect(
+      within(context)
+        .getAllByRole("progressbar")
+        .map((bar) => bar.getAttribute("aria-label")),
+    ).toEqual([
+      "This session context (Codex): 25% used",
+      "Review the diff context (Claude Code): 5% used",
+    ]);
+    expect(
+      screen
+        .getByTestId("ae-limits-in-use")
+        .closest("[data-harness]")
+        ?.getAttribute("data-harness"),
+    ).toBe("codex");
+    // Closing stops the polling: no request lands after the popover is gone.
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByText("Usage")).toBeNull());
+    const calls = vi.mocked(authenticatedFetch).mock.calls.length;
+    await new Promise((resolve) => {
+      setTimeout(resolve, 20);
+    });
+    expect(vi.mocked(authenticatedFetch).mock.calls.length).toBe(calls);
   });
 
   it("ignores clicks anywhere else", () => {

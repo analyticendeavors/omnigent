@@ -910,6 +910,57 @@ def test_image_block_is_sent_as_local_image_not_inline_base64(
     )
 
 
+@pytest.mark.parametrize("active", [False, True])
+def test_team_roster_is_sent_as_application_context(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, active: bool
+) -> None:
+    """Both start and steer carry the roster without changing the user bubble."""
+    from omnigent.inner.native_attachments import framework_notice_block
+
+    _FakeCodexNativeClient.requests = []
+    monkeypatch.setattr(
+        "omnigent.harnesses.codex_native.app_server.CodexAppServerClient",
+        _FakeCodexNativeClient,
+    )
+    _start_state(tmp_path)
+    if active:
+        codex_native_executor.update_active_turn_id(tmp_path, "running-turn")
+    executor = CodexNativeExecutor(bridge_dir=tmp_path)
+
+    async def run() -> None:
+        async for _ in executor.run_turn(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "Build the demo"},
+                        framework_notice_block(
+                            {
+                                "ae_team": {
+                                    "mode": "team",
+                                    "members": [
+                                        {"session_id": "child", "agent_id": "claude"},
+                                    ],
+                                }
+                            }
+                        ),
+                    ],
+                }
+            ],
+            [],
+            "",
+        ):
+            pass
+
+    asyncio.run(run())
+    method, params = _FakeCodexNativeClient.requests[-1]
+    assert method == ("turn/steer" if active else "turn/start")
+    assert params["input"] == [{"type": "text", "text": "Build the demo"}]
+    context = params["additionalContext"]["omnigent.team"]
+    assert context["kind"] == "application"
+    assert '"session_id": "child"' in context["value"]
+
+
 def test_resize_notice_is_encoded_in_model_visible_image_path(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

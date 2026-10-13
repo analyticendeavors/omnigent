@@ -478,7 +478,10 @@ def framework_notices(content: object) -> list[str]:
     for block in content:
         if not isinstance(block, dict) or block.get("type") != FRAMEWORK_NOTICE_BLOCK_TYPE:
             continue
-        text = resize_notice(block.get("source_metadata"))
+        from omnigent.inner.ae_team import render_team_notice
+
+        metadata = block.get("source_metadata")
+        text = render_team_notice(metadata) or resize_notice(metadata)
         if text:
             notices.append(text)
     return notices
