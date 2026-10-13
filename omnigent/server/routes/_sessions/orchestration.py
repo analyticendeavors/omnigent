@@ -3208,6 +3208,7 @@ async def _persist_external_conversation_items(
         if items
         else []
     )
+    notify_items_persisted(session_id, [it for it in persisted_items if not it.deduplicated])
     for body, persisted in zip(bodies[: len(items)], persisted_items, strict=True):
         if not persisted.deduplicated:
             _publish_persisted_external_item(session_id, body, persisted)
