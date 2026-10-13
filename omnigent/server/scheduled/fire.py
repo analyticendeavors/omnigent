@@ -67,6 +67,7 @@ from omnigent.server.routes._session_create_validation import (
     validate_session_model_metadata,
     validate_session_permission_mode,
 )
+from omnigent.server.scheduled.retention import notify_fire_observers
 from omnigent.server.schemas import SessionEventInput
 
 _logger = logging.getLogger(__name__)
@@ -548,6 +549,7 @@ async def _run_fire_for_task(
 
         await _record_run(deps, task, conv.id, scheduled_at, status="running")
         _logger.info("scheduled fire: task %s fired session %s", task.id, conv.id)
+        await notify_fire_observers(deps, task, conv.id)
     except Exception:
         _logger.exception("scheduled fire: task %s failed", task.id)
 

@@ -112,6 +112,13 @@ class SysScheduledTaskCreateTool(Tool):
                                 "blocked once the limit is reached. Omit for no cap."
                             ),
                         },
+                        "keep_runs": {
+                            "type": "integer",
+                            "description": (
+                                "Run sessions kept after each firing, newest first; older "
+                                "idle ones are deleted. Omit for 5; null keeps them all."
+                            ),
+                        },
                         "workspace": {
                             "type": "string",
                             "description": (
@@ -241,6 +248,13 @@ class SysScheduledTaskUpdateTool(Tool):
                             "type": "number",
                             "description": (
                                 "New per-firing cost budget in USD. Null clears the cap."
+                            ),
+                        },
+                        "keep_runs": {
+                            "type": "integer",
+                            "description": (
+                                "New number of run sessions kept after each firing. "
+                                "Null keeps them all."
                             ),
                         },
                         "workspace": {
