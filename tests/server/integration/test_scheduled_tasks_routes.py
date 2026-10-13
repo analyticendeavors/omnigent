@@ -26,6 +26,7 @@ from omnigent.stores.artifact_store.local import LocalArtifactStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.file_store.sqlalchemy_store import SqlAlchemyFileStore
 from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
+from omnigent.stores.project_store.sqlalchemy_store import SqlAlchemyProjectStore
 from omnigent.stores.scheduled_task_store.sqlalchemy_store import (
     SqlAlchemyScheduledTaskStore,
 )
@@ -72,6 +73,7 @@ def auth_app(runtime_init: None, db_uri: str, tmp_path: Path) -> FastAPI:
         # ownership) resolves against actual host rows. Without it,
         # ``app.state.host_store`` is None and the route skips the check.
         host_store=HostStore(db_uri),
+        project_store=SqlAlchemyProjectStore(db_uri),
         auth_provider=UnifiedAuthProvider(source="header"),
     )
     _make_user(db_uri)
@@ -1816,3 +1818,91 @@ async def test_keep_runs_out_of_range_is_rejected(
         "/v1/scheduled-tasks", json=_create_body(keep_runs=0), headers=_headers()
     )
     assert zero.status_code in (400, 422), zero.text
+
+
+# ── project_id ───────────────────────────────────────────────────────────
+
+
+def _make_project(db_uri: str, name: str, owner: str = "alice@example.com") -> str:
+    import uuid
+
+    project = SqlAlchemyProjectStore(db_uri).create(uuid.uuid4().hex, name, owner)
+    return str(project.id)
+
+
+async def test_project_id_round_trips_and_clears(
+    auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    project_id = _make_project(db_uri, "Automation Notes")
+    created = await auth_client.post(
+        "/v1/scheduled-tasks", json=_create_body(), headers=_headers()
+    )
+    assert created.status_code == 200, created.text
+    task_id = created.json()["id"]
+    assert created.json()["project_id"] is None
+
+    patched = await auth_client.patch(
+        f"/v1/scheduled-tasks/{task_id}", json={"project_id": project_id}, headers=_headers()
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["project_id"] == project_id
+    got = await auth_client.get(f"/v1/scheduled-tasks/{task_id}", headers=_headers())
+    assert got.json()["project_id"] == project_id
+    listed = await auth_client.get("/v1/scheduled-tasks", headers=_headers())
+    [row] = [t for t in listed.json()["scheduled_tasks"] if t["id"] == task_id]
+    assert row["project_id"] == project_id
+
+    # Patching another field leaves the project alone; "" or null unfiles.
+    renamed = await auth_client.patch(
+        f"/v1/scheduled-tasks/{task_id}", json={"name": "renamed"}, headers=_headers()
+    )
+    assert renamed.json()["project_id"] == project_id
+    cleared = await auth_client.patch(
+        f"/v1/scheduled-tasks/{task_id}", json={"project_id": ""}, headers=_headers()
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["project_id"] is None
+
+
+async def test_project_id_must_be_the_callers_project(
+    auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    _make_user(db_uri, "bob@example.com")
+    bobs = _make_project(db_uri, "Bob's", owner="bob@example.com")
+    resp = await auth_client.post(
+        "/v1/scheduled-tasks", json=_create_body(project_id=bobs), headers=_headers()
+    )
+    assert resp.status_code == 404, resp.text
+    missing = await auth_client.post(
+        "/v1/scheduled-tasks", json=_create_body(project_id="f" * 32), headers=_headers()
+    )
+    assert missing.status_code == 404, missing.text
+
+
+async def test_default_project_applies_only_when_create_omits_one(
+    auth_client: httpx.AsyncClient, db_uri: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from omnigent.server.scheduled import task_project
+
+    default_id = _make_project(db_uri, "Automation Notes")
+    other_id = _make_project(db_uri, "Other")
+    monkeypatch.setenv(task_project.DEFAULT_PROJECT_ENV, "Automation Notes")
+
+    omitted = await auth_client.post(
+        "/v1/scheduled-tasks", json=_create_body(), headers=_headers()
+    )
+    assert omitted.json()["project_id"] == default_id
+    explicit = await auth_client.post(
+        "/v1/scheduled-tasks", json=_create_body(project_id=other_id), headers=_headers()
+    )
+    assert explicit.json()["project_id"] == other_id
+    unfiled = await auth_client.post(
+        "/v1/scheduled-tasks", json=_create_body(project_id=None), headers=_headers()
+    )
+    assert unfiled.json()["project_id"] is None
+
+    task_id = omitted.json()["id"]
+    deleted = await auth_client.delete(f"/v1/scheduled-tasks/{task_id}", headers=_headers())
+    assert deleted.status_code == 200
+    store = SqlAlchemyScheduledTaskStore(db_uri)
+    assert task_project.project_ids_for(store, [task_id]) == {task_id: None}
