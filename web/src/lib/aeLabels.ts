@@ -111,18 +111,24 @@ export function aeDisplayStatus(
   return status;
 }
 
+/** The row fields the slot count reads. */
+type AeSlotRow = Pick<
+  Conversation,
+  "labels" | "archived" | "parent_session_id" | "pending_elicitations_count" | "status"
+>;
+
 /**
- * Whether a row holds a slot: `ae.status=working`, not archived, and not a
- * sub-agent (sub-agents run inside their parent's slot). Mirrors the slot
- * cap's count in `ae_omni_policies.slot_cap`.
+ * Whether a row holds a slot: `ae.status=working`, not archived, not a
+ * sub-agent (sub-agents run inside their parent's slot), and neither blocked
+ * on an approval nor failed. Mirrors `ae_omni_policies.sessions.working_sessions`.
  */
-export function isAeSlot(
-  conversation: Pick<Conversation, "labels" | "archived" | "parent_session_id">,
-): boolean {
+export function isAeSlot(conversation: AeSlotRow): boolean {
   return (
     aeStatusOf(conversation.labels) === "working" &&
     !conversation.archived &&
-    (conversation.parent_session_id ?? null) === null
+    (conversation.parent_session_id ?? null) === null &&
+    (conversation.pending_elicitations_count ?? 0) === 0 &&
+    conversation.status !== "failed"
   );
 }
 
@@ -143,7 +149,7 @@ export function pickAeLabels(labels: unknown): Record<string, string> {
 
 /** Count the slots held across rows, each session counted once by id. */
 export function countAeSlots(
-  conversations: Iterable<Pick<Conversation, "id" | "labels" | "archived" | "parent_session_id">>,
+  conversations: Iterable<AeSlotRow & Pick<Conversation, "id">>,
 ): number {
   const counted = new Set<string>();
   let count = 0;

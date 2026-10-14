@@ -80,6 +80,21 @@ describe("slots", () => {
     expect(isAeSlot({ labels: { "ae.status": "parked" } })).toBe(false);
   });
 
+  it("holds no slot while blocked on an approval or failed, like the server", () => {
+    expect(isAeSlot({ ...working("a"), pending_elicitations_count: 1 })).toBe(false);
+    expect(isAeSlot({ ...working("a"), pending_elicitations_count: 0 })).toBe(true);
+    expect(isAeSlot({ ...working("a"), status: "failed" })).toBe(false);
+    expect(isAeSlot({ ...working("a"), status: "running" })).toBe(true);
+    expect(
+      countAeSlots([
+        working("a"),
+        working("b"),
+        working("c"),
+        { ...working("d"), status: "failed" as const },
+      ]),
+    ).toBe(3);
+  });
+
   it("counts each session once and stops at nothing", () => {
     expect(AE_SLOT_LIMIT).toBe(3);
     expect(
