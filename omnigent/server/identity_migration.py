@@ -24,6 +24,7 @@ User-id-bearing columns rewritten (the full set as of this schema):
 - ``comments.created_by``
 - ``policies.created_by``
 - ``hosts.user_id`` (unique-constraint part)
+- the rest, in :mod:`omnigent.server.identity_migration_extra`
 
 Ordering within a mapping is load-bearing: the new ``users`` row is
 created first (so FK-bearing children can point at it), children are
@@ -52,6 +53,7 @@ from omnigent.db.db_models import (
 )
 from omnigent.db.query_context import query_name_scope
 from omnigent.server.auth import _RESERVED_USERS
+from omnigent.server.identity_migration_extra import remap_extra_columns
 
 
 def _lock_host_collisions_and_check_tombstones(
@@ -283,6 +285,8 @@ def remap_identities(
                     ),
                 )
                 report._bump(SqlAccountToken.__tablename__, result.rowcount or 0)
+
+            remap_extra_columns(session, old_id, new_id, report._bump)
 
             # ── hosts.user_id is a unique-constraint part (user_id, name); a
             # collision with an existing (new, name) host would violate the
