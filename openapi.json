@@ -2524,6 +2524,96 @@
         "title": "FailedResponseObject",
         "type": "object"
       },
+      "FastModeChange": {
+        "description": "A change's answer: the confirmed state, or the requested one still pending.",
+        "properties": {
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "pending": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "FastModeChange",
+        "type": "object"
+      },
+      "FastModeChangeRequest": {
+        "additionalProperties": false,
+        "description": "Body of `PUT /v1/sessions/{id}/fast-mode`.",
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "FastModeChangeRequest",
+        "type": "object"
+      },
+      "FastModeState": {
+        "description": "The session's fast mode; `None` until Claude Code reports it.",
+        "properties": {
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "per_session": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Session"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "FastModeState",
+        "type": "object"
+      },
       "FunctionCallData": {
         "description": "Data for a function_call item.\n\n**Parameters**\n\n- `agent` \u2014 Agent name. Serialized as `\"model\"` in JSON.",
         "properties": {
@@ -12540,6 +12630,100 @@
         "summary": "Update Comment",
         "tags": [
           "comments"
+        ]
+      }
+    },
+    "/v1/sessions/{session_id}/fast-mode": {
+      "get": {
+        "description": "Read the session's fast mode from its Claude Code terminal.",
+        "operationId": "get_session_fast_mode_v1_sessions__session_id__fast_mode_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastModeState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Session Fast Mode",
+        "tags": [
+          "sessions"
+        ]
+      },
+      "put": {
+        "description": "Turn fast mode on or off in the session's Claude Code terminal.",
+        "operationId": "put_session_fast_mode_v1_sessions__session_id__fast_mode_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FastModeChangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastModeChange"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Session Fast Mode",
+        "tags": [
+          "sessions"
         ]
       }
     },

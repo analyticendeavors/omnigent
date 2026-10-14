@@ -10487,7 +10487,9 @@ def create_runner_app(
                 body,
                 harness=_session_harness_name(conversation_id),
                 server_client=server_client,
+                terminal_registry=resource_registry.terminal_registry,
                 prepare_pane=_prepare_claude_native_pane_for_injection,
+                turn_in_flight=_native_turn_in_flight,
             )
 
         if body_type == "plan_mode_change":

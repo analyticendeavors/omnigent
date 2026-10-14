@@ -65,6 +65,7 @@ import {
 import { isIOSShell, onNativeSidebarDrag, setNativeServerSwitcherHidden } from "@/lib/nativeBridge";
 import { type Agent, useSessionAgent, useAgents } from "@/hooks/useAgents";
 import { AeFastModeSection } from "@/components/AeFastMode";
+import { useAeFastModePending } from "@/lib/aeFastMode";
 import { AePlanLimitsPopover } from "@/components/AePlanLimits";
 import { AeTeamControl } from "@/components/AeTeamControl";
 import { agentDisplayLabel } from "@/components/AgentInfo";
@@ -4609,6 +4610,8 @@ function SessionHarnessPicker({
   const sessionHarness = useChatStore((state) => state.sessionHarness);
   const subAgentName = useChatStore((state) => state.subAgentName);
   const pendingModelChange = useChatStore((state) => state.pendingModelChange);
+  // A pending fast mode flip blocks model and effort picks, not the menu itself.
+  const picksBusy = useAeFastModePending(conversationId) || busy;
   const sessionModelSeeded = useChatStore((state) => state.sessionModelSeeded);
   const selectedEffort = useSessionEffort();
   const costControlModeOverride = useChatStore((state) => state.costControlModeOverride);
@@ -4733,7 +4736,7 @@ function SessionHarnessPicker({
       {costRoutingEligible && showModels && (
         <>
           <DropdownMenuItem
-            disabled={busy || pendingModelChange !== null}
+            disabled={picksBusy || pendingModelChange !== null}
             onSelect={() =>
               void apply(() => useChatStore.getState().setCostControlMode(routingOn ? "off" : "on"))
             }
@@ -4767,7 +4770,7 @@ function SessionHarnessPicker({
                           key: "__default__",
                           label: "Default",
                           checked: !routingOn && pickerSelectedModel === null,
-                          disabled: busy || pendingModelChange !== null || !!inferenceError,
+                          disabled: picksBusy || pendingModelChange !== null || !!inferenceError,
                           onSelect: () => selectModel(null),
                           testId: "composer-agent-model-default",
                         },
@@ -4781,7 +4784,7 @@ function SessionHarnessPicker({
                       (composerFusion !== undefined && model.id === composerFusionOption?.id
                         ? isFusionModelUid(pickerSelectedModel)
                         : model.id === pickerSelectedModel),
-                    disabled: busy || pendingModelChange !== null || !!inferenceError,
+                    disabled: picksBusy || pendingModelChange !== null || !!inferenceError,
                     onSelect: () =>
                       composerFusion !== undefined && model.id === composerFusionOption?.id
                         ? selectFusionModel(composerFusion.default)
@@ -4817,7 +4820,7 @@ function SessionHarnessPicker({
                   key: effort,
                   label: formatStatusEffortLabel(effort) ?? effort,
                   checked: !routingOn && effort === selectedEffort,
-                  disabled: routingOn || busy || pendingModelChange !== null,
+                  disabled: routingOn || picksBusy || pendingModelChange !== null,
                   onSelect: () => void apply(() => useChatStore.getState().setEffort(effort)),
                   testId: `composer-agent-effort-${effort}`,
                   data: { "data-effort-level": effort },
