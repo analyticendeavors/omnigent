@@ -72,9 +72,9 @@ const LIMITS: AeLimitsAnswer = {
   },
 };
 
-/** The popover's own frame: 20rem wide, capped height, scrolling body. */
+/** The popover's own frame: 22rem wide, capped height, scrolling body. */
 const PopoverFrame: Decorator = (Story) => (
-  <div className="max-h-[32rem] w-full max-w-80 overflow-y-auto rounded-md border bg-popover p-4 text-sm text-popover-foreground shadow-md">
+  <div className="max-h-[32rem] w-full max-w-[22rem] overflow-y-auto rounded-md border bg-popover p-4 text-sm text-popover-foreground shadow-md">
     <Story />
   </div>
 );
