@@ -64,6 +64,7 @@ import {
 } from "@/hooks/useNativeServerSwitcher";
 import { isIOSShell, onNativeSidebarDrag, setNativeServerSwitcherHidden } from "@/lib/nativeBridge";
 import { type Agent, useSessionAgent, useAgents } from "@/hooks/useAgents";
+import { AeFastModeSection } from "@/components/AeFastMode";
 import { AePlanLimitsPopover } from "@/components/AePlanLimits";
 import { AeTeamControl } from "@/components/AeTeamControl";
 import { agentDisplayLabel } from "@/components/AgentInfo";
@@ -4835,6 +4836,12 @@ function SessionHarnessPicker({
               })
             : undefined
         }
+      />
+      <AeFastModeSection
+        pickerKind={modelPickerKind}
+        model={effectiveModel}
+        modelLabel={modelSummary}
+        busy={busy}
       />
     </>
   );

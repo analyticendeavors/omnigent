@@ -10479,6 +10479,17 @@ def create_runner_app(
                 )
             return Response(status_code=204)
 
+        if body_type in ("fast_mode_status", "fast_mode_change"):
+            from omnigent.runner.ae_fast_mode import handle_fast_mode_event
+
+            return await handle_fast_mode_event(
+                conversation_id,
+                body,
+                harness=_session_harness_name(conversation_id),
+                server_client=server_client,
+                prepare_pane=_prepare_claude_native_pane_for_injection,
+            )
+
         if body_type == "plan_mode_change":
             harness = _session_harness_name(conversation_id)
             if harness == "codex-native":
