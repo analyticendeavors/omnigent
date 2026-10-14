@@ -8,11 +8,19 @@
 // `packages/ae_omni_policies/src/ae_omni_policies/limits.py`,
 // docs/PLAN-LIMITS.md). omnigent-ae patch P6, 2026-09-24; the context row,
 // per-model rows, credits and plan added the same day in a second pass.
+//
+// 2026-10-14, Reid: the popover had outgrown a screen. It now follows Claude
+// Desktop's own: the context as one bar with the prompt cache parts joined in
+// it, each limit on two lines (label, reset and percentage, then the bar), the
+// explainers behind an info toggle, and the other plan and the collaborators
+// behind "See detailed breakdown".
 
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useId, useMemo, useState } from "react";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { type AeTone, contextTone } from "@/lib/aeContextTone";
 import { authenticatedFetch } from "@/lib/identity";
+import { AeTablerSvg } from "@/lib/aeTablerIcon";
+import type { AeTablerIconNode } from "@/lib/aeTablerIconData";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chatStore";
 import {
@@ -159,67 +167,233 @@ export async function fetchAeLimits(): Promise<AeLimitsAnswer> {
   return (await res.json()) as AeLimitsAnswer;
 }
 
+/**
+ * The reset as a row shows it: a countdown within a day ("Resets in 21m"),
+ * else the weekday and time ("Resets Wed 4:00 AM"), past a week the date.
+ * The full `formatReset` text is the row's title.
+ */
+export function formatResetShort(iso: string | null, now: number): string | null {
+  if (!iso) return null;
+  const at = Date.parse(iso);
+  if (!Number.isFinite(at)) return null;
+  if (at <= now) return "Waiting for a new reading";
+  if (at - now < DAY) return `Resets in ${formatDuration(at - now)}`;
+  const date = new Date(at);
+  const clock = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const day =
+    at - now < 7 * DAY
+      ? date.toLocaleDateString(undefined, { weekday: "short" })
+      : date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return `Resets ${day} ${clock}`;
+}
+
+/** `formatMoney` without a whole amount's zero cents: "$0", "$200", but "$78.81". */
+export function formatMoneyShort(minor: number, currency: string): string {
+  let format: Intl.NumberFormat;
+  try {
+    format = new Intl.NumberFormat(undefined, { style: "currency", currency });
+  } catch {
+    return formatMoney(minor, currency);
+  }
+  const digits = format.resolvedOptions().maximumFractionDigits ?? 2;
+  if (minor % 10 ** digits !== 0) return format.format(minor / 10 ** digits);
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(minor / 10 ** digits);
+}
+
+/** Claude Desktop's words for the all-models window; every other label as the server sends it. */
+export function windowLabel(w: AeLimitWindow): string {
+  return w.label === "Weekly, all models" ? "Weekly · all models" : w.label;
+}
+
+/** Fill per tone; normal is Claude Desktop's blue (the first chart colour). */
 const TONE_BAR: Record<AeTone, string> = {
-  normal: "bg-foreground/60",
+  normal: "bg-chart-1",
   warning: "bg-warning",
   critical: "bg-destructive",
 };
 
-/** One labelled bar: the row every section of the popover is made of. */
-function UsageRow({
+/** A stale reading, or a window past its reset: still drawn, greyed. */
+const MUTED_BAR = "bg-foreground/25";
+
+/** A toned percentage as text: an amber that reads on white, unlike the ring's. */
+const TONE_TEXT: Record<AeTone, string | undefined> = {
+  normal: undefined,
+  warning: "text-amber-700 dark:text-amber-400",
+  critical: "text-destructive",
+};
+
+/** Tabler's `info-circle` (@tabler/icons 3.46.0), inlined for the section toggles. */
+const INFO_ICON: AeTablerIconNode = [
+  ["path", { d: "M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0" }],
+  ["path", { d: "M12 9h.01" }],
+  ["path", { d: "M11 12h1v4h1" }],
+];
+
+const CONTEXT_INFO = "Per session and model; one session's window does not include another's.";
+const PLAN_INFO = "Account-wide; shared by every session on that plan.";
+
+interface Segment {
+  key: string;
+  className: string;
+  /** This segment's share of the fill, 0 to 1. */
+  share: number;
+}
+
+/**
+ * A bar: the track, and a fill `pct` wide made of one segment or of the
+ * prompt cache's parts joined end to end, each its `share` of the fill.
+ */
+function Meter({
+  label,
+  pct,
+  segments,
+  thick = false,
+}: {
+  label: string;
+  pct: number;
+  segments: Segment[];
+  thick?: boolean;
+}) {
+  const rounded = Math.round(pct);
+  return (
+    <div
+      className={cn(
+        "w-full overflow-hidden rounded-full bg-foreground/10",
+        thick ? "h-1.5" : "h-1",
+      )}
+      role="progressbar"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.min(rounded, 100)}
+    >
+      <div
+        className="flex h-full gap-px overflow-hidden rounded-full"
+        data-testid="ae-meter-fill"
+        style={{ width: `${Math.min(Math.max(pct, 0), 100)}%` }}
+      >
+        {segments.map((segment) => (
+          <div
+            key={segment.key}
+            data-segment={segment.key}
+            className={cn("h-full min-w-0", segment.className)}
+            style={{ flexGrow: segment.share, flexBasis: 0 }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A section's header row: a muted title, an info toggle whose explainer opens
+ * under the row (a tap, so it works on a phone), and a value on the right.
+ */
+function SectionHeader({
+  title,
+  tag,
+  right,
+  info,
+  infoLabel,
+}: {
+  title: ReactNode;
+  tag?: ReactNode;
+  right?: ReactNode;
+  info?: string;
+  infoLabel?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const infoId = useId();
+  return (
+    <div className="flex flex-col gap-0.5">
+      <div className="flex items-center gap-2">
+        <h3 className="flex min-w-0 items-center gap-1 text-sm font-normal text-muted-foreground">
+          <span className="min-w-0 truncate">{title}</span>
+          {info && (
+            <button
+              type="button"
+              aria-label={infoLabel}
+              aria-expanded={open}
+              aria-controls={infoId}
+              data-testid="ae-limits-info-toggle"
+              className="-my-1 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 aria-expanded:text-foreground"
+              onClick={() => setOpen((value) => !value)}
+            >
+              <AeTablerSvg node={INFO_ICON} className="size-3.5" />
+            </button>
+          )}
+          {tag}
+        </h3>
+        {right && <span className="ml-auto shrink-0">{right}</span>}
+      </div>
+      {info && (
+        <p
+          id={infoId}
+          hidden={!open}
+          className="text-sm text-muted-foreground"
+          data-testid="ae-limits-info"
+        >
+          {info}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One limit on Claude Desktop's two lines: the label, then the reset and the
+ * percentage on the right (wrapping under the label on a narrow phone), and
+ * the bar under them. The full reset is the row's title.
+ */
+function LimitRow({
   id,
   label,
   value,
   pct,
-  detail,
-  sublabel,
-  ariaLabel = label,
+  reset,
+  resetFull,
   muted = false,
-  tone = limitTone(pct),
-  children,
+  testId = "ae-limit-window",
 }: {
   id: string;
   label: string;
   value: string;
   pct: number;
-  detail?: string | null;
-  /** Second line under the label: which agent and model the bar belongs to. */
-  sublabel?: string | null;
-  ariaLabel?: string;
+  reset?: string | null;
+  resetFull?: string | null;
   muted?: boolean;
-  /** Defaults to the plan limit steps; the context row passes `contextTone`. */
-  tone?: AeTone;
-  children?: ReactNode;
+  testId?: string;
 }) {
-  const rounded = Math.round(pct);
   return (
-    <li className="flex flex-col gap-1" data-testid="ae-limit-window" data-window={id}>
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="min-w-0 truncate">{label}</span>
-        <span className={cn("shrink-0 tabular-nums", muted && "text-muted-foreground")}>
-          {value}
+    <li
+      className="flex flex-col gap-1"
+      data-testid={testId}
+      data-window={id}
+      title={resetFull ?? undefined}
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+        <span className="min-w-0 max-w-full truncate">{label}</span>
+        <span className="ml-auto flex shrink-0 items-baseline gap-3">
+          {reset && <span className="text-sm text-muted-foreground">{reset}</span>}
+          <span
+            className={cn("min-w-10 text-right tabular-nums", muted && "text-muted-foreground")}
+          >
+            {value}
+          </span>
         </span>
       </div>
-      {sublabel && (
-        <span className="-mt-1 truncate text-xs text-muted-foreground" data-testid="ae-usage-who">
-          {sublabel}
-        </span>
-      )}
-      <div
-        className="h-1.5 w-full overflow-hidden rounded-full bg-foreground/10"
-        role="progressbar"
-        aria-label={`${ariaLabel}: ${rounded}% used`}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={Math.min(rounded, 100)}
-      >
-        <div
-          className={cn("h-full rounded-full", muted ? "bg-foreground/25" : TONE_BAR[tone])}
-          style={{ width: `${Math.min(Math.max(pct, 0), 100)}%` }}
-        />
-      </div>
-      {children}
-      {detail && <span className="text-xs text-muted-foreground">{detail}</span>}
+      <Meter
+        label={`${label}: ${Math.round(pct)}% used${resetFull ? `. ${resetFull}` : ""}`}
+        pct={pct}
+        segments={[
+          { key: "used", className: muted ? MUTED_BAR : TONE_BAR[limitTone(pct)], share: 1 },
+        ]}
+      />
     </li>
   );
 }
@@ -227,12 +401,13 @@ function UsageRow({
 function WindowRow({ window: w, now }: { window: AeLimitWindow; now: number }) {
   const passed = w.resets_at !== null && Date.parse(w.resets_at) <= now;
   return (
-    <UsageRow
+    <LimitRow
       id={w.id}
-      label={w.label}
-      value={`${Math.round(w.used_percent)}% used`}
+      label={windowLabel(w)}
+      value={`${Math.round(w.used_percent)}%`}
       pct={w.used_percent}
-      detail={formatReset(w.resets_at, now)}
+      reset={formatResetShort(w.resets_at, now)}
+      resetFull={formatReset(w.resets_at, now)}
       muted={passed}
     />
   );
@@ -244,83 +419,96 @@ function CreditsRow({ credits, now }: { credits: AeCredits; now: number }) {
     return (
       <li className="flex items-baseline justify-between gap-2" data-testid="ae-limit-credits">
         <span>Usage credits</span>
-        <span className="text-xs text-muted-foreground">Off</span>
+        <span className="text-sm text-muted-foreground">Off</span>
       </li>
     );
   }
   if (used === null) return null;
-  const spent = formatMoney(used, credits.currency);
   if (credits.limit_minor === null) {
     return (
       <li className="flex items-baseline justify-between gap-2" data-testid="ae-limit-credits">
         <span>Usage credits</span>
-        <span className="tabular-nums">{spent} spent</span>
+        <span className="tabular-nums">{formatMoneyShort(used, credits.currency)} spent</span>
       </li>
     );
   }
   const cap = credits.limit_minor;
   const pct = credits.used_percent ?? (cap > 0 ? (used / cap) * 100 : 0);
-  // Credits reset with the calendar month (Claude Code's own /usage row).
+  // Credits reset with the calendar month (Claude Code's own /usage row); the
+  // row keeps that for its title, as Claude Desktop shows only the amounts.
   const month = new Date(now);
   const reset = new Date(month.getFullYear(), month.getMonth() + 1, 1).toISOString();
   return (
-    <UsageRow
+    <LimitRow
       id="credits"
       label="Usage credits"
-      value={`${spent} of ${formatMoney(cap, credits.currency)}`}
+      value={`${formatMoneyShort(used, credits.currency)} of ${formatMoneyShort(cap, credits.currency)}`}
       pct={pct}
-      detail={formatReset(reset, now)}
+      resetFull={formatReset(reset, now)}
     />
   );
 }
 
 /**
- * The thin bar under the context row: how the used tokens were sent on the
- * session's last request (read from the prompt cache, written to it, or new).
- * Three greys read as a second meter (Reid, 2026-09-24), so since P18 each part
- * has its own chart colour (blue, green, grey; never the warning or destructive
- * colours the bars above use for "nearly full") and a caption says what it is.
- * It is not a /context-style breakdown by system prompt, tools and messages:
- * the status line the relay reads carries only these three counts.
+ * How the used tokens were sent on the session's last request (read from the
+ * prompt cache, written to it, or new). Since P18 each part has its own chart
+ * colour, never the warning or destructive ones; since 2026-10-14 the parts
+ * are joined segments of the context bar itself, after Claude Desktop, and
+ * this legend is their key. It is not a /context-style breakdown by system
+ * prompt, tools and messages: the status line carries only these three counts.
  */
 const CONTEXT_PARTS = [
-  { key: "cache_read_tokens", label: "Cached", className: "bg-chart-1" },
-  { key: "cache_write_tokens", label: "Cache write", className: "bg-chart-3" },
-  { key: "input_tokens", label: "New input", className: "bg-chart-5" },
+  { key: "cache_read_tokens", label: "cached", className: "bg-chart-1" },
+  { key: "cache_write_tokens", label: "written", className: "bg-chart-3" },
+  { key: "input_tokens", label: "new", className: "bg-chart-5" },
 ] as const;
 
 const CONTEXT_BREAKDOWN_CAPTION = "How those tokens were billed (prompt cache)";
 
-function ContextBreakdown({ context, now }: { context: AeSessionContext; now: number }) {
-  const parts = CONTEXT_PARTS.filter((part) => context[part.key] > 0);
+function contextParts(context: AeSessionContext | null) {
+  return context ? CONTEXT_PARTS.filter((part) => context[part.key] > 0) : [];
+}
+
+/**
+ * The context bar's segments. The breakdown can lag the live figure, so each
+ * part takes its share of the breakdown, never its raw count. Near full (the
+ * ring's warning steps) the bar is one toned fill, as the ring is.
+ */
+function contextSegments(
+  pct: number,
+  stale: boolean,
+  breakdown: AeSessionContext | null,
+): Segment[] {
+  const tone = contextTone(pct);
+  if (stale) return [{ key: "used", className: MUTED_BAR, share: 1 }];
+  const parts = contextParts(breakdown);
+  const total = parts.reduce((sum, part) => sum + breakdown![part.key], 0);
+  if (tone !== "normal" || total === 0) {
+    return [{ key: "used", className: TONE_BAR[tone], share: 1 }];
+  }
+  return parts.map((part) => ({
+    key: part.key,
+    className: part.className,
+    share: breakdown![part.key] / total,
+  }));
+}
+
+function ContextLegend({ context, now }: { context: AeSessionContext; now: number }) {
+  const parts = contextParts(context);
   if (parts.length === 0) return null;
   return (
-    <div
-      className="flex flex-col gap-1"
+    <p
+      className="flex flex-wrap gap-x-2.5 text-sm text-muted-foreground"
       data-testid="ae-context-breakdown"
-      title={`From the session's status line, ${formatAgo(context.observed_at, now)}`}
+      title={`${CONTEXT_BREAKDOWN_CAPTION}, from the session's status line, ${formatAgo(context.observed_at, now)}`}
     >
-      <span className="text-xs text-muted-foreground" data-testid="ae-context-breakdown-caption">
-        {CONTEXT_BREAKDOWN_CAPTION}
-      </span>
-      <div className="flex h-1 w-full overflow-hidden rounded-full bg-foreground/10">
-        {parts.map((part) => (
-          <div
-            key={part.key}
-            className={part.className}
-            style={{ width: `${(context[part.key] / context.window_size) * 100}%` }}
-          />
-        ))}
-      </div>
-      <div className="flex flex-wrap gap-x-2.5 text-xs text-muted-foreground">
-        {parts.map((part) => (
-          <span key={part.key} className="inline-flex items-center gap-1 tabular-nums">
-            <span className={cn("inline-block size-1.5 rounded-full", part.className)} />
-            {part.label} {formatTokens(context[part.key])}
-          </span>
-        ))}
-      </div>
-    </div>
+      {parts.map((part) => (
+        <span key={part.key} className="inline-flex items-center gap-1 tabular-nums">
+          <span className={cn("inline-block size-1.5 rounded-full", part.className)} />
+          {formatTokens(context[part.key])} {part.label}
+        </span>
+      ))}
+    </p>
   );
 }
 
@@ -331,11 +519,56 @@ function readingDetail(reading: AeContextReading, now: number): string | null {
   return `From Claude Code's status line, ${ago}${reading.stale ? " (may be out of date)" : ""}`;
 }
 
-/** One session's own context window, or a plain "unavailable" in place of a bar. */
-function ContextEntryRow({ entry, now }: { entry: AeContextEntry; now: number }) {
+/** "167.4k / 1M (17%)", the percentage in the ring's tone once the window fills. */
+function ContextValue({ reading }: { reading: AeContextReading }) {
+  const pct = (reading.used / reading.size) * 100;
+  return (
+    <span
+      className={cn("tabular-nums", reading.stale ? "text-muted-foreground" : "text-foreground")}
+      data-testid="ae-context-value"
+    >
+      {formatTokens(reading.used)} / {formatTokens(reading.size)}{" "}
+      <span className={reading.stale ? undefined : TONE_TEXT[contextTone(pct)]}>
+        ({Math.round(pct)}%)
+      </span>
+    </span>
+  );
+}
+
+/**
+ * One session's own context window, or a plain "unavailable" in place of a
+ * bar. `lead` is this session's row: its head is the section's header.
+ */
+function ContextEntryRow({
+  entry,
+  now,
+  lead = false,
+}: {
+  entry: AeContextEntry;
+  now: number;
+  lead?: boolean;
+}) {
   const who = [entry.agent, entry.model].filter(Boolean).join(" · ") || null;
   const ariaLabel = `${entry.name} context${entry.agent ? ` (${entry.agent})` : ""}`;
   const { reading } = entry;
+  const value = reading ? (
+    <ContextValue reading={reading} />
+  ) : (
+    <span className="text-sm text-muted-foreground">Unavailable</span>
+  );
+  const head = lead ? (
+    <SectionHeader
+      title="Context window"
+      info={CONTEXT_INFO}
+      infoLabel="About the context window"
+      right={value}
+    />
+  ) : (
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="min-w-0 truncate">{entry.name}</span>
+      <span className="shrink-0">{value}</span>
+    </div>
+  );
   if (!reading) {
     return (
       <li
@@ -344,81 +577,40 @@ function ContextEntryRow({ entry, now }: { entry: AeContextEntry; now: number })
         data-session={entry.key}
         data-role={entry.role}
       >
-        <div className="flex items-baseline justify-between gap-2">
-          <span className="min-w-0 truncate">{entry.name}</span>
-          <span className="shrink-0 text-xs text-muted-foreground">Unavailable</span>
-        </div>
+        {head}
+        <span className="text-sm text-muted-foreground">{entry.unavailable}</span>
         {who && (
-          <span className="-mt-1 truncate text-xs text-muted-foreground" data-testid="ae-usage-who">
+          <span className="truncate text-sm text-muted-foreground" data-testid="ae-usage-who">
             {who}
           </span>
         )}
-        <span className="text-xs text-muted-foreground">{entry.unavailable}</span>
       </li>
     );
   }
   const pct = (reading.used / reading.size) * 100;
+  const detail = readingDetail(reading, now);
   return (
-    <UsageRow
-      id={`context:${entry.key}`}
-      label={entry.name}
-      sublabel={who}
-      ariaLabel={ariaLabel}
-      value={`${formatTokens(reading.used)} / ${formatTokens(reading.size)} · ${Math.round(pct)}%`}
-      pct={pct}
-      tone={contextTone(pct)}
-      muted={reading.stale}
-      detail={readingDetail(reading, now)}
+    <li
+      className="flex flex-col gap-1.5"
+      data-testid="ae-limit-window"
+      data-window={`context:${entry.key}`}
     >
-      {entry.breakdown && <ContextBreakdown context={entry.breakdown} now={now} />}
-    </UsageRow>
-  );
-}
-
-/** Context windows: this session first, then each collaborator, never summed. */
-function ContextSection({
-  active,
-  collaborators,
-  hidden = 0,
-  error,
-  now,
-}: {
-  active: AeContextEntry;
-  collaborators: AeContextEntry[];
-  hidden?: number;
-  error?: string | null;
-  now: number;
-}) {
-  return (
-    <section className="flex flex-col gap-2" data-testid="ae-limits-context">
-      <div className="flex flex-col">
-        <h3 className="font-medium">Context window</h3>
-        <span className="text-xs text-muted-foreground">
-          Per session and model; one session's window does not include another's.
-        </span>
-      </div>
-      <ul className="flex flex-col gap-2" data-testid="ae-context-active">
-        <ContextEntryRow entry={active} now={now} />
-      </ul>
-      {(collaborators.length > 0 || error || hidden > 0) && (
-        <div className="flex flex-col gap-2" data-testid="ae-context-collaborators">
-          <h4 className="text-xs font-medium text-muted-foreground">Collaborators</h4>
-          <ul className="flex flex-col gap-2">
-            {collaborators.map((c) => (
-              <ContextEntryRow key={c.key} entry={c} now={now} />
-            ))}
-          </ul>
-          {hidden > 0 && (
-            <p className="text-xs text-muted-foreground">
-              {hidden} more {hidden === 1 ? "collaborator" : "collaborators"} not shown.
-            </p>
-          )}
-          {error && (
-            <p className="text-xs text-muted-foreground">Could not list collaborators ({error}).</p>
-          )}
-        </div>
+      {head}
+      <Meter
+        label={`${ariaLabel}: ${Math.round(pct)}% used`}
+        pct={pct}
+        segments={contextSegments(pct, reading.stale, entry.breakdown)}
+        thick
+      />
+      {entry.breakdown && <ContextLegend context={entry.breakdown} now={now} />}
+      {(who || detail) && (
+        <p className="text-sm text-muted-foreground">
+          {who && <span data-testid="ae-usage-who">{who}</span>}
+          {who && detail && <span aria-hidden="true"> · </span>}
+          {detail && <span>{who ? detail.charAt(0).toLowerCase() + detail.slice(1) : detail}</span>}
+        </p>
       )}
-    </section>
+    </li>
   );
 }
 
@@ -438,64 +630,73 @@ function HarnessBlock({
   snapshot,
   now,
   inUse = false,
+  lead = false,
 }: {
   harness: AeHarness;
   snapshot: AeLimitSnapshot | null | undefined;
   now: number;
-  /** This session runs on this harness's plan. */
+  /** This session runs on this harness's plan, and another plan is listed too. */
   inUse?: boolean;
+  /** The block that heads the section, which carries the section's info toggle. */
+  lead?: boolean;
 }) {
   return (
     <section
-      className="flex flex-col gap-2"
+      className="flex flex-col gap-2.5"
       data-testid="ae-limits-harness"
       data-harness={harness}
       data-in-use={inUse || undefined}
     >
-      <div className="flex items-baseline justify-between gap-2">
-        <h3 className="min-w-0 font-medium">
-          {AE_HARNESS_NAMES[harness]}
-          {snapshot?.plan && (
+      <SectionHeader
+        title={
+          <>
+            {AE_HARNESS_NAMES[harness]}
+            {snapshot?.plan && (
+              <>
+                {" · "}
+                <span data-testid="ae-limits-plan">{snapshot.plan}</span>
+              </>
+            )}
+          </>
+        }
+        tag={
+          inUse ? (
             <span
-              className="ml-1.5 text-xs font-normal text-muted-foreground"
-              data-testid="ae-limits-plan"
-            >
-              {snapshot.plan}
-            </span>
-          )}
-          {inUse && (
-            <span
-              className="ml-1.5 rounded bg-foreground/10 px-1 text-xs font-normal"
+              className="ml-1 shrink-0 rounded bg-foreground/10 px-1 text-sm text-foreground"
               data-testid="ae-limits-in-use"
             >
               This session
             </span>
-          )}
-        </h3>
-        {snapshot && (
-          <span
-            className="shrink-0 text-xs text-muted-foreground"
-            title={new Date(snapshot.observed_at).toLocaleString()}
-          >
-            Updated {formatAgo(snapshot.observed_at, now)}
-          </span>
-        )}
-      </div>
+          ) : null
+        }
+        info={lead ? PLAN_INFO : undefined}
+        infoLabel="About plan limits"
+        right={
+          snapshot ? (
+            <span
+              className="text-sm text-muted-foreground"
+              title={`Updated ${new Date(snapshot.observed_at).toLocaleString()}`}
+            >
+              {formatAgo(snapshot.observed_at, now)}
+            </span>
+          ) : null
+        }
+      />
       {!snapshot ? (
-        <p className="text-xs text-muted-foreground">{EMPTY_TEXT[harness]}</p>
+        <p className="text-sm text-muted-foreground">{EMPTY_TEXT[harness]}</p>
       ) : (
         <>
           {(snapshot.windows.length > 0 || snapshot.credits) && (
-            <ul className="flex flex-col gap-2">
+            <ul className="flex flex-col gap-2.5">
               {snapshot.windows.map((w) => (
                 <WindowRow key={w.id} window={w} now={now} />
               ))}
               {snapshot.credits && <CreditsRow credits={snapshot.credits} now={now} />}
             </ul>
           )}
-          {snapshot.note && <p className="text-xs text-muted-foreground">{snapshot.note}</p>}
+          {snapshot.note && <p className="text-sm text-muted-foreground">{snapshot.note}</p>}
           {snapshot.hint && (
-            <p className="text-xs text-muted-foreground" data-testid="ae-limits-hint">
+            <p className="text-sm text-muted-foreground" data-testid="ae-limits-hint">
               {snapshot.hint}
             </p>
           )}
@@ -534,6 +735,8 @@ export function AePlanLimitsPanel({
   /** This session's snapshot and its collaborators', from `useAeSessionContexts`. */
   sessions?: AeSessionContextsState;
 }) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const detailsId = useId();
   const statusLines = data?.harnesses.claude?.contexts;
   const active = buildActiveContext(
     { conversationId, harness, model, contextWindow, tokensUsed },
@@ -547,42 +750,88 @@ export function AePlanLimitsPanel({
   // The active row's harness, so a stale store harness cannot pick the block.
   const inUse = aeLimitsHarnessFor(active.harness);
   const order: AeHarness[] = inUse === "codex" ? ["codex", "claude"] : ["claude", "codex"];
+  const [primary] = order;
+  // Another plan the server answered for (a reading, or null with its hint)
+  // waits behind the breakdown toggle, after Claude Desktop's own.
+  const others =
+    error || !data ? [] : order.slice(1).filter((h) => Object.hasOwn(data.harnesses, h));
+  const hidden = sessions.hidden ?? 0;
+  const hasCollaborators = collaborators.length > 0 || Boolean(sessions.error) || hidden > 0;
   return (
     <div className="flex flex-col gap-3" data-testid="ae-plan-limits">
-      <div className="font-medium">Usage</div>
-      <ContextSection
-        active={active}
-        collaborators={collaborators}
-        hidden={sessions.hidden}
-        error={sessions.error}
-        now={now}
-      />
-      <div className="flex flex-col gap-3 border-t pt-3" data-testid="ae-limits-plans">
-        <div className="flex flex-col">
-          <h3 className="font-medium">Plan limits</h3>
-          <span className="text-xs text-muted-foreground">
-            Account-wide; shared by every session on that plan.
-          </span>
-        </div>
+      <section className="flex flex-col gap-2" data-testid="ae-limits-context">
+        <ul data-testid="ae-context-active">
+          <ContextEntryRow entry={active} now={now} lead />
+        </ul>
+      </section>
+      <div className="flex flex-col gap-2.5 border-t pt-3" data-testid="ae-limits-plans">
         {error ? (
-          <p className="text-xs text-destructive">
-            Could not load plan limits ({error instanceof Error ? error.message : String(error)}).
-            The /v1/ae/limits route belongs to omnigent-ae; check the server is on a current tag.
-          </p>
+          <>
+            <SectionHeader title="Plan limits" info={PLAN_INFO} infoLabel="About plan limits" />
+            <p className="text-sm text-destructive">
+              Could not load plan limits ({error instanceof Error ? error.message : String(error)}).
+              The /v1/ae/limits route belongs to omnigent-ae; check the server is on a current tag.
+            </p>
+          </>
         ) : loading && !data ? (
-          <p className="text-xs text-muted-foreground">Loading…</p>
+          <>
+            <SectionHeader title="Plan limits" info={PLAN_INFO} infoLabel="About plan limits" />
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          </>
         ) : (
-          order.map((h) => (
-            <HarnessBlock
-              key={h}
-              harness={h}
-              snapshot={data?.harnesses[h]}
-              now={now}
-              inUse={inUse === h}
-            />
-          ))
+          <HarnessBlock
+            harness={primary}
+            snapshot={data?.harnesses[primary]}
+            now={now}
+            inUse={inUse === primary && others.length > 0}
+            lead
+          />
         )}
       </div>
+      {(hasCollaborators || others.length > 0) && (
+        <div className="flex flex-col gap-3 border-t pt-3">
+          <button
+            type="button"
+            aria-expanded={detailsOpen}
+            aria-controls={detailsId}
+            data-testid="ae-limits-details-toggle"
+            className="cursor-pointer self-start rounded-md border border-border px-2.5 py-1 text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 pointer-coarse:py-2"
+            onClick={() => setDetailsOpen((open) => !open)}
+          >
+            {detailsOpen ? "Hide detailed breakdown" : "See detailed breakdown"}
+          </button>
+          <div
+            id={detailsId}
+            hidden={!detailsOpen}
+            className="flex flex-col gap-4"
+            data-testid="ae-limits-details"
+          >
+            {hasCollaborators && (
+              <div className="flex flex-col gap-2" data-testid="ae-context-collaborators">
+                <h4 className="text-sm text-muted-foreground">Collaborators</h4>
+                <ul className="flex flex-col gap-2.5">
+                  {collaborators.map((c) => (
+                    <ContextEntryRow key={c.key} entry={c} now={now} />
+                  ))}
+                </ul>
+                {hidden > 0 && (
+                  <p className="text-sm text-muted-foreground">
+                    {hidden} more {hidden === 1 ? "collaborator" : "collaborators"} not shown.
+                  </p>
+                )}
+                {sessions.error && (
+                  <p className="text-sm text-muted-foreground">
+                    Could not list collaborators ({sessions.error}).
+                  </p>
+                )}
+              </div>
+            )}
+            {others.map((h) => (
+              <HarnessBlock key={h} harness={h} snapshot={data?.harnesses[h]} now={now} />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -688,8 +937,9 @@ export function AePlanLimitsPopover() {
       <PopoverContent
         side="top"
         align="end"
-        // Context rows plus plan limits outgrow a phone: cap at the room Radix measured and scroll.
-        className="max-h-(--radix-popover-content-available-height) w-80 max-w-[calc(100vw-2rem)] overflow-y-auto"
+        // Claude Desktop's width; a phone still caps at the room Radix measured and scrolls.
+        className="max-h-(--radix-popover-content-available-height) w-[22rem] max-w-[calc(100vw-2rem)] overflow-y-auto"
+        aria-label="Usage"
         onInteractOutside={keepOpenOnRing}
         onCloseAutoFocus={(event) => {
           event.preventDefault();

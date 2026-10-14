@@ -14,9 +14,12 @@ import {
   formatAgo,
   formatDuration,
   formatMoney,
+  formatMoneyShort,
   formatReset,
+  formatResetShort,
   formatTokens,
   limitTone,
+  windowLabel,
 } from "./AePlanLimits";
 import type { AeSessionContextsState } from "./aeSessionContext";
 
@@ -132,6 +135,31 @@ describe("formatting", () => {
     expect(formatReset(iso(NOW - 60_000), NOW)).toBe("Window reset; waiting for a new reading");
   });
 
+  it("words a reset the way a row shows it, short", () => {
+    expect(formatResetShort(null, NOW)).toBeNull();
+    expect(formatResetShort(iso(NOW + 21 * 60_000), NOW)).toBe("Resets in 21m");
+    expect(formatResetShort(iso(NOW + 2 * 3_600_000 + 10 * 60_000), NOW)).toBe("Resets in 2h 10m");
+    // A day or more out: the weekday and the clock, no countdown.
+    const later = formatResetShort(iso(NOW + 3 * 86_400_000), NOW);
+    expect(later).toMatch(/^Resets \S+ \d/);
+    expect(later).not.toContain(" in ");
+    expect(formatResetShort(iso(NOW - 60_000), NOW)).toBe("Waiting for a new reading");
+  });
+
+  it("drops a whole amount's cents, keeps the rest", () => {
+    expect(formatMoneyShort(0, "USD")).toBe("$0");
+    expect(formatMoneyShort(20000, "USD")).toBe("$200");
+    expect(formatMoneyShort(7881, "USD")).toBe("$78.81");
+    expect(formatMoneyShort(100, "not-a-currency")).toBe("1.00 not-a-currency");
+  });
+
+  it("names the all-models window the way Claude Desktop does", () => {
+    const w = { id: "x", used_percent: 1, resets_at: null, window_minutes: null };
+    expect(windowLabel({ ...w, label: "Weekly, all models" })).toBe("Weekly · all models");
+    expect(windowLabel({ ...w, label: "Weekly · Fable" })).toBe("Weekly · Fable");
+    expect(windowLabel({ ...w, label: "5-hour limit" })).toBe("5-hour limit");
+  });
+
   it("prints tokens and money the way the usage popover does", () => {
     expect(formatTokens(950)).toBe("950");
     expect(formatTokens(12_400)).toBe("12.4k");
@@ -156,15 +184,22 @@ describe("AePlanLimitsPanel", () => {
     const [claude, codex] = screen.getAllByTestId("ae-limits-harness");
     expect(claude.getAttribute("data-harness")).toBe("claude");
     expect(codex.getAttribute("data-harness")).toBe("codex");
-    expect(within(claude).getByText("Updated 4m ago")).toBeTruthy();
+    expect(within(claude).getByText("4m ago")).toBeTruthy();
     const bars = within(claude).getAllByRole("progressbar");
     expect(bars.map((bar) => bar.getAttribute("aria-label"))).toEqual([
-      "5-hour limit: 38% used",
-      "Weekly, all models: 92% used",
+      expect.stringMatching(/^5-hour limit: 38% used\. Resets .+ \(in 2h\)$/),
+      expect.stringMatching(/^Weekly · all models: 92% used\. Resets .+ \(in 3d\)$/),
     ]);
-    expect((bars[1].firstChild as HTMLElement).className).toContain("bg-destructive");
-    expect(within(claude).getByText(/in 2h\)$/)).toBeTruthy();
+    expect(bars[1].querySelector("[data-segment]")?.className).toContain("bg-destructive");
+    // The row gives the reset in short; its title keeps the clock time and countdown.
+    const [fiveHour] = within(claude).getAllByTestId("ae-limit-window");
+    expect(within(fiveHour).getByText("Resets in 2h")).toBeTruthy();
+    expect(within(fiveHour).getByText("38%")).toBeTruthy();
+    expect(fiveHour.getAttribute("title")).toMatch(/^Resets .+ \(in 2h\)$/);
     expect(within(claude).getByText("A note from the relay.")).toBeTruthy();
+    // The other plan waits, folded, behind the breakdown toggle.
+    expect(screen.getByTestId("ae-limits-details").hidden).toBe(true);
+    expect(codex.closest("[data-testid=ae-limits-details]")).toBeTruthy();
     expect(codex.textContent).toContain("No reading yet");
     expect(codex.textContent).toContain("codex login");
   });
@@ -191,19 +226,52 @@ describe("AePlanLimitsPanel", () => {
     const bars = screen.getAllByRole("progressbar");
     expect(bars.map((bar) => bar.getAttribute("aria-label"))).toEqual([
       "This session context (Claude Code): 22% used",
-      "5-hour limit: 41% used",
-      "Weekly, all models: 63% used",
-      "Weekly · Fable: 22% used",
-      "Usage credits: 20% used",
+      expect.stringMatching(/^5-hour limit: 41% used\. Resets .+ \(in 2h\)$/),
+      expect.stringMatching(/^Weekly · all models: 63% used\. Resets .+ \(in 3d\)$/),
+      expect.stringMatching(/^Weekly · Fable: 22% used\. Resets .+ \(in 3d\)$/),
+      expect.stringMatching(/^Usage credits: 20% used\. Resets .+$/),
     ]);
-    expect(screen.getByText("216.8k / 1M · 22%")).toBeTruthy();
+    expect(screen.getByTestId("ae-context-value").textContent).toBe("216.8k / 1M (22%)");
     expect(screen.getByTestId("ae-limits-plan").textContent).toBe("Max 20x");
-    expect(screen.getByText("$78.81 of $400.00")).toBeTruthy();
+    expect(screen.getByText("$78.81 of $400")).toBeTruthy();
+    expect(screen.getByText("Weekly · all models")).toBeTruthy();
     const breakdown = screen.getByTestId("ae-context-breakdown");
-    expect(breakdown.textContent).toContain("Cached 210k");
-    expect(breakdown.textContent).toContain("Cache write 1.8k");
-    expect(breakdown.textContent).toContain("New input 5k");
+    expect(breakdown.textContent).toContain("210k cached");
+    expect(breakdown.textContent).toContain("1.8k written");
+    expect(breakdown.textContent).toContain("5k new");
     expect(screen.queryByTestId("ae-limits-hint")).toBeNull();
+  });
+
+  it("draws no breakdown toggle when nothing waits behind it", () => {
+    render(
+      <AePlanLimitsPanel
+        data={{ now: iso(NOW), harnesses: { claude: FULL.harnesses.claude } }}
+        now={NOW}
+        conversationId="conv_a"
+        harness="claude-native"
+      />,
+    );
+    expect(screen.queryByTestId("ae-limits-details-toggle")).toBeNull();
+    expect(screen.queryByTestId("ae-limits-in-use")).toBeNull();
+  });
+
+  it("opens and closes each section's explainer with a tap", () => {
+    render(
+      <AePlanLimitsPanel data={FULL} now={NOW} conversationId="conv_a" harness="claude-native" />,
+    );
+    const [contextInfo, planInfo] = screen.getAllByTestId("ae-limits-info-toggle");
+    const [contextLine, planLine] = screen.getAllByTestId("ae-limits-info");
+    expect(contextInfo.getAttribute("aria-label")).toBe("About the context window");
+    expect(planInfo.getAttribute("aria-label")).toBe("About plan limits");
+    expect(contextLine.hidden).toBe(true);
+    expect(contextLine.textContent).toContain("one session's window does not include another's");
+    expect(planLine.textContent).toBe("Account-wide; shared by every session on that plan.");
+    fireEvent.click(contextInfo);
+    expect(contextInfo.getAttribute("aria-expanded")).toBe("true");
+    expect(contextLine.hidden).toBe(false);
+    expect(planLine.hidden).toBe(true);
+    fireEvent.click(contextInfo);
+    expect(contextLine.hidden).toBe(true);
   });
 
   it("tones the context bar with the ring's steps, not the plan limit steps", () => {
@@ -211,31 +279,79 @@ describe("AePlanLimitsPanel", () => {
       cleanup();
       render(<AePlanLimitsPanel now={NOW} contextWindow={1_000_000} tokensUsed={tokensUsed} />);
       const bar = within(screen.getByTestId("ae-limits-context")).getByRole("progressbar");
-      return (bar.firstChild as HTMLElement).className;
+      return bar.querySelector("[data-segment]")?.className ?? "";
     };
-    expect(contextBar(500_000)).toContain("bg-foreground/60");
+    expect(contextBar(500_000)).toContain("bg-chart-1");
     // 65% is still grey on a plan limit bar (limitTone warns from 70).
     expect(contextBar(650_000)).toContain("bg-warning");
     expect(contextBar(850_000)).toContain("bg-destructive");
   });
 
-  it("captions the prompt cache bar and gives each part its own colour", () => {
+  it("puts the ring's tone on the context percentage", () => {
+    const percent = (tokensUsed: number) => {
+      cleanup();
+      render(<AePlanLimitsPanel now={NOW} contextWindow={1_000_000} tokensUsed={tokensUsed} />);
+      return screen.getByTestId("ae-context-value").lastElementChild?.className ?? "";
+    };
+    expect(percent(500_000)).toBe("");
+    expect(percent(650_000)).toContain("text-amber-700");
+    expect(percent(850_000)).toContain("text-destructive");
+  });
+
+  it("joins the prompt cache parts into the context bar, by share of the live figure", () => {
     render(
-      <AePlanLimitsPanel data={FULL} now={NOW} conversationId="conv_a" harness="claude-native" />,
+      <AePlanLimitsPanel
+        data={FULL}
+        now={NOW}
+        conversationId="conv_a"
+        harness="claude-native"
+        contextWindow={1_000_000}
+        tokensUsed={250_000}
+      />,
     );
-    const breakdown = screen.getByTestId("ae-context-breakdown");
-    const caption = within(breakdown).getByTestId("ae-context-breakdown-caption");
-    expect(caption.textContent).toBe("How those tokens were billed (prompt cache)");
-    // The caption sits above the thin bar, so it is read before the bar.
-    expect(breakdown.firstElementChild).toBe(caption);
-    const dots = Array.from(breakdown.querySelectorAll("span.rounded-full"));
+    const bar = within(screen.getByTestId("ae-limits-context")).getByRole("progressbar");
+    // The fill is the live figure, not the status line's older 216.8k.
+    expect(within(bar).getByTestId("ae-meter-fill").style.width).toBe("25%");
+    const segments = Array.from(bar.querySelectorAll<HTMLElement>("[data-segment]"));
+    expect(segments.map((s) => s.className.match(/bg-\S+/)?.[0])).toEqual([
+      "bg-chart-1",
+      "bg-chart-3",
+      "bg-chart-5",
+    ]);
+    // Each part's share of the breakdown (210k, 1.8k and 5k of 216.8k), never its count.
+    const shares = segments.map((s) => Number(s.style.flexGrow));
+    expect(shares[0]).toBeCloseTo(210_000 / 216_800, 5);
+    expect(shares[1]).toBeCloseTo(1_800 / 216_800, 5);
+    expect(shares[2]).toBeCloseTo(5_000 / 216_800, 5);
+    // The legend is the key: the same colours, never the "nearly full" ones.
+    const legend = screen.getByTestId("ae-context-breakdown");
+    const dots = Array.from(legend.querySelectorAll("span.rounded-full"));
     expect(dots.map((dot) => dot.className.match(/bg-\S+/)?.[0])).toEqual([
       "bg-chart-1",
       "bg-chart-3",
       "bg-chart-5",
     ]);
-    // Never the colours the bars use for "nearly full".
-    expect(breakdown.innerHTML).not.toMatch(/bg-(warning|destructive)/);
+    expect(legend.getAttribute("title")).toContain("How those tokens were billed (prompt cache)");
+    expect(legend.innerHTML).not.toMatch(/bg-(warning|destructive)/);
+  });
+
+  it("draws a nearly full context as one toned fill, as the ring does", () => {
+    render(
+      <AePlanLimitsPanel
+        data={FULL}
+        now={NOW}
+        conversationId="conv_a"
+        harness="claude-native"
+        contextWindow={1_000_000}
+        tokensUsed={850_000}
+      />,
+    );
+    const bar = within(screen.getByTestId("ae-limits-context")).getByRole("progressbar");
+    const segments = Array.from(bar.querySelectorAll<HTMLElement>("[data-segment]"));
+    expect(segments).toHaveLength(1);
+    expect(segments[0].className).toContain("bg-destructive");
+    // The legend still names the parts.
+    expect(screen.getByTestId("ae-context-breakdown").textContent).toContain("210k cached");
   });
 
   it("shows another session's breakdown only for that session", () => {
@@ -260,8 +376,8 @@ describe("AePlanLimitsPanel", () => {
     render(
       <AePlanLimitsPanel data={FULL} now={NOW} conversationId="conv_a" harness="claude-native" />,
     );
-    expect(screen.getByText("216.8k / 1M · 22%")).toBeTruthy();
-    expect(screen.getByText("From Claude Code's status line, 2m ago")).toBeTruthy();
+    expect(screen.getByTestId("ae-context-value").textContent).toBe("216.8k / 1M (22%)");
+    expect(screen.getByText("from Claude Code's status line, 2m ago")).toBeTruthy();
   });
 
   it("shows the hint when the login lacks the profile scope, and credits turned off", () => {
@@ -442,13 +558,25 @@ describe("AePlanLimitsPanel session contexts", () => {
         sessions={sessions}
       />,
     );
-    // Live store figures win over the snapshot for the active row.
-    expect(contextLabels()).toEqual([
-      "This session context (Codex): 30% used",
+    // Live store figures win over the snapshot for the active row; the
+    // collaborators wait behind the breakdown toggle.
+    expect(contextLabels()).toEqual(["This session context (Codex): 30% used"]);
+    const toggle = screen.getByTestId("ae-limits-details-toggle");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.textContent).toBe("See detailed breakdown");
+    expect(screen.queryByRole("progressbar", { name: /Review the diff/ })).toBeNull();
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle.textContent).toBe("Hide detailed breakdown");
+    const collaborators = screen.getByTestId("ae-context-collaborators");
+    expect(
+      within(collaborators)
+        .getAllByRole("progressbar")
+        .map((bar) => bar.getAttribute("aria-label")),
+    ).toEqual([
       "Review the diff context (Claude Code): 22% used",
       "Write tests context (Pi): 10% used",
     ]);
-    const collaborators = screen.getByTestId("ae-context-collaborators");
     const missing = within(collaborators).getAllByTestId("ae-context-unavailable");
     expect(missing.map((row) => row.getAttribute("data-session"))).toEqual([
       "conv_quiet",
@@ -471,7 +599,7 @@ describe("AePlanLimitsPanel session contexts", () => {
     );
     expect(screen.getByText(/status line, 3h 2m ago \(may be out of date\)$/)).toBeTruthy();
     const bar = within(screen.getByTestId("ae-limits-context")).getByRole("progressbar");
-    expect((bar.firstChild as HTMLElement).className).toContain("bg-foreground/25");
+    expect(bar.querySelector("[data-segment]")?.className).toContain("bg-foreground/25");
   });
 
   it("says unavailable before the session exists rather than showing zero", () => {
@@ -570,42 +698,42 @@ describe("AePlanLimitsPopover", () => {
     fireEvent.click(ring);
     await waitFor(() => expect(screen.getAllByRole("progressbar")).toHaveLength(2));
     expect(authenticatedFetch).toHaveBeenCalledWith("/v1/ae/limits", { method: "GET" });
-    expect(screen.getByText("Usage")).toBeTruthy();
+    expect(screen.getByTestId("ae-plan-limits")).toBeTruthy();
   });
 
   it("closes on a second click on the ring and on Escape", async () => {
     renderRing();
     const ring = screen.getByTestId("composer-context-ring");
     fireEvent.click(ring);
-    await waitFor(() => expect(screen.getByText("Usage")).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId("ae-plan-limits")).toBeTruthy());
     fireEvent.pointerDown(ring);
     fireEvent.click(ring);
-    await waitFor(() => expect(screen.queryByText("Usage")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("ae-plan-limits")).toBeNull());
     fireEvent.click(ring);
-    await waitFor(() => expect(screen.getByText("Usage")).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId("ae-plan-limits")).toBeTruthy());
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByText("Usage")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("ae-plan-limits")).toBeNull());
   });
 
   it("closes on a press outside, like upstream's other popovers", async () => {
     renderRing();
     fireEvent.click(screen.getByTestId("composer-context-ring"));
-    await waitFor(() => expect(screen.getByText("Usage")).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId("ae-plan-limits")).toBeTruthy());
     // Radix arms its outside-press listener a tick after the content mounts.
     await new Promise((resolve) => {
       setTimeout(resolve, 0);
     });
     fireEvent.pointerDown(document.body);
     fireEvent.click(document.body); // a full press: Radix defers the dismiss to the click
-    await waitFor(() => expect(screen.queryByText("Usage")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("ae-plan-limits")).toBeNull());
   });
 
   it("closes when the window loses focus (a click in another split pane)", async () => {
     renderRing();
     fireEvent.click(screen.getByTestId("composer-context-ring"));
-    await waitFor(() => expect(screen.getByText("Usage")).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId("ae-plan-limits")).toBeTruthy());
     fireEvent.blur(window);
-    await waitFor(() => expect(screen.queryByText("Usage")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("ae-plan-limits")).toBeNull());
   });
 
   it("shows this session's context from the chat store", async () => {
@@ -619,7 +747,8 @@ describe("AePlanLimitsPopover", () => {
     renderRing();
     fireEvent.click(screen.getByTestId("composer-context-ring"));
     await waitFor(() => expect(screen.getByTestId("ae-context-breakdown")).toBeTruthy());
-    expect(screen.getByText("12k / 100k · 12%")).toBeTruthy();
+    expect(screen.getByTestId("ae-context-value").textContent).toBe("12k / 100k (12%)");
+    expect(screen.getByRole("dialog", { name: "Usage" })).toBeTruthy();
   });
 
   it("lists collaborators' own windows only while open", async () => {
@@ -665,10 +794,13 @@ describe("AePlanLimitsPopover", () => {
       within(context)
         .getAllByRole("progressbar")
         .map((bar) => bar.getAttribute("aria-label")),
-    ).toEqual([
-      "This session context (Codex): 25% used",
-      "Review the diff context (Claude Code): 5% used",
-    ]);
+    ).toEqual(["This session context (Codex): 25% used"]);
+    fireEvent.click(screen.getByTestId("ae-limits-details-toggle"));
+    expect(
+      within(screen.getByTestId("ae-context-collaborators"))
+        .getAllByRole("progressbar")
+        .map((bar) => bar.getAttribute("aria-label")),
+    ).toEqual(["Review the diff context (Claude Code): 5% used"]);
     expect(
       screen
         .getByTestId("ae-limits-in-use")
@@ -677,7 +809,7 @@ describe("AePlanLimitsPopover", () => {
     ).toBe("codex");
     // Closing stops the polling: no request lands after the popover is gone.
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByText("Usage")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("ae-plan-limits")).toBeNull());
     const calls = vi.mocked(authenticatedFetch).mock.calls.length;
     await new Promise((resolve) => {
       setTimeout(resolve, 20);
@@ -688,7 +820,7 @@ describe("AePlanLimitsPopover", () => {
   it("ignores clicks anywhere else", () => {
     renderRing();
     fireEvent.click(screen.getByTestId("bar"));
-    expect(screen.queryByText("Usage")).toBeNull();
+    expect(screen.queryByTestId("ae-plan-limits")).toBeNull();
     expect(authenticatedFetch).not.toHaveBeenCalled();
   });
 });
