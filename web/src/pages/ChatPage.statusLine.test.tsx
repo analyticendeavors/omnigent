@@ -90,6 +90,9 @@ vi.mock("@/hooks/useSession", async (importOriginal) => ({
   ...(await importOriginal<typeof UseSessionModule>()),
   useSession: (id: string | null | undefined) => useSessionMock(id),
 }));
+// 2026-10-14: that session mounts AeTeamControl, which needs a query client and
+// the sidebar's data; stub it like the other provider-backed pieces.
+vi.mock("@/components/AeTeamControl", () => ({ AeTeamControl: () => null }));
 vi.mock("@/hooks/useHosts", async (importOriginal) => ({
   ...(await importOriginal<typeof UseHostsModule>()),
   useHosts: (opts: unknown) => useHostsMock(opts),
