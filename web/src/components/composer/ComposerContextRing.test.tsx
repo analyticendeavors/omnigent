@@ -39,10 +39,8 @@ describe("ComposerContextRing", () => {
     await user.tab();
     expect(screen.getByTestId("composer-context-ring")).toHaveFocus();
     expect(await screen.findByText("12% context used")).toBeInTheDocument();
-    expect(screen.getByText("123 / 1K tokens")).toHaveClass(
-      "text-neutral-400",
-      "dark:text-muted-foreground",
-    );
+    // Tooltips take the popover surface in both themes since 2026-10-14.
+    expect(screen.getByText("123 / 1K tokens")).toHaveClass("text-muted-foreground");
   });
 
   it("fits the SVG to the painted ring so its padding does not widen the label gap", () => {

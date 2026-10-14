@@ -70,7 +70,7 @@ export function ComposerContextRing({
       </TooltipTrigger>
       <TooltipContent side="top" className="flex-col items-start gap-0 px-3 py-2 text-left text-sm">
         <p className="tabular-nums text-ui leading-tight">{usedPct}% context used</p>
-        <p className="tabular-nums text-neutral-400 leading-tight dark:text-muted-foreground">
+        <p className="tabular-nums text-muted-foreground leading-tight">
           {formatTokenCount(tokensUsed)} / {formatTokenCount(contextWindow)} tokens
         </p>
       </TooltipContent>
