@@ -5,7 +5,11 @@ comments, policies, tokens and hosts. A deployment that has been in use also
 carries the user id on its agents, projects, schedules, device grants,
 conversation items, preferences, connections, daily costs and the turn-actor
 label; without these the renamed user loses their projects, schedules and
-history attribution. This module rewrites them inside the same transaction.
+history attribution. This module rewrites them inside the same transaction,
+so it assumes conversations live in the operational database (no separate
+``conversation_storage_location``).
+Connection secrets are encrypted under the owner's id, so a moved connection
+is re-encrypted under the new one.
 """
 
 from __future__ import annotations
@@ -29,6 +33,9 @@ from omnigent.db.db_models import (
     SqlUserDailyCost,
     current_workspace_id,
 )
+from omnigent.stores.credential_store import build_secret_cipher
+from omnigent.stores.credential_store.secret_cipher import SecretCipher
+from omnigent.stores.credential_store.sqlalchemy_store import _enc_context
 
 # Mirrors ``_TURN_ACTOR_LABEL`` in ``omnigent.server.routes._sessions.common``;
 # importing the routes package from here would pull the whole server in.
@@ -55,7 +62,10 @@ def remap_extra_columns(
     Runs inside the caller's transaction. Rows keyed by user id (preferences,
     connections, daily costs) can collide only when ``new_id`` already existed
     (a ``force`` merge): the new user's preference and connection win, and
-    daily costs are summed.
+    daily costs are summed (the approved checkpoint keeps the higher value). A
+    moved connection whose secret the deployment's cipher cannot read (no
+    cipher, wrong key) moves as is and is counted under
+    ``connections_reconnect``: it was unreadable before the move too.
 
     :param session: The open session of the remap transaction.
     :param old_id: The identity being retired, e.g. ``"alice"``.
@@ -90,6 +100,14 @@ def remap_extra_columns(
     )
     bump(SqlConversationLabel.__tablename__, result.rowcount or 0)
 
+    cipher: SecretCipher | None = None
+    if session.execute(
+        select(SqlConnection.user_id).where(
+            SqlConnection.workspace_id == ws, SqlConnection.user_id == old_id
+        )
+    ).first():
+        cipher = build_secret_cipher()
+
     for model in (SqlPreference, SqlConnection):
         rows = (
             session.execute(select(model).where(model.workspace_id == ws, model.user_id == old_id))
@@ -101,6 +119,8 @@ def remap_extra_columns(
             if clash is not None:
                 session.delete(row)
             else:
+                if model is SqlConnection and not _reencrypt(cipher, row, new_id):
+                    bump("connections_reconnect", 1)
                 row.user_id = new_id
             bump(model.__tablename__, 1)
         session.flush()
@@ -118,7 +138,8 @@ def remap_extra_columns(
         clash = session.get(SqlUserDailyCost, _key_for(SqlUserDailyCost, row, new_id))
         if clash is not None:
             clash.cost_usd += row.cost_usd
-            clash.ask_approved_usd += row.ask_approved_usd
+            # The approved soft-cap checkpoint, not a running total.
+            clash.ask_approved_usd = max(clash.ask_approved_usd, row.ask_approved_usd)
             clash.updated_at = max(clash.updated_at or 0, row.updated_at or 0)
             session.delete(row)
         else:
@@ -133,3 +154,16 @@ def _key_for(model: Any, row: Any, user_id: str) -> tuple[Any, ...]:
         user_id if col.key == "user_id" else getattr(row, col.key)
         for col in inspect(model).primary_key
     )
+
+
+def _reencrypt(cipher: SecretCipher | None, row: SqlConnection, new_id: str) -> bool:
+    """Re-encrypt *row*'s secret under *new_id*; ``False`` if it cannot be read."""
+    if cipher is None:
+        return False
+    old_ctx = _enc_context(row.workspace_id, row.user_id, row.provider, row.account_id)
+    plaintext = cipher.decrypt(row.secret_enc, context=old_ctx)
+    if plaintext is None:
+        return False
+    new_ctx = _enc_context(row.workspace_id, new_id, row.provider, row.account_id)
+    row.secret_enc = cipher.encrypt(plaintext, context=new_ctx)
+    return True
