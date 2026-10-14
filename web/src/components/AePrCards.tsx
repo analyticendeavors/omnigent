@@ -33,20 +33,44 @@
 // 2026-09-28, Reid: the confirm step says which method to use. The server
 // recommends one (a merge commit when the head is a long-lived branch such as
 // dev or release/x, else squash; `recommend_merge_method` in omnigent-ae's
-// ae_omni_policies.prs); the toggle opens on it, its segment carries a small
-// "Recommended" tag and the reason as its title, and the reason is one muted
-// line under the question. The other method stays one tap away.
+// ae_omni_policies.prs); the toggle opens on it, its segment carries the
+// reason as its title, and the reason is one muted line in the confirm step.
+// The other method stays one tap away.
+//
+// 2026-10-14, Reid: a calmer card. The header leads with the pull request's
+// state (open green, merged purple, as GitHub draws them), gives the title two
+// lines and puts the repo and number beside it. A card whose Merge is live
+// shows one Ready line; otherwise the chips are quiet (an icon and a word, a
+// red tint only for a problem), since outlined chips read as buttons. The
+// confirm step is a section of the card, not a box inside it: "Recommended"
+// leads the reason line instead of tagging the toggle, and the button names
+// the method and the base ("Squash into main"), the question line's job.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLinkIcon, GitMergeIcon, Loader2Icon } from "lucide-react";
 import { useId, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
+  AE_ICON_ALERT_CIRCLE,
+  AE_ICON_CHECK,
+  AE_ICON_CIRCLE_CHECK,
+  AE_ICON_CIRCLE_DASHED,
+  AE_ICON_CIRCLE_X,
+  AE_ICON_CLOCK,
+  AE_ICON_EXTERNAL_LINK,
+  AE_ICON_LOADER,
+  AE_ICON_MERGE,
+  AE_ICON_PR_CLOSED,
+  AE_ICON_PR_DRAFT,
+  AE_ICON_PR_OPEN,
+} from "@/lib/aePrIcons";
+import {
   AE_MERGEABLE_TEXT,
-  AE_METHOD_TEXT,
   AE_PR_NOT_CONFIGURED,
   AE_REVIEW_TEXT,
   aeCiText,
+  aeMergeLabel,
+  aeReadyDetail,
+  aeReadyToMerge,
   type AeMergeMethod,
   type AeMergeResult,
   type AePrCard,
@@ -64,26 +88,37 @@ import { patchAeStatus } from "@/shell/AeStatusMenu";
 /** How often an open card re-reads (the server caches GitHub for a minute). */
 export const AE_PR_POLL_MS = 30_000;
 
-type Tone = "ok" | "warn" | "err" | "muted";
+/** Each tone has its own icon shape, so color is never the only signal. */
+type Tone = "ok" | "wait" | "warn" | "muted" | "err";
 
-const TONE_CLASS: Record<Tone, string> = {
-  ok: "border-emerald-600/50 text-emerald-700 dark:text-emerald-400",
-  warn: "border-amber-600/50 text-amber-700 dark:text-amber-400",
-  err: "border-destructive/50 text-destructive",
-  muted: "border-border text-muted-foreground",
+const TONE_ICON: Record<Tone, AeTablerIconNode> = {
+  ok: AE_ICON_CIRCLE_CHECK,
+  wait: AE_ICON_CLOCK,
+  warn: AE_ICON_ALERT_CIRCLE,
+  muted: AE_ICON_CIRCLE_DASHED,
+  err: AE_ICON_CIRCLE_X,
+};
+
+const TONE_ICON_CLASS: Record<Tone, string> = {
+  ok: "text-emerald-600 dark:text-emerald-400",
+  wait: "text-amber-600 dark:text-amber-400",
+  warn: "text-amber-600 dark:text-amber-400",
+  muted: "text-muted-foreground",
+  err: "text-destructive",
 };
 
 function ciTone(state: AePrCard["ci"]["state"]): Tone {
   if (state === "passing") return "ok";
   if (state === "failing") return "err";
-  if (state === "pending") return "warn";
+  if (state === "pending") return "wait";
   return "muted";
 }
 
 function mergeableTone(state: AePrCard["mergeable"]["state"]): Tone {
   if (state === "clean" || state === "merged") return "ok";
   if (state === "conflicted") return "err";
-  if (state === "draft" || state === "checking" || state === "closed") return "muted";
+  if (state === "checking") return "wait";
+  if (state === "draft" || state === "closed") return "muted";
   return "warn";
 }
 
@@ -94,17 +129,48 @@ function reviewTone(state: AePrCard["review"]["state"]): Tone {
   return "muted";
 }
 
-function Chip({ tone, children }: { tone: Tone; children: string }) {
+/** A quiet status item, an icon and a word; only a problem gets color and a tint. */
+function Chip({ tone, title, children }: { tone: Tone; title?: string; children: string }) {
   return (
     <span
+      title={title}
+      data-tone={tone}
       className={cn(
-        "rounded-full border px-2 text-xs leading-5 font-medium whitespace-nowrap",
-        TONE_CLASS[tone],
+        "inline-flex items-center gap-1 text-sm whitespace-nowrap",
+        tone === "err"
+          ? "rounded-full bg-destructive/10 px-2 font-medium text-destructive"
+          : "text-muted-foreground",
       )}
     >
+      <AeTablerSvg
+        node={TONE_ICON[tone]}
+        className={cn("size-3.5 shrink-0", TONE_ICON_CLASS[tone])}
+      />
       {children}
     </span>
   );
+}
+
+/** GitHub's merged purple, the one upstream's GitHub panel gives its Merged badge. */
+const MERGED_TEXT = "text-purple-700 dark:text-purple-400";
+
+type PrState = "open" | "draft" | "merged" | "closed";
+
+const STATE_ICON: Record<PrState, { node: AeTablerIconNode; tone: string; label: string }> = {
+  open: {
+    node: AE_ICON_PR_OPEN,
+    tone: "text-emerald-600 dark:text-emerald-400",
+    label: "Open pull request",
+  },
+  draft: { node: AE_ICON_PR_DRAFT, tone: "text-muted-foreground", label: "Draft pull request" },
+  merged: { node: AE_ICON_MERGE, tone: MERGED_TEXT, label: "Merged pull request" },
+  closed: { node: AE_ICON_PR_CLOSED, tone: "text-destructive", label: "Closed pull request" },
+};
+
+function prState(card: AePrCard | undefined, mergedHere: boolean): PrState {
+  if (mergedHere || card?.state === "merged") return "merged";
+  if (card?.state === "closed") return "closed";
+  return card?.draft ? "draft" : "open";
 }
 
 /** 32 px with a mouse, 40 px on a touch screen (the Dashboard's .btn, 2026-09-27). */
@@ -116,14 +182,42 @@ const TOUCH = "h-8 pointer-coarse:h-10";
  */
 const ROW_PART = "flex min-w-0 flex-auto flex-wrap items-center gap-x-2 gap-y-1";
 
-/** The method toggle's short labels; the question line keeps the full text. */
+/** The method toggle's short labels; the confirm button names the method in full. */
 const METHOD_SHORT: Record<AeMergeMethod, string> = { squash: "Squash", merge: "Merge commit" };
 
 /** What the offer after a merge does, for its tooltip and the hint beside it. */
 const DONE_TITLE = "Set this session's status to Review (done), which frees one of your slots";
 
-/** Tabler's `check` outline icon, inlined so the confirm step loads no icon set. */
-const CHECK: AeTablerIconNode = [["path", { d: "M5 12l5 5l10 -10" }]];
+/** The all-clear status: one line in place of three green chips. */
+function ReadyLine({ card }: { card: AePrCard }) {
+  return (
+    <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-sm" data-testid="ae-pr-ready">
+      <AeTablerSvg
+        node={AE_ICON_CIRCLE_CHECK}
+        className={cn("size-3.5 shrink-0", TONE_ICON_CLASS.ok)}
+      />
+      <span className="font-medium text-foreground">Ready to merge</span>
+      {aeReadyDetail(card).map((part) => (
+        <span key={part} className="text-muted-foreground">
+          <span aria-hidden="true">· </span>
+          {part}
+        </span>
+      ))}
+    </p>
+  );
+}
+
+function Chips({ card }: { card: AePrCard }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1" data-testid="ae-pr-chips">
+      <Chip tone={ciTone(card.ci.state)}>{aeCiText(card.ci)}</Chip>
+      <Chip tone={mergeableTone(card.mergeable.state)} title={card.mergeable.detail}>
+        {AE_MERGEABLE_TEXT[card.mergeable.state]}
+      </Chip>
+      <Chip tone={reviewTone(card.review.state)}>{AE_REVIEW_TEXT[card.review.state]}</Chip>
+    </div>
+  );
+}
 
 function MergedNote({
   result,
@@ -145,9 +239,15 @@ function MergedNote({
   // GitHub's own message ("Pull Request successfully merged") only repeats
   // this line, so it is not shown (2026-09-27).
   return (
-    <div role="status" className={cn(ROW_PART, "text-ui")}>
-      <span className="text-emerald-700 dark:text-emerald-400" data-testid="ae-pr-merged">
-        Merged ({how}){result.sha ? ` ${result.sha.slice(0, 7)}` : ""}
+    <div role="status" className={cn(ROW_PART, "text-sm")}>
+      <span className={cn("font-medium", MERGED_TEXT)} data-testid="ae-pr-merged">
+        Merged ({how})
+        {result.sha && (
+          <>
+            {" "}
+            <span className="font-mono">{result.sha.slice(0, 7)}</span>
+          </>
+        )}
       </span>
       {offer.kind === "open" && (
         <span className="text-muted-foreground" data-testid="ae-pr-more-open">
@@ -174,7 +274,7 @@ function MergedNote({
               >
                 Mark session done
               </Button>
-              <span id={hintId} className="text-xs text-muted-foreground">
+              <span id={hintId} className="text-sm text-muted-foreground">
                 frees a slot
               </span>
             </span>
@@ -221,26 +321,32 @@ function ConfirmMerge({
       }
     },
   });
+  const label = aeMergeLabel(method, card.base_ref);
+  const choice = methods.length > 1 && Boolean(recommended && methods.includes(recommended));
   return (
     <div
       role="group"
       aria-label="Confirm merge"
-      className="flex flex-col gap-2 rounded-md border border-primary/40 p-2"
+      className="flex flex-col gap-2 border-t border-border pt-2"
     >
-      <p className="text-ui font-medium wrap-anywhere">
-        {AE_METHOD_TEXT[method]} #{card.number} into{" "}
-        <span className="font-mono">{card.base_ref ?? "the base branch"}</span>?
-      </p>
       {why && (
         <p
-          className="-mt-1 text-xs text-muted-foreground wrap-anywhere"
+          className="text-sm text-muted-foreground wrap-anywhere"
           data-testid="ae-pr-recommended-why"
         >
+          {/* With one method there is nothing to recommend, only the reason. */}
+          {choice && (
+            <>
+              <span className="font-medium text-foreground">Recommended</span>
+              {" · "}
+            </>
+          )}
           {why}
         </p>
       )}
-      {/* One row: toggle, Confirm, Cancel. Under 30rem the toggle takes its own
-          row and the two buttons share the next (2026-09-26). */}
+      {/* One row: the toggle on the left, Cancel and the confirm button at the
+          right end. Under 30rem the toggle takes its own row and the two
+          buttons share the next (2026-09-26). */}
       <div className="flex flex-wrap items-center gap-2" data-testid="ae-pr-confirm-row">
         {methods.length > 1 && (
           // A segmented control, not buttons: one track, the chosen method filled
@@ -270,45 +376,42 @@ function ConfirmMerge({
                 >
                   {/* Unticked: gone on a phone, a blank on wider cards (steady width). */}
                   <AeTablerSvg
-                    node={CHECK}
+                    node={AE_ICON_CHECK}
                     className={cn(
                       "size-3.5 shrink-0",
                       !checked && "hidden @[30rem]/aepr:invisible @[30rem]/aepr:block",
                     )}
                   />
                   <span className="truncate">{METHOD_SHORT[option]}</span>
-                  {option === recommended && (
-                    <span
-                      className="shrink-0 rounded-full border border-border px-1.5 text-xs leading-4 font-medium text-muted-foreground"
-                      data-testid="ae-pr-recommended-tag"
-                    >
-                      Recommended
-                    </span>
-                  )}
                 </button>
               );
             })}
           </div>
         )}
-        <Button
-          className={cn(TOUCH, "flex-1 @[30rem]/aepr:flex-none")}
-          disabled={merge.isPending}
-          onClick={() => merge.mutate()}
-        >
-          {merge.isPending && <Loader2Icon className="size-3.5 animate-spin" aria-hidden />}
-          Confirm merge
-        </Button>
-        <Button
-          variant="outline"
-          className={cn(TOUCH, "flex-1 @[30rem]/aepr:flex-none")}
-          disabled={merge.isPending}
-          onClick={onCancel}
-        >
-          Cancel
-        </Button>
+        <div className="flex min-w-0 flex-1 justify-end gap-2">
+          <Button
+            variant="outline"
+            className={cn(TOUCH, "flex-1 @[30rem]/aepr:flex-none")}
+            disabled={merge.isPending}
+            onClick={onCancel}
+          >
+            Cancel
+          </Button>
+          <Button
+            className={cn(TOUCH, "min-w-0 flex-1 @[30rem]/aepr:flex-none")}
+            disabled={merge.isPending}
+            title={label}
+            onClick={() => merge.mutate()}
+          >
+            {merge.isPending && (
+              <AeTablerSvg node={AE_ICON_LOADER} className="size-3.5 animate-spin" />
+            )}
+            <span className="truncate">{label}</span>
+          </Button>
+        </div>
       </div>
       {merge.isError && (
-        <p role="alert" className="text-ui text-destructive">
+        <p role="alert" className="text-sm text-destructive">
           Not merged: {merge.error.message}
         </p>
       )}
@@ -358,102 +461,143 @@ export function AePrCardView({
     ) : null;
   }
   const card = query.data;
+  const shown = prState(card, result !== null);
+  const state = STATE_ICON[shown];
+  // The panel's card names its branches too, on the repo's line: a line of
+  // their own made a narrow panel card five rows tall.
+  const branch =
+    !inline && card?.head_ref
+      ? `${card.head_ref}${card.base_ref ? ` → ${card.base_ref}` : ""}`
+      : null;
   return (
     <article
       data-testid={inline ? "ae-pr-inline" : "ae-pr-card"}
       data-pr={url}
       className={cn(
-        "@container/aepr flex flex-col gap-1 rounded-lg border border-border bg-background px-2 py-1.5",
+        "@container/aepr flex flex-col gap-1.5 rounded-lg border border-border bg-background px-3 py-2",
         // A set width, not max-w only: the container ignores its content, so
         // the chat's w-fit bubble would shrink the card to the message text.
         inline && "mt-2 w-xl max-w-full",
       )}
     >
-      <div className="flex min-w-0 items-center gap-2">
-        <a
-          href={url}
-          target="_blank"
-          rel="noreferrer"
-          className="flex min-w-0 flex-1 items-center gap-1 text-ui font-medium hover:underline"
+      {/* One link for the whole header: the state, the title on up to two
+          lines, then the repo and number, beside the title on a wide inline
+          card and under it otherwise. */}
+      <a
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        className={cn(
+          "group grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-x-2 text-ui",
+          inline && "@[30rem]/aepr:grid-cols-[auto_minmax(0,1fr)_auto]",
+        )}
+      >
+        <span
+          className="flex h-[1lh] items-center"
+          title={state.label}
+          data-testid="ae-pr-state"
+          data-pr-state={shown}
         >
-          <span className="line-clamp-2 wrap-anywhere md:truncate">{card?.title ?? url}</span>
-          <span className="shrink-0 text-muted-foreground">#{number}</span>
-          <ExternalLinkIcon className="size-3 shrink-0 text-muted-foreground" aria-hidden />
-        </a>
-      </div>
-      {card?.head_ref && !inline && (
-        <span className="truncate font-mono text-xs text-muted-foreground">
-          {repo} · {card.head_ref}
-          {card.base_ref ? ` → ${card.base_ref}` : ""}
+          <AeTablerSvg node={state.node} className={cn("size-4 shrink-0", state.tone)} />
+          <span className="sr-only">{state.label}</span>
         </span>
-      )}
-      {query.isPending && (
-        <span className="flex items-center gap-1 text-ui text-muted-foreground">
-          <Loader2Icon className="size-3.5 animate-spin" aria-hidden /> Reading GitHub…
+        <span className="line-clamp-2 font-medium wrap-anywhere group-hover:underline">
+          {card?.title ?? url}
         </span>
-      )}
-      {query.isError && !card && (
-        <p role="alert" className="text-ui text-destructive">
-          {query.error.message}
-        </p>
-      )}
-      {card && (
-        <>
-          <div
-            className="flex flex-wrap items-center gap-x-3 gap-y-1"
-            data-testid="ae-pr-status-row"
-          >
-            <div className="flex flex-wrap gap-1.5" data-testid="ae-pr-chips">
-              <Chip tone={ciTone(card.ci.state)}>{aeCiText(card.ci)}</Chip>
-              <Chip tone={mergeableTone(card.mergeable.state)}>
-                {AE_MERGEABLE_TEXT[card.mergeable.state]}
-              </Chip>
-              <Chip tone={reviewTone(card.review.state)}>{AE_REVIEW_TEXT[card.review.state]}</Chip>
-            </div>
-            {result ? (
-              <MergedNote result={result} sessionId={sessionId} tracked={tracked} />
-            ) : (
-              !confirming &&
-              ((!card.merge.allowed && card.merge.reason) || card.state === "open") && (
-                <div className={ROW_PART}>
-                  {!card.merge.allowed && card.merge.reason && (
-                    <p
-                      className="text-ui text-amber-700 dark:text-amber-400"
-                      data-testid="ae-pr-why"
-                    >
-                      {card.merge.reason}
-                    </p>
-                  )}
-                  {card.state === "open" && (
-                    <Button
-                      className={cn(TOUCH, "ml-auto")}
-                      disabled={!card.merge.allowed}
-                      title={
-                        card.merge.allowed ? `Merge #${number}` : (card.merge.reason ?? undefined)
-                      }
-                      onClick={() => setConfirming(true)}
-                    >
-                      <GitMergeIcon className="size-3.5" aria-hidden />
-                      Merge
-                    </Button>
-                  )}
-                </div>
-              )
-            )}
-          </div>
-          {!result && confirming && (
-            <ConfirmMerge
-              card={card}
-              sessionId={sessionId}
-              onCancel={() => setConfirming(false)}
-              onMerged={(merged) => {
-                setResult(merged);
-                setConfirming(false);
-              }}
-            />
+        <span
+          className={cn(
+            "col-start-2 flex min-w-0 items-center",
+            inline &&
+              "@[30rem]/aepr:col-start-3 @[30rem]/aepr:row-start-1 @[30rem]/aepr:h-[1lh] @[30rem]/aepr:pl-2",
           )}
-        </>
-      )}
+          title={repo}
+          data-testid="ae-pr-meta"
+        >
+          <span className="flex min-w-0 items-center gap-1 text-sm whitespace-nowrap text-muted-foreground">
+            <span className="shrink-0">
+              {repo.split("/").pop()} #{number}
+            </span>
+            {branch && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="min-w-0 truncate font-mono">{branch}</span>
+              </>
+            )}
+            <AeTablerSvg node={AE_ICON_EXTERNAL_LINK} className="size-3 shrink-0" />
+          </span>
+        </span>
+      </a>
+      {/* Everything under the header lines up with the title, not the icon. */}
+      <div className="flex min-w-0 flex-col gap-1.5 pl-6">
+        {query.isPending && (
+          <span className="flex items-center gap-1 text-sm text-muted-foreground">
+            <AeTablerSvg node={AE_ICON_LOADER} className="size-3.5 animate-spin" /> Reading GitHub…
+          </span>
+        )}
+        {query.isError && !card && (
+          <p role="alert" className="text-sm text-destructive">
+            {query.error.message}
+          </p>
+        )}
+        {card && (
+          <>
+            <div
+              className="flex flex-wrap items-center gap-x-2 gap-y-1"
+              data-testid="ae-pr-status-row"
+            >
+              {result ? (
+                <MergedNote result={result} sessionId={sessionId} tracked={tracked} />
+              ) : card.state === "merged" ? (
+                <p className={cn("text-sm font-medium", MERGED_TEXT)} data-testid="ae-pr-merged">
+                  Merged
+                </p>
+              ) : card.state === "closed" ? (
+                <p className="text-sm text-muted-foreground" data-testid="ae-pr-closed">
+                  Closed without merging
+                </p>
+              ) : (
+                <>
+                  {aeReadyToMerge(card) ? <ReadyLine card={card} /> : <Chips card={card} />}
+                  {!confirming && (
+                    <div className={ROW_PART}>
+                      {!card.merge.allowed && card.merge.reason && (
+                        <p
+                          className="text-sm text-amber-700 dark:text-amber-400"
+                          data-testid="ae-pr-why"
+                        >
+                          {card.merge.reason}
+                        </p>
+                      )}
+                      <Button
+                        className={cn(TOUCH, "ml-auto")}
+                        disabled={!card.merge.allowed}
+                        title={
+                          card.merge.allowed ? `Merge #${number}` : (card.merge.reason ?? undefined)
+                        }
+                        onClick={() => setConfirming(true)}
+                      >
+                        <AeTablerSvg node={AE_ICON_MERGE} className="size-3.5" />
+                        Merge
+                      </Button>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+            {!result && confirming && (
+              <ConfirmMerge
+                card={card}
+                sessionId={sessionId}
+                onCancel={() => setConfirming(false)}
+                onMerged={(merged) => {
+                  setResult(merged);
+                  setConfirming(false);
+                }}
+              />
+            )}
+          </>
+        )}
+      </div>
     </article>
   );
 }

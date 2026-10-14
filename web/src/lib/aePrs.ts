@@ -136,46 +136,70 @@ export async function mergeAePr(
   return body as AeMergeResult;
 }
 
-/** "CI 6/6 passing", "CI 1 failing of 6", "CI 2 running of 6", "no checks". */
+/** "6/6 checks", "1 of 6 checks failing", "2 of 6 checks running", "No checks". */
 export function aeCiText(ci: AePrCard["ci"]): string {
   switch (ci.state) {
     case "passing":
-      return `CI ${ci.passing}/${ci.total} passing`;
+      return `${ci.passing}/${ci.total} checks`;
     case "failing":
-      return `CI ${ci.failing} failing of ${ci.total}`;
+      return `${ci.failing} of ${ci.total} checks failing`;
     case "pending":
-      return `CI ${ci.pending} running of ${ci.total}`;
+      return `${ci.pending} of ${ci.total} checks running`;
     case "none":
-      return "no checks";
+      return "No checks";
     default:
-      return "CI unknown";
+      return "Checks unknown";
   }
 }
 
 export const AE_MERGEABLE_TEXT: Record<AePrMergeableState, string> = {
-  clean: "no conflicts",
-  unstable: "mergeable",
-  conflicted: "conflicted",
-  blocked: "blocked",
-  behind: "behind base",
-  draft: "draft",
-  checking: "checking",
-  merged: "merged",
-  closed: "closed",
+  clean: "No conflicts",
+  unstable: "Mergeable",
+  conflicted: "Conflicts",
+  blocked: "Blocked",
+  behind: "Behind base",
+  draft: "Draft",
+  checking: "Checking conflicts",
+  merged: "Merged",
+  closed: "Closed",
 };
 
 export const AE_REVIEW_TEXT: Record<AePrReviewState, string> = {
-  approved: "approved",
-  changes_requested: "changes requested",
-  review_required: "review requested",
-  none: "no review",
-  unknown: "reviews unknown",
+  approved: "Approved",
+  changes_requested: "Changes requested",
+  review_required: "Review requested",
+  none: "No review",
+  unknown: "Reviews unknown",
 };
 
-export const AE_METHOD_TEXT: Record<AeMergeMethod, string> = {
-  squash: "Squash and merge",
-  merge: "Merge commit",
-};
+/**
+ * The confirm button: the method and the branch it lands on ("Squash into
+ * main"), since the card shows the base nowhere else (2026-10-14).
+ */
+export function aeMergeLabel(method: AeMergeMethod, base: string | null): string {
+  if (base) return `${method === "squash" ? "Squash" : "Merge"} into ${base}`;
+  return method === "squash" ? "Squash and merge" : "Create merge commit";
+}
+
+/**
+ * Whether the card is all clear: Merge is live, nothing conflicts and CI
+ * passed (or the repo has none). It then shows one Ready line, no chips.
+ */
+export function aeReadyToMerge(card: AePrCard): boolean {
+  return (
+    card.state === "open" &&
+    card.merge.allowed &&
+    card.mergeable.state === "clean" &&
+    (card.ci.state === "passing" || card.ci.state === "none")
+  );
+}
+
+/** What the Ready line adds after "Ready to merge": the checks, and a review worth naming. */
+export function aeReadyDetail(card: AePrCard): string[] {
+  const review = card.review.state;
+  const named = review === "approved" || review === "review_required";
+  return [aeCiText(card.ci), ...(named ? [AE_REVIEW_TEXT[review]] : [])];
+}
 
 const PULL_IN_TEXT =
   /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*(?![0-9])/g;

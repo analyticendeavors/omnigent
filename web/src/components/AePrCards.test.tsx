@@ -78,7 +78,9 @@ describe("AePrCards", () => {
     expect(authenticatedFetch).not.toHaveBeenCalled();
   });
 
-  it("shows title, branch, CI counts, mergeability and review on a card per PR", async () => {
+  // 2026-10-14: a card whose Merge is live says so in one line; the state
+  // leads the header and the repo and number sit beside the title.
+  it("shows the state, title, repo, branch and one Ready line when Merge is live", async () => {
     serve((path) =>
       path.endsWith("/5")
         ? json(card(5))
@@ -88,15 +90,32 @@ describe("AePrCards", () => {
     const cards = await screen.findAllByTestId("ae-pr-card");
     expect(cards).toHaveLength(2);
     await waitFor(() => expect(within(cards[0]).getByText("PR 5")).toBeTruthy());
-    expect(within(cards[0]).getByText(`${REPO} · claude/branch-5 → main`)).toBeTruthy();
-    const chips = within(cards[0]).getByTestId("ae-pr-chips");
-    expect([...chips.children].map((chip) => chip.textContent)).toEqual([
-      "CI 6/6 passing",
-      "no conflicts",
-      "approved",
+    const link = within(cards[0]).getByRole("link");
+    expect(link.getAttribute("href")).toBe(url(5));
+    // The panel's card names the branches on the repo's line, one row, not two.
+    const meta = within(cards[0]).getByTestId("ae-pr-meta");
+    expect(within(meta).getByText("omnigent-ae #5")).toBeTruthy();
+    expect(within(meta).getByText("claude/branch-5 → main")).toBeTruthy();
+    expect(meta.getAttribute("title")).toBe(REPO);
+    expect(link.contains(meta)).toBe(true);
+    const state = within(cards[0]).getByTestId("ae-pr-state");
+    expect(state.getAttribute("data-pr-state")).toBe("open");
+    expect(state.textContent).toBe("Open pull request");
+    const words = (line: HTMLElement) =>
+      [...line.children].filter((part) => part.tagName === "SPAN").map((part) => part.textContent);
+    expect(words(within(cards[0]).getByTestId("ae-pr-ready"))).toEqual([
+      "Ready to merge",
+      "· 6/6 checks",
+      "· Approved",
     ]);
-    expect(within(cards[0]).getByRole("link").getAttribute("href")).toBe(url(5));
-    await waitFor(() => expect(within(cards[1]).getByText("review requested")).toBeTruthy());
+    expect(within(cards[0]).queryByTestId("ae-pr-chips")).toBeNull();
+    await waitFor(() =>
+      expect(words(within(cards[1]).getByTestId("ae-pr-ready"))).toEqual([
+        "Ready to merge",
+        "· 6/6 checks",
+        "· Review requested",
+      ]),
+    );
     expect(authenticatedFetch).toHaveBeenCalledWith(`/v1/ae/prs/${REPO}/5`, { method: "GET" });
   });
 
@@ -105,6 +124,7 @@ describe("AePrCards", () => {
       json(
         card(7, {
           ci: { state: "failing", passing: 5, failing: 1, pending: 0, total: 6 },
+          mergeable: { state: "conflicted", detail: "Conflicts with the base branch." },
           merge: {
             methods: ["squash"],
             default_method: "squash",
@@ -118,6 +138,19 @@ describe("AePrCards", () => {
     const merge = await screen.findByRole("button", { name: "Merge" });
     expect((merge as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByTestId("ae-pr-why").textContent).toBe("CI is failing: 1 of 6 checks.");
+    expect(screen.queryByTestId("ae-pr-ready")).toBeNull();
+    const chips = [...screen.getByTestId("ae-pr-chips").children] as HTMLElement[];
+    expect(chips.map((chip) => chip.textContent)).toEqual([
+      "1 of 6 checks failing",
+      "Conflicts",
+      "Approved",
+    ]);
+    expect(chips.map((chip) => chip.dataset.tone)).toEqual(["err", "err", "ok"]);
+    // 2026-10-14: an outlined chip read as a button; only a problem is tinted.
+    expect(chips.some((chip) => chip.className.includes("border"))).toBe(false);
+    expect(chips[0].className).toContain("bg-destructive/10");
+    expect(chips[2].className).not.toContain("bg-destructive/10");
+    expect(chips[1].getAttribute("title")).toBe("Conflicts with the base branch.");
     // P26: the chips, the reason and the disabled Merge share one status row,
     // the button compact (32 px, 40 px on touch) at the row's end.
     const row = screen.getByTestId("ae-pr-status-row");
@@ -152,15 +185,21 @@ describe("AePrCards", () => {
     renderCards([{ url: url(8) }]);
     fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
     const group = screen.getByRole("group", { name: "Confirm merge" });
-    expect(group.textContent).toContain("Squash and merge #8 into main?");
+    // 2026-10-14: the button names the method and the base, the old question's job.
+    expect(within(group).getByRole("button", { name: "Squash into main" })).toBeTruthy();
     fireEvent.click(within(group).getByRole("radio", { name: "Merge commit" }));
-    expect(group.textContent).toContain("Merge commit #8 into main?");
-    fireEvent.click(within(group).getByRole("button", { name: "Confirm merge" }));
+    fireEvent.click(within(group).getByRole("button", { name: "Merge into main" }));
     const done = await screen.findByRole("status");
-    // P26: short and on the chips' row, without GitHub's echo.
-    expect(screen.getByTestId("ae-pr-merged").textContent).toBe("Merged (merge commit) m3rg3d0");
+    // P26: short and on the status row, without GitHub's echo; purple since 2026-10-14.
+    const merged = screen.getByTestId("ae-pr-merged");
+    expect(merged.textContent).toBe("Merged (merge commit) m3rg3d0");
+    expect(merged.className).toContain("text-purple-700");
     expect(done.textContent).not.toContain("successfully merged");
     expect(screen.getByTestId("ae-pr-status-row").contains(done)).toBe(true);
+    // The Ready line spoke for the open pull request; the merged one drops it.
+    expect(screen.queryByTestId("ae-pr-ready")).toBeNull();
+    expect(screen.queryByTestId("ae-pr-chips")).toBeNull();
+    expect(screen.getByTestId("ae-pr-state").getAttribute("data-pr-state")).toBe("merged");
     const merge = calls.find((call) => call.path.endsWith("/merge"))!;
     expect(merge.path).toBe(`/v1/ae/prs/${REPO}/8/merge`);
     expect(merge.init?.method).toBe("POST");
@@ -207,7 +246,7 @@ describe("AePrCards", () => {
     await waitFor(() => expect(screen.getAllByRole("button", { name: "Merge" })).toHaveLength(4));
     const first = screen.getAllByTestId("ae-pr-card")[0];
     fireEvent.click(within(first).getByRole("button", { name: "Merge" }));
-    fireEvent.click(within(first).getByRole("button", { name: "Confirm merge" }));
+    fireEvent.click(within(first).getByRole("button", { name: "Squash into main" }));
     expect((await within(first).findByRole("status")).textContent).toContain("Merged (squashed)");
     const more = await within(first).findByTestId("ae-pr-more-open");
     expect(more.textContent).toBe("3 more open pull requests in this session.");
@@ -222,7 +261,7 @@ describe("AePrCards", () => {
     renderCards([{ url: url(11) }, { url: url(12) }, { url: url(13) }]);
     const last = (await screen.findAllByTestId("ae-pr-card"))[2];
     fireEvent.click(await within(last).findByRole("button", { name: "Merge" }));
-    fireEvent.click(within(last).getByRole("button", { name: "Confirm merge" }));
+    fireEvent.click(within(last).getByRole("button", { name: "Squash into main" }));
     const offer = await within(last).findByTestId("ae-pr-set-review");
     // 2026-09-26: plain words, an outline button (it is optional), and the
     // hint on screen for a phone, where the tooltip never shows.
@@ -240,7 +279,7 @@ describe("AePrCards", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
     const group = screen.getByRole("radiogroup", { name: "Merge method" });
     const radios = within(group).getAllByRole("radio");
-    // Short labels on the toggle (2026-09-26); the question line keeps the full text.
+    // Short labels on the toggle (2026-09-26); the confirm button names the method.
     expect(radios.map((radio) => radio.textContent)).toEqual(["Squash", "Merge commit"]);
     const checked = () =>
       within(group)
@@ -271,23 +310,21 @@ describe("AePrCards", () => {
         },
       });
 
-    it("opens on it, tags its segment and says why under the question", async () => {
+    it("opens on it and leads the reason line with Recommended", async () => {
       serve(() => json(promotion(21)));
       renderCards([{ url: url(21) }]);
       fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
       const group = screen.getByRole("group", { name: "Confirm merge" });
-      expect(group.textContent).toContain("Merge commit #21 into main?");
       const methods = within(group).getByRole("radiogroup", { name: "Merge method" });
       const chosen = within(methods).getByRole("radio", { checked: true });
-      expect(chosen.textContent).toBe("Merge commitRecommended");
+      // 2026-10-14: no tag inside the segment; the reason stays its tooltip.
+      expect(chosen.textContent).toBe("Merge commit");
       expect(chosen.getAttribute("title")).toBe(PROMOTE);
-      const tags = within(group).getAllByTestId("ae-pr-recommended-tag");
-      expect(tags).toHaveLength(1);
-      expect(chosen.contains(tags[0])).toBe(true);
+      expect(within(group).getByRole("button", { name: "Merge into main" })).toBeTruthy();
       const why = within(group).getByTestId("ae-pr-recommended-why");
-      expect(why.textContent).toBe(PROMOTE);
+      expect(why.textContent).toBe(`Recommended · ${PROMOTE}`);
       expect(why.className).toContain("text-muted-foreground");
-      expect(why.previousElementSibling?.textContent).toBe("Merge commit #21 into main?");
+      expect(group.firstElementChild).toBe(why);
     });
 
     it("still merges with the other method when it is picked", async () => {
@@ -312,13 +349,14 @@ describe("AePrCards", () => {
       const group = screen.getByRole("group", { name: "Confirm merge" });
       fireEvent.click(within(group).getByRole("radio", { name: "Squash" }));
       expect(within(group).getByRole("radio", { checked: true }).textContent).toBe("Squash");
-      expect(group.textContent).toContain("Squash and merge #22 into main?");
-      // The tag and the reason stay on the recommendation.
-      expect(within(group).getByTestId("ae-pr-recommended-why").textContent).toBe(PROMOTE);
-      expect(
-        within(group).getByRole("radio", { name: /Merge commit/ }).textContent,
-      ).toContain("Recommended");
-      fireEvent.click(within(group).getByRole("button", { name: "Confirm merge" }));
+      // The reason stays on the recommendation; the button follows the pick.
+      expect(within(group).getByTestId("ae-pr-recommended-why").textContent).toBe(
+        `Recommended · ${PROMOTE}`,
+      );
+      expect(within(group).getByRole("radio", { name: "Merge commit" }).getAttribute("title")).toBe(
+        PROMOTE,
+      );
+      fireEvent.click(within(group).getByRole("button", { name: "Squash into main" }));
       await screen.findByRole("status");
       const merge = calls.find((call) => call.path.endsWith("/merge"))!;
       expect(JSON.parse(String(merge.init?.body))).toEqual({
@@ -328,32 +366,70 @@ describe("AePrCards", () => {
       });
     });
 
-    it("shows no tag or reason for a card without a recommendation", async () => {
+    it("shows no reason line for a card without a recommendation", async () => {
       serve(() => json(card(23)));
       renderCards([{ url: url(23) }]);
       fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
       expect(screen.getByRole("radio", { checked: true }).textContent).toBe("Squash");
-      expect(screen.queryByTestId("ae-pr-recommended-tag")).toBeNull();
       expect(screen.queryByTestId("ae-pr-recommended-why")).toBeNull();
+      expect(screen.getByRole("group", { name: "Confirm merge" }).textContent).not.toContain(
+        "Recommended",
+      );
+    });
+
+    it("gives the reason alone when the repo allows one method", async () => {
+      const ONLY = "The only method this repo allows.";
+      serve(() =>
+        json(
+          card(24, {
+            merge: {
+              methods: ["merge"],
+              default_method: "merge",
+              recommended_method: "merge",
+              recommended_reason: ONLY,
+              allowed: true,
+              reason: null,
+            },
+          }),
+        ),
+      );
+      renderCards([{ url: url(24) }]);
+      fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
+      expect(screen.getByTestId("ae-pr-recommended-why").textContent).toBe(ONLY);
+      expect(screen.getByRole("button", { name: "Merge into main" })).toBeTruthy();
     });
   });
 
   // 2026-09-26: Reid saw the method buttons on one row and Confirm and Cancel
-  // on a second, on a 1100 px card. Now all three sit in one wrapping row.
-  it("puts the method toggle, Confirm merge and Cancel in one row", async () => {
+  // on a second, on a 1100 px card. Now all three sit in one wrapping row, the
+  // two buttons together at its right end (2026-10-14).
+  it("puts the method toggle, Cancel and the confirm button in one row", async () => {
     serve(() => json(card(17)));
     renderCards([{ url: url(17) }]);
     fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
     const group = screen.getByRole("group", { name: "Confirm merge" });
-    expect(group.textContent).toContain("Squash and merge #17 into main?");
+    // A section of the card under one divider, not a box inside it.
+    expect(group.className).toContain("border-t");
+    expect(group.className).not.toContain("rounded");
     const row = within(group).getByTestId("ae-pr-confirm-row");
     expect(row.className).toContain("flex-wrap");
     expect(row.className).not.toContain("flex-col");
-    const children = [...row.children];
-    expect(children).toHaveLength(3);
-    expect(children[0].getAttribute("role")).toBe("radiogroup");
-    expect(children[1].textContent).toBe("Confirm merge");
-    expect(children[2].textContent).toBe("Cancel");
+    const [toggle, buttons, ...rest] = [...row.children];
+    expect(rest).toHaveLength(0);
+    expect(toggle.getAttribute("role")).toBe("radiogroup");
+    expect([...buttons.children].map((button) => button.textContent)).toEqual([
+      "Cancel",
+      "Squash into main",
+    ]);
+  });
+
+  it("names the method alone when the base branch is unknown", async () => {
+    serve(() => json(card(19, { base_ref: null })));
+    renderCards([{ url: url(19) }]);
+    fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
+    expect(screen.getByRole("button", { name: "Squash and merge" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: "Merge commit" }));
+    expect(screen.getByRole("button", { name: "Create merge commit" })).toBeTruthy();
   });
 
   it("locks the method while the merge is in flight", async () => {
@@ -368,7 +444,7 @@ describe("AePrCards", () => {
     renderCards([{ url: url(18) }]);
     fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
     const group = screen.getByRole("radiogroup", { name: "Merge method" });
-    fireEvent.click(screen.getByRole("button", { name: "Confirm merge" }));
+    fireEvent.click(screen.getByRole("button", { name: "Squash into main" }));
     await waitFor(() =>
       expect(within(group).getByRole("radio", { name: "Merge commit" })).toBeDisabled(),
     );
@@ -389,10 +465,11 @@ describe("AePrCards", () => {
     expect(screen.getByRole("group", { name: "Confirm merge" })).toBeTruthy();
     expect(screen.queryByRole("radiogroup")).toBeNull();
     const row = screen.getByTestId("ae-pr-confirm-row");
-    expect([...row.children].map((child) => child.textContent)).toEqual([
-      "Confirm merge",
-      "Cancel",
-    ]);
+    expect(
+      within(row)
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(["Cancel", "Squash into main"]);
   });
 
   it("Cancel closes the confirm step without a request", async () => {
@@ -432,7 +509,7 @@ describe("AePrCards", () => {
     );
     renderCards([{ url: url(10) }]);
     fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
-    fireEvent.click(screen.getByRole("button", { name: "Confirm merge" }));
+    fireEvent.click(screen.getByRole("button", { name: "Squash into main" }));
     expect((await screen.findByRole("alert")).textContent).toBe(
       "Not merged: CI is still running: 1 of 6 checks.",
     );
@@ -440,7 +517,54 @@ describe("AePrCards", () => {
     expect((screen.getByRole("button", { name: "Merge" }) as HTMLButtonElement).disabled).toBe(
       true,
     );
-    expect(screen.getByText("CI 1 running of 6")).toBeTruthy();
+    expect(screen.getByText("1 of 6 checks running").dataset.tone).toBe("wait");
+  });
+
+  it("says Merged or Closed, with no chips and no Merge, once GitHub closed it", async () => {
+    const shut = (number: number, state: "merged" | "closed", reason: string) =>
+      card(number, {
+        state,
+        mergeable: { state, detail: `The pull request is ${state}.` },
+        merge: { ...card(number).merge, allowed: false, reason },
+      });
+    serve((path) =>
+      json(
+        path.endsWith("/31")
+          ? shut(31, "merged", "Already merged.")
+          : shut(32, "closed", "Closed without merging."),
+      ),
+    );
+    renderCards([{ url: url(31) }, { url: url(32) }]);
+    const [merged, closed] = await screen.findAllByTestId("ae-pr-card");
+    await waitFor(() =>
+      expect(within(merged).getByTestId("ae-pr-merged").textContent).toBe("Merged"),
+    );
+    expect(within(merged).getByTestId("ae-pr-state").getAttribute("data-pr-state")).toBe("merged");
+    await waitFor(() =>
+      expect(within(closed).getByTestId("ae-pr-closed").textContent).toBe("Closed without merging"),
+    );
+    expect(within(closed).getByTestId("ae-pr-state").getAttribute("data-pr-state")).toBe("closed");
+    expect(screen.queryByTestId("ae-pr-chips")).toBeNull();
+    expect(screen.queryByTestId("ae-pr-ready")).toBeNull();
+    expect(screen.queryByTestId("ae-pr-why")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Merge" })).toBeNull();
+  });
+
+  it("draws a draft with its own icon and a quiet Draft chip", async () => {
+    const DRAFT = "Draft: mark it ready for review on GitHub first.";
+    serve(() =>
+      json(
+        card(33, {
+          draft: true,
+          mergeable: { state: "draft", detail: DRAFT },
+          merge: { ...card(33).merge, allowed: false, reason: DRAFT },
+        }),
+      ),
+    );
+    renderCards([{ url: url(33) }]);
+    await screen.findByTestId("ae-pr-chips");
+    expect(screen.getByTestId("ae-pr-state").getAttribute("data-pr-state")).toBe("draft");
+    expect(screen.getByText("Draft").dataset.tone).toBe("muted");
   });
 
   it("says once that Merge is off without a GitHub token", async () => {

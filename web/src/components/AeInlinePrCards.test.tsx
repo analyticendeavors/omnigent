@@ -80,6 +80,8 @@ describe("AeInlinePrCards", () => {
     renderText(`PR: ${url(41)}. Builds on ${url(6935, "omnigent-ai/omnigent")}.`, [url(41)]);
     const inline = await screen.findByTestId("ae-pr-inline");
     expect(within(inline).getByText("PR 41")).toBeTruthy();
+    // Compact: the repo and number only, no branch line (2026-10-14).
+    expect(within(inline).getByTestId("ae-pr-meta").textContent).toBe("omnigent-ae #41");
     expect(screen.getAllByTestId("ae-pr-inline")).toHaveLength(1);
     expect(authenticatedFetch).toHaveBeenCalledTimes(1);
     expect(authenticatedFetch).toHaveBeenCalledWith(`/v1/ae/prs/${REPO}/41`, { method: "GET" });
@@ -114,7 +116,7 @@ describe("AeInlinePrCards", () => {
     });
     renderText(`Opened ${url(41)}`, [url(41)]);
     fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
-    fireEvent.click(screen.getByRole("button", { name: "Confirm merge" }));
+    fireEvent.click(screen.getByRole("button", { name: "Squash into main" }));
     const done = await screen.findByRole("status");
     expect(done.textContent).toContain("Merged (squashed) abcdef1");
     expect(done.textContent).not.toContain("Pull Request successfully merged");
@@ -144,7 +146,7 @@ describe("AeInlinePrCards", () => {
     });
     renderText(`Opened ${url(41)}`, [url(41), url(42)]);
     fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
-    fireEvent.click(screen.getByRole("button", { name: "Confirm merge" }));
+    fireEvent.click(screen.getByRole("button", { name: "Squash into main" }));
     expect((await screen.findByTestId("ae-pr-more-open")).textContent).toBe(
       "1 more open pull request in this session.",
     );

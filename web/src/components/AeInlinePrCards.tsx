@@ -1,7 +1,7 @@
 // A compact PR card under an assistant message that names a pull request the
-// session tracks: colored CI, conflicts and review chips and the same Merge as
-// the GitHub panel's card, so a PR the agent just opened can be merged where
-// it was announced. omnigent-ae patch P12, 2026-09-25.
+// session tracks: the same status line (Ready, or CI, conflicts and review
+// chips) and the same Merge as the GitHub panel's card, so a PR the agent just
+// opened can be merged where it was announced. omnigent-ae patch P12, 2026-09-25.
 
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
