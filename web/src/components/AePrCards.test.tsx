@@ -421,6 +421,12 @@ describe("AePrCards", () => {
       "Cancel",
       "Squash into main",
     ]);
+    // Cancel stays compact; the confirm button, whose label names the branch,
+    // takes the rest of a narrow row (review, 2026-10-14).
+    const [cancel, confirm] = [...buttons.children];
+    expect(cancel.className).toContain("flex-none");
+    expect(cancel.className).not.toContain("flex-1");
+    expect(confirm.className).toContain("flex-1");
   });
 
   it("names the method alone when the base branch is unknown", async () => {
@@ -548,6 +554,29 @@ describe("AePrCards", () => {
     expect(screen.queryByTestId("ae-pr-ready")).toBeNull();
     expect(screen.queryByTestId("ae-pr-why")).toBeNull();
     expect(screen.queryByRole("button", { name: "Merge" })).toBeNull();
+  });
+
+  // Review, 2026-10-14: before GitHub answers (or when the read failed) the
+  // header claims no state: a muted icon named "Pull request", never open.
+  it("claims no state while the card is loading or could not be read", async () => {
+    serve(
+      () =>
+        new Promise<Response>(() => {
+          // Never settles: the card stays at "Reading GitHub…".
+        }),
+    );
+    renderCards([{ url: url(40) }]);
+    await screen.findByText("Reading GitHub…");
+    const loading = screen.getByTestId("ae-pr-state");
+    expect(loading.getAttribute("data-pr-state")).toBe("unknown");
+    expect(loading.textContent).toBe("Pull request");
+    expect(loading.getAttribute("title")).toBe("Pull request");
+    expect(loading.querySelector("svg")?.getAttribute("class")).toContain("text-muted-foreground");
+    cleanup();
+    serve(() => json({ error: { code: "github_error", message: "GitHub answered 502" } }, 502));
+    renderCards([{ url: url(41) }]);
+    await screen.findByRole("alert");
+    expect(screen.getByTestId("ae-pr-state").getAttribute("data-pr-state")).toBe("unknown");
   });
 
   it("draws a draft with its own icon and a quiet Draft chip", async () => {
