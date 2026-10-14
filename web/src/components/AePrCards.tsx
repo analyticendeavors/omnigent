@@ -154,7 +154,8 @@ function Chip({ tone, title, children }: { tone: Tone; title?: string; children:
 /** GitHub's merged purple, the one upstream's GitHub panel gives its Merged badge. */
 const MERGED_TEXT = "text-purple-700 dark:text-purple-400";
 
-type PrState = "open" | "draft" | "merged" | "closed";
+/** `unknown`: no card read yet (loading, or the read failed), so no state is claimed. */
+type PrState = "open" | "draft" | "merged" | "closed" | "unknown";
 
 const STATE_ICON: Record<PrState, { node: AeTablerIconNode; tone: string; label: string }> = {
   open: {
@@ -165,12 +166,14 @@ const STATE_ICON: Record<PrState, { node: AeTablerIconNode; tone: string; label:
   draft: { node: AE_ICON_PR_DRAFT, tone: "text-muted-foreground", label: "Draft pull request" },
   merged: { node: AE_ICON_MERGE, tone: MERGED_TEXT, label: "Merged pull request" },
   closed: { node: AE_ICON_PR_CLOSED, tone: "text-destructive", label: "Closed pull request" },
+  unknown: { node: AE_ICON_PR_OPEN, tone: "text-muted-foreground", label: "Pull request" },
 };
 
 function prState(card: AePrCard | undefined, mergedHere: boolean): PrState {
   if (mergedHere || card?.state === "merged") return "merged";
-  if (card?.state === "closed") return "closed";
-  return card?.draft ? "draft" : "open";
+  if (!card) return "unknown";
+  if (card.state === "closed") return "closed";
+  return card.draft ? "draft" : "open";
 }
 
 /** 32 px with a mouse, 40 px on a touch screen (the Dashboard's .btn, 2026-09-27). */
@@ -388,10 +391,12 @@ function ConfirmMerge({
             })}
           </div>
         )}
+        {/* Cancel stays compact; the confirm button takes the rest of a narrow
+            row, since its label carries the branch name. */}
         <div className="flex min-w-0 flex-1 justify-end gap-2">
           <Button
             variant="outline"
-            className={cn(TOUCH, "flex-1 @[30rem]/aepr:flex-none")}
+            className={cn(TOUCH, "flex-none")}
             disabled={merge.isPending}
             onClick={onCancel}
           >
