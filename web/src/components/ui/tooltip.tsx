@@ -22,7 +22,7 @@ function TooltipShortcutKeys({ shortcut }: { shortcut: TooltipShortcut }) {
     >
       {groups.map((keys, groupIndex) => (
         <React.Fragment key={`${groupIndex}-${keys.join("-")}`}>
-          {groupIndex > 0 && <span className="text-white/50">+</span>}
+          {groupIndex > 0 && <span className="text-muted-foreground">+</span>}
           <span className="inline-flex items-center gap-0.5">
             {keys.map((key, keyIndex) => (
               <CompactKbd key={`${keyIndex}-${key}`}>{key}</CompactKbd>
