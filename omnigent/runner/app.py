@@ -6772,6 +6772,17 @@ def create_runner_app(
                 )
             return Response(status_code=204)
 
+        if body_type in ("fast_mode_status", "fast_mode_change"):
+            from omnigent.runner.ae_fast_mode import handle_fast_mode_event
+
+            return await handle_fast_mode_event(
+                conversation_id,
+                body,
+                harness=_session_harness_name(conversation_id),
+                server_client=server_client,
+                prepare_pane=_prepare_claude_native_pane_for_injection,
+            )
+
         if body_type == "plan_mode_change":
             harness = _session_harness_name(conversation_id)
             if harness == "codex-native":
@@ -7166,6 +7177,9 @@ def create_runner_app(
         server_client=server_client,
     )
     _codex_native_model_options = _native_controls.codex_native_model_options
+    _prepare_claude_native_pane_for_injection = (
+        _native_controls.prepare_claude_native_pane_for_injection
+    )
     _handle_claude_native_btw_dismiss = _native_controls.handle_claude_native_btw_dismiss
     _handle_claude_native_compact = _native_controls.handle_claude_native_compact
     _handle_claude_native_cost_popup = _native_controls.handle_claude_native_cost_popup

@@ -5276,8 +5276,8 @@ describe("Composer config gear", () => {
       await openSessionModels();
       expect(screen.queryByRole("menuitem", { name: "Smart Routing" })).toBeNull();
       const configMenu = within(screen.getByTestId("composer-agent-config-menu"));
-      // Only the Models | Effort divider remains.
-      expect(configMenu.queryAllByRole("separator")).toHaveLength(showModels ? 1 : 0);
+      // Only the Models | Effort divider remains, plus Effort | Fast mode.
+      expect(configMenu.queryAllByRole("separator")).toHaveLength((showModels ? 1 : 0) + 1);
       expect(configMenu.getByTestId("composer-agent-efforts")).toBeVisible();
     },
   );
@@ -5304,8 +5304,8 @@ describe("Composer config gear", () => {
       expect(menu.getByRole("menuitem", { name: "Smart Routing" })).not.toHaveAttribute(
         "data-disabled",
       );
-      // Smart Routing | Models, then Models | Effort.
-      expect(menu.getAllByRole("separator")).toHaveLength(2);
+      // Smart Routing | Models, Models | Effort, then Effort | Fast mode.
+      expect(menu.getAllByRole("separator")).toHaveLength(3);
       expect(useChatStore.getState().costControlModeOverride).toBe(costControlModeOverride);
       if (costControlModeOverride === "on") {
         for (const choice of menu.getAllByRole("menuitemcheckbox")) {

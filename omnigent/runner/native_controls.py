@@ -218,6 +218,8 @@ class NativeControls:
     is_sdk_compact_body: Callable[[dict[str, Any]], bool]
     opencode_native_model_options: Callable[[str], Coroutine[Any, Any, list[_JsonObject]]]
     teardown_session_terminals: Callable[[str], Coroutine[Any, Any, None]]
+    # The runner's fast mode dispatch types /fast into the same healed pane.
+    prepare_claude_native_pane_for_injection: Callable[[str, Path], Coroutine[Any, Any, None]]
 
 
 def build_native_controls(
@@ -2134,4 +2136,5 @@ def build_native_controls(
         is_sdk_compact_body=_is_sdk_compact_body,
         opencode_native_model_options=_opencode_native_model_options,
         teardown_session_terminals=_teardown_session_terminals,
+        prepare_claude_native_pane_for_injection=_prepare_claude_native_pane_for_injection,
     )

@@ -71,6 +71,9 @@ def normalize_status_payload(payload: dict[str, object]) -> dict[str, object] | 
         model_id = model.strip()
     if model_id is not None:
         record["model"] = model_id
+    # 2026-10-14: kept so the web's fast mode switch can read and confirm it.
+    if isinstance(payload.get("fast_mode"), bool):
+        record["fast_mode"] = payload["fast_mode"]
     return record
 
 

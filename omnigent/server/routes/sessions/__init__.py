@@ -994,4 +994,14 @@ def create_sessions_router(
         host_registry=host_registry,
     )
 
+    from omnigent.server.routes.sessions.routes_ae_fast_mode import register_ae_fast_mode_routes
+
+    register_ae_fast_mode_routes(
+        router,
+        conversation_store=conversation_store,
+        runner_router=runner_router,
+        auth_provider=auth_provider,
+        permission_store=permission_store,
+    )
+
     return router
