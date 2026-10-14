@@ -9,6 +9,7 @@ daily costs) instead of violating their primary keys.
 
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -175,7 +176,10 @@ def test_dry_run_leaves_extra_columns_alone(db_uri: str) -> None:
 
 
 def test_force_merge_resolves_user_keyed_collisions(db_uri: str) -> None:
-    """On a merge, NEW's preference and connection win and daily costs add up."""
+    """On a merge, NEW's preference and connection win and daily costs add up.
+
+    The approved checkpoint is a high-water mark, so it keeps the higher value.
+    """
     accounts = SqlAlchemyAccountStore(db_uri)
     accounts.create_user_with_password(OLD, hash_password("password123"))
     accounts.create_user_with_password(NEW, hash_password("password123"))
@@ -197,4 +201,79 @@ def test_force_merge_resolves_user_keyed_collisions(db_uri: str) -> None:
     assert leftover is None
     assert pref is not None and pref.value == "dark9"
     assert conn is not None and conn.secret_enc == "s9"
-    assert cost is not None and cost.cost_usd == 3.0 and cost.ask_approved_usd == 1.0
+    assert cost is not None and cost.cost_usd == 3.0 and cost.ask_approved_usd == 0.5
+
+
+class _BoundCipher:
+    """A cipher whose ciphertext only decrypts under the context it was made in."""
+
+    def encrypt(self, plaintext: str, *, context: dict[str, str]) -> str:
+        return f"{context['user_id']}|{plaintext}"
+
+    def decrypt(self, ciphertext: str, *, context: dict[str, str]) -> str | None:
+        owner, _, plaintext = ciphertext.partition("|")
+        return plaintext if owner == context["user_id"] else None
+
+
+def _seed_connection(db_uri: str, secret_enc: str) -> None:
+    """Create OLD and one GitHub connection for it with *secret_enc*."""
+    SqlAlchemyAccountStore(db_uri).create_user_with_password(OLD, hash_password("password123"))
+    with Session(get_or_create_engine(db_uri)) as s:
+        s.add(
+            SqlConnection(
+                user_id=OLD,
+                provider="github",
+                account_id="acct",
+                secret_enc=secret_enc,
+                metadata_json="{}",
+                created_at=1,
+                updated_at=1,
+            )
+        )
+        s.commit()
+
+
+def test_moved_connection_is_reencrypted_for_the_new_owner(
+    db_uri: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A readable secret decrypts under NEW after the move, and no longer under OLD."""
+    cipher = _BoundCipher()
+    monkeypatch.setattr(
+        "omnigent.server.identity_migration_extra.build_secret_cipher", lambda: cipher
+    )
+    _seed_connection(db_uri, cipher.encrypt('{"token": "t"}', context={"user_id": OLD}))
+    engine = get_or_create_engine(db_uri)
+
+    report = remap_identities(engine, {OLD: NEW}, dry_run=False)
+
+    with Session(engine) as s:
+        row = s.get(SqlConnection, (current_workspace_id(), NEW, "github", "acct"))
+    assert row is not None
+    assert cipher.decrypt(row.secret_enc, context={"user_id": NEW}) == '{"token": "t"}'
+    assert cipher.decrypt(row.secret_enc, context={"user_id": OLD}) is None
+    assert "connections_reconnect" not in report.per_table
+
+
+def test_unreadable_connection_moves_and_is_counted_for_reconnect(
+    db_uri: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without a cipher the row still moves; the report says it needs a reconnect."""
+    monkeypatch.setattr(
+        "omnigent.server.identity_migration_extra.build_secret_cipher", lambda: None
+    )
+    _seed_connection(db_uri, "opaque")
+    engine = get_or_create_engine(db_uri)
+
+    report = remap_identities(engine, {OLD: NEW}, dry_run=False)
+
+    with Session(engine) as s:
+        row = s.get(SqlConnection, (current_workspace_id(), NEW, "github", "acct"))
+    assert row is not None and row.secret_enc == "opaque"
+    assert report.per_table["connections_reconnect"] == 1
+
+
+def test_turn_actor_label_matches_the_server() -> None:
+    """The copied label name must stay the one the session routes write."""
+    from omnigent.server.routes._sessions.common import _TURN_ACTOR_LABEL
+
+    assert TURN_ACTOR_LABEL == _TURN_ACTOR_LABEL
