@@ -1,12 +1,13 @@
 // Tests for the fast mode store and model gate (omnigent-ae, 2026-10-14).
 
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock("@/lib/identity", () => ({ authenticatedFetch: mocks.fetch }));
 
 import {
+  AE_FAST_MODE_CONFIRM_WINDOW_MS,
   aeFastModeModelSupported,
   aeFastModePath,
   changeAeFastMode,
@@ -16,6 +17,7 @@ import {
   refreshAeFastMode,
   resetAeFastModeStore,
   useAeFastMode,
+  useAeFastModePending,
 } from "./aeFastMode";
 
 function json(status: number, body: unknown): Response {
@@ -24,6 +26,8 @@ function json(status: number, body: unknown): Response {
     headers: { "Content-Type": "application/json" },
   });
 }
+
+const QUEUED = "Applies when the current reply finishes";
 
 beforeEach(() => {
   mocks.fetch.mockReset();
@@ -75,9 +79,11 @@ describe("requests", () => {
     expect(aeFastModePath("conv 1/2")).toBe("/v1/sessions/conv%201%2F2/fast-mode");
   });
 
-  it("reads null as unknown and throws the server's reason", async () => {
-    mocks.fetch.mockResolvedValueOnce(json(200, { enabled: null }));
-    await expect(fetchAeFastMode("c")).resolves.toBeNull();
+  it("reads the state and the host's per-session setting, and throws the server's reason", async () => {
+    mocks.fetch.mockResolvedValueOnce(json(200, { enabled: null, per_session: null }));
+    await expect(fetchAeFastMode("c")).resolves.toEqual({ enabled: null, perSession: null });
+    mocks.fetch.mockResolvedValueOnce(json(200, { enabled: true, per_session: false }));
+    await expect(fetchAeFastMode("c")).resolves.toEqual({ enabled: true, perSession: false });
     mocks.fetch.mockResolvedValueOnce(json(409, { error: { message: "not Claude" } }));
     await expect(fetchAeFastMode("c")).rejects.toThrow("not Claude");
   });
@@ -85,6 +91,21 @@ describe("requests", () => {
   it("refuses a change answer without a state", async () => {
     mocks.fetch.mockResolvedValueOnce(json(200, {}));
     await expect(putAeFastMode("c", true)).rejects.toThrow("without a fast mode state");
+  });
+
+  it("reads a 202 as pending with its reason", async () => {
+    mocks.fetch.mockResolvedValueOnce(json(202, { enabled: true, pending: true, reason: QUEUED }));
+    await expect(putAeFastMode("c", true)).resolves.toEqual({
+      enabled: true,
+      pending: true,
+      reason: QUEUED,
+    });
+    mocks.fetch.mockResolvedValueOnce(json(202, { enabled: false, pending: true }));
+    await expect(putAeFastMode("c", false)).resolves.toEqual({
+      enabled: false,
+      pending: true,
+      reason: "Waiting for Claude Code to confirm",
+    });
   });
 });
 
@@ -102,10 +123,17 @@ describe("store", () => {
 
     const read = refreshAeFastMode("c");
     await changeAeFastMode("c", true);
-    answerRead(json(200, { enabled: false }));
+    answerRead(json(200, { enabled: false, per_session: true }));
     await read;
 
-    expect(result.current).toEqual({ enabled: true, pending: null, error: null, settled: true });
+    expect(result.current).toEqual({
+      enabled: true,
+      perSession: null,
+      pending: null,
+      pendingReason: null,
+      error: null,
+      settled: true,
+    });
   });
 
   it("keeps sessions apart and ignores a second change while one runs", async () => {
@@ -124,7 +152,9 @@ describe("store", () => {
     expect(result.current[0].pending).toBe(true);
     expect(result.current[1]).toEqual({
       enabled: null,
+      perSession: null,
       pending: null,
+      pendingReason: null,
       error: null,
       settled: false,
     });
@@ -138,5 +168,80 @@ describe("store", () => {
     const { result } = renderHook(() => useAeFastMode("c"));
     expect(result.current.error).toBe("Could not turn fast mode off.");
     expect(result.current.pending).toBeNull();
+  });
+
+  it("clears a previous error on a successful read, not on a failed one", async () => {
+    mocks.fetch.mockResolvedValueOnce(json(409, { error: { message: "No terminal." } }));
+    await changeAeFastMode("c", true);
+    const { result } = renderHook(() => useAeFastMode("c"));
+    expect(result.current.error).toBe("No terminal.");
+
+    mocks.fetch.mockResolvedValueOnce(json(503, { error: { message: "runner asleep" } }));
+    await act(() => refreshAeFastMode("c"));
+    expect(result.current.error).toBe("No terminal.");
+
+    mocks.fetch.mockResolvedValueOnce(json(200, { enabled: false, per_session: true }));
+    await act(() => refreshAeFastMode("c"));
+    expect(result.current).toMatchObject({ enabled: false, perSession: true, error: null });
+  });
+
+  it("is pending while the request runs and while a 202 waits, until a read confirms it", async () => {
+    let answerPut!: (response: Response) => void;
+    mocks.fetch.mockImplementation((_path: string, init: RequestInit) =>
+      init.method === "PUT"
+        ? new Promise<Response>((resolve) => {
+            answerPut = resolve;
+          })
+        : Promise.resolve(json(200, { enabled: true, per_session: true })),
+    );
+    const { result } = renderHook(() => ({
+      state: useAeFastMode("c"),
+      pending: useAeFastModePending("c"),
+    }));
+
+    let change!: Promise<void>;
+    act(() => {
+      change = changeAeFastMode("c", true);
+    });
+    expect(result.current.pending).toBe(true);
+    // No read while the request runs: it would race the answer.
+    await act(() => refreshAeFastMode("c"));
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      answerPut(json(202, { enabled: true, pending: true, reason: QUEUED }));
+      await change;
+    });
+    expect(result.current.pending).toBe(true);
+    expect(result.current.state).toMatchObject({ pending: true, pendingReason: QUEUED });
+
+    await act(() => refreshAeFastMode("c"));
+    expect(result.current.pending).toBe(false);
+    expect(result.current.state).toMatchObject({
+      enabled: true,
+      pending: null,
+      pendingReason: null,
+    });
+  });
+
+  it("keeps an unconfirmed 202 pending through its window, then the read wins", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    mocks.fetch.mockImplementation((_path: string, init: RequestInit) =>
+      Promise.resolve(
+        init.method === "PUT"
+          ? json(202, { enabled: true, pending: true, reason: QUEUED })
+          : json(200, { enabled: false, per_session: true }),
+      ),
+    );
+    const { result } = renderHook(() => useAeFastMode("c"));
+    await act(() => changeAeFastMode("c", true));
+
+    vi.setSystemTime(Date.now() + AE_FAST_MODE_CONFIRM_WINDOW_MS - 1);
+    await act(() => refreshAeFastMode("c"));
+    expect(result.current).toMatchObject({ enabled: false, pending: true, pendingReason: QUEUED });
+
+    vi.setSystemTime(Date.now() + 1);
+    await act(() => refreshAeFastMode("c"));
+    expect(result.current).toMatchObject({ enabled: false, pending: null, pendingReason: null });
   });
 });

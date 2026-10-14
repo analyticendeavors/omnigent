@@ -2,11 +2,13 @@
 
 The routes only authorize and forward: the runner answers, so the forward is
 stubbed on the sessions facade (the seam the model change tests use too) and
-each test checks what was sent and how the runner's answer comes back.
+each test checks what was sent and how the runner's answer comes back. The
+timeout test keeps the real forward and stubs the runner client instead.
 """
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import httpx
@@ -20,7 +22,10 @@ from omnigent.server.auth import LEVEL_OWNER, LEVEL_READ, UnifiedAuthProvider
 from omnigent.server.routes import sessions as sessions_facade
 from omnigent.server.routes._sessions.helpers import _RunnerForwardResult
 from omnigent.server.routes.sessions import create_sessions_router
-from omnigent.server.routes.sessions.routes_ae_fast_mode import FAST_MODE_FORWARD_TIMEOUT_S
+from omnigent.server.routes.sessions.routes_ae_fast_mode import (
+    FAST_MODE_FORWARD_TIMEOUT_S,
+    UNANSWERED_REASON,
+)
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
@@ -92,6 +97,17 @@ def setup(db_uri: str) -> tuple[TestClient, str]:
     return TestClient(_app(db_uri)), _seed_session(db_uri)
 
 
+class _TimedOutRunner:
+    """A runner client whose request goes out and gets no answer in time."""
+
+    def __init__(self) -> None:
+        self.posts: list[tuple[str, dict[str, Any], float]] = []
+
+    async def post(self, path: str, *, json: dict[str, Any], timeout: float) -> httpx.Response:
+        self.posts.append((path, json, timeout))
+        raise httpx.ReadTimeout("timed out")
+
+
 def _runner(monkeypatch: pytest.MonkeyPatch, status: int | None, body: str = "") -> _Runner:
     result = None if status is None else _RunnerForwardResult(status_code=status, body=body)
     runner = _Runner(result)
@@ -103,19 +119,24 @@ def _as(user: str) -> dict[str, str]:
     return {"X-Forwarded-Email": user}
 
 
-@pytest.mark.parametrize("enabled", [True, False, None])
+@pytest.mark.parametrize(
+    ("enabled", "per_session"), [(True, True), (False, True), (None, True), (False, False)]
+)
 def test_get_returns_what_the_runner_reads(
-    setup: tuple[TestClient, str], monkeypatch: pytest.MonkeyPatch, enabled: bool | None
+    setup: tuple[TestClient, str],
+    monkeypatch: pytest.MonkeyPatch,
+    enabled: bool | None,
+    per_session: bool,
 ) -> None:
     client, sid = setup
     runner = _runner(
-        monkeypatch, 200, f'{{"enabled": {"null" if enabled is None else str(enabled).lower()}}}'
+        monkeypatch, 200, json.dumps({"enabled": enabled, "per_session": per_session})
     )
 
     response = client.get(f"/v1/sessions/{sid}/fast-mode", headers=_as(OWNER))
 
     assert response.status_code == 200, response.text
-    assert response.json() == {"enabled": enabled}
+    assert response.json() == {"enabled": enabled, "per_session": per_session}
     assert runner.calls == [(sid, {"type": "fast_mode_status"}, None)]
 
 
@@ -128,7 +149,7 @@ def test_get_without_a_runner_is_unknown(
     response = client.get(f"/v1/sessions/{sid}/fast-mode", headers=_as(VIEWER))
 
     assert response.status_code == 200, response.text
-    assert response.json() == {"enabled": None}
+    assert response.json() == {"enabled": None, "per_session": None}
 
 
 def test_get_relays_a_runner_refusal(
@@ -169,32 +190,56 @@ def test_put_forwards_the_change_and_returns_the_confirmed_state(
     ]
 
 
+@pytest.mark.parametrize(
+    ("status", "code"), [(409, "conflict"), (503, "runner_unavailable")], ids=["409", "503"]
+)
 def test_put_relays_the_runner_detail_on_failure(
-    setup: tuple[TestClient, str], monkeypatch: pytest.MonkeyPatch
+    setup: tuple[TestClient, str], monkeypatch: pytest.MonkeyPatch, status: int, code: str
 ) -> None:
     client, sid = setup
     _runner(
         monkeypatch,
-        503,
-        '{"error": "claude_native_fast_mode_unconfirmed", '
-        '"detail": "Claude Code did not confirm the change within 10s."}',
+        status,
+        '{"error": "claude_native_no_terminal", '
+        '"detail": "No Claude Code terminal right now; send the session a message first."}',
     )
 
     response = client.put(
         f"/v1/sessions/{sid}/fast-mode", json={"enabled": True}, headers=_as(OWNER)
     )
 
-    assert response.status_code == 503
+    assert response.status_code == status
     error = response.json()["error"]
-    assert error["code"] == "runner_unavailable"
+    assert error["code"] == code
     assert error["message"] == (
-        "Could not turn fast mode on: Claude Code did not confirm the change within 10s."
+        "Could not turn fast mode on: No Claude Code terminal right now; "
+        "send the session a message first."
     )
 
 
-def test_put_without_a_runner_says_how_to_recover(
+def test_put_relays_a_change_the_runner_typed_but_has_not_confirmed(
     setup: tuple[TestClient, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    client, sid = setup
+    pending = {
+        "enabled": True,
+        "pending": True,
+        "reason": "Applies when the current reply finishes",
+    }
+    _runner(monkeypatch, 202, json.dumps(pending))
+
+    response = client.put(
+        f"/v1/sessions/{sid}/fast-mode", json={"enabled": True}, headers=_as(OWNER)
+    )
+
+    assert response.status_code == 202, response.text
+    assert response.json() == pending
+
+
+def test_put_without_an_answer_is_pending(
+    setup: tuple[TestClient, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No answer may still mean a typed command, so the web re-reads instead of reverting."""
     client, sid = setup
     _runner(monkeypatch, None)
 
@@ -202,10 +247,38 @@ def test_put_without_a_runner_says_how_to_recover(
         f"/v1/sessions/{sid}/fast-mode", json={"enabled": False}, headers=_as(OWNER)
     )
 
-    assert response.status_code == 503
-    message = response.json()["error"]["message"]
-    assert message.startswith("Could not turn fast mode off: no live runner")
-    assert "Send a message to wake it" in message
+    assert response.status_code == 202, response.text
+    assert response.json() == {"enabled": False, "pending": True, "reason": UNANSWERED_REASON}
+    assert UNANSWERED_REASON == "Waiting for Claude Code to confirm"
+
+
+def test_put_whose_forward_times_out_is_pending(
+    setup: tuple[TestClient, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real forward, with a runner that never answers within the budget."""
+    client, sid = setup
+    runner_client = _TimedOutRunner()
+
+    async def _resolve(session_id: str, runner_router: Any, **kwargs: Any) -> _TimedOutRunner:
+        del session_id, runner_router, kwargs
+        return runner_client
+
+    monkeypatch.setattr(sessions_facade, "_get_runner_client", _resolve)
+
+    response = client.put(
+        f"/v1/sessions/{sid}/fast-mode", json={"enabled": True}, headers=_as(OWNER)
+    )
+
+    assert response.status_code == 202, response.text
+    assert response.json() == {"enabled": True, "pending": True, "reason": UNANSWERED_REASON}
+    assert runner_client.posts == [
+        (
+            f"/v1/sessions/{sid}/events",
+            {"type": "fast_mode_change", "enabled": True},
+            FAST_MODE_FORWARD_TIMEOUT_S,
+        )
+    ]
+    assert FAST_MODE_FORWARD_TIMEOUT_S == 75.0
 
 
 def test_put_needs_edit_access(
@@ -282,7 +355,7 @@ async def test_the_full_app_serves_both_routes(
     read = await client.get(f"/v1/sessions/{sid}/fast-mode")
     change = await client.put(f"/v1/sessions/{sid}/fast-mode", json={"enabled": True})
 
-    assert (read.status_code, read.json()) == (200, {"enabled": True})
+    assert (read.status_code, read.json()) == (200, {"enabled": True, "per_session": None})
     assert (change.status_code, change.json()) == (200, {"enabled": True})
     assert [event for _sid, event, _timeout in runner.calls] == [
         {"type": "fast_mode_status"},

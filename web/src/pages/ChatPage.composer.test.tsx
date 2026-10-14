@@ -170,6 +170,7 @@ vi.mock("@/lib/goalApi", async (importOriginal) => ({
 import type { ElicitationBlock, UserMessageBlock } from "@/lib/blocks";
 import { getGoal } from "@/lib/goalApi";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { changeAeFastMode, resetAeFastModeStore } from "@/lib/aeFastMode";
 import { Composer, computeIsWorking } from "./ChatPage";
 import { readAlwaysSteer, writeAlwaysSteer } from "@/lib/alwaysSteerPreferences";
 import { appendPromptHistoryEntry } from "@/hooks/usePromptHistory";
@@ -5316,6 +5317,39 @@ describe("Composer config gear", () => {
       }
     },
   );
+
+  it("disables model and effort picks while a fast mode flip is pending", async () => {
+    // A change request that never answers keeps the flip pending.
+    vi.spyOn(identity, "authenticatedFetch").mockReturnValue(new Promise<Response>(() => {}));
+    try {
+      renderWithTooltips(
+        <Composer
+          {...composerProps({
+            showModels: true,
+            modelPickerKind: "claude",
+            codexModelOptions: CLAUDE_MODEL_OPTIONS,
+          })}
+        />,
+      );
+      await openSessionModels();
+      const menu = within(screen.getByTestId("composer-agent-config-menu"));
+      const picks = () => [
+        ...CLAUDE_MODEL_OPTIONS.map(({ id }) => menu.getByTestId(`composer-agent-model-${id}`)),
+        ...["low", "medium", "high"].map((level) =>
+          menu.getByTestId(`composer-agent-effort-${level}`),
+        ),
+      ];
+      for (const pick of picks()) expect(pick).not.toHaveAttribute("data-disabled");
+
+      act(() => void changeAeFastMode("conv_test", false));
+
+      for (const pick of picks()) expect(pick).toHaveAttribute("data-disabled");
+      // The menu stays open on the pending switch.
+      expect(menu.getByTestId("composer-fast-mode-switch")).toHaveAttribute("aria-busy", "true");
+    } finally {
+      resetAeFastModeStore();
+    }
+  });
 
   it("omits Advanced settings and its trailing separator from the picker", () => {
     renderWithTooltips(

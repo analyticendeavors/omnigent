@@ -8,11 +8,16 @@ runner the way the model change does (``_forward_session_change_to_runner``),
 and ``omnigent/runner/ae_fast_mode.py`` reads or flips the TUI.
 
 ``GET /v1/sessions/{id}/fast-mode``
-    ``{"enabled": bool | null}``; ``null`` (unknown) when no runner answers
-    or Claude Code has not reported fast mode yet. Read access.
+    ``{"enabled": bool | null, "per_session": bool | null}``. ``enabled`` is
+    ``null`` (unknown) when no runner answers or Claude Code has not reported
+    fast mode yet; ``per_session`` says whether the runner's host keeps fast
+    mode per session, which turning it on needs (``null`` when no runner
+    answers). Read access.
 ``PUT /v1/sessions/{id}/fast-mode`` with ``{"enabled": bool}``
-    ``{"enabled": bool}`` once the TUI confirmed it. Edit access, the level a
-    model change needs, and a JSON body like every other control write.
+    ``200 {"enabled": bool}`` once the TUI confirmed it, or ``202 {"enabled":
+    bool, "pending": true, "reason": str}`` when the command was typed but is
+    not confirmed yet, or the runner's answer never arrived. Edit access, the
+    level a model change needs, and a JSON body like every other control write.
 """
 
 from __future__ import annotations
@@ -20,7 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, ConfigDict, StrictBool
 
 from omnigent.errors import ErrorCode, OmnigentError
@@ -36,9 +41,14 @@ from omnigent.server.routes._sessions.helpers import (
 from omnigent.stores import ConversationStore
 from omnigent.stores.permission_store import PermissionStore
 
-# The runner types the command, then polls for up to 10 s; typing alone can
-# take about 16 s in the worst case, past the 20 s budget the model change uses.
-FAST_MODE_FORWARD_TIMEOUT_S = 30.0
+# Past the runner's worst case: waiting out a change already running in the
+# session, the pane heal, an injection with up to 20 s of submit verification,
+# then the 10 s confirm poll.
+FAST_MODE_FORWARD_TIMEOUT_S = 75.0
+
+# A change whose answer never arrived may still have been typed, so the web
+# keeps it pending and re-reads instead of reverting.
+UNANSWERED_REASON = "Waiting for Claude Code to confirm"
 
 _RUNNER_STATUS_CODES = {400: ErrorCode.INVALID_INPUT, 409: ErrorCode.CONFLICT}
 
@@ -47,6 +57,15 @@ class FastModeState(BaseModel):
     """The session's fast mode; ``None`` until Claude Code reports it."""
 
     enabled: bool | None
+    per_session: bool | None = None
+
+
+class FastModeChange(BaseModel):
+    """A change's answer: the confirmed state, or the requested one still pending."""
+
+    enabled: bool | None
+    pending: bool | None = None
+    reason: str | None = None
 
 
 class FastModeChangeRequest(BaseModel):
@@ -69,8 +88,8 @@ def _runner_detail(result: _RunnerForwardResult) -> str:
     return f"the runner returned status {result.status_code}."
 
 
-def _state_from_runner(result: _RunnerForwardResult, *, action: str) -> FastModeState:
-    """Map the runner's answer to the route's response, raising on a refusal."""
+def _runner_answer(result: _RunnerForwardResult, *, action: str) -> dict[str, object]:
+    """Return the runner's 2xx body as a dict, raising on a refusal."""
     if not 200 <= result.status_code < 300:
         raise OmnigentError(
             f"Could not {action}: {_runner_detail(result)}",
@@ -80,8 +99,11 @@ def _state_from_runner(result: _RunnerForwardResult, *, action: str) -> FastMode
         payload = json.loads(result.body)
     except (TypeError, ValueError):
         payload = None
-    enabled = payload.get("enabled") if isinstance(payload, dict) else None
-    return FastModeState(enabled=enabled if isinstance(enabled, bool) else None)
+    return payload if isinstance(payload, dict) else {}
+
+
+def _bool_or_none(value: object) -> bool | None:
+    return value if isinstance(value, bool) else None
 
 
 def register_ae_fast_mode_routes(
@@ -118,20 +140,25 @@ def register_ae_fast_mode_routes(
         )
         if result is None:
             return FastModeState(enabled=None)
-        return _state_from_runner(result, action="read fast mode")
+        answer = _runner_answer(result, action="read fast mode")
+        return FastModeState(
+            enabled=_bool_or_none(answer.get("enabled")),
+            per_session=_bool_or_none(answer.get("per_session")),
+        )
 
     @router.put(
         "/sessions/{session_id}/fast-mode",
         dependencies=[Depends(require_json_content_type)],
+        response_model_exclude_unset=True,
     )
     async def put_session_fast_mode(
         request: Request,
+        response: Response,
         session_id: str,
         body: FastModeChangeRequest,
-    ) -> FastModeState:
+    ) -> FastModeChange:
         """Turn fast mode on or off in the session's Claude Code terminal."""
         await _authorized(request, session_id, LEVEL_EDIT)
-        action = f"turn fast mode {'on' if body.enabled else 'off'}"
         result = await _forward_session_change_to_runner(
             session_id,
             runner_router,
@@ -139,9 +166,17 @@ def register_ae_fast_mode_routes(
             timeout_s=FAST_MODE_FORWARD_TIMEOUT_S,
         )
         if result is None:
-            raise OmnigentError(
-                f"Could not {action}: no live runner is serving this session. "
-                "Send a message to wake it, then try again.",
-                code=ErrorCode.RUNNER_UNAVAILABLE,
+            # The helper answers None both when it found no runner and when the
+            # request failed or timed out after it went out: the command may
+            # have been typed.
+            reason = UNANSWERED_REASON
+        else:
+            answer = _runner_answer(
+                result, action=f"turn fast mode {'on' if body.enabled else 'off'}"
             )
-        return _state_from_runner(result, action=action)
+            if result.status_code != 202:
+                return FastModeChange(enabled=_bool_or_none(answer.get("enabled")))
+            sent = answer.get("reason")
+            reason = sent if isinstance(sent, str) and sent else UNANSWERED_REASON
+        response.status_code = 202
+        return FastModeChange(enabled=body.enabled, pending=True, reason=reason)

@@ -2,12 +2,15 @@
 
 The pane is never real here: ``inject_slash_command`` is stubbed, and the stub
 plays Claude Code plus the forwarder by writing ``context.json`` the way the
-statusLine wrapper does, so the reader under test is the real one.
+statusLine wrapper does, so the reader under test is the real one. The host's
+Claude user settings live in a temp ``CLAUDE_CONFIG_DIR``.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -16,13 +19,21 @@ import pytest
 from omnigent.harnesses.claude_native import bridge as claude_native_bridge
 from omnigent.harnesses.claude_native import status as claude_native_status
 from omnigent.runner import ae_fast_mode, create_runner_app
-from omnigent.runner.ae_fast_mode import handle_fast_mode_event, read_claude_fast_mode
+from omnigent.runner.ae_fast_mode import (
+    NO_TERMINAL_DETAIL,
+    REASON_AFTER_REPLY,
+    REASON_UNCONFIRMED,
+    claude_fast_mode_per_session,
+    handle_fast_mode_event,
+    read_claude_fast_mode,
+)
 from omnigent.spec.types import AgentSpec, ExecutorSpec
 from tests.runner.conftest import _FakeProcessManager, _runner_client, _ScriptedHarnessClient
 from tests.runner.helpers import NullServerClient
 
 SESSION_ID = "5f1e0c3a9b7d4e2fa6c8b0d1e3f5a7c9"
 AGENT_ID = "880b5afda28ad55ff74cbeb9b5fc67fb"
+OPT_IN = {"fastModePerSessionOptIn": True}
 
 
 def _write_snapshot(bridge_dir: Path, **fields: object) -> None:
@@ -48,6 +59,28 @@ class _Pane:
             _write_snapshot(bridge_dir, fast_mode=command == "/fast on")
 
 
+class _Terminal:
+    """Stands in for the registered Claude pane and its liveness probe."""
+
+    def __init__(self, *, alive: bool = True) -> None:
+        self.alive = alive
+
+    async def is_alive(self) -> bool:
+        return self.alive
+
+
+class _Registry:
+    """Stands in for the runner's terminal registry, holding at most one pane."""
+
+    def __init__(self, pane: _Terminal | None) -> None:
+        self.pane = pane
+        self.lookups: list[tuple[str, str, str]] = []
+
+    def get(self, conversation_id: str, terminal_name: str, session_key: str) -> _Terminal | None:
+        self.lookups.append((conversation_id, terminal_name, session_key))
+        return self.pane
+
+
 @pytest.fixture
 def bridge_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point every bridge id at a temp dir and keep the confirm loop fast."""
@@ -58,17 +91,36 @@ def bridge_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return root / SESSION_ID
 
 
+@pytest.fixture(autouse=True)
+def claude_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A Claude config dir whose settings keep fast mode per session."""
+    config = tmp_path / "claude-config"
+    config.mkdir()
+    (config / "settings.json").write_text(json.dumps(OPT_IN), encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
+    return config
+
+
 async def _no_heal(conversation_id: str, bridge_dir: Path) -> None:
     del conversation_id, bridge_dir
 
 
-async def _event(body: dict[str, Any], *, harness: str | None = "claude-native") -> Any:
+async def _event(
+    body: dict[str, Any],
+    *,
+    harness: str | None = "claude-native",
+    registry: _Registry | None = None,
+    prepare_pane: Any = _no_heal,
+    in_flight: bool = False,
+) -> Any:
     response = await handle_fast_mode_event(
         SESSION_ID,
         body,
         harness=harness,
         server_client=NullServerClient(),  # type: ignore[arg-type]
-        prepare_pane=_no_heal,
+        terminal_registry=registry or _Registry(_Terminal()),  # type: ignore[arg-type]
+        prepare_pane=prepare_pane,
+        turn_in_flight=lambda conversation_id: in_flight,
     )
     return response.status_code, json.loads(bytes(response.body)) if response.body else None
 
@@ -115,20 +167,75 @@ def test_reader_answers_unknown_without_a_boolean(tmp_path: Path, content: str |
     assert read_claude_fast_mode(tmp_path) is None
 
 
+# The host's Claude user settings.
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        None,
+        "{not json",
+        json.dumps(["list"]),
+        json.dumps({}),
+        json.dumps({"fastModePerSessionOptIn": False}),
+        json.dumps({"fastModePerSessionOptIn": "true"}),
+    ],
+)
+def test_per_session_needs_the_opt_in_set_to_true(
+    claude_config: Path, content: str | None
+) -> None:
+    settings = claude_config / "settings.json"
+    settings.unlink()
+    if content is not None:
+        settings.write_text(content)
+    assert claude_fast_mode_per_session() is False
+
+
+def test_per_session_reads_the_home_config_dir_without_claude_config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "settings.json").write_text(json.dumps(OPT_IN))
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR")
+    monkeypatch.setenv("HOME", str(home))
+    assert claude_fast_mode_per_session() is True
+
+
 # The handler, called directly.
 
 
-async def test_status_reads_the_snapshot(bridge_dir: Path) -> None:
+async def test_status_reads_the_snapshot_and_the_settings(bridge_dir: Path) -> None:
     _write_snapshot(bridge_dir, fast_mode=True)
-    assert await _event({"type": "fast_mode_status"}) == (200, {"enabled": True})
+    assert await _event({"type": "fast_mode_status"}) == (
+        200,
+        {"enabled": True, "per_session": True},
+    )
+
+
+async def test_status_reports_a_host_without_the_opt_in(
+    bridge_dir: Path, claude_config: Path
+) -> None:
+    _write_snapshot(bridge_dir, fast_mode=False)
+    (claude_config / "settings.json").write_text("{}")
+    assert await _event({"type": "fast_mode_status"}) == (
+        200,
+        {"enabled": False, "per_session": False},
+    )
 
 
 async def test_status_is_unknown_without_a_snapshot(bridge_dir: Path) -> None:
-    assert await _event({"type": "fast_mode_status"}) == (200, {"enabled": None})
+    assert await _event({"type": "fast_mode_status"}) == (
+        200,
+        {"enabled": None, "per_session": True},
+    )
 
 
 async def test_status_is_unknown_before_the_runner_loads_the_session(bridge_dir: Path) -> None:
-    assert await _event({"type": "fast_mode_status"}, harness=None) == (200, {"enabled": None})
+    assert await _event({"type": "fast_mode_status"}, harness=None) == (
+        200,
+        {"enabled": None, "per_session": True},
+    )
 
 
 async def test_change_types_fast_on_and_confirms(
@@ -169,29 +276,98 @@ async def test_change_from_unknown_confirms_once_the_snapshot_reports(
     assert len(pane.calls) == 1
 
 
-async def test_change_already_in_place_types_nothing(
-    bridge_dir: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_change_types_even_when_the_snapshot_already_matches(
+    bridge_dir: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool
 ) -> None:
-    _write_snapshot(bridge_dir, fast_mode=True)
+    _write_snapshot(bridge_dir, fast_mode=enabled)
     pane = _Pane(bridge_dir)
     monkeypatch.setattr(claude_native_bridge, "inject_slash_command", pane)
 
-    assert await _event({"type": "fast_mode_change", "enabled": True}) == (200, {"enabled": True})
+    assert await _event({"type": "fast_mode_change", "enabled": enabled}) == (
+        200,
+        {"enabled": enabled},
+    )
+    assert [call["command"] for call in pane.calls] == [f"/fast {'on' if enabled else 'off'}"]
+
+
+@pytest.mark.parametrize("settings", [None, "{}", json.dumps({"fastModePerSessionOptIn": False})])
+async def test_turning_on_without_the_opt_in_answers_409_before_anything(
+    bridge_dir: Path,
+    claude_config: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    settings: str | None,
+) -> None:
+    _write_snapshot(bridge_dir, fast_mode=False)
+    (claude_config / "settings.json").unlink()
+    if settings is not None:
+        (claude_config / "settings.json").write_text(settings)
+    pane = _Pane(bridge_dir)
+    monkeypatch.setattr(claude_native_bridge, "inject_slash_command", pane)
+    registry = _Registry(_Terminal())
+    healed: list[str] = []
+
+    async def _heal(conversation_id: str, bridge: Path) -> None:
+        healed.append(conversation_id)
+
+    status, body = await _event(
+        {"type": "fast_mode_change", "enabled": True}, registry=registry, prepare_pane=_heal
+    )
+    assert status == 409
+    assert body["error"] == "claude_native_fast_mode_needs_per_session"
+    assert '"fastModePerSessionOptIn": true' in body["detail"]
+    assert "deploy/README.md" in body["detail"]
+    assert '"Fast mode, per session"' in body["detail"]
     assert pane.calls == []
+    assert healed == []
+    assert registry.lookups == []
 
 
-async def test_change_that_never_shows_answers_503(
+async def test_turning_off_needs_no_opt_in(
+    bridge_dir: Path, claude_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_snapshot(bridge_dir, fast_mode=True)
+    (claude_config / "settings.json").unlink()
+    pane = _Pane(bridge_dir)
+    monkeypatch.setattr(claude_native_bridge, "inject_slash_command", pane)
+
+    assert await _event({"type": "fast_mode_change", "enabled": False}) == (
+        200,
+        {"enabled": False},
+    )
+    assert [call["command"] for call in pane.calls] == ["/fast off"]
+
+
+async def test_change_mid_turn_answers_202_pending_without_waiting(
+    bridge_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Claude Code queues the typed command until the reply ends."""
+    _write_snapshot(bridge_dir, fast_mode=False)
+    pane = _Pane(bridge_dir, applies=False)
+    monkeypatch.setattr(claude_native_bridge, "inject_slash_command", pane)
+    monkeypatch.setattr(ae_fast_mode, "FAST_MODE_CONFIRM_TIMEOUT_S", 5.0)
+
+    started = time.monotonic()
+    result = await _event({"type": "fast_mode_change", "enabled": True}, in_flight=True)
+
+    assert result == (202, {"enabled": True, "pending": True, "reason": REASON_AFTER_REPLY})
+    assert REASON_AFTER_REPLY == "Applies when the current reply finishes"
+    assert [call["command"] for call in pane.calls] == ["/fast on"]
+    assert time.monotonic() - started < 2.0
+
+
+async def test_change_typed_but_unconfirmed_answers_202_not_a_failure(
     bridge_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _write_snapshot(bridge_dir, fast_mode=False)
     pane = _Pane(bridge_dir, applies=False)
     monkeypatch.setattr(claude_native_bridge, "inject_slash_command", pane)
 
-    status, body = await _event({"type": "fast_mode_change", "enabled": True})
-    assert status == 503
-    assert body["error"] == "claude_native_fast_mode_unconfirmed"
-    assert "did not confirm the change" in body["detail"]
-    assert "/fast" in body["detail"]
+    result = await _event({"type": "fast_mode_change", "enabled": True})
+
+    assert result == (202, {"enabled": True, "pending": True, "reason": REASON_UNCONFIRMED})
+    assert REASON_UNCONFIRMED == "Waiting for Claude Code to confirm"
+    assert len(pane.calls) == 1
 
 
 async def test_change_with_a_failed_injection_answers_503_without_the_path(
@@ -229,28 +405,110 @@ async def test_change_with_a_pending_question_answers_409(
     assert body["detail"].startswith("Answer the pending Claude question")
 
 
-async def test_change_without_a_bridge_answers_503_after_the_heal(
+async def test_change_heals_a_live_pane_then_types(
     bridge_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _write_snapshot(bridge_dir, fast_mode=False)
+    steps: list[str] = []
     pane = _Pane(bridge_dir)
-    monkeypatch.setattr(claude_native_bridge, "inject_slash_command", pane)
-    healed: list[tuple[str, Path]] = []
+
+    def _type(bridge_dir: Path, *, command: str, **kwargs: Any) -> None:
+        steps.append(command)
+        pane(bridge_dir, command=command, **kwargs)
 
     async def _heal(conversation_id: str, bridge: Path) -> None:
-        healed.append((conversation_id, bridge))
+        steps.append(f"heal {conversation_id} {bridge.name}")
+
+    monkeypatch.setattr(claude_native_bridge, "inject_slash_command", _type)
+    registry = _Registry(_Terminal())
+
+    assert await _event(
+        {"type": "fast_mode_change", "enabled": True}, registry=registry, prepare_pane=_heal
+    ) == (200, {"enabled": True})
+    assert steps == [f"heal {SESSION_ID} {SESSION_ID}", "/fast on"]
+    assert registry.lookups == [(SESSION_ID, "claude", "main")]
+
+
+@pytest.mark.parametrize(
+    ("registry", "make_bridge"),
+    [
+        (None, True),
+        (_Registry(None), True),
+        (_Registry(_Terminal(alive=False)), True),
+        (_Registry(_Terminal()), False),
+    ],
+    ids=["no-registry", "no-pane", "dead-pane", "no-bridge"],
+)
+async def test_change_without_a_live_terminal_answers_409_and_never_heals(
+    bridge_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    registry: _Registry | None,
+    make_bridge: bool,
+) -> None:
+    if make_bridge:
+        bridge_dir.mkdir(parents=True)
+    pane = _Pane(bridge_dir)
+    monkeypatch.setattr(claude_native_bridge, "inject_slash_command", pane)
+    healed: list[str] = []
+
+    async def _heal(conversation_id: str, bridge: Path) -> None:
+        healed.append(conversation_id)
 
     response = await handle_fast_mode_event(
         SESSION_ID,
-        {"type": "fast_mode_change", "enabled": True},
+        {"type": "fast_mode_change", "enabled": False},
         harness="claude-native",
         server_client=NullServerClient(),  # type: ignore[arg-type]
+        terminal_registry=registry,  # type: ignore[arg-type]
         prepare_pane=_heal,
+        turn_in_flight=lambda conversation_id: False,
     )
     body = json.loads(bytes(response.body))
-    assert response.status_code == 503
-    assert body["error"] == "claude_native_bridge_missing"
-    assert healed == [(SESSION_ID, bridge_dir)]
+    assert response.status_code == 409
+    assert body == {"error": "claude_native_no_terminal", "detail": NO_TERMINAL_DETAIL}
+    assert NO_TERMINAL_DETAIL == (
+        "No Claude Code terminal right now; send the session a message first."
+    )
+    assert healed == []
     assert pane.calls == []
+
+
+async def test_a_session_runs_one_change_at_a_time(
+    bridge_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each change checks, types and confirms before the next one starts."""
+    _write_snapshot(bridge_dir, fast_mode=False)
+    steps: list[str] = []
+    read = ae_fast_mode.read_claude_fast_mode
+
+    async def _heal(conversation_id: str, bridge: Path) -> None:
+        steps.append("heal")
+        await asyncio.sleep(0.01)
+
+    def _type(bridge_dir: Path, *, command: str, **kwargs: Any) -> None:
+        steps.append(f"type {command}")
+        time.sleep(0.02)
+        _write_snapshot(bridge_dir, fast_mode=command == "/fast on")
+
+    def _read(bridge_dir: Path) -> bool | None:
+        value = read(bridge_dir)
+        steps.append(f"read {value}")
+        return value
+
+    monkeypatch.setattr(claude_native_bridge, "inject_slash_command", _type)
+    monkeypatch.setattr(ae_fast_mode, "read_claude_fast_mode", _read)
+
+    on, off = await asyncio.gather(
+        _event({"type": "fast_mode_change", "enabled": True}, prepare_pane=_heal),
+        _event({"type": "fast_mode_change", "enabled": False}, prepare_pane=_heal),
+    )
+
+    assert on == (200, {"enabled": True})
+    assert off == (200, {"enabled": False})
+    assert sorted([steps[:3], steps[3:]]) == [
+        ["heal", "type /fast off", "read False"],
+        ["heal", "type /fast on", "read True"],
+    ]
 
 
 @pytest.mark.parametrize("enabled", [None, "on", 1])
@@ -283,7 +541,9 @@ async def test_other_harnesses_answer_409(
 # The dispatch lines in the runner's /events route.
 
 
-async def _post_events(harness: str, *bodies: dict[str, Any]) -> list[Any]:
+async def _post_events(
+    harness: str, *bodies: dict[str, Any], app_state: dict[str, Any] | None = None
+) -> list[Any]:
     spec = AgentSpec(
         spec_version=1,
         name="t",
@@ -299,6 +559,8 @@ async def _post_events(harness: str, *bodies: dict[str, Any]) -> list[Any]:
         spec_resolver=_resolver,
         server_client=NullServerClient(),  # type: ignore[arg-type]
     )
+    if app_state is not None:
+        app_state["app"] = app
     async with _runner_client(app) as client:
         created = await client.post(
             "/v1/sessions", json={"session_id": SESSION_ID, "agent_id": AGENT_ID}
@@ -309,22 +571,64 @@ async def _post_events(harness: str, *bodies: dict[str, Any]) -> list[Any]:
         ]
 
 
+@pytest.fixture
+def probed_panes(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Any, str, Path]]:
+    """Report every Claude pane as live, recording what the dispatch passed in."""
+    probed: list[tuple[Any, str, Path]] = []
+
+    async def _alive(registry: Any, conversation_id: str, bridge: Path) -> bool:
+        probed.append((registry, conversation_id, bridge))
+        return True
+
+    monkeypatch.setattr(ae_fast_mode, "claude_pane_alive", _alive)
+    return probed
+
+
 async def test_runner_routes_both_events_for_a_claude_session(
-    bridge_dir: Path, monkeypatch: pytest.MonkeyPatch
+    bridge_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    probed_panes: list[tuple[Any, str, Path]],
 ) -> None:
     _write_snapshot(bridge_dir, fast_mode=False)
     pane = _Pane(bridge_dir)
     monkeypatch.setattr(claude_native_bridge, "inject_slash_command", pane)
+    app_state: dict[str, Any] = {}
 
     before, change, after = await _post_events(
         "claude-native",
         {"type": "fast_mode_status"},
         {"type": "fast_mode_change", "enabled": True},
         {"type": "fast_mode_status"},
+        app_state=app_state,
     )
-    assert (before.status_code, before.json()) == (200, {"enabled": False})
+    assert (before.status_code, before.json()) == (200, {"enabled": False, "per_session": True})
     assert (change.status_code, change.json()) == (200, {"enabled": True})
-    assert (after.status_code, after.json()) == (200, {"enabled": True})
+    assert (after.status_code, after.json()) == (200, {"enabled": True, "per_session": True})
+    assert [call["command"] for call in pane.calls] == ["/fast on"]
+    registry = app_state["app"].state.session_resource_registry.terminal_registry
+    assert probed_panes == [(registry, SESSION_ID, bridge_dir)]
+
+
+async def test_runner_answers_pending_for_a_change_typed_mid_turn(
+    bridge_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    probed_panes: list[tuple[Any, str, Path]],
+) -> None:
+    """The dispatch passes the pane's turn status, the model change's queued-switch signal."""
+    _write_snapshot(bridge_dir, fast_mode=False)
+    pane = _Pane(bridge_dir, applies=False)
+    monkeypatch.setattr(claude_native_bridge, "inject_slash_command", pane)
+
+    running, change = await _post_events(
+        "claude-native",
+        {"type": "external_session_status", "data": {"status": "running"}},
+        {"type": "fast_mode_change", "enabled": True},
+    )
+    assert running.status_code < 300, running.text
+    assert (change.status_code, change.json()) == (
+        202,
+        {"enabled": True, "pending": True, "reason": REASON_AFTER_REPLY},
+    )
     assert [call["command"] for call in pane.calls] == ["/fast on"]
 
 

@@ -4,15 +4,19 @@
 // `/fast on|off` mid-session and reports the state in its status line; this
 // row reads and changes it through `@/lib/aeFastMode`.
 //
-// Shown for claude-native sessions only, and usable only on the Opus releases
-// that have fast mode. The switch never guesses: until the session reports
-// its state it is drawn off with a note saying so.
+// Shown for claude-native sessions only. Turning it on needs an Opus release
+// with fast mode and a host that keeps fast mode per session; turning it off
+// is always allowed. The switch never guesses: until the session reports its
+// state it is drawn off with a note saying so. A change Claude Code has not
+// confirmed yet keeps the switch at the requested state with the reason, and
+// the open menu re-reads it.
 
 import { useEffect, useId } from "react";
 import * as DropdownMenuPrimitive from "radix-ui/dropdown-menu";
 import { DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { MenuItem } from "@/components/ui/menu-item";
 import {
+  AE_FAST_MODE_RECHECK_MS,
   aeFastModeModelSupported,
   changeAeFastMode,
   refreshAeFastMode,
@@ -22,6 +26,7 @@ import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chatStore";
 
 export const AE_FAST_MODE_HINT = "Faster Opus output; bills usage credits";
+export const AE_FAST_MODE_NEEDS_PER_SESSION = "Needs per-session fast mode on this host";
 
 /** The design system's Switch, drawn without a button: the menu item is the control. */
 function SwitchTrack({ checked, disabled }: { checked: boolean; disabled: boolean }) {
@@ -66,25 +71,36 @@ export function AeFastModeSection({
   const modelChangePending = useChatStore((state) => state.pendingModelChange !== null);
   const shown = pickerKind === "claude" && sessionId !== null;
   const state = useAeFastMode(shown ? sessionId : null);
+  const awaitingConfirmation = state.pending !== null && state.pendingReason !== null;
   const labelId = useId();
   const hintId = useId();
   const noteId = useId();
   useEffect(() => {
     if (shown && sessionId) void refreshAeFastMode(sessionId);
   }, [shown, sessionId]);
+  useEffect(() => {
+    if (!shown || !sessionId || !awaitingConfirmation) return;
+    const timer = setInterval(() => void refreshAeFastMode(sessionId), AE_FAST_MODE_RECHECK_MS);
+    return () => clearInterval(timer);
+  }, [shown, sessionId, awaitingConfirmation]);
   if (!shown || sessionId === null) return null;
 
-  const supported = aeFastModeModelSupported(model, modelLabel);
   const pending = state.pending !== null;
   const checked = state.pending ?? state.enabled ?? false;
-  const disabled = !supported || pending || busy || modelChangePending;
-  const failed = !pending && supported && state.error !== null;
+  // Why turning it on is unavailable; off stays allowed while it is on or unknown.
+  const onBlocked = !aeFastModeModelSupported(model, modelLabel)
+    ? "Opus only"
+    : state.perSession === false
+      ? AE_FAST_MODE_NEEDS_PER_SESSION
+      : null;
+  const mayTurnOff = state.enabled === true || (state.enabled === null && state.settled);
+  const disabled = pending || busy || modelChangePending || (onBlocked !== null && !mayTurnOff);
+  const failed = !pending && state.error !== null;
   const note = pending
-    ? `Turning fast mode ${state.pending ? "on" : "off"}…`
-    : !supported
-      ? "Opus only"
-      : (state.error ??
-        (state.enabled === null && state.settled ? "Unknown until the session replies" : null));
+    ? (state.pendingReason ?? `Turning fast mode ${state.pending ? "on" : "off"}…`)
+    : (state.error ??
+      onBlocked ??
+      (state.enabled === null && state.settled ? "Unknown until the session replies" : null));
 
   return (
     <div data-testid="composer-fast-mode">
@@ -99,7 +115,9 @@ export function AeFastModeSection({
           aria-busy={pending || undefined}
           data-testid="composer-fast-mode-switch"
           onSelect={(event) => event.preventDefault()}
-          onCheckedChange={(next) => void changeAeFastMode(sessionId, next === true)}
+          onCheckedChange={(next) =>
+            void changeAeFastMode(sessionId, onBlocked === null && next === true)
+          }
         >
           <span className="flex min-w-0 flex-1 flex-col whitespace-normal break-words">
             <span id={labelId} className={cn("leading-5", disabled && "text-muted-foreground")}>
