@@ -51,9 +51,7 @@ export function KeyboardShortcutHint({ label, keys }: { label: string; keys: str
     <>
       <span>{label}</span>
       {keys.map((key) => (
-        <Kbd key={`${label}-${key}`} variant="dark">
-          {key}
-        </Kbd>
+        <Kbd key={`${label}-${key}`}>{key}</Kbd>
       ))}
     </>
   );
@@ -61,10 +59,7 @@ export function KeyboardShortcutHint({ label, keys }: { label: string; keys: str
 
 export function KeyboardShortcutTooltipContent({ label, keys }: { label: string; keys: string[] }) {
   return (
-    <TooltipContent
-      side="top"
-      className="border border-slate-700 bg-slate-900 text-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-    >
+    <TooltipContent side="top">
       <KeyboardShortcutHint label={label} keys={keys} />
     </TooltipContent>
   );

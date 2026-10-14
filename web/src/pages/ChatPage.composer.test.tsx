@@ -136,6 +136,9 @@ vi.mock("@/hooks/useSession", async (importOriginal) => ({
     error: null,
   }),
 }));
+// 2026-10-14: that session mounts AeTeamControl, which needs a query client and
+// the sidebar's data; stub it like the other provider-backed pieces.
+vi.mock("@/components/AeTeamControl", () => ({ AeTeamControl: () => null }));
 vi.mock("@/hooks/useHosts", async (importOriginal) => ({
   ...(await importOriginal<typeof UseHostsModule>()),
   useHosts: () => ({ data: [] }),
@@ -5320,6 +5323,10 @@ describe("Composer config gear", () => {
     expect(tooltip).toHaveTextContent("Couldn’t update configuration");
     expect(tooltip).toHaveTextContent("Host stopped responding");
     expect(tooltip).toHaveTextContent("Try again");
+    // 2026-10-14: the base tooltip's ring is its only edge; a border drew a second.
+    expect(tooltip).toHaveClass("ring-1");
+    expect(tooltip).not.toHaveClass("border");
+    expect(tooltip).not.toHaveClass("border-border");
   });
 
   it("recomputes the Codex effort ladder after a confirmed model change and drops an unsupported level", async () => {

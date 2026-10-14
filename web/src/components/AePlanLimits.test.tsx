@@ -274,6 +274,23 @@ describe("AePlanLimitsPanel", () => {
     expect(contextLine.hidden).toBe(true);
   });
 
+  it("keeps the plan explainer open while the limits load, arrive and fail", () => {
+    const toggle = () => screen.getByRole("button", { name: "About plan limits" });
+    const line = () => within(screen.getByTestId("ae-limits-plans")).getByTestId("ae-limits-info");
+    const { rerender } = render(<AePlanLimitsPanel loading now={NOW} />);
+    expect(screen.getByText("Loading…")).toBeTruthy();
+    fireEvent.click(toggle());
+    expect(line().hidden).toBe(false);
+    rerender(<AePlanLimitsPanel data={FULL} now={NOW} />);
+    expect(screen.getByTestId("ae-limits-plan").textContent).toBe("Max 20x");
+    expect(toggle().getAttribute("aria-expanded")).toBe("true");
+    expect(line().hidden).toBe(false);
+    rerender(<AePlanLimitsPanel data={FULL} error={new Error("502 Bad Gateway")} now={NOW} />);
+    expect(line().hidden).toBe(false);
+    fireEvent.click(toggle());
+    expect(line().hidden).toBe(true);
+  });
+
   it("tones the context bar with the ring's steps, not the plan limit steps", () => {
     const contextBar = (tokensUsed: number) => {
       cleanup();
@@ -350,8 +367,35 @@ describe("AePlanLimitsPanel", () => {
     const segments = Array.from(bar.querySelectorAll<HTMLElement>("[data-segment]"));
     expect(segments).toHaveLength(1);
     expect(segments[0].className).toContain("bg-destructive");
-    // The legend still names the parts.
-    expect(screen.getByTestId("ae-context-breakdown").textContent).toContain("210k cached");
+    // The legend still names the parts, but drops the dots no red fill matches (2026-10-14).
+    const legend = screen.getByTestId("ae-context-breakdown");
+    expect(legend.textContent).toContain("210k cached");
+    expect(legend.querySelector("span.rounded-full")).toBeNull();
+  });
+
+  it("keys the legend with dots at a normal tone and drops them at the warning tone", () => {
+    const legendAt = (tokensUsed: number) => {
+      cleanup();
+      render(
+        <AePlanLimitsPanel
+          data={FULL}
+          now={NOW}
+          conversationId="conv_a"
+          harness="claude-native"
+          contextWindow={1_000_000}
+          tokensUsed={tokensUsed}
+        />,
+      );
+      const legend = screen.getByTestId("ae-context-breakdown");
+      return {
+        dots: legend.querySelectorAll("span.rounded-full").length,
+        parts: Array.from(legend.children).map((part) => part.textContent),
+      };
+    };
+    const parts = ["210k cached", "1.8k written", "5k new"];
+    expect(legendAt(500_000)).toEqual({ dots: 3, parts });
+    // 65%: the bar is one amber fill, so the legend keeps only its words (2026-10-14).
+    expect(legendAt(650_000)).toEqual({ dots: 0, parts });
   });
 
   it("shows another session's breakdown only for that session", () => {
@@ -600,6 +644,26 @@ describe("AePlanLimitsPanel session contexts", () => {
     expect(screen.getByText(/status line, 3h 2m ago \(may be out of date\)$/)).toBeTruthy();
     const bar = within(screen.getByTestId("ae-limits-context")).getByRole("progressbar");
     expect(bar.querySelector("[data-segment]")?.className).toContain("bg-foreground/25");
+  });
+
+  it("drops the legend dots on a stale reading at a normal tone", () => {
+    render(
+      <AePlanLimitsPanel
+        data={FULL}
+        now={NOW + 3 * 3_600_000}
+        conversationId="conv_a"
+        harness="claude-native"
+      />,
+    );
+    // 22% is a normal tone, but a stale bar is one grey fill (2026-10-14).
+    expect(screen.getByTestId("ae-context-value").textContent).toBe("216.8k / 1M (22%)");
+    const legend = screen.getByTestId("ae-context-breakdown");
+    expect(legend.querySelector("span.rounded-full")).toBeNull();
+    expect(Array.from(legend.children).map((part) => part.textContent)).toEqual([
+      "210k cached",
+      "1.8k written",
+      "5k new",
+    ]);
   });
 
   it("says unavailable before the session exists rather than showing zero", () => {

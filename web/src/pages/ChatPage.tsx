@@ -4904,7 +4904,7 @@ function SessionHarnessPicker({
             </TooltipTrigger>
             <TooltipContent
               side="top"
-              className="w-72 max-w-[calc(100vw-2rem)] flex-col items-start gap-1 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-menu"
+              className="w-72 max-w-[calc(100vw-2rem)] flex-col items-start gap-1 rounded-lg bg-popover p-3 text-popover-foreground shadow-menu"
               data-testid="composer-config-error-tooltip"
             >
               <strong className="font-medium">Couldn’t update configuration</strong>

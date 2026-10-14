@@ -300,14 +300,20 @@ function SectionHeader({
   right,
   info,
   infoLabel,
+  infoOpen,
+  onInfoOpenChange,
 }: {
   title: ReactNode;
   tag?: ReactNode;
   right?: ReactNode;
   info?: string;
   infoLabel?: string;
+  infoOpen?: boolean;
+  onInfoOpenChange?: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const open = infoOpen ?? ownOpen;
+  const setOpen = onInfoOpenChange ?? setOwnOpen;
   const infoId = useId();
   return (
     <div className="flex flex-col gap-0.5">
@@ -322,7 +328,7 @@ function SectionHeader({
               aria-controls={infoId}
               data-testid="ae-limits-info-toggle"
               className="-my-1 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 aria-expanded:text-foreground"
-              onClick={() => setOpen((value) => !value)}
+              onClick={() => setOpen(!open)}
             >
               <AeTablerSvg node={INFO_ICON} className="size-3.5" />
             </button>
@@ -493,7 +499,16 @@ function contextSegments(
   }));
 }
 
-function ContextLegend({ context, now }: { context: AeSessionContext; now: number }) {
+function ContextLegend({
+  context,
+  now,
+  dots,
+}: {
+  context: AeSessionContext;
+  now: number;
+  /** 2026-10-14: off while the bar is one toned or grey fill, which no dot would match. */
+  dots: boolean;
+}) {
   const parts = contextParts(context);
   if (parts.length === 0) return null;
   return (
@@ -504,7 +519,7 @@ function ContextLegend({ context, now }: { context: AeSessionContext; now: numbe
     >
       {parts.map((part) => (
         <span key={part.key} className="inline-flex items-center gap-1 tabular-nums">
-          <span className={cn("inline-block size-1.5 rounded-full", part.className)} />
+          {dots && <span className={cn("inline-block size-1.5 rounded-full", part.className)} />}
           {formatTokens(context[part.key])} {part.label}
         </span>
       ))}
@@ -602,7 +617,13 @@ function ContextEntryRow({
         segments={contextSegments(pct, reading.stale, entry.breakdown)}
         thick
       />
-      {entry.breakdown && <ContextLegend context={entry.breakdown} now={now} />}
+      {entry.breakdown && (
+        <ContextLegend
+          context={entry.breakdown}
+          now={now}
+          dots={!reading.stale && contextTone(pct) === "normal"}
+        />
+      )}
       {(who || detail) && (
         <p className="text-sm text-muted-foreground">
           {who && <span data-testid="ae-usage-who">{who}</span>}
@@ -631,6 +652,8 @@ function HarnessBlock({
   now,
   inUse = false,
   lead = false,
+  infoOpen,
+  onInfoOpenChange,
 }: {
   harness: AeHarness;
   snapshot: AeLimitSnapshot | null | undefined;
@@ -639,6 +662,8 @@ function HarnessBlock({
   inUse?: boolean;
   /** The block that heads the section, which carries the section's info toggle. */
   lead?: boolean;
+  infoOpen?: boolean;
+  onInfoOpenChange?: (open: boolean) => void;
 }) {
   return (
     <section
@@ -671,6 +696,8 @@ function HarnessBlock({
         }
         info={lead ? PLAN_INFO : undefined}
         infoLabel="About plan limits"
+        infoOpen={infoOpen}
+        onInfoOpenChange={onInfoOpenChange}
         right={
           snapshot ? (
             <span
@@ -737,6 +764,10 @@ export function AePlanLimitsPanel({
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const detailsId = useId();
+  // 2026-10-14: the loading, error and loaded states each draw their own plan
+  // header, so the panel keeps its explainer open across them.
+  const [planInfoOpen, setPlanInfoOpen] = useState(false);
+  const planInfo = { infoOpen: planInfoOpen, onInfoOpenChange: setPlanInfoOpen };
   const statusLines = data?.harnesses.claude?.contexts;
   const active = buildActiveContext(
     { conversationId, harness, model, contextWindow, tokensUsed },
@@ -767,7 +798,12 @@ export function AePlanLimitsPanel({
       <div className="flex flex-col gap-2.5 border-t pt-3" data-testid="ae-limits-plans">
         {error ? (
           <>
-            <SectionHeader title="Plan limits" info={PLAN_INFO} infoLabel="About plan limits" />
+            <SectionHeader
+              title="Plan limits"
+              info={PLAN_INFO}
+              infoLabel="About plan limits"
+              {...planInfo}
+            />
             <p className="text-sm text-destructive">
               Could not load plan limits ({error instanceof Error ? error.message : String(error)}).
               The /v1/ae/limits route belongs to omnigent-ae; check the server is on a current tag.
@@ -775,7 +811,12 @@ export function AePlanLimitsPanel({
           </>
         ) : loading && !data ? (
           <>
-            <SectionHeader title="Plan limits" info={PLAN_INFO} infoLabel="About plan limits" />
+            <SectionHeader
+              title="Plan limits"
+              info={PLAN_INFO}
+              infoLabel="About plan limits"
+              {...planInfo}
+            />
             <p className="text-sm text-muted-foreground">Loading…</p>
           </>
         ) : (
@@ -785,6 +826,7 @@ export function AePlanLimitsPanel({
             now={now}
             inUse={inUse === primary && others.length > 0}
             lead
+            {...planInfo}
           />
         )}
       </div>
