@@ -91,6 +91,22 @@ export function aeAgentLabel(harness: string | null | undefined): string | null 
   );
 }
 
+const CLAUDE_MODEL_ID =
+  /^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d+))?(?:-\d{8})?(?:\[1m\])?$/i;
+const CLAUDE_MODEL_ALIAS = /^(opus|sonnet|haiku|fable)(?:\[1m\])?$/i;
+
+/** A Claude model id as people read it: "claude-opus-5-5[1m]" -> "Opus 5.5". */
+export function aeModelName(model: string | null | undefined): string | null {
+  const raw = model?.trim();
+  if (!raw) return null;
+  const id = CLAUDE_MODEL_ID.exec(raw);
+  const family = id?.[1] ?? CLAUDE_MODEL_ALIAS.exec(raw)?.[1];
+  if (!family) return raw;
+  const name = family.charAt(0).toUpperCase() + family.slice(1).toLowerCase();
+  if (!id) return name;
+  return id[3] ? `${name} ${id[2]}.${id[3]}` : `${name} ${id[2]}`;
+}
+
 function isClaudeCodeHarness(harness: string): boolean {
   return harness === "claude-native" || harness === "native-claude";
 }
@@ -157,9 +173,7 @@ function snapshotReading(snapshot: AeSessionSnapshot | null | undefined): AeCont
   };
 }
 
-function missingText(agent: string | null, what: string): string {
-  return `${agent ?? "This agent"} has not reported ${what} yet; no reading to show.`;
-}
+const MISSING_TEXT = "No reading yet; it appears after the session's next reply.";
 
 export interface AeActiveSessionInput {
   conversationId: string | null;
@@ -211,7 +225,7 @@ export function buildActiveContext(
     unavailable: reading
       ? null
       : input.conversationId
-        ? missingText(agent, "context usage for this session")
+        ? MISSING_TEXT
         : "No session yet; the reading appears after the first reply.",
     breakdown: statusLine,
   };
@@ -239,7 +253,7 @@ export function buildCollaboratorContext(
     unavailable: reading
       ? null
       : input.snapshot
-        ? missingText(agent, "context usage for this session")
+        ? MISSING_TEXT
         : `Could not load this session${input.error ? ` (${input.error})` : ""}.`,
     breakdown: statusLine,
   };
@@ -254,8 +268,19 @@ function toSnapshot(session: Session): AeSessionSnapshot {
   };
 }
 
+/** Claude Code's own subagents run inside its process and report no context of their own. */
+const NATIVE_SUBAGENT_WRAPPER = "claude-code-native-ui-subagent";
+
+function isNativeSubagent(child: ChildSessionInfo): boolean {
+  return child.labels?.["omnigent.wrapper"] === NATIVE_SUBAGENT_WRAPPER;
+}
+
+/** The task summary or title, never a bare "type:hexid" such as "general-purpose:a45b4b17". */
 function childName(child: ChildSessionInfo): string {
-  return child.task_summary || child.title || child.session_name || child.id;
+  const title = child.title?.trim();
+  if (child.task_summary) return child.task_summary;
+  if (title && !/^[\w.-]+:[0-9a-f]{8,}$/i.test(title)) return title;
+  return "Collaborator";
 }
 
 function errorText(error: unknown): string {
@@ -274,7 +299,8 @@ export async function fetchAeSessionContexts(
       (error: unknown) => ({ rows: [] as ChildSessionInfo[], error: errorText(error) }),
     ),
   ]);
-  const shown = children.rows.slice(0, AE_MAX_COLLABORATORS);
+  const rows = children.rows.filter((child) => !isNativeSubagent(child));
+  const shown = rows.slice(0, AE_MAX_COLLABORATORS);
   const collaborators = await Promise.all(
     shown.map(async (child): Promise<AeCollaboratorInput> => {
       const base = { id: child.id, name: childName(child), routedModel: child.routed_model };
@@ -288,7 +314,7 @@ export async function fetchAeSessionContexts(
   return {
     self,
     collaborators,
-    hidden: children.rows.length - shown.length,
+    hidden: rows.length - shown.length,
     error: children.error,
   };
 }

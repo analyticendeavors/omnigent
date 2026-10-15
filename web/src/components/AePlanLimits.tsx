@@ -28,6 +28,7 @@ import {
   type AeContextReading,
   type AeSessionContextsState,
   aeLimitsHarnessFor,
+  aeModelName,
   buildActiveContext,
   buildCollaboratorContext,
   useAeSessionContexts,
@@ -527,6 +528,18 @@ function ContextLegend({
   );
 }
 
+/** Claude Code compacts a native 1M window at about 967k tokens by default (its model-config docs). */
+const AE_AUTOCOMPACT_AT_1M = 967_000;
+
+/** "About 524k until auto-compact", for a Claude Code session on a 1M window only. */
+function autoCompactText(entry: AeContextEntry, reading: AeContextReading): string | null {
+  if (entry.agent !== "Claude Code" || reading.stale || reading.size < 1_000_000) return null;
+  const left = AE_AUTOCOMPACT_AT_1M - reading.used;
+  if (left <= 0) return "Auto-compact is due";
+  if (left < 1000) return "Less than 1k until auto-compact";
+  return `About ${Math.round(left / 1000)}k until auto-compact`;
+}
+
 function readingDetail(reading: AeContextReading, now: number): string | null {
   if (reading.source === "live") return null;
   if (reading.source === "snapshot") return "As of the session's last reply";
@@ -563,13 +576,13 @@ function ContextEntryRow({
   now: number;
   lead?: boolean;
 }) {
-  const who = [entry.agent, entry.model].filter(Boolean).join(" · ") || null;
+  const who = [entry.agent, aeModelName(entry.model)].filter(Boolean).join(" · ") || null;
   const ariaLabel = `${entry.name} context${entry.agent ? ` (${entry.agent})` : ""}`;
   const { reading } = entry;
   const value = reading ? (
     <ContextValue reading={reading} />
   ) : (
-    <span className="text-sm text-muted-foreground">Unavailable</span>
+    <span className="text-sm text-muted-foreground">No reading yet</span>
   );
   const head = lead ? (
     <SectionHeader
@@ -585,25 +598,29 @@ function ContextEntryRow({
     </div>
   );
   if (!reading) {
+    // A collaborator without a reading is one line; the why sits in its tooltip.
     return (
       <li
         className="flex flex-col gap-1"
         data-testid="ae-context-unavailable"
         data-session={entry.key}
         data-role={entry.role}
+        title={lead ? undefined : [who, entry.unavailable].filter(Boolean).join(" · ")}
       >
         {head}
-        <span className="text-sm text-muted-foreground">{entry.unavailable}</span>
-        {who && (
-          <span className="truncate text-sm text-muted-foreground" data-testid="ae-usage-who">
-            {who}
-          </span>
+        {lead && (
+          <p className="text-sm text-muted-foreground">
+            {who && <span data-testid="ae-usage-who">{who}</span>}
+            {who && <span aria-hidden="true"> · </span>}
+            <span>{entry.unavailable}</span>
+          </p>
         )}
       </li>
     );
   }
   const pct = (reading.used / reading.size) * 100;
   const detail = readingDetail(reading, now);
+  const autoCompact = lead ? autoCompactText(entry, reading) : null;
   return (
     <li
       className="flex flex-col gap-1.5"
@@ -624,6 +641,15 @@ function ContextEntryRow({
           dots={!reading.stale && contextTone(pct) === "normal"}
         />
       )}
+      {autoCompact && (
+        <p
+          className="text-sm text-muted-foreground tabular-nums"
+          data-testid="ae-context-autocompact"
+          title="Claude Code compacts a 1M context window at about 967k tokens by default"
+        >
+          {autoCompact}
+        </p>
+      )}
       {(who || detail) && (
         <p className="text-sm text-muted-foreground">
           {who && <span data-testid="ae-usage-who">{who}</span>}
@@ -635,7 +661,7 @@ function ContextEntryRow({
   );
 }
 
-/** "No reading yet", with what to do about it. */
+/** What to do about "No reading yet", shown as its tooltip. */
 const EMPTY_TEXT: Record<AeHarness, string> = {
   claude:
     "No reading yet. Send one message in any Claude session; the box host's limits relay " +
@@ -710,7 +736,13 @@ function HarnessBlock({
         }
       />
       {!snapshot ? (
-        <p className="text-sm text-muted-foreground">{EMPTY_TEXT[harness]}</p>
+        <p
+          className="text-sm text-muted-foreground"
+          data-testid="ae-limits-empty"
+          title={EMPTY_TEXT[harness]}
+        >
+          No reading yet
+        </p>
       ) : (
         <>
           {(snapshot.windows.length > 0 || snapshot.credits) && (
