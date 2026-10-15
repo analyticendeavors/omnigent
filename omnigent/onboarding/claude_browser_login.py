@@ -94,7 +94,7 @@ def _run(job: Login) -> None:
                 with _LOCK:
                     code, job.code = job.code, ""
                 if code:
-                    process.sendline(code)
+                    process.send(code + "\r")
                 ended = False
                 try:
                     output = (output + process.read_nonblocking(8192, timeout=0.25))[-131072:]
@@ -108,6 +108,13 @@ def _run(job: Login) -> None:
                         job.url, job.status = url, "waiting"
                 clean = _ANSI.sub("", output)
                 token = _TOKEN.search(clean)
+                if "OAuth error:" in clean:
+                    job.status = "failed"
+                    job.error = (
+                        "Claude rejected the authorization code. "
+                        "Start sign-in again and use the new code."
+                    )
+                    return
                 if token:
                     with _LOCK:
                         if job.cancel.is_set():
@@ -155,13 +162,13 @@ def login_action(kind: str, name_or_id: str, code: str = "") -> dict[str, str]:
             if name_or_id in _read()["accounts"]:
                 raise ValueError("That account label already exists. Choose another label.")
             if any(
-                j.name == name_or_id and j.status in {"starting", "waiting"}
+                j.name == name_or_id and j.status in {"starting", "waiting", "exchanging"}
                 for j in _JOBS.values()
             ):
                 raise ValueError(
                     "Sign-in for that label is already open. Finish or cancel it first."
                 )
-            if sum(j.status in {"starting", "waiting"} for j in _JOBS.values()) >= 3:
+            if sum(j.status in {"starting", "waiting", "exchanging"} for j in _JOBS.values()) >= 3:
                 raise ValueError("Finish or cancel an existing sign-in before starting another.")
             job = Login(name_or_id)
             _JOBS[job.id] = job
@@ -172,7 +179,7 @@ def login_action(kind: str, name_or_id: str, code: str = "") -> dict[str, str]:
             raise ValueError("Sign-in expired or the host restarted. Start sign-in again.")
         if kind == "claude-login-cancel":
             job.cancel.set()
-            if job.status in {"starting", "waiting"}:
+            if job.status in {"starting", "waiting", "exchanging"}:
                 job.status = "cancelled"
         elif kind == "claude-login-code":
             if (
@@ -183,6 +190,7 @@ def login_action(kind: str, name_or_id: str, code: str = "") -> dict[str, str]:
             ):
                 raise ValueError("Paste the one-time authorization code shown by Claude.")
             job.code = code
+            job.status = "exchanging"
         elif kind != "claude-login-poll":
             raise ValueError("Unknown sign-in action.")
         return job.public()

@@ -34,7 +34,10 @@ export function ClaudeBrowserLogin({
   const completed = useRef(false);
   const done = useRef(onComplete);
   done.current = onComplete;
-  const active = login?.login_status === "starting" || login?.login_status === "waiting";
+  const active =
+    login?.login_status === "starting" ||
+    login?.login_status === "waiting" ||
+    login?.login_status === "exchanging";
   const action = async (
     kind: "claude-login-start" | "claude-login-code" | "claude-login-cancel",
   ) => {
@@ -101,9 +104,11 @@ export function ClaudeBrowserLogin({
       {active && (
         <>
           <p role="status" className="text-xs text-muted-foreground">
-            {url
-              ? "Open Claude and authorize your second subscription account. Your password stays on Claude's site."
-              : "Preparing secure sign-in on the host…"}
+            {login?.login_status === "exchanging"
+              ? "Completing sign-in with Claude…"
+              : url
+                ? "Open Claude and authorize your second subscription account. Your password stays on Claude's site."
+                : "Preparing secure sign-in on the host…"}
           </p>
           {url && (
             <a className="text-sm underline" href={url} target="_blank" rel="noopener noreferrer">
@@ -113,19 +118,19 @@ export function ClaudeBrowserLogin({
           {url && (
             <>
               <p className="text-xs text-muted-foreground">
-                If Claude shows a one-time code, paste it here. If it opens your primary account,
-                switch to the second account before authorizing.
+                Paste the full authorization code from Claude here, even if it is long. If it opens
+                your primary account, switch to the second account before authorizing.
               </p>
               <Input
                 aria-label="Claude authorization code"
-                placeholder="One-time authorization code"
+                placeholder="Authorization code (paste the full code)"
                 autoComplete="off"
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
               />
               <Button
                 type="button"
-                disabled={!code.trim() || store.isPending}
+                disabled={!code.trim() || store.isPending || login?.login_status === "exchanging"}
                 onClick={() => void action("claude-login-code")}
               >
                 Complete sign-in
