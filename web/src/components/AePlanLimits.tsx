@@ -34,6 +34,9 @@ import {
   useAeSessionContexts,
 } from "./aeSessionContext";
 
+import { AeCategoryBar, AeContextCategories } from "./AeContextCategories";
+import { contextCountdown, useContextUsage, type ContextUsage } from "./aeContextUsage";
+
 export const AE_LIMITS_PATH = "/v1/ae/limits";
 
 export type AeHarness = "claude" | "codex";
@@ -571,14 +574,24 @@ function ContextEntryRow({
   entry,
   now,
   lead = false,
+  categories,
 }: {
+  categories?: ContextUsage;
   entry: AeContextEntry;
   now: number;
   lead?: boolean;
 }) {
   const who = [entry.agent, aeModelName(entry.model)].filter(Boolean).join(" · ") || null;
   const ariaLabel = `${entry.name} context${entry.agent ? ` (${entry.agent})` : ""}`;
-  const { reading } = entry;
+  const reading: AeContextReading | null = categories
+    ? {
+        source: "snapshot",
+        used: categories.totalTokens,
+        size: categories.maxTokens,
+        observedAt: categories.observedAt,
+        stale: now - Date.parse(categories.observedAt) > 180_000,
+      }
+    : entry.reading;
   const value = reading ? (
     <ContextValue reading={reading} />
   ) : (
@@ -619,8 +632,14 @@ function ContextEntryRow({
     );
   }
   const pct = (reading.used / reading.size) * 100;
-  const detail = readingDetail(reading, now);
-  const autoCompact = lead ? autoCompactText(entry, reading) : null;
+  const detail = categories
+    ? `Estimated category snapshot · ${formatAgo(categories.observedAt, now)}`
+    : readingDetail(reading, now);
+  const autoCompact = lead
+    ? categories
+      ? contextCountdown(categories, reading.used)
+      : autoCompactText(entry, reading)
+    : null;
   return (
     <li
       className="flex flex-col gap-1.5"
@@ -628,13 +647,17 @@ function ContextEntryRow({
       data-window={`context:${entry.key}`}
     >
       {head}
-      <Meter
-        label={`${ariaLabel}: ${Math.round(pct)}% used`}
-        pct={pct}
-        segments={contextSegments(pct, reading.stale, entry.breakdown)}
-        thick
-      />
-      {entry.breakdown && (
+      {categories ? (
+        <AeCategoryBar data={categories} />
+      ) : (
+        <Meter
+          label={`${ariaLabel}: ${Math.round(pct)}% used`}
+          pct={pct}
+          segments={contextSegments(pct, reading.stale, entry.breakdown)}
+          thick
+        />
+      )}
+      {entry.breakdown && !categories && (
         <ContextLegend
           context={entry.breakdown}
           now={now}
@@ -645,7 +668,11 @@ function ContextEntryRow({
         <p
           className="text-sm text-muted-foreground tabular-nums"
           data-testid="ae-context-autocompact"
-          title="Claude Code compacts a 1M context window at about 967k tokens by default"
+          title={
+            categories
+              ? "From Claude Code’s context snapshot"
+              : "Claude Code compacts a 1M context window at about 967k tokens by default"
+          }
         >
           {autoCompact}
         </p>
@@ -807,6 +834,13 @@ export function AePlanLimitsPanel({
     statusLines,
     now,
   );
+  const native = active.harness === "claude-native" || active.harness === "native-claude";
+  const context = useContextUsage(
+    conversationId ?? null,
+    detailsOpen && native,
+    `${active.harness}:${active.model}`,
+  );
+  const categories = context.data?.available ? context.data : undefined;
   const collaborators = sessions.collaborators.map((c) =>
     buildCollaboratorContext(c, statusLines, now),
   );
@@ -824,7 +858,7 @@ export function AePlanLimitsPanel({
     <div className="flex flex-col gap-3" data-testid="ae-plan-limits">
       <section className="flex flex-col gap-2" data-testid="ae-limits-context">
         <ul data-testid="ae-context-active">
-          <ContextEntryRow entry={active} now={now} lead />
+          <ContextEntryRow entry={active} now={now} lead categories={categories} />
         </ul>
       </section>
       <div className="flex flex-col gap-2.5 border-t pt-3" data-testid="ae-limits-plans">
@@ -862,14 +896,14 @@ export function AePlanLimitsPanel({
           />
         )}
       </div>
-      {(hasCollaborators || others.length > 0) && (
+      {(native || hasCollaborators || others.length > 0) && (
         <div className="flex flex-col gap-3 border-t pt-3">
           <button
             type="button"
             aria-expanded={detailsOpen}
             aria-controls={detailsId}
             data-testid="ae-limits-details-toggle"
-            className="cursor-pointer self-start rounded-md border border-border px-2.5 py-1 text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 pointer-coarse:py-2"
+            className="min-h-8 pointer-coarse:min-h-10 cursor-pointer self-start rounded-md border border-border px-2.5 py-1 text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 pointer-coarse:py-2"
             onClick={() => setDetailsOpen((open) => !open)}
           >
             {detailsOpen ? "Hide detailed breakdown" : "See detailed breakdown"}
@@ -880,6 +914,7 @@ export function AePlanLimitsPanel({
             className="flex flex-col gap-4"
             data-testid="ae-limits-details"
           >
+            {native && <AeContextCategories data={context.data} error={context.error} />}
             {hasCollaborators && (
               <div className="flex flex-col gap-2" data-testid="ae-context-collaborators">
                 <h4 className="text-sm text-muted-foreground">Collaborators</h4>

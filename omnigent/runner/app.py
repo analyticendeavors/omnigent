@@ -6772,6 +6772,15 @@ def create_runner_app(
                 )
             return Response(status_code=204)
 
+        if body_type == "context_usage":
+            from omnigent.runner.ae_context_usage import handle_context_usage
+
+            return await handle_context_usage(
+                conversation_id,
+                harness=_session_harness_name(conversation_id),
+                server_client=server_client,
+            )
+
         if body_type in ("fast_mode_status", "fast_mode_change"):
             from omnigent.runner.ae_fast_mode import handle_fast_mode_event
 

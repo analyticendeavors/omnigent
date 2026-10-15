@@ -246,7 +246,7 @@ describe("AePlanLimitsPanel", () => {
     expect(screen.queryByTestId("ae-limits-hint")).toBeNull();
   });
 
-  it("draws no breakdown toggle when nothing waits behind it", () => {
+  it("offers native context categories even without another plan or collaborator", () => {
     render(
       <AePlanLimitsPanel
         data={{ now: iso(NOW), harnesses: { claude: FULL.harnesses.claude } }}
@@ -255,7 +255,7 @@ describe("AePlanLimitsPanel", () => {
         harness="claude-native"
       />,
     );
-    expect(screen.queryByTestId("ae-limits-details-toggle")).toBeNull();
+    expect(screen.getByTestId("ae-limits-details-toggle")).toBeTruthy();
     expect(screen.queryByTestId("ae-limits-in-use")).toBeNull();
   });
 
