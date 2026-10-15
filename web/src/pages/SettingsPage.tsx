@@ -257,6 +257,7 @@ import {
   readBackgroundSessionTitlesEnabled,
   writeBackgroundSessionTitlesEnabled,
 } from "@/lib/backgroundSessionTitlesPreferences";
+import { SettingsAiAccountsSection } from "./settings/SettingsAiAccountsSection";
 import { SettingsCustomizeSection } from "./settings/SettingsCustomizeSection";
 
 // Admin-only management surfaces, rendered as the Members / Policies settings
@@ -322,6 +323,7 @@ export function SettingsPage() {
     <PageScroll contentClassName="px-8" extraBottom="2.5rem">
       {section === "appearance" && <AppearanceSection />}
       {section === "general" && <GeneralSection />}
+      {section === "ai-accounts" && <SettingsAiAccountsSection />}
       {section === "git" && <GitSection />}
       {section === "integrations" && <IntegrationsSection />}
       {section === "shortcuts" && <ShortcutsSection />}

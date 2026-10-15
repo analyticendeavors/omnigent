@@ -34,7 +34,10 @@ export function ClaudeAccounts({ host }: { host: Host | null | undefined }) {
   if (!host) return null;
   const rows = (accounts.data ?? []).filter((row) => row.family.startsWith("claude-oauth"));
   return (
-    <div className="flex flex-col gap-2 border-t px-3 py-3" data-testid="claude-accounts">
+    <div
+      className="flex min-w-0 max-w-full flex-col gap-2 whitespace-normal [overflow-wrap:anywhere] border-t px-3 py-3"
+      data-testid="claude-accounts"
+    >
       <span className="text-sm font-medium">Claude subscription account</span>
       <p className="text-xs text-muted-foreground">
         Used for new Claude subscription chats on {host.name}, including team members. Start a new
@@ -49,6 +52,7 @@ export function ClaudeAccounts({ host }: { host: Host | null | undefined }) {
           key={row.env_var ?? ""}
           variant="ghost"
           size="sm"
+          className="h-auto min-h-8 w-full whitespace-normal break-words"
           disabled={store.isPending || row.family === "claude-oauth-active"}
           onClick={() =>
             store.mutate(
@@ -83,21 +87,30 @@ export function ClaudeAccounts({ host }: { host: Host | null | undefined }) {
           }}
         >
           <p className="text-xs text-muted-foreground">
-            Run <code>CLAUDE_CONFIG_DIR=~/.claude-backup claude setup-token</code> on your computer
-            and sign in with the second account in the browser. Paste the generated OAuth token
-            here. Your original CLI login is preserved. When this token expires, add a fresh token
-            under a new name.
+            1. Open a terminal on a computer with Claude Code installed. Run:
+          </p>
+          <code className="block min-w-0 rounded bg-muted p-2 text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">
+            CLAUDE_CONFIG_DIR=~/.claude-backup claude setup-token
+          </code>
+          <p className="text-xs text-muted-foreground">
+            2. In the browser, sign in with your second Claude account's email and login method. If
+            your primary account opens, sign out there and choose the second account.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            3. Give this account a label, such as Personal or Backup. Paste the generated OAuth
+            token below, not your password. Your original CLI login is preserved. When the token
+            expires, add a fresh token under a new name.
           </p>
           <Input
             aria-label="Claude account name"
-            placeholder="Account name"
+            placeholder="Label, e.g. Backup"
             value={name}
             maxLength={64}
             onChange={(event) => setName(event.target.value)}
           />
           <Input
             aria-label="Claude OAuth token"
-            placeholder="OAuth token"
+            placeholder="OAuth token from setup-token"
             type="password"
             autoComplete="off"
             value={token}
