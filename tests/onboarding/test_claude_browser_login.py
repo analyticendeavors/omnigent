@@ -41,6 +41,7 @@ def test_start_validation_cancel_and_expiry(monkeypatch):
         login.login_action("claude-login-code", job.id, "code\ncommand")
     login.login_action("claude-login-code", job.id, "one-time-code#state")
     assert job.code == "one-time-code#state"
+    assert job.status == "exchanging"
     assert "one-time-code" not in repr(job.public())
     assert login.login_action("claude-login-cancel", job.id)["login_status"] == "cancelled"
     assert job.cancel.is_set()
@@ -99,3 +100,30 @@ def test_login_frame_roundtrip():
         login_url="https://claude.com/oauth/authorize?state=test",
     )
     assert decode_host_frame(encode_host_frame(frame)) == frame
+
+
+def test_code_submitted_with_enter(monkeypatch):
+    import pexpect
+
+    process = Mock()
+    process.read_nonblocking.side_effect = pexpect.EOF
+    monkeypatch.setattr(pexpect, "spawn", Mock(return_value=process))
+    monkeypatch.setattr(login.shutil, "which", lambda _: "/usr/bin/claude")
+    job = login.Login("Backup", code="dummy#state")
+    login._run(job)
+    process.send.assert_called_once_with("dummy#state\r")
+    process.sendline.assert_not_called()
+
+
+def test_cli_oauth_error_is_reported_without_secrets(monkeypatch):
+    import pexpect
+
+    process = Mock()
+    process.read_nonblocking.return_value = "OAuth error: secret-provider-detail"
+    monkeypatch.setattr(pexpect, "spawn", Mock(return_value=process))
+    monkeypatch.setattr(login.shutil, "which", lambda _: "/usr/bin/claude")
+    job = login.Login("Backup")
+    login._run(job)
+    assert job.status == "failed"
+    assert "rejected" in job.error
+    assert "secret-provider-detail" not in repr(job.public())

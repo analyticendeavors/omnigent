@@ -15,7 +15,9 @@ const waiting = {
 };
 describe("Claude browser login", () => {
   it("starts login on the chosen host and submits only the one-time code", async () => {
-    mutateAsync.mockResolvedValue(waiting);
+    mutateAsync
+      .mockResolvedValueOnce(waiting)
+      .mockResolvedValue({ ...waiting, login_status: "exchanging" });
     render(<ClaudeBrowserLogin hostId="host" name="Backup" onComplete={() => {}} />);
     fireEvent.click(screen.getByText("Sign in with Claude"));
     await screen.findByText("Open Claude sign-in");
@@ -29,6 +31,7 @@ describe("Claude browser login", () => {
       target: { value: "code#state" },
     });
     fireEvent.click(screen.getByText("Complete sign-in"));
+    await screen.findByText("Completing sign-in with Claude…");
     await waitFor(() =>
       expect(mutateAsync).toHaveBeenCalledWith({
         harness: "claude-native",
