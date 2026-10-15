@@ -762,6 +762,9 @@ async def _receive_loop(
                         "configured_harnesses": frame.configured_harnesses,
                         "gateway_inference": frame.gateway_inference,
                         "error": frame.error,
+                        "login_id": frame.login_id,
+                        "login_status": frame.login_status,
+                        "login_url": frame.login_url,
                     }
                 )
             continue

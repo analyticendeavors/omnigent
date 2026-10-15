@@ -1,3 +1,4 @@
+import { ClaudeBrowserLogin } from "./ClaudeBrowserLogin";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -76,54 +77,62 @@ export function ClaudeAccounts({ host }: { host: Host | null | undefined }) {
         Add Claude account
       </Button>
       {adding && (
-        <div
-          className="flex flex-col gap-2"
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              event.stopPropagation();
-              addAccount();
-            }
-          }}
-        >
-          <p className="text-xs text-muted-foreground">
-            1. Open a terminal on a computer with Claude Code installed. Run:
-          </p>
-          <code className="block min-w-0 rounded bg-muted p-2 text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">
-            CLAUDE_CONFIG_DIR=~/.claude-backup claude setup-token
-          </code>
-          <p className="text-xs text-muted-foreground">
-            2. In the browser, sign in with your second Claude account's email and login method. If
-            your primary account opens, sign out there and choose the second account.
-          </p>
-          <p className="text-xs text-muted-foreground">
-            3. Give this account a label, such as Personal or Backup. Paste the generated OAuth
-            token below, not your password. Your original CLI login is preserved. When the token
-            expires, add a fresh token under a new name.
-          </p>
+        <div className="flex min-w-0 flex-col gap-2">
           <Input
             aria-label="Claude account name"
-            placeholder="Label, e.g. Backup"
+            placeholder="Account label, e.g. Backup"
             value={name}
             maxLength={64}
             onChange={(event) => setName(event.target.value)}
           />
-          <Input
-            aria-label="Claude OAuth token"
-            placeholder="OAuth token from setup-token"
-            type="password"
-            autoComplete="off"
-            value={token}
-            onChange={(event) => setToken(event.target.value)}
+          <ClaudeBrowserLogin
+            hostId={host.host_id}
+            name={name}
+            onComplete={() => {
+              setName("");
+              setToken("");
+              setAdding(false);
+              setMessage("Account saved and selected for new chats.");
+            }}
           />
-          <Button
-            type="button"
-            onClick={addAccount}
-            size="sm"
-            disabled={store.isPending || !name.trim() || !token.trim()}
-          >
-            Save account
-          </Button>
+          <details className="min-w-0">
+            <summary className="cursor-pointer text-xs text-muted-foreground">
+              Advanced: paste an existing OAuth token
+            </summary>
+            <div className="mt-2 flex min-w-0 flex-col gap-2">
+              <p className="text-xs text-muted-foreground">
+                1. Open a terminal on a computer with Claude Code installed. Run:
+              </p>
+              <code className="block min-w-0 rounded bg-muted p-2 text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">
+                CLAUDE_CONFIG_DIR=~/.claude-backup claude setup-token
+              </code>
+              <p className="text-xs text-muted-foreground">
+                2. In the browser, sign in with your second Claude account's email and login method.
+                If your primary account opens, sign out there and choose the second account.
+              </p>
+              <p className="text-xs text-muted-foreground">
+                3. Give this account a label, such as Personal or Backup. Paste the generated OAuth
+                token below, not your password. Your original CLI login is preserved. When the token
+                expires, add a fresh token under a new name.
+              </p>
+              <Input
+                aria-label="Claude OAuth token"
+                placeholder="OAuth token from setup-token"
+                type="password"
+                autoComplete="off"
+                value={token}
+                onChange={(event) => setToken(event.target.value)}
+              />
+              <Button
+                type="button"
+                onClick={addAccount}
+                size="sm"
+                disabled={store.isPending || !name.trim() || !token.trim()}
+              >
+                Save account
+              </Button>
+            </div>
+          </details>
         </div>
       )}
       {message && (

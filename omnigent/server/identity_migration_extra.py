@@ -119,7 +119,9 @@ def remap_extra_columns(
             if clash is not None:
                 session.delete(row)
             else:
-                if model is SqlConnection and not _reencrypt(cipher, row, new_id):
+                if model is SqlConnection and not _reencrypt(
+                    cipher, cast(SqlConnection, row), new_id
+                ):
                     bump("connections_reconnect", 1)
                 row.user_id = new_id
             bump(model.__tablename__, 1)

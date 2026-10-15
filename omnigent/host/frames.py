@@ -832,6 +832,9 @@ class HostStoreSecretResultFrame:
     configured_harnesses: dict[str, HarnessAvailability] | None = None
     gateway_inference: dict[str, bool] | None = None
     error: str | None = None
+    login_id: str | None = None
+    login_status: str | None = None
+    login_url: str | None = None
 
 
 @dataclass
@@ -1440,6 +1443,9 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "configured_harnesses": frame.configured_harnesses,
                 "gateway_inference": frame.gateway_inference,
                 "error": frame.error,
+                "login_id": frame.login_id,
+                "login_status": frame.login_status,
+                "login_url": frame.login_url,
             }
         )
     if isinstance(frame, HostDetectCredentialsFrame):
@@ -2168,6 +2174,9 @@ def _decode_store_secret_result(msg: _JsonObject) -> HostStoreSecretResultFrame:
         configured_harnesses=_optional_str_availability_map(msg, "configured_harnesses"),
         gateway_inference=optional_str_bool_map(msg, "gateway_inference"),
         error=_optional_nullable_str(msg, "error"),
+        login_id=_optional_nullable_str(msg, "login_id"),
+        login_status=_optional_nullable_str(msg, "login_status"),
+        login_url=_optional_nullable_str(msg, "login_url"),
     )
 
 

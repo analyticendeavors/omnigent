@@ -261,7 +261,16 @@ export function useInstallingHarnesses(hostId: string): ReadonlySet<string> {
 /** Payload for {@link useStoreCredential}: an API key, a gateway, or adopt. */
 export interface StoreCredentialInput {
   harness: string;
-  kind: "key" | "gateway" | "adopt" | "claude-oauth-add" | "claude-oauth-select";
+  kind:
+    | "key"
+    | "gateway"
+    | "adopt"
+    | "claude-oauth-add"
+    | "claude-oauth-select"
+    | "claude-login-start"
+    | "claude-login-poll"
+    | "claude-login-code"
+    | "claude-login-cancel";
   account_name?: string;
   /** The API key / gateway token for `key` / `gateway`; omitted for `adopt`. */
   secret?: string;
@@ -277,7 +286,11 @@ export interface StoreCredentialInput {
   env_var?: string;
 }
 
-interface StoreCredentialResult {
+export interface StoreCredentialResult {
+  login_id?: string | null;
+  login_status?: string | null;
+  login_url?: string | null;
+  login_error?: string | null;
   object: "harness_credential";
   harness: string;
   configured_harnesses: Record<string, boolean | string>;
@@ -323,6 +336,7 @@ export function useStoreCredential(hostId: string) {
     // react-query fires both — don't consolidate them, or the cache patch here
     // is lost.
     onSuccess: (result) => {
+      if (result.login_status && result.login_status !== "complete") return;
       queryClient.setQueriesData<Host[]>({ queryKey: ["hosts"] }, (hosts) =>
         hosts?.map((h) =>
           h.host_id === hostId ? { ...h, configured_harnesses: result.configured_harnesses } : h,

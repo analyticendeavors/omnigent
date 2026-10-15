@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 from pathlib import Path
 
 from omnigent.onboarding import secrets
@@ -56,7 +57,15 @@ def account_descriptors() -> list[dict[str, str | None]]:
     ]
 
 
+_ACCOUNT_LOCK = threading.RLock()
+
+
 def change_account(kind: str, name: str, token: str = "") -> StoreCredentialResult:
+    with _ACCOUNT_LOCK:
+        return _change_account(kind, name, token)
+
+
+def _change_account(kind: str, name: str, token: str = "") -> StoreCredentialResult:
     if name and not _valid_name(name):
         return StoreCredentialResult(
             False, None, "Use a name of up to 64 letters, digits, spaces, - or _."

@@ -1491,7 +1491,17 @@ def create_hosts_router(
                 status_code=400,
                 detail=f"harness {harness!r} is not configurable from the UI",
             )
-        if body.kind not in ("key", "gateway", "adopt", "claude-oauth-add", "claude-oauth-select"):
+        if body.kind not in (
+            "key",
+            "gateway",
+            "adopt",
+            "claude-oauth-add",
+            "claude-oauth-select",
+            "claude-login-start",
+            "claude-login-poll",
+            "claude-login-code",
+            "claude-login-cancel",
+        ):
             raise HTTPException(status_code=400, detail=f"unknown credential kind {body.kind!r}")
 
         user_id = require_user(request, auth_provider)
@@ -1551,6 +1561,10 @@ def create_hosts_router(
             "configured_harnesses": result.get("configured_harnesses") or {},
             # Passed through as-is: ``None`` is "unknown", not "none backed".
             "gateway_inference": written_gateway,
+            "login_id": result.get("login_id"),
+            "login_status": result.get("login_status"),
+            "login_url": result.get("login_url"),
+            "login_error": result.get("error"),
         }
 
     @router.get("/hosts/{host_id}/credentials/detected")
