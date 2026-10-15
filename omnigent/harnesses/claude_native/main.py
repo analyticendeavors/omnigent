@@ -1547,6 +1547,10 @@ def build_native_claude_terminal_env(
                 f"carries a raw {_ANTHROPIC_API_KEY_ENV}; the credential must reach "
                 "Claude Code via the helper, not the environment."
             )
+    if claude_config is None:
+        from omnigent.onboarding.claude_accounts import account_env_for_launch
+
+        terminal_env.update(account_env_for_launch(terminal_env))
     return terminal_env
 
 

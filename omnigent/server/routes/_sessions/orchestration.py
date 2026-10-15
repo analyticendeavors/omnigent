@@ -11024,6 +11024,28 @@ async def _create_session_from_existing_agent(
         if repl_labels:
             initial_labels.update(repl_labels)
 
+    if (
+        body.parent_session_id is not None
+        and body.sub_agent_name is None
+        and body.terminal_launch_args is None
+        and validated_launch_args is None
+        and not (
+            own_spec is not None
+            and any(
+                key in own_spec.executor.config for key in ("permission_mode", "exec_mode", "yolo")
+            )
+        )
+    ):
+        from omnigent.server.routes._sessions.team_permissions import (
+            inherited_team_permission_args,
+        )
+
+        permission_parent = conversation_store.get_conversation(body.parent_session_id)
+        if permission_parent is not None:
+            validated_launch_args = inherited_team_permission_args(
+                permission_parent.labels, initial_labels.get("omnigent.wrapper")
+            )
+
     if harness_override == "auto" or _native_smart_routing:
         from omnigent.runner.subagent_routing import AUTO_HARNESS_LABEL_KEY
 

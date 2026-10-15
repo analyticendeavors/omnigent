@@ -595,13 +595,9 @@ def build_native_controls(
         conv_id: str,
         mode: str,
     ) -> Response:
-        # Codex switches approval stance through its own /permissions popup, not
-        # thread/settings/update (that RPC drives model/effort but no-ops for
-        # approval). So drive the popup by keystroke into the codex tmux pane —
-        # the same channel /compact uses — reading the popup to find the preset's
-        # menu digit (row positions vary by codex build/platform, so we discover
-        # it rather than hardcode it) and confirming Codex echoed the switch.
         from omnigent.codex_approval_modes import codex_permission_preset
+        from omnigent.harnesses.codex_native.app_server import CodexAppServerResponseError
+        from omnigent.harnesses.codex_native.permissions import apply_permission_mode
 
         preset = codex_permission_preset(mode)
         if preset is None:
@@ -612,6 +608,41 @@ def build_native_controls(
                     "detail": f"Unknown codex approval mode {mode!r}",
                 },
             )
+        state = await _codex_native_bridge_state_for_session(
+            conv_id, action="approval-mode update"
+        )
+        if state is not None:
+            try:
+                if await apply_permission_mode(state.socket_path, state.thread_id, mode):
+                    return JSONResponse(status_code=200, content={"approval_mode": preset.value})
+            except CodexAppServerResponseError as exc:
+                # Older protocols and a new thread without a rollout still need
+                # the terminal menu. Policy rejections must not use a fallback.
+                if exc.code != -32601 and "no rollout found for thread id" not in (
+                    exc.message or ""
+                ):
+                    return JSONResponse(
+                        status_code=503,
+                        content={
+                            "error": "codex_native_approval_mode_failed",
+                            "detail": _client_safe_error_detail(
+                                exc, context="codex-native approval mode change"
+                            ),
+                        },
+                    )
+            except Exception as exc:  # noqa: BLE001 - return transport failures to the picker.
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "error": "codex_native_approval_mode_failed",
+                        "detail": _client_safe_error_detail(
+                            exc, context="codex-native approval mode change"
+                        ),
+                    },
+                )
+        # Compatibility path for Codex builds without live permission settings:
+        # drive the /permissions popup by keystroke into the codex tmux pane,
+        # reading its menu digit from the pane and confirming Codex echoed it.
         registry = resource_registry.terminal_registry
         instance = registry.get(conv_id, "codex", "main") if registry is not None else None
         if instance is None or not instance.running:

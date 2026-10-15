@@ -4425,9 +4425,11 @@ describe("AppShell clone/fork action", () => {
 
     await waitFor(() => expect(screen.queryByTestId("fork-session-dialog")).toBeNull());
     expect(await screen.findByText("Couldn't load the session to fork. Try again.")).toBeVisible();
-    expect(getSessionSlimMock.mock.calls.filter(([id]) => id === "conv_side_child")).toHaveLength(
-      1,
-    );
+    // omnigent-ae: useSession retries a failed refreshState read once without it.
+    expect(getSessionSlimMock.mock.calls.filter(([id]) => id === "conv_side_child")).toEqual([
+      ["conv_side_child", { refreshState: true }],
+      ["conv_side_child"],
+    ]);
   });
 
   it("retries an errored scoped source only when the same fork is reopened", async () => {
@@ -4448,10 +4450,12 @@ describe("AppShell clone/fork action", () => {
       data: [{ host_id: "host_a", name: "Host A", owner: "owner", status: "online" }],
     } as ReturnType<typeof useHosts>);
     useSessionMock.mockImplementation(realUseSession.hook);
-    getSessionSlimMock.mockImplementation((sessionId) => {
+    getSessionSlimMock.mockImplementation((sessionId, options) => {
       if (sessionId === "conv_parent") return Promise.resolve(parent);
       if (sessionId === "conv_side_child") {
-        sourceAttempts += 1;
+        // omnigent-ae: a failed refreshState read is retried once without it;
+        // that fallback belongs to the same attempt.
+        if (options?.refreshState) sourceAttempts += 1;
         return sourceAttempts === 1 ? firstRequest.promise : retryRequest.promise;
       }
       return Promise.reject(new Error(`unexpected session ${sessionId}`));

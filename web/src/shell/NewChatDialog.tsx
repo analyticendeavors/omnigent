@@ -1,6 +1,7 @@
 import { useLoadedConversations } from "@/hooks/useSidebarData";
 import { useComposerContext } from "@/hooks/useComposerContext";
 import { useSlashCompletion } from "@/hooks/useSlashCompletion";
+import { ClaudeAccounts } from "./ClaudeAccounts";
 import {
   HarnessPicker,
   HarnessPickerEntry,
@@ -3324,6 +3325,7 @@ export function NewChatLandingScreen() {
     return rest;
   }, [brainHarnessLabelsAll, brainRoutable]);
   const isEntryConfigurable = (agent: AvailableAgent) =>
+    nativeCodingAgentForAvailableAgent(agent)?.harness === "claude-native" ||
     (sandboxHasModelCatalog && agent.id === effectiveAgentId) ||
     agentHasModelSettings(agent) ||
     agentHasAdvancedSettings(agent, brainHarnessLabelsAll);
@@ -3782,6 +3784,7 @@ export function NewChatLandingScreen() {
   const selectedConfigContent =
     selectedAgent && isEntryConfigurable(selectedAgent) ? (
       <>
+        {selectedNativeHarness === "claude-native" && <ClaudeAccounts host={harnessWarningHost} />}
         {smartRoutingEligible && (
           <>
             <DropdownMenuCheckboxItem

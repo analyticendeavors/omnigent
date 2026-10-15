@@ -625,6 +625,13 @@ def _claude_login_detected() -> bool:
         the credentials file on any platform, or via the macOS Keychain through
         the CLI status fallback; ``False`` otherwise.
     """
+    from omnigent.onboarding.claude_accounts import account_env
+
+    try:
+        if account_env():
+            return True
+    except (OSError, ValueError, RuntimeError):
+        pass
     if claude_auth_has_credential(_claude_credentials_path()):
         return True
     if sys.platform == "darwin":

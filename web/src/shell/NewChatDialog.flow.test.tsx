@@ -125,6 +125,8 @@ vi.mock("@/lib/identity", () => ({
 }));
 vi.mock("@/hooks/useHosts", () => ({
   useHosts: vi.fn(),
+  useDetectedCredentials: vi.fn(() => ({ data: [], isError: false })),
+  useStoreCredential: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   useHostModelOptions: vi.fn(() => ({
     data: [
       { id: "opus", displayName: "Opus" },

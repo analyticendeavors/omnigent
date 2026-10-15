@@ -1,11 +1,10 @@
 """Codex-native runtime approval presets — mirrors Codex's ``/permissions`` popup.
 
-The interactive ``codex`` TUI switches approval stance through its own
-``/permissions`` popup, NOT through the app-server ``thread/settings/update``
-RPC (that path drives model/effort but is a no-op for approval). So Omnigent's
-running-session switcher drives the popup by keystroke: type ``/permissions``,
-then the option's menu digit (position-independent, unlike arrow navigation),
-then confirm the sub-dialog for the ones that ask.
+Current Codex builds accept permission changes through ``thread/settings/update``.
+Older builds use the interactive ``/permissions`` popup as a compatibility path:
+type ``/permissions``, then the option's menu digit, then confirm the sub-dialog
+for the ones that ask (``needs_confirm``). Both paths must confirm the applied
+settings before the web picker reports success.
 
 These presets use the popup's labels. Menu digits are discovered from the
 rendered popup because row positions vary by platform and configuration.

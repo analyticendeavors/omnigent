@@ -262,7 +262,8 @@ export function useInstallingHarnesses(hostId: string): ReadonlySet<string> {
 /** Payload for {@link useStoreCredential}: an API key, a gateway, or adopt. */
 export interface StoreCredentialInput {
   harness: string;
-  kind: "key" | "gateway" | "adopt";
+  kind: "key" | "gateway" | "adopt" | "claude-oauth-add" | "claude-oauth-select";
+  account_name?: string;
   /** The API key / gateway token for `key` / `gateway`; omitted for `adopt`. */
   secret?: string;
   /** Gateway base URL (required for `kind: "gateway"`). */
