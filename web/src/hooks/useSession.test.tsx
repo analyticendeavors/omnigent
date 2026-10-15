@@ -57,6 +57,34 @@ afterEach(() => {
 });
 
 describe("useSession — refresh_state", () => {
+  it("keeps durable team metadata available when runner refresh fails", async () => {
+    const saved = { ...session("conv_1"), labels: { "ae.team": "saved-team" } };
+    getSessionSlimMock.mockRejectedValueOnce(new Error("Runner reconnecting"));
+    getSessionSlimMock.mockResolvedValueOnce(saved);
+    const { Wrapper } = harness();
+    const { result } = renderHook(() => useSession("conv_1"), { wrapper: Wrapper });
+    await flush();
+    expect(refreshFlags()).toEqual([true, false]);
+    expect(result.current.session).toEqual(saved);
+    expect(result.current.error).toBeNull();
+  });
+
+  it("allows retry after both metadata requests fail", async () => {
+    getSessionSlimMock.mockRejectedValueOnce(new Error("Runner reconnecting"));
+    getSessionSlimMock.mockRejectedValueOnce(new Error("Host unavailable"));
+    const { client, Wrapper } = harness();
+    const { result } = renderHook(() => useSession("conv_1"), { wrapper: Wrapper });
+    await flush();
+    expect(result.current.session).toBeNull();
+    expect(result.current.error?.message).toBe("Host unavailable");
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ["session", "conv_1"] });
+    });
+    await flush();
+    expect(result.current.session?.id).toBe("conv_1");
+    expect(result.current.error).toBeNull();
+  });
+
   it("asks for a state refresh on the initial fetch", async () => {
     const { Wrapper } = harness();
     renderHook(() => useSession("conv_1"), { wrapper: Wrapper });

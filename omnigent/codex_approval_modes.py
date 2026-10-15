@@ -1,14 +1,9 @@
 """Codex-native runtime approval presets — mirrors Codex's ``/permissions`` popup.
 
-The interactive ``codex`` TUI switches approval stance through its own
-``/permissions`` popup, NOT through the app-server ``thread/settings/update``
-RPC (that path drives model/effort but is a no-op for approval). So Omnigent's
-running-session switcher drives the popup by keystroke: type ``/permissions``,
-then the option's menu digit (position-independent, unlike arrow navigation),
-then confirm the sub-dialog for the ones that ask.
-
-These presets mirror the popup: their ``label`` is what the popup shows and
-their order/``menu_key`` is the popup's own.
+Current Codex builds accept permission changes through ``thread/settings/update``.
+Older builds use the interactive ``/permissions`` popup as a compatibility path;
+``menu_key`` and ``needs_confirm`` describe that popup. Both paths must confirm
+the applied settings before the web picker reports success.
 
 Version caveat: the popup's contents are codex-version-dependent. 0.146.0 offers
 the first three (Ask for approval / Approve for me / Full Access); newer builds

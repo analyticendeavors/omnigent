@@ -14,9 +14,15 @@ import {
 } from "@/lib/aeTeam";
 import type * as AeTeamModule from "@/lib/aeTeam";
 import type { Session } from "@/lib/types";
-import { AeTeamControl, AeTeamEditor } from "./AeTeamControl";
+import { AeTeamControl, AeTeamEditor, SessionTeamControl } from "./AeTeamControl";
 
-const mocks = vi.hoisted(() => ({ agents: vi.fn(), hosts: vi.fn(), models: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  agents: vi.fn(),
+  hosts: vi.fn(),
+  models: vi.fn(),
+  session: vi.fn(),
+}));
+vi.mock("@/hooks/useSession", () => ({ useSession: mocks.session }));
 vi.mock("@/lib/aeTeam", async (original) => ({
   ...(await original<typeof AeTeamModule>()),
   saveAeTeam: vi.fn(),
@@ -129,6 +135,27 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("composer team picker", () => {
+  it("keeps a loading entry point and lets failed metadata be retried", () => {
+    const client = new QueryClient();
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    mocks.session.mockReturnValue({ session: null, isLoading: true, error: null });
+    const view = () => (
+      <QueryClientProvider client={client}>
+        <SessionTeamControl sessionId="parent" />
+      </QueryClientProvider>
+    );
+    const rendered = render(view());
+    expect(screen.getByRole("button", { name: "Loading team configuration" })).toBeDisabled();
+    mocks.session.mockReturnValue({ session: null, isLoading: false, error: new Error("Offline") });
+    rendered.rerender(view());
+    fireEvent.click(screen.getByRole("button", { name: "Retry team configuration" }));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["session", "parent"] });
+    mocks.session.mockReturnValue({ session, isLoading: false, error: null });
+    rendered.rerender(view());
+    openPicker();
+    expect(screen.getByText("Lead / orchestrator")).toBeInTheDocument();
+  });
+
   it("defaults to Auto and explains native helpers in every mode without saving", () => {
     mount();
     expect(screen.getByRole("button", { name: "Collaboration: Auto" })).toHaveTextContent("Auto");

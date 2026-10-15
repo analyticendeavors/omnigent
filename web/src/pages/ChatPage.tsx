@@ -67,7 +67,8 @@ import { type Agent, useSessionAgent, useAgents } from "@/hooks/useAgents";
 import { AeFastModeSection } from "@/components/AeFastMode";
 import { useAeFastModePending } from "@/lib/aeFastMode";
 import { AePlanLimitsPopover } from "@/components/AePlanLimits";
-import { AeTeamControl } from "@/components/AeTeamControl";
+import { SessionTeamControl } from "@/components/AeTeamControl";
+import { ClaudeAccounts } from "@/shell/ClaudeAccounts";
 import { agentDisplayLabel } from "@/components/AgentInfo";
 import {
   BRAIN_HARNESS_LABELS,
@@ -2633,6 +2634,7 @@ function ComposerImpl(
       const store = useChatStore.getState();
       if (showClaudePermissionMode) await store.setClaudePermissionMode(mode);
       else if (showCodexApprovalMode) await store.setCodexApprovalMode(mode);
+      if (useChatStore.getState().conversationId === sourceSessionId) setCommandError(null);
     } catch (error) {
       if (useChatStore.getState().conversationId === sourceSessionId)
         setCommandError(error instanceof Error ? error.message : "Unable to change permissions");
@@ -3919,10 +3921,10 @@ function ComposerImpl(
           ),
           trailing: (
             <>
-              {composerSession && (
-                <AeTeamControl
-                  key={composerSession.id}
-                  session={composerSession}
+              {composerSessionId && (
+                <SessionTeamControl
+                  key={composerSessionId}
+                  sessionId={composerSessionId}
                   disabled={isReadOnly || unreachable || configBusy}
                   working={isWorking}
                 />
@@ -4637,6 +4639,9 @@ function SessionHarnessPicker({
   const nativeAgent =
     nativeCodingAgentForHarness(sessionHarness) ??
     (modelPickerKind ? nativeCodingAgentForHarness(modelPickerKind + "-native") : undefined);
+  const showClaudeAccounts = nativeAgent?.harness === "claude-native";
+  const { data: configHosts = [] } = useHosts({ enabled: menuOpen && showClaudeAccounts });
+  const accountHost = configHosts.find((host) => host.host_id === modelLabelHostId);
   const iconAgent = {
     name: nativeAgent?.agentName ?? agentName ?? subAgentName ?? "",
     harness: nativeAgent?.harness ?? sessionHarness,
@@ -4650,10 +4655,12 @@ function SessionHarnessPicker({
     modelLabel: modelSummary,
     costRoutingEligible,
   });
-  const configurable = hasSessionConfig({
-    showModels,
-    showEffort,
-  });
+  const configurable =
+    showClaudeAccounts ||
+    hasSessionConfig({
+      showModels,
+      showEffort,
+    });
   const effortLabel = showEffort && !routingOn ? formatStatusEffortLabel(selectedEffort) : null;
   const label = routingOn
     ? SMART_ROUTING_LABEL
@@ -4733,6 +4740,7 @@ function SessionHarnessPicker({
     });
   const configContent = (
     <>
+      {showClaudeAccounts && <ClaudeAccounts host={accountHost} />}
       {costRoutingEligible && showModels && (
         <>
           <DropdownMenuItem

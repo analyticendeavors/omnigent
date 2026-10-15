@@ -801,6 +801,7 @@ class HostStoreSecretFrame:
     default_model: str | None = None
     wire_api: str | None = None
     env_var: str | None = None
+    account_name: str | None = None
 
 
 @dataclass
@@ -1427,6 +1428,7 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "default_model": frame.default_model,
                 "wire_api": frame.wire_api,
                 "env_var": frame.env_var,
+                "account_name": frame.account_name,
             }
         )
     if isinstance(frame, HostStoreSecretResultFrame):
@@ -2150,6 +2152,7 @@ def _decode_store_secret(msg: _JsonObject) -> HostStoreSecretFrame:
         default_model=_optional_nullable_str(msg, "default_model"),
         wire_api=_optional_nullable_str(msg, "wire_api"),
         env_var=_optional_nullable_str(msg, "env_var"),
+        account_name=_optional_nullable_str(msg, "account_name"),
     )
 
 

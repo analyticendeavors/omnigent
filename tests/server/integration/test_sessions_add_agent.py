@@ -237,6 +237,57 @@ async def test_add_agent_child_preserves_body_terminal_launch_args(
 # ── Targeted message scoping ─────────────────────────────
 
 
+@pytest.mark.parametrize(
+    ("child_name", "explicit_args", "expected_args"),
+    [
+        (
+            "codex-native-ui",
+            None,
+            [
+                "--sandbox",
+                "workspace-write",
+                "--ask-for-approval",
+                "on-request",
+                "-c",
+                'approvals_reviewer="auto_review"',
+            ],
+        ),
+        ("claude-native-ui", None, ["--permission-mode", "auto"]),
+        ("codex-native-ui", ["--sandbox", "read-only"], ["--sandbox", "read-only"]),
+        ("codex-native-ui", [], []),
+    ],
+)
+async def test_added_team_member_inherits_parent_permission_unless_overridden(
+    client: httpx.AsyncClient,
+    child_name: str,
+    explicit_args: list[str] | None,
+    expected_args: list[str],
+) -> None:
+    parent_agent = await create_test_agent(client, name="codex-native-ui")
+    parent = await client.post(
+        "/v1/sessions",
+        json={
+            "agent_id": parent_agent["id"],
+            "labels": {"omnigent.codex_native.approval_mode": "approve-for-me"},
+        },
+    )
+    assert parent.status_code == 201, parent.text
+    child_agent = (
+        parent_agent
+        if child_name == "codex-native-ui"
+        else await create_test_agent(client, name=child_name)
+    )
+    child = await _add_child_agent(
+        client,
+        parent_session_id=parent.json()["id"],
+        child_agent_id=child_agent["id"],
+        title="team:member",
+        terminal_launch_args=explicit_args,
+    )
+    assert child.status_code == 201, child.text
+    assert child.json()["terminal_launch_args"] == expected_args
+
+
 async def test_initial_task_is_scoped_to_the_added_child(
     client: httpx.AsyncClient,
 ) -> None:

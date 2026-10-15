@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useAvailableAgents, type AvailableAgent } from "@/hooks/useAvailableAgents";
 import { useHostModelOptions, useHosts, type Host } from "@/hooks/useHosts";
 import { childSessionsQueryKey } from "@/hooks/useChildSessions";
+import { useSession } from "@/hooks/useSession";
 import {
   aeTeamAgentName,
   aeTeamLeadName,
@@ -298,6 +299,38 @@ export function AeTeamEditor({
         </div>
       )}
     </div>
+  );
+}
+
+/** Keep the configuration entry point visible while session metadata recovers. */
+export function SessionTeamControl({
+  sessionId,
+  disabled = false,
+  working = false,
+}: {
+  sessionId: string;
+  disabled?: boolean;
+  working?: boolean;
+}) {
+  const { session, error, isLoading } = useSession(sessionId);
+  const queryClient = useQueryClient();
+  if (session) return <AeTeamControl session={session} disabled={disabled} working={working} />;
+  return (
+    <button
+      type="button"
+      aria-label={error ? "Retry team configuration" : "Loading team configuration"}
+      title={
+        error
+          ? "Could not load team and lead settings. Click to retry."
+          : "Loading team and lead settings…"
+      }
+      disabled={disabled || isLoading || !error}
+      onClick={() => void queryClient.invalidateQueries({ queryKey: ["session", sessionId] })}
+      className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg px-2 text-xs text-muted-foreground hover:bg-accent disabled:opacity-50"
+    >
+      <UsersRound className="size-4" />
+      <span>{error ? "Retry team" : "Team…"}</span>
+    </button>
   );
 }
 

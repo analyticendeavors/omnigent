@@ -4747,7 +4747,8 @@ def test_handle_detect_credentials_returns_non_secret_descriptors(
     result = host._handle_detect_credentials(HostDetectCredentialsFrame(request_id="d1"))
     assert isinstance(result, HostDetectCredentialsResultFrame)
     assert result.credentials == [
-        {"family": "anthropic", "source": "$ANTHROPIC_API_KEY", "env_var": "ANTHROPIC_API_KEY"}
+        {"family": "anthropic", "source": "$ANTHROPIC_API_KEY", "env_var": "ANTHROPIC_API_KEY"},
+        {"family": "claude-oauth-active", "source": "Default CLI account", "env_var": ""},
     ]
 
 

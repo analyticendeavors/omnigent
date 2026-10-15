@@ -479,6 +479,7 @@ class StoreHarnessCredentialRequest(BaseModel):
     default_model: str | None = None
     wire_api: str | None = None
     env_var: str | None = None
+    account_name: str | None = None
 
 
 class HostModelOptionsResponse(BaseModel):
@@ -1490,7 +1491,7 @@ def create_hosts_router(
                 status_code=400,
                 detail=f"harness {harness!r} is not configurable from the UI",
             )
-        if body.kind not in ("key", "gateway", "adopt"):
+        if body.kind not in ("key", "gateway", "adopt", "claude-oauth-add", "claude-oauth-select"):
             raise HTTPException(status_code=400, detail=f"unknown credential kind {body.kind!r}")
 
         user_id = require_user(request, auth_provider)
@@ -1514,6 +1515,7 @@ def create_hosts_router(
             default_model=body.default_model,
             wire_api=body.wire_api,
             env_var=body.env_var,
+            account_name=body.account_name,
         )
         # Serialize credential writes to this host: the daemon's write is a
         # non-atomic load→merge→save of config.yaml (twice — entry, then

@@ -35,6 +35,8 @@ import { COMPOSER_SEND_SHORTCUT_STORAGE_KEY } from "@/lib/composerSendShortcutPr
 import { composerContextToLabels } from "@/lib/composerContextAdapters";
 import { CHAT_COLUMN_WIDTH } from "./chatLayout";
 
+vi.mock("@/shell/ClaudeAccounts", () => ({ ClaudeAccounts: () => null }));
+
 // Composer reads workspace files via a TanStack query hook (for "@"-file
 // mentions). These slash-command tests don't exercise that, so stub the hook
 // to avoid needing a QueryClientProvider around every bare render.
@@ -138,7 +140,7 @@ vi.mock("@/hooks/useSession", async (importOriginal) => ({
 }));
 // 2026-10-14: that session mounts AeTeamControl, which needs a query client and
 // the sidebar's data; stub it like the other provider-backed pieces.
-vi.mock("@/components/AeTeamControl", () => ({ AeTeamControl: () => null }));
+vi.mock("@/components/AeTeamControl", () => ({ SessionTeamControl: () => null }));
 vi.mock("@/hooks/useHosts", async (importOriginal) => ({
   ...(await importOriginal<typeof UseHostsModule>()),
   useHosts: () => ({ data: [] }),
@@ -2483,6 +2485,25 @@ describe("Composer shared visible controls", () => {
     fireEvent.keyDown(screen.getByTestId("composer-permission-chip"), { key: "ArrowDown" });
     fireEvent.click(screen.getByTestId("composer-permission-option-read-only"));
     await waitFor(() => expect(setApproval).toHaveBeenCalledWith("read-only"));
+  });
+
+  it("clears a permission failure after a successful retry", async () => {
+    useChatStore.setState({
+      conversationId: "permission-retry",
+      codexApprovalMode: "ask-for-approval",
+    });
+    const setApproval = vi
+      .spyOn(useChatStore.getState(), "setCodexApprovalMode")
+      .mockRejectedValueOnce(new Error("Could not switch permissions"))
+      .mockResolvedValueOnce(undefined);
+    renderWithTooltips(<Composer {...composerProps({ showCodexApprovalMode: true })} />);
+    fireEvent.keyDown(screen.getByTestId("composer-permission-chip"), { key: "ArrowDown" });
+    fireEvent.click(screen.getByTestId("composer-permission-option-approve-for-me"));
+    await screen.findByText("Could not switch permissions");
+    fireEvent.keyDown(screen.getByTestId("composer-permission-chip"), { key: "ArrowDown" });
+    fireEvent.click(screen.getByTestId("composer-permission-option-approve-for-me"));
+    await waitFor(() => expect(setApproval).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText("Could not switch permissions")).toBeNull());
   });
 });
 

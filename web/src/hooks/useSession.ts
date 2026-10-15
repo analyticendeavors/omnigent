@@ -57,7 +57,15 @@ export function useSession(conversationId: string | null | undefined): UseSessio
   const serverId = isTempConvId(conversationId) ? null : (conversationId ?? null);
   const { data, isLoading, error } = useQuery({
     queryKey: serverId ? ["session", serverId] : ["session", null],
-    queryFn: () => getSessionSlim(serverId as string, { refreshState: true }),
+    queryFn: async () => {
+      try {
+        return await getSessionSlim(serverId as string, { refreshState: true });
+      } catch {
+        // Team/lead configuration needs durable metadata even when the runner
+        // cannot refresh its live capabilities during startup or reconnect.
+        return getSessionSlim(serverId as string);
+      }
+    },
     enabled: serverId !== null,
     staleTime: Infinity,
     retry: false,

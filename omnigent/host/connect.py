@@ -2925,7 +2925,17 @@ class HostProcess:
                 error=f"harness {frame.harness!r} is not configurable from the UI",
             )
 
-        if frame.kind == "adopt":
+        if frame.kind in ("claude-oauth-add", "claude-oauth-select"):
+            from omnigent.onboarding.claude_accounts import change_account
+
+            if install_key != ANTHROPIC_FAMILY:
+                return HostStoreSecretResultFrame(
+                    request_id=frame.request_id,
+                    status="failed",
+                    error="OAuth accounts require Claude.",
+                )
+            result = change_account(frame.kind, frame.account_name or "", frame.secret_value or "")
+        elif frame.kind == "adopt":
             if not frame.env_var:
                 return HostStoreSecretResultFrame(
                     request_id=frame.request_id,
@@ -3002,12 +3012,15 @@ class HostProcess:
         :param frame: The detect request (carries only a request id).
         :returns: Result frame with the non-secret credential descriptors.
         """
+        from omnigent.onboarding.claude_accounts import account_descriptors
+
         detected = detect_adoptable_credentials()
         return HostDetectCredentialsResultFrame(
             request_id=frame.request_id,
             credentials=[
                 {"family": d.family, "source": d.source, "env_var": d.env_var} for d in detected
-            ],
+            ]
+            + account_descriptors(),
         )
 
     def _handle_fs_request(self, frame: HostFsRequestFrame) -> HostFsResultFrame:
