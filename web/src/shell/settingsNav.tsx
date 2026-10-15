@@ -38,6 +38,7 @@ export type SettingsSectionId =
   | "harnesses"
   | "custom-agents"
   | "general"
+  | "ai-accounts"
   | "git"
   | "integrations"
   | "shortcuts"
@@ -55,6 +56,7 @@ const SECTION_IDS: readonly SettingsSectionId[] = [
   "harnesses",
   "custom-agents",
   "general",
+  "ai-accounts",
   "git",
   "integrations",
   "shortcuts",
@@ -107,6 +109,7 @@ export function settingsNavGroups(
     { id: "general", label: "General", icon: SettingsIcon },
     { id: "appearance", label: "Appearance", icon: PaletteIcon },
     { id: "git", label: "Git", icon: GitBranchIcon },
+    { id: "ai-accounts", label: "AI accounts", icon: UserCogIcon },
     { id: "shortcuts", label: "Keyboard shortcuts", icon: KeyboardIcon, hideOnMobile: true },
     { id: "import", label: "Import sessions", icon: DownloadIcon },
   ];

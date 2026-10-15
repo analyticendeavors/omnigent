@@ -447,6 +447,10 @@
   padding-right: 32px;
 }
 
+.composer-agent-config-menu:has([data-testid="claude-accounts"]) {
+  width: min(24rem, calc(100vw - 2rem));
+}
+
 .composer-agent-config-menu :is([role="menuitem"], [role="menuitemcheckbox"]) {
   min-height: 28px;
 }

@@ -260,6 +260,7 @@ import {
   readBackgroundSessionTitlesEnabled,
   writeBackgroundSessionTitlesEnabled,
 } from "@/lib/backgroundSessionTitlesPreferences";
+import { SettingsAiAccountsSection } from "./settings/SettingsAiAccountsSection";
 import { SettingsHarnessesSection } from "./settings/SettingsHarnessesSection";
 import { SettingsCustomAgentsSection } from "./settings/SettingsCustomAgentsSection";
 
@@ -336,6 +337,7 @@ export function SettingsPage() {
     >
       {section === "appearance" && <AppearanceSection />}
       {section === "general" && <GeneralSection />}
+      {section === "ai-accounts" && <SettingsAiAccountsSection />}
       {section === "harnesses" && <SettingsHarnessesSection />}
       {section === "custom-agents" && <SettingsCustomAgentsSection />}
       {section === "git" && <GitSection />}
