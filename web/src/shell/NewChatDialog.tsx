@@ -4225,6 +4225,18 @@ export function NewChatLandingScreen() {
       setDevinPermissionMode(
         resolve(DEVIN_NATIVE_PERMISSION_MODES, DEVIN_NATIVE_DEFAULT_PERMISSION_MODE),
       );
+      const model =
+        projectSeed(devinModelOptions) ??
+        (devinModelOptions.some((option) => option.id === stored.model) ? stored.model : "");
+      setPickedModel(model);
+      setPickedEffort(
+        codexEffortLevelsForModel(
+          devinModelOptions,
+          model || devinModelOptions.find((option) => option.isDefault)?.id,
+        ).includes(stored.effort)
+          ? stored.effort
+          : "",
+      );
     }
     // Reseed on harness changes, when the selected host's catalog resolves,
     // and when the project's configured default model settles (its config
@@ -4237,6 +4249,7 @@ export function NewChatLandingScreen() {
     claudeModelOptions,
     codexModelOptions,
     piModelOptions,
+    devinModelOptions,
     projectDefaultModel,
   ]);
   useEffect(() => {

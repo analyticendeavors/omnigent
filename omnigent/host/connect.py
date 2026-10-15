@@ -3061,6 +3061,45 @@ class HostProcess:
                 error=f"harness {frame.harness!r} is not configurable from the UI",
             )
 
+        if frame.kind in {
+            "claude-login-start",
+            "claude-login-poll",
+            "claude-login-code",
+            "claude-login-cancel",
+        }:
+            from omnigent.onboarding.claude_browser_login import login_action
+
+            if install_key != ANTHROPIC_FAMILY:
+                return HostStoreSecretResultFrame(
+                    request_id=frame.request_id,
+                    status="failed",
+                    error="Browser sign-in requires Claude.",
+                )
+            try:
+                login = login_action(
+                    frame.kind, frame.account_name or "", frame.secret_value or ""
+                )
+            except (ValueError, RuntimeError):
+                return HostStoreSecretResultFrame(
+                    request_id=frame.request_id,
+                    status="failed",
+                    error="Could not update sign-in. Check the account label or restart sign-in.",
+                )
+            return HostStoreSecretResultFrame(
+                request_id=frame.request_id,
+                status="ok",
+                login_id=login["login_id"],
+                login_status=login["login_status"],
+                login_url=login["login_url"],
+                error=login["error"],
+                configured_harnesses=configured_harness_map()
+                if login["login_status"] == "complete"
+                else None,
+                gateway_inference=gateway_inference_map()
+                if login["login_status"] == "complete"
+                else None,
+            )
+
         if frame.kind in ("claude-oauth-add", "claude-oauth-select"):
             from omnigent.onboarding.claude_accounts import change_account
 
