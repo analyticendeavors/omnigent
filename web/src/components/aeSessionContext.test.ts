@@ -11,6 +11,7 @@ import {
   aeLimitsHarnessFor,
   buildActiveContext,
   buildCollaboratorContext,
+  aeModelName,
   fetchAeSessionContexts,
   useAeSessionContexts,
   usesClaudeStatusLine,
@@ -110,7 +111,7 @@ describe("buildActiveContext", () => {
       NOW,
     );
     expect(entry.reading).toBeNull();
-    expect(entry.unavailable).toContain("Codex has not reported");
+    expect(entry.unavailable).toBe("No reading yet; it appears after the session's next reply.");
   });
 
   it("drops the store's figures when the snapshot shows a different agent", () => {
@@ -149,8 +150,45 @@ describe("buildCollaboratorContext", () => {
   });
 });
 
+describe("aeModelName", () => {
+  it("reads Claude model ids and aliases as names, and leaves others as they are", () => {
+    expect(aeModelName("claude-opus-5-5[1m]")).toBe("Opus 5.5");
+    expect(aeModelName("claude-sonnet-4-5-20250929")).toBe("Sonnet 4.5");
+    expect(aeModelName("claude-fable-5")).toBe("Fable 5");
+    expect(aeModelName("opus[1m]")).toBe("Opus");
+    expect(aeModelName("gpt-5.5")).toBe("gpt-5.5");
+    expect(aeModelName(null)).toBeNull();
+  });
+});
+
 describe("fetchAeSessionContexts", () => {
   beforeEach(() => vi.mocked(authenticatedFetch).mockReset());
+
+  it("leaves Claude Code's own subagents out and never names a row by its raw id", async () => {
+    const rows = [
+      {
+        ...child("conv_helper"),
+        title: "general-purpose:a45b4b1759d6fb802",
+        labels: { "omnigent.wrapper": "claude-code-native-ui-subagent" },
+      },
+      { ...child("conv_team"), title: "codex:a45b4b1759d6fb802" },
+      { ...child("conv_named"), task_summary: "Review the diff" },
+    ];
+    vi.mocked(authenticatedFetch).mockImplementation((url) => {
+      const path = String(url);
+      if (path === "/v1/sessions/conv_root/child_sessions") {
+        return json({ object: "list", data: rows });
+      }
+      const id = path.match(/^\/v1\/sessions\/([^/?]+)\?/)?.[1] ?? "";
+      return json(wire(id, "codex-native"));
+    });
+    const state = await fetchAeSessionContexts("conv_root");
+    expect(state.collaborators.map((c) => [c.id, c.name])).toEqual([
+      ["conv_team", "Collaborator"],
+      ["conv_named", "Review the diff"],
+    ]);
+    expect(state.hidden).toBe(0);
+  });
 
   it("fetches each child's snapshot, caps the list and keeps a failed child visible", async () => {
     const ids = Array.from({ length: AE_MAX_COLLABORATORS + 2 }, (_, i) => `conv_c${i}`);

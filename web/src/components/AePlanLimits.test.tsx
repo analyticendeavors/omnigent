@@ -200,15 +200,19 @@ describe("AePlanLimitsPanel", () => {
     // The other plan waits, folded, behind the breakdown toggle.
     expect(screen.getByTestId("ae-limits-details").hidden).toBe(true);
     expect(codex.closest("[data-testid=ae-limits-details]")).toBeTruthy();
-    expect(codex.textContent).toContain("No reading yet");
-    expect(codex.textContent).toContain("codex login");
+    // One plain line; what to do about it is the tooltip.
+    const empty = within(codex).getByTestId("ae-limits-empty");
+    expect(empty.textContent).toBe("No reading yet");
+    expect(empty.getAttribute("title")).toContain("codex login");
   });
 
   it("says what to do when Claude has no reading", () => {
     render(<AePlanLimitsPanel data={{ now: iso(NOW), harnesses: {} }} now={NOW} />);
     const [claude] = screen.getAllByTestId("ae-limits-harness");
-    expect(claude.textContent).toContain("Send one message in any Claude session");
-    expect(claude.textContent).toContain("docs/PLAN-LIMITS.md");
+    const empty = within(claude).getByTestId("ae-limits-empty");
+    expect(empty.textContent).toBe("No reading yet");
+    expect(empty.getAttribute("title")).toContain("Send one message in any Claude session");
+    expect(claude.textContent).not.toContain("docs/PLAN-LIMITS.md");
   });
 
   it("renders the full Claude panel in the usage popover's order", () => {
@@ -412,7 +416,7 @@ describe("AePlanLimitsPanel", () => {
     const context = screen.getByTestId("ae-limits-context");
     expect(within(context).queryByRole("progressbar")).toBeNull();
     expect(within(context).getByTestId("ae-context-unavailable").textContent).toContain(
-      "Claude Code has not reported context usage",
+      "No reading yet; it appears after the session's next reply.",
     );
   });
 
@@ -519,7 +523,7 @@ describe("AePlanLimitsPanel session contexts", () => {
     expect(contextLabels()).toEqual([]);
     expect(screen.queryByTestId("ae-context-breakdown")).toBeNull();
     expect(screen.getByTestId("ae-context-unavailable").textContent).toContain(
-      "Codex has not reported context usage for this session yet",
+      "No reading yet; it appears after the session's next reply.",
     );
   });
 
@@ -626,7 +630,15 @@ describe("AePlanLimitsPanel session contexts", () => {
       "conv_quiet",
       "conv_gone",
     ]);
-    expect(missing[1].textContent).toContain("Could not load this session (404 Not Found)");
+    // One line each: the name and "No reading yet"; the why is the tooltip.
+    expect(missing.map((row) => row.textContent)).toEqual([
+      expect.stringMatching(/No reading yet$/),
+      expect.stringMatching(/No reading yet$/),
+    ]);
+    expect(missing[0].textContent).not.toContain("appears after");
+    expect(missing[1].getAttribute("title")).toContain(
+      "Could not load this session (404 Not Found)",
+    );
     expect(collaborators.textContent).toContain("2 more collaborators not shown.");
     // No row reads a combined total of the windows above.
     expect(screen.queryByText(/2\.4M|336\.8k/)).toBeNull();
@@ -664,6 +676,37 @@ describe("AePlanLimitsPanel session contexts", () => {
       "1.8k written",
       "5k new",
     ]);
+  });
+
+  it("counts down to auto-compact on a 1M Claude Code window and names the model", () => {
+    const { rerender } = render(
+      <AePlanLimitsPanel
+        data={WITH_CODEX}
+        now={NOW}
+        conversationId="conv_a"
+        harness="claude-native"
+        model="claude-opus-5-5[1m]"
+        contextWindow={1_000_000}
+        tokensUsed={443_100}
+      />,
+    );
+    const left = screen.getByTestId("ae-context-autocompact");
+    expect(left.textContent).toBe("About 524k until auto-compact");
+    expect(left.getAttribute("title")).toContain("967k");
+    expect(screen.getByTestId("ae-usage-who").textContent).toBe("Claude Code · Opus 5.5");
+    // A 200k window has no documented compaction point to count down to.
+    rerender(
+      <AePlanLimitsPanel
+        data={WITH_CODEX}
+        now={NOW}
+        conversationId="conv_a"
+        harness="claude-native"
+        model="claude-sonnet-4-5"
+        contextWindow={200_000}
+        tokensUsed={90_000}
+      />,
+    );
+    expect(screen.queryByTestId("ae-context-autocompact")).toBeNull();
   });
 
   it("says unavailable before the session exists rather than showing zero", () => {
