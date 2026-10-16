@@ -7,6 +7,7 @@ import {
   aeLabel,
   aeStatusOf,
   countAeSlots,
+  isAeDashboardPath,
   isAeSlot,
   stripLeadingGlyph,
 } from "./aeLabels";
@@ -107,5 +108,21 @@ describe("slots", () => {
       ]),
     ).toBe(2);
     expect(countAeSlots([working("a"), working("b"), working("c"), working("d")])).toBe(4);
+  });
+});
+
+describe("isAeDashboardPath", () => {
+  const base = "/extensions/analyticendeavors.parking-lot/";
+
+  it("is true on the Dashboard's two pages", () => {
+    expect(isAeDashboardPath(`${base}lot`)).toBe(true);
+    expect(isAeDashboardPath(`${base}your-move`)).toBe(true);
+  });
+
+  it("is false on Fabric Admin, other extensions and ordinary routes", () => {
+    expect(isAeDashboardPath(`${base}fabric`)).toBe(false);
+    expect(isAeDashboardPath(base)).toBe(false);
+    expect(isAeDashboardPath("/extensions/other.ext/lot")).toBe(false);
+    expect(isAeDashboardPath("/c/abc")).toBe(false);
   });
 });
