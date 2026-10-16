@@ -10,6 +10,24 @@ import pytest
 from omnigent.runner import ae_context_usage as usage
 
 
+@pytest.mark.parametrize(
+    "categories",
+    [
+        [],
+        [None],
+        [{"name": "Unknown", "tokens": 1, "kind": "unknown"}],
+        [{"name": "Messages", "tokens": -1, "kind": "used"}],
+        [{"name": "Messages", "tokens": float("nan"), "kind": "used"}],
+    ],
+)
+def test_normalize_rejects_incomplete_category_data(categories):
+    with pytest.raises(ValueError):
+        usage.normalize(
+            {"categories": categories, "totalTokens": 123, "maxTokens": 200000},
+            complete=True,
+        )
+
+
 def test_normalize_excludes_config_and_keeps_deferred():
     result = usage.normalize(
         {
@@ -218,3 +236,17 @@ async def test_malformed_protocol_is_rejected(tmp_path, payload):
     script.write_text(f"import sys\nsys.stdin.readline()\nprint({payload!r}, flush=True)\n")
     with pytest.raises(ValueError):
         await usage.probe([sys.executable, str(script)], {}, str(tmp_path))
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_nonfinite_totals_rejected(bad):
+    with pytest.raises(ValueError):
+        usage.normalize({"categories": [], "totalTokens": bad, "maxTokens": 200000}, complete=True)
+
+
+def test_unknown_bridge_launch_rejected(tmp_path):
+    config = {"mcpServers": {"bridge": {"command": "wrapper", "args": ["--bridge-dir", "/live"]}}}
+    with pytest.raises(ValueError, match="Unrecognized bridge"):
+        usage.isolated_command(
+            ["claude", "--mcp-config", json.dumps(config)], str(tmp_path), tmp_path
+        )
