@@ -43,7 +43,6 @@ import { Link, useLocation } from "@/lib/routing";
 import { ComposerAgentIcon } from "@/components/ComposerAgentIcon";
 import { Button } from "@/components/ui/button";
 import { RunningDot } from "@/components/RunningDot";
-import { shortModelName } from "@/components/CostRoutingControl";
 import { MAX_TREE_DEPTH, useChildSessions, type ChildSessionInfo } from "@/hooks/useChildSessions";
 import { useSession } from "@/hooks/useSession";
 import { sessionNavigationSearch } from "@/lib/sessionNavigation";
@@ -62,6 +61,13 @@ import {
 import { childPrimaryLabel } from "./subagentLabel";
 import { childStatus, type AgentActivity, type AgentStatus } from "./subagentStatus";
 import { AddAgentDialog } from "./AddAgentDialog";
+import {
+  AeAgentLastLine,
+  AeAgentRowMeta,
+  AeAgentsSections,
+  AeAgentStopButton,
+  AePlanSection,
+} from "./AeAgentsSections";
 
 const CODEX_NATIVE_SUBAGENT_ROLE_LABEL = "omnigent.codex_native.agent_role";
 const ANTIGRAVITY_NATIVE_SUBAGENT_ROLE_LABEL = "omnigent.antigravity_native.agent_role";
@@ -145,18 +151,23 @@ export function SubagentsPanel({ conversationId, rootSessionId }: SubagentsPanel
       </button>
       <ul className="relative flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-2 pb-2 pt-2">
         <MainRow rootSessionId={rootSessionId} isActive={conversationId === rootSessionId} />
-        {children.map((child, index) => (
-          <SubagentRow
-            key={child.id}
-            child={child}
-            depth={1}
-            rootGuideContinues={index < children.length - 1}
-            conversationId={conversationId}
-            collapsedRows={collapsedRows}
-            onToggleCollapsed={toggleCollapsedRow}
-          />
-        ))}
+        <AeAgentsSections
+          rootSessionId={rootSessionId}
+          agents={children}
+          renderRow={(child, index, siblings) => (
+            <SubagentRow
+              key={child.id}
+              child={child}
+              depth={1}
+              rootGuideContinues={index < siblings.length - 1}
+              conversationId={conversationId}
+              collapsedRows={collapsedRows}
+              onToggleCollapsed={toggleCollapsedRow}
+            />
+          )}
+        />
       </ul>
+      <AePlanSection />
       {/* Mounted only while open so a closed rail issues no /v1/agents
           fetch and carries none of the dialog's query dependencies. */}
       {addOpen && (
@@ -616,27 +627,16 @@ function SubagentRow({
                     <RoleIcon className="size-4 text-muted-foreground" />
                   )}
                 </span>
-                <span className="min-w-0 flex-1 truncate text-sm font-medium">{primary}</span>
-                {child.routed_model ? (
-                  // Model the intelligent router picked for this sub-agent — the
-                  // per-subagent half of routing visibility.
-                  <span
-                    data-testid="subagent-routed-model"
-                    title={`Smart routing picked ${child.routed_model}`}
-                    className="shrink-0 truncate font-mono text-[10px] text-muted-foreground"
-                  >
-                    {shortModelName(child.routed_model)}
-                  </span>
-                ) : null}
+                <span className="min-w-0 flex-1 truncate text-sm font-medium" title={primary}>
+                  {primary}
+                </span>
+                <AeAgentRowMeta child={child} status={null} />
               </div>
-              {child.last_message_preview && (
-                <p className="mt-0.5 truncate text-sm text-muted-foreground">
-                  {child.last_message_preview}
-                </p>
-              )}
+              <AeAgentLastLine child={child} className="mt-0.5" />
             </div>
           </div>
         </Link>
+        <AeAgentStopButton child={child} />
       </li>
       {!collapsed &&
         grandchildren.map((grandchild) => (

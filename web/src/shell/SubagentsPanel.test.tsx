@@ -133,6 +133,9 @@ const ICON_CASES: [string | null, ReturnType<typeof iconForAgentType>][] = [
 ];
 
 beforeEach(() => {
+  // Finished agents fold by default; these suites inspect every row.
+  window.localStorage.clear();
+  window.localStorage.setItem("ae.agentsPane.finishedOpen", "1");
   useChildSessionsMock.mockReset();
   useSessionMock.mockReset();
   // Default: parent's status is idle. Tests override per-case.
@@ -484,8 +487,9 @@ describe("SubagentsPanel", () => {
     expect(screen.getByTestId("subagent-main-row")).toBeInTheDocument();
     const rows = screen.getAllByTestId("subagent-row");
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toHaveAttribute("href", "/c/conv_child_a");
-    expect(rows[1]).toHaveAttribute("href", "/c/conv_child_b");
+    // Running agents list above finished ones.
+    expect(rows[0]).toHaveAttribute("href", "/c/conv_child_b");
+    expect(rows[1]).toHaveAttribute("href", "/c/conv_child_a");
     // Status-word display (which states show a word vs. a bare dot) is owned
     // by the dedicated "shows the status word only for notable states" test.
   });
