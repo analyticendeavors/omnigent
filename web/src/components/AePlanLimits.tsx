@@ -840,7 +840,10 @@ export function AePlanLimitsPanel({
     detailsOpen && native,
     `${active.harness}:${active.model}`,
   );
-  const categories = context.data?.available ? context.data : undefined;
+  const categories =
+    context.data?.available && now - Date.parse(context.data.observedAt) < 180_000
+      ? context.data
+      : undefined;
   const collaborators = sessions.collaborators.map((c) =>
     buildCollaboratorContext(c, statusLines, now),
   );

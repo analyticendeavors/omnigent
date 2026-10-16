@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 
 from omnigent.runner.routing import RunnerRouter
-from omnigent.server.auth import LEVEL_READ, AuthProvider
+from omnigent.server.auth import LEVEL_EDIT, AuthProvider
 from omnigent.server.routes._auth_helpers import get_user_id, require_access
 from omnigent.server.routes._sessions.helpers import _forward_session_change_to_runner
 from omnigent.server.routes.sessions.routes_ae_fast_mode import _runner_answer
@@ -26,7 +26,7 @@ def register_context_usage_routes(
         await require_access(
             get_user_id(request, auth_provider),
             session_id,
-            LEVEL_READ,
+            LEVEL_EDIT,
             permission_store,
             conversation_store,
         )
@@ -39,6 +39,6 @@ def register_context_usage_routes(
         if result is None:
             return {
                 "available": False,
-                "reason": "Session runner is offline. Try again when it reconnects.",
+                "reason": "Context request timed out or the runner is offline. Try again shortly.",
             }
         return _runner_answer(result, action="read context breakdown")
