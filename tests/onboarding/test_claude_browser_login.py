@@ -57,7 +57,7 @@ def test_cli_token_saved_but_never_returned(monkeypatch):
     process = Mock()
     process.read_nonblocking.side_effect = [
         "\x1b]8;;https://claude.com/oauth/authorize?state=abc\x07",
-        f"\n{token}\r\n",
+        f"\n{token}\r\nStore this token securely\r\n",
     ]
     spawn = Mock(return_value=process)
     monkeypatch.setattr(pexpect, "spawn", spawn)
@@ -102,6 +102,37 @@ def test_login_frame_roundtrip():
     assert decode_host_frame(encode_host_frame(frame)) == frame
 
 
+def test_cursor_redraw_and_split_token_are_saved_completely(monkeypatch):
+    import pexpect
+
+    token = "sk-ant-oat01-" + "x" * 70
+    process = Mock()
+    process.read_nonblocking.side_effect = [
+        "\x1b[1;1Hsk-ant-oat01-" + "x" * 35,
+        "x" * 35 + "\r\nStore\x1b[7Gthis\x1b[12Gtoken\x1b[18Gsecurely",
+    ]
+    monkeypatch.setattr(pexpect, "spawn", Mock(return_value=process))
+    monkeypatch.setattr(login.shutil, "which", lambda _: "/usr/bin/claude")
+    job = login.Login("Backup")
+    login._run(job)
+    assert job.status == "complete"
+    assert account_env()["CLAUDE_CODE_OAUTH_TOKEN"] == token
+    assert process.read_nonblocking.call_count == 2
+
+
+def test_provider_hold_with_cursor_positioned_spaces(monkeypatch):
+    import pexpect
+
+    process = Mock()
+    process.read_nonblocking.return_value = "Your\x1b[6Gaccount\x1b[14Gis\x1b[17Gon\x1b[20Ghold"
+    monkeypatch.setattr(pexpect, "spawn", Mock(return_value=process))
+    monkeypatch.setattr(login.shutil, "which", lambda _: "/usr/bin/claude")
+    job = login.Login("Backup")
+    login._run(job)
+    assert job.status == "failed"
+    assert "account is on hold" in job.error
+
+
 def test_code_submitted_with_enter(monkeypatch):
     import pexpect
 
@@ -135,7 +166,6 @@ def test_cli_oauth_error_is_reported_without_secrets(monkeypatch):
         ("", "process exited"),
         ("authentication token created successfully!", "could not read the returned token"),
         ("sk-ant-oat", "could not read the returned token"),
-        ("Invalid code. secret-value", "authorization error"),
     ],
 )
 def test_incomplete_result_identifies_stage_without_logging_secrets(

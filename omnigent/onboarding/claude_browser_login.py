@@ -75,6 +75,11 @@ def _run(job: Login) -> None:
     ended = False
     try:
         import pexpect
+        import pyte
+
+        screen = pyte.Screen(4096, 40)
+        stream = pyte.Stream(screen)
+        clean = ""
 
         binary = shutil.which("claude")
         if binary is None:
@@ -117,7 +122,9 @@ def _run(job: Login) -> None:
                     _logger.info("Browser login %s: code submitted", job.id)
                 ended = False
                 try:
-                    output = (output + process.read_nonblocking(8192, timeout=0.25))[-131072:]
+                    chunk = process.read_nonblocking(8192, timeout=0.25)
+                    output = (output + chunk)[-131072:]
+                    stream.feed(chunk)
                 except pexpect.TIMEOUT:
                     continue
                 except pexpect.EOF:
@@ -126,16 +133,25 @@ def _run(job: Login) -> None:
                 with _LOCK:
                     if url and not job.url:
                         job.url, job.status = url, "waiting"
-                clean = _ANSI.sub("", output)
+                clean = "\n".join(screen.display)
                 token = _TOKEN.search(clean)
-                if "OAuth error:" in clean:
+                if "Your account is on hold" in clean:
+                    job.status = "failed"
+                    job.error = (
+                        "Claude reports this account is on hold. "
+                        "Review the account at https://claude.ai/restricted. Account not saved."
+                    )
+                    return
+                if "OAuth error:" in clean or "Invalid code." in clean:
                     job.status = "failed"
                     job.error = (
                         "Claude rejected the authorization code. "
                         "Start sign-in again and use the new code."
                     )
                     return
-                if token:
+                # A screen pads incomplete chunks with spaces. Wait for the footer
+                # or EOF before treating a displayed token as complete.
+                if token and (ended or "Store this token securely" in clean):
                     with _LOCK:
                         if job.cancel.is_set():
                             break
@@ -150,7 +166,15 @@ def _run(job: Login) -> None:
                     break
             with _LOCK:
                 job.status = "cancelled" if job.cancel.is_set() else "failed"
-                success, token_seen, provider_error = _result_markers(output)
+                success, token_seen, provider_error = _result_markers(clean)
+                if ended:
+                    process.close()
+                    _logger.info(
+                        "Browser login %s: exit_code=%s signal=%s",
+                        job.id,
+                        process.exitstatus,
+                        process.signalstatus,
+                    )
                 if job.cancel.is_set():
                     job.error = ""
                 elif success or token_seen:
