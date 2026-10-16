@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import math
 import os
 import signal
 import tempfile
@@ -130,9 +131,12 @@ def normalize(body: dict[str, Any], *, complete: bool) -> dict[str, Any]:
     total = body.get("totalTokens")
     if (
         not isinstance(categories, list)
+        or not categories
         or not isinstance(maximum, (int, float))
+        or not math.isfinite(maximum)
         or maximum <= 0
         or not isinstance(total, (int, float))
+        or not math.isfinite(total)
         or total < 0
     ):
         raise ValueError(
@@ -146,14 +150,15 @@ def normalize(body: dict[str, Any], *, complete: bool) -> dict[str, Any]:
             "buffer",
             "deferred",
         ):
-            continue
+            raise ValueError("Claude returned an unsupported context category.")
         tokens = row.get("tokens")
         if (
             not isinstance(tokens, (int, float))
+            or not math.isfinite(tokens)
             or tokens < 0
             or not isinstance(row.get("name"), str)
         ):
-            continue
+            raise ValueError("Claude returned an unsupported context category.")
         clean.append({"name": row["name"], "tokens": tokens, "kind": row["kind"]})
     threshold = body.get("autoCompactThreshold")
     return {
@@ -162,7 +167,7 @@ def normalize(body: dict[str, Any], *, complete: bool) -> dict[str, Any]:
         "totalTokens": total,
         "maxTokens": maximum,
         "autoCompactThreshold": threshold
-        if isinstance(threshold, (int, float)) and threshold > 0
+        if isinstance(threshold, (int, float)) and math.isfinite(threshold) and threshold > 0
         else None,
         "isAutoCompactEnabled": body.get("isAutoCompactEnabled") is True,
         "observedAt": datetime.now(UTC).isoformat(),
@@ -196,7 +201,7 @@ def _rows(rows: object, names: tuple[str, ...]) -> list[dict[str, Any]]:
             continue
         name = next((row[n] for n in names if isinstance(row.get(n), str)), None)
         tokens = row.get("tokens")
-        if name and isinstance(tokens, (int, float)) and tokens >= 0:
+        if name and isinstance(tokens, (int, float)) and math.isfinite(tokens) and tokens >= 0:
             result.append({"name": name, "tokens": tokens})
     return result
 
@@ -217,9 +222,14 @@ def isolated_command(command: list[str], cwd: str, scratch: Path) -> list[str]:
                 if value.lstrip().startswith("{")
                 else json.loads((Path(cwd) / value).read_text())
             )
-            for server in config.get("mcpServers", {}).values():
+            for number, server in enumerate(config.get("mcpServers", {}).values()):
                 args = server.get("args", [])
                 if "omnigent.harnesses.claude_native.bridge" not in args:
+                    if any(
+                        "bridge-dir" in str(arg) or "claude_native.bridge" in str(arg)
+                        for arg in args
+                    ):
+                        raise ValueError("Unrecognized bridge launch; cannot isolate safely")
                     continue
                 if "--bridge-dir" not in args:
                     raise ValueError("Unsupported bridge launch configuration")
@@ -227,7 +237,7 @@ def isolated_command(command: list[str], cwd: str, scratch: Path) -> list[str]:
                 live = Path(args[position])
                 if not live.is_absolute():
                     live = Path(cwd) / live
-                copy = scratch / str(index)
+                copy = scratch / f"{index}-{number}"
                 copy.mkdir(mode=0o700, exist_ok=True)
                 for name in ("bridge.json", "tool_relay.json"):
                     source = live / name
@@ -332,6 +342,9 @@ async def handle_context_usage(
     lock = _locks.setdefault(conversation_id, asyncio.Lock())
     async with lock:
         try:
+            for expired in list(_failures):
+                if time.monotonic() - _failures[expired] >= 30:
+                    _failures.pop(expired, None)
             if time.monotonic() - _failures.get(conversation_id, float("-inf")) < 30:
                 raise ValueError("Recent probe failure")
             bridge_id = await _claude_native_bridge_id_for_session(

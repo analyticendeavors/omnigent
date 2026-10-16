@@ -28,8 +28,11 @@ export function useContextUsage(session: string | null, enabled: boolean, identi
     if (!enabled || !session) return;
     let cancelled = false;
     setState({ key });
-    const refresh = () =>
-      authenticatedFetch(`/v1/sessions/${encodeURIComponent(session)}/context-usage`)
+    let inFlight = false;
+    const refresh = () => {
+      if (inFlight) return;
+      inFlight = true;
+      return authenticatedFetch(`/v1/sessions/${encodeURIComponent(session)}/context-usage`)
         .then(async (response) => {
           if (!response.ok)
             throw new Error("Could not load context. Close and reopen the breakdown to retry.");
@@ -44,7 +47,11 @@ export function useContextUsage(session: string | null, enabled: boolean, identi
               key,
               error: error instanceof Error ? error.message : "Context unavailable",
             });
+        })
+        .finally(() => {
+          inFlight = false;
         });
+    };
     void refresh();
     const timer = setInterval(refresh, 180_000);
     return () => {
