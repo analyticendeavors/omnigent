@@ -94,7 +94,11 @@ def _run(job: Login) -> None:
                 with _LOCK:
                     code, job.code = job.code, ""
                 if code:
-                    process.send(code + "\r")
+                    # Long input is handled as a paste; submit in a separate input event.
+                    process.send(code)
+                    if job.cancel.wait(0.3):
+                        break
+                    process.send("\r")
                 ended = False
                 try:
                     output = (output + process.read_nonblocking(8192, timeout=0.25))[-131072:]
