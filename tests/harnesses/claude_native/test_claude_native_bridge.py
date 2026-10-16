@@ -68,6 +68,10 @@ from omnigent.harnesses.claude_native.bridge import (
     stop_hook_seen_since,
     write_tmux_target,
 )
+from omnigent.harnesses.claude_native.transcript_filters import (
+    is_request_log_record,
+    is_system_queued_command,
+)
 from omnigent.inner.datamodel import (
     CredentialProxyEntry,
     CredentialProxySpec,
@@ -1407,6 +1411,167 @@ def test_native_agent_tool_result_carries_only_completion_provenance(
     assert item.subagent_return_id == ("agent-1" if status == "completed" else None)
     assert item.data == {"call_id": "tool-1", "output": "Result text"}
     assert response_id == "active"
+
+
+def test_read_transcript_items_since_skips_request_log_records(tmp_path: Path) -> None:
+    """
+    ``api-request-blob`` records never become chat items.
+
+    Claude Code 2.1.300 and later log the raw request text the model saw
+    as ``type: "api-request-blob"`` records with a ``message.role`` of
+    ``user``, ``assistant`` or ``system`` and no ``uuid``. Dispatching on
+    the role alone mirrored them into the chat as duplicate bubbles. A
+    real task notification in the same file must still come out as a
+    meta user message.
+    """
+    task_notification = (
+        "<task-notification>\n"
+        "<task-id>b1mhekpmy</task-id>\n"
+        "<summary>Background command finished</summary>\n"
+        "</task-notification>"
+    )
+    transcript_path = tmp_path / "session.jsonl"
+    transcript_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "type": "api-request-blob",
+                        "hash": "blob-user",
+                        "sessionId": "session-1",
+                        "message": {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "<system-reminder>request log copy</system-reminder>",
+                                }
+                            ],
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "api-request-blob",
+                        "hash": "blob-assistant",
+                        "sessionId": "session-1",
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": "request log reply"}],
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "user",
+                        "uuid": "task-notification-1",
+                        "message": {"role": "user", "content": task_notification},
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    _cursor, current_response_id, items = read_transcript_items_since(
+        transcript_path,
+        0,
+        agent_name="claude-native-ui",
+    )
+
+    assert current_response_id is None
+    assert [item.item_type for item in items] == ["message"]
+    assert items[0].data == {
+        "role": "user",
+        "is_meta": True,
+        "content": [{"type": "input_text", "text": task_notification}],
+    }
+
+
+def test_read_transcript_items_since_skips_system_queued_commands(tmp_path: Path) -> None:
+    """
+    Queued commands Claude Code delivered on its own stay out of the chat.
+
+    A subagent's hand-back report arrives as a prompt-mode
+    ``queued_command`` attachment marked ``isMeta`` with an ``origin`` of
+    kind ``peer`` and ``handback`` set. It is not user input, so it must
+    not render as a user bubble, while a prompt the user queued still
+    does.
+    """
+    transcript_path = tmp_path / "session.jsonl"
+    transcript_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "type": "attachment",
+                        "uuid": "queued-handback",
+                        "attachment": {
+                            "type": "queued_command",
+                            "prompt": "Subagent report text",
+                            "commandMode": "prompt",
+                            "isMeta": True,
+                            "origin": {"kind": "peer", "from": "agent-1", "handback": True},
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "attachment",
+                        "uuid": "queued-peer",
+                        "attachment": {
+                            "type": "queued_command",
+                            "prompt": "Peer message text",
+                            "commandMode": "prompt",
+                            "origin": {"kind": "peer", "from": "agent-2"},
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "attachment",
+                        "uuid": "queued-stop",
+                        "attachment": {
+                            "type": "queued_command",
+                            "prompt": "STOP",
+                            "commandMode": "prompt",
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    _cursor, _current_response_id, items = read_transcript_items_since(
+        transcript_path,
+        0,
+        agent_name="claude-native-ui",
+    )
+
+    assert [item.source_id for item in items] == ["queued-stop:0:message"]
+    assert items[0].data == {
+        "role": "user",
+        "content": [{"type": "input_text", "text": "STOP"}],
+    }
+
+
+def test_system_queued_command_predicate() -> None:
+    """
+    Each marker on its own flags a queued command as system-delivered.
+    """
+    assert is_system_queued_command({"isMeta": True})
+    assert is_system_queued_command({"origin": {"kind": "peer"}})
+    assert is_system_queued_command({"origin": {"kind": "task-notification"}})
+    assert is_system_queued_command({"origin": {"kind": "other", "handback": True}})
+    assert not is_system_queued_command({"prompt": "STOP", "commandMode": "prompt"})
+    assert not is_system_queued_command({"isMeta": False, "origin": {"kind": "user"}})
+    assert is_request_log_record({"type": "api-request-blob"})
+    assert is_request_log_record({"type": "api-request"})
+    assert not is_request_log_record({"type": "user"})
+    assert not is_request_log_record({"message": {"role": "user"}})
 
 
 def test_read_transcript_items_since_flags_compact_summary(tmp_path: Path) -> None:
