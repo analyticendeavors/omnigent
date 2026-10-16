@@ -105,6 +105,11 @@ def test_launch_isolated_and_uses_current_model(tmp_path):
                 str(settings),
                 "--model",
                 "old-model",
+                "--strict-mcp-config",
+                "--tools=Read",
+                "--disallowedTools",
+                "Bash",
+                "Write",
                 "--mcp-config",
                 "config",
                 "--append-system-prompt",
@@ -118,6 +123,11 @@ def test_launch_isolated_and_uses_current_model(tmp_path):
     assert command[command.index("--model") + 1] == "current-model"
     assert command[command.index("--resume") + 1] == sid == "live-session"
     assert "--fork-session" in command and "--no-session-persistence" in command
+    assert "--strict-mcp-config" in command
+    assert command[command.index("--tools") + 1] == "Read"
+    assert command[
+        command.index("--disallowedTools") + 1 : command.index("--disallowedTools") + 3
+    ] == ["Bash", "Write"]
     assert env == {"SAFE": "value"}
     assert cwd == str(tmp_path)
     copied = json.loads(command[command.index("--settings") + 1])
@@ -144,3 +154,67 @@ async def test_cancelled_probe_reaps_process(tmp_path):
         await asyncio.wait_for(usage.probe([sys.executable, str(script)], {}, str(tmp_path)), 1)
     with pytest.raises(ProcessLookupError):
         os.kill(int(pid_file.read_text()), 0)
+
+
+def test_probe_redirects_bridge_writes_to_private_directory(tmp_path):
+    live = tmp_path / "live"
+    live.mkdir()
+    (live / "bridge.json").write_text('{"token":"private"}')
+    (live / "server.json").write_text('{"pid":123}')
+    (live / "tool_relay.json").write_text('{"tools":[]}')
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    config = {
+        "mcpServers": {
+            "omnigent": {
+                "args": [
+                    "-m",
+                    "omnigent.harnesses.claude_native.bridge",
+                    "serve-mcp",
+                    "--bridge-dir",
+                    str(live),
+                ]
+            }
+        }
+    }
+    command = usage.isolated_command(
+        ["claude", "--mcp-config", json.dumps(config)], str(tmp_path), scratch
+    )
+    copied = json.loads(command[2])["mcpServers"]["omnigent"]["args"][-1]
+    copy = type(live)(copied)
+    assert copy != live and copy.parent == scratch
+    assert (copy / "bridge.json").read_bytes() == (live / "bridge.json").read_bytes()
+    assert (copy / "tool_relay.json").exists()
+    assert not (copy / "server.json").exists()
+    (copy / "server.json").write_text('{"pid":456}')
+    assert (live / "server.json").read_text() == '{"pid":123}'
+
+
+@pytest.mark.asyncio
+async def test_failed_requests_share_cooldown(monkeypatch):
+    import omnigent.runner.native as native
+
+    monkeypatch.setattr(
+        native, "_claude_native_bridge_id_for_session", AsyncMock(return_value="bridge")
+    )
+    monkeypatch.setattr(usage, "launch_config", lambda _: (["claude"], {}, "/tmp", "failed-id"))
+    probe = AsyncMock(side_effect=ValueError("unsupported"))
+    monkeypatch.setattr(usage, "probe", probe)
+    usage._failures.clear()
+    replies = await asyncio.gather(
+        *(
+            usage.handle_context_usage("failure", harness="claude-native", server_client=None)
+            for _ in range(3)
+        )
+    )
+    assert probe.await_count == 1
+    assert all(json.loads(reply.body)["available"] is False for reply in replies)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", ["null", "[]", '{"type":"control_response","response":null}'])
+async def test_malformed_protocol_is_rejected(tmp_path, payload):
+    script = tmp_path / "bad.py"
+    script.write_text(f"import sys\nsys.stdin.readline()\nprint({payload!r}, flush=True)\n")
+    with pytest.raises(ValueError):
+        await usage.probe([sys.executable, str(script)], {}, str(tmp_path))

@@ -28,24 +28,31 @@ export function useContextUsage(session: string | null, enabled: boolean, identi
     if (!enabled || !session) return;
     let cancelled = false;
     setState({ key });
-    authenticatedFetch(`/v1/sessions/${encodeURIComponent(session)}/context-usage`)
-      .then(async (response) => {
-        if (!response.ok)
-          throw new Error("Could not load context. Close and reopen the breakdown to retry.");
-        return (await response.json()) as ContextUsage;
-      })
-      .then((data) => {
-        if (!cancelled) setState({ key, data });
-      })
-      .catch((error: unknown) => {
-        if (!cancelled)
-          setState({ key, error: error instanceof Error ? error.message : "Context unavailable" });
-      });
+    const refresh = () =>
+      authenticatedFetch(`/v1/sessions/${encodeURIComponent(session)}/context-usage`)
+        .then(async (response) => {
+          if (!response.ok)
+            throw new Error("Could not load context. Close and reopen the breakdown to retry.");
+          return (await response.json()) as ContextUsage;
+        })
+        .then((data) => {
+          if (!cancelled) setState({ key, data });
+        })
+        .catch((error: unknown) => {
+          if (!cancelled)
+            setState({
+              key,
+              error: error instanceof Error ? error.message : "Context unavailable",
+            });
+        });
+    void refresh();
+    const timer = setInterval(refresh, 180_000);
     return () => {
+      clearInterval(timer);
       cancelled = true;
     };
   }, [enabled, session, key]);
-  return state.key === key ? state : { key };
+  return enabled && state.key === key ? state : { key };
 }
 
 export const categoryColors = [

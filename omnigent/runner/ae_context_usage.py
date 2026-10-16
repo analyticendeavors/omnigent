@@ -7,6 +7,7 @@ import contextlib
 import json
 import os
 import signal
+import tempfile
 import time
 import weakref
 from datetime import UTC, datetime
@@ -17,6 +18,7 @@ import httpx
 from fastapi.responses import JSONResponse
 
 TTL = 180
+_failures: dict[str, float] = {}
 _cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
 
@@ -26,16 +28,21 @@ def launch_config(
 ) -> tuple[list[str], dict[str, str], str, str]:
     """Use the owning Linux process, never another session's launch configuration."""
     raw = json.loads((bridge / "context_raw.json").read_text())
+    if not isinstance(raw, dict):
+        raise ValueError("Invalid context snapshot")
     session_id = raw.get("session_id")
     if not isinstance(session_id, str) or not session_id:
         raise ValueError("No Claude session reading yet. Send a message first.")
     settings_path = str(bridge / "claude-settings.json")
-    for proc in process_root.glob("[0-9]*"):
+    for proc in sorted(process_root.glob("[0-9]*"), key=lambda p: int(p.name), reverse=True):
         try:
-            argv = (proc / "cmdline").read_bytes().decode().split("\0")
+            original = (proc / "cmdline").read_bytes().decode().split("\0")
+            argv = []
+            for arg in original:
+                argv.extend(arg.split("=", 1) if arg.startswith("--") and "=" in arg else [arg])
             if "--settings" not in argv or argv[argv.index("--settings") + 1] != settings_path:
                 continue
-            if Path(argv[0]).name != "claude":
+            if Path(argv[0]).name != "claude" and "/claude/versions/" not in argv[0]:
                 continue
             env = dict(
                 item.split("=", 1)
@@ -63,23 +70,49 @@ def launch_config(
                 "--settings",
                 json.dumps(settings),
             ]
-            for flag in (
+            single = {
                 "--model",
-                "--mcp-config",
                 "--append-system-prompt",
                 "--system-prompt",
-                "--plugin-dir",
-                "--add-dir",
                 "--agents",
                 "--agent",
                 "--setting-sources",
-            ):
-                for i, arg in enumerate(argv[:-1]):
-                    if arg == flag:
-                        command.extend((flag, argv[i + 1]))
+                "--autocompact",
+                "--permission-mode",
+                "--append-system-prompt-file",
+                "--system-prompt-file",
+            }
+            multiple = {
+                "--mcp-config",
+                "--plugin-dir",
+                "--add-dir",
+                "--tools",
+                "--allowedTools",
+                "--allowed-tools",
+                "--disallowedTools",
+                "--disallowed-tools",
+            }
+            for i, flag in enumerate(argv):
+                if flag == "--strict-mcp-config":
+                    command.append(flag)
+                elif flag in single and i + 1 < len(argv):
+                    command.extend((flag, argv[i + 1]))
+                elif flag in multiple:
+                    command.append(flag)
+                    for value in argv[i + 1 :]:
+                        if value.startswith("--") or value == "":
+                            break
+                        command.append(value)
             model = raw.get("model", {})
             model_id = model.get("id") if isinstance(model, dict) else None
             if isinstance(model_id, str) and model_id:
+                window = raw.get("context_window", {})
+                if (
+                    isinstance(window, dict)
+                    and window.get("context_window_size") == 1000000
+                    and "[1m]" not in model_id
+                ):
+                    model_id += "[1m]"
                 if "--model" in command:
                     command[command.index("--model") + 1] = model_id
                 else:
@@ -168,7 +201,53 @@ def _rows(rows: object, names: tuple[str, ...]) -> list[dict[str, Any]]:
     return result
 
 
+def isolated_command(command: list[str], cwd: str, scratch: Path) -> list[str]:
+    """Redirect bridge advertisements to private copies before starting any MCP server."""
+    result = list(command)
+    index = 0
+    while index < len(result):
+        if result[index] != "--mcp-config":
+            index += 1
+            continue
+        index += 1
+        while index < len(result) and not result[index].startswith("--"):
+            value = result[index]
+            config = (
+                json.loads(value)
+                if value.lstrip().startswith("{")
+                else json.loads((Path(cwd) / value).read_text())
+            )
+            for server in config.get("mcpServers", {}).values():
+                args = server.get("args", [])
+                if "omnigent.harnesses.claude_native.bridge" not in args:
+                    continue
+                if "--bridge-dir" not in args:
+                    raise ValueError("Unsupported bridge launch configuration")
+                position = args.index("--bridge-dir") + 1
+                live = Path(args[position])
+                if not live.is_absolute():
+                    live = Path(cwd) / live
+                copy = scratch / str(index)
+                copy.mkdir(mode=0o700, exist_ok=True)
+                for name in ("bridge.json", "tool_relay.json"):
+                    source = live / name
+                    if source.exists():
+                        target = copy / name
+                        target.write_bytes(source.read_bytes())
+                        target.chmod(0o600)
+                args[position] = str(copy)
+            result[index] = json.dumps(config)
+            index += 1
+    return result
+
+
 async def probe(command: list[str], env: dict[str, str], cwd: str) -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="ae-context-") as scratch:
+        isolated = await asyncio.to_thread(isolated_command, command, cwd, Path(scratch))
+        return await _probe(isolated, env, cwd)
+
+
+async def _probe(command: list[str], env: dict[str, str], cwd: str) -> dict[str, Any]:
     proc = await asyncio.create_subprocess_exec(
         *command,
         env=env,
@@ -194,14 +273,21 @@ async def probe(command: list[str], env: dict[str, str], cwd: str) -> dict[str, 
         await proc.stdin.drain()
         while line := await proc.stdout.readline():
             message = json.loads(line)
+            if not isinstance(message, dict):
+                raise ValueError("Invalid control message")
             response = message.get("response", {})
+            if not isinstance(response, dict):
+                raise ValueError("Invalid control response")
             if message.get("type") != "control_response" or response.get("request_id") != rid:
                 continue
             if response.get("subtype") != "success":
                 raise ValueError(
                     "Claude Code does not support context summaries. Update it and retry."
                 )
-            return response.get("response", {})
+            payload = response.get("response", {})
+            if not isinstance(payload, dict):
+                raise ValueError("Invalid control payload")
+            return payload
         raise ValueError("Claude stopped before returning context. Try again.")
 
     try:
@@ -213,8 +299,10 @@ async def probe(command: list[str], env: dict[str, str], cwd: str) -> dict[str, 
                 await asyncio.sleep(0.5)
                 status = await request({"subtype": "mcp_status"})
                 servers = status.get("mcpServers", [])
+                if not isinstance(servers, list) or any(not isinstance(s, dict) for s in servers):
+                    raise ValueError("Invalid MCP status")
                 pending = any(s.get("status") in ("pending", "connecting") for s in servers)
-                if attempt >= 3 and not pending:
+                if attempt >= 3 and servers and not pending:
                     complete = all(s.get("status") == "connected" for s in servers)
                     break
             body = await request({"subtype": "get_context_usage", "detail": "summary"})
@@ -244,6 +332,8 @@ async def handle_context_usage(
     lock = _locks.setdefault(conversation_id, asyncio.Lock())
     async with lock:
         try:
+            if time.monotonic() - _failures.get(conversation_id, float("-inf")) < 30:
+                raise ValueError("Recent probe failure")
             bridge_id = await _claude_native_bridge_id_for_session(
                 server_client=server_client, session_id=conversation_id
             )
@@ -260,9 +350,13 @@ async def handle_context_usage(
             for old in list(_cache):
                 if now - _cache[old][0] >= TTL:
                     del _cache[old]
+            _failures.pop(conversation_id, None)
             _cache[key] = (now, answer)
             return JSONResponse(answer)
-        except (OSError, ValueError, TimeoutError):
+        except (OSError, ValueError, TimeoutError, AttributeError, TypeError, httpx.HTTPError):
+            _failures.setdefault(conversation_id, time.monotonic())
+            if time.monotonic() - _failures[conversation_id] >= 30:
+                _failures[conversation_id] = time.monotonic()
             return JSONResponse(
                 {
                     "available": False,

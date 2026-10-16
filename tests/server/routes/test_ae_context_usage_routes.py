@@ -12,7 +12,7 @@ from tests.server.routes.test_ae_fast_mode_routes import OWNER, VIEWER, _app, _s
 
 
 @pytest.mark.parametrize(
-    "user,expected", [(OWNER, 200), (VIEWER, 200), ("stranger@example.com", 404)]
+    "user,expected", [(OWNER, 200), (VIEWER, 403), ("stranger@example.com", 404)]
 )
 def test_access(db_uri, monkeypatch, user, expected):
     session = _seed_session(db_uri)

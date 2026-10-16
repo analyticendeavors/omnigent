@@ -26,6 +26,18 @@ describe("on-demand context", () => {
     });
     expect(result.current.data).toBeUndefined();
   });
+  it("clears the displayed snapshot when folded", async () => {
+    vi.mocked(authenticatedFetch).mockResolvedValue(
+      new Response(JSON.stringify({ available: true })),
+    );
+    const { result, rerender } = renderHook(
+      ({ open }) => useContextUsage("session", open, "claude"),
+      { initialProps: { open: true } },
+    );
+    await waitFor(() => expect(result.current.data?.available).toBe(true));
+    rerender({ open: false });
+    expect(result.current.data).toBeUndefined();
+  });
   it("reports errors and retries when reopened", async () => {
     vi.mocked(authenticatedFetch)
       .mockResolvedValueOnce(new Response(null, { status: 503 }))
