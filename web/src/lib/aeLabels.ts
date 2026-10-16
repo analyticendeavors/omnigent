@@ -42,6 +42,16 @@ export const AE_PARKING_LOT_PATH = "/extensions/analyticendeavors.parking-lot/lo
 /** Every route of the Dashboard extension (both its pages render the Dashboard). */
 export const AE_DASHBOARD_PREFIX = "/extensions/analyticendeavors.parking-lot/";
 
+/** The Dashboard's own pages. The same extension's other pages (Fabric Admin) are not it. */
+const AE_DASHBOARD_VIEWS = ["lot", "your-move"];
+
+/** True on the Dashboard's pages only, so the sidebar row stays off for Fabric Admin. */
+export function isAeDashboardPath(pathname: string): boolean {
+  if (!pathname.startsWith(AE_DASHBOARD_PREFIX)) return false;
+  const view = pathname.slice(AE_DASHBOARD_PREFIX.length).split(/[/?#]/)[0];
+  return AE_DASHBOARD_VIEWS.includes(view);
+}
+
 /**
  * The legacy session-title glyphs from the branch-discipline rules, one per
  * status. Imported Claude Code sessions carry them; nothing here ever writes

@@ -147,6 +147,9 @@ describe("AeSlotsPill", () => {
     cleanup();
     renderPill(qc, "/c/abc");
     expect(screen.getByRole("link", { name: "Dashboard 0/3" })).not.toHaveAttribute("aria-current");
+    cleanup();
+    renderPill(qc, "/extensions/analyticendeavors.parking-lot/fabric");
+    expect(screen.getByRole("link", { name: "Dashboard 0/3" })).not.toHaveAttribute("aria-current");
   });
 
   it("keeps the installed app's icon badge on the slot count", () => {
