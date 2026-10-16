@@ -67,6 +67,7 @@ from filelock import FileLock
 from filelock import Timeout as FileLockTimeout
 
 from omnigent._platform import IS_WINDOWS, is_wsl, stable_user_id
+from omnigent.harnesses.claude_native import transcript_filters
 from omnigent.harnesses.claude_native.message_display_hook import MESSAGE_DELTAS_FILE
 from omnigent.harnesses.claude_native.status import CONTEXT_RAW_FILE
 from omnigent.harnesses.diagnostics import detect_sign_in_prompt, sign_in_next_step
@@ -7682,6 +7683,8 @@ def _transcript_items_from_entry(
         the file shape.
     :returns: Updated active response id and parsed items.
     """
+    if transcript_filters.is_request_log_record(entry):
+        return current_response_id, []
     if not include_sidechains and entry.get("isSidechain") is True:
         return current_response_id, []
     if entry.get("type") == "attachment":
@@ -7753,6 +7756,8 @@ def _attachment_transcript_items_from_entry(
     if attachment.get("type") != "queued_command":
         return current_response_id, []
     if attachment.get("commandMode") != "prompt":
+        return current_response_id, []
+    if transcript_filters.is_system_queued_command(attachment):
         return current_response_id, []
     prompt = attachment.get("prompt")
     if not isinstance(prompt, str) or not prompt:
