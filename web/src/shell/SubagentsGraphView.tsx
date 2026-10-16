@@ -10,12 +10,21 @@ import { useSession } from "@/hooks/useSession";
 import { cn } from "@/lib/utils";
 import { nativeCodingAgentForWrapper, WRAPPER_LABEL_KEY } from "@/lib/nativeCodingAgents";
 import {
-  buildGraphLayout,
+  buildTree,
+  layoutTree,
   NODE_WIDTH,
   type AgentActivity,
   type AgentNodeData,
 } from "./subagentGraphLayout";
 import { activityDotClassName, sessionStatus } from "./subagentStatus";
+import {
+  layoutTreeLeftRight,
+  resolveDirection,
+  useElementSize,
+  useGraphDirectionSetting,
+  type GraphDirectionSetting,
+} from "./aeAgentsGraphLayout";
+import { AeGraphDirectionButton, useReadableFit } from "./AeAgentsGraphControls";
 
 import "@xyflow/react/dist/style.css";
 
@@ -52,12 +61,13 @@ function NodeStatusDot({ activity }: { activity: AgentActivity }) {
 function AgentNodeComponent({ data }: NodeProps<Node<AgentNodeData>>) {
   const { label, activity, statusLabel, isActive, preview } = data;
   const tint = ACTIVITY_TINT[activity];
+  const sideways = data.direction === "lr";
 
   return (
     <>
       <Handle
         type="target"
-        position={Position.Top}
+        position={sideways ? Position.Left : Position.Top}
         className="!bg-muted-foreground/40 !w-1.5 !h-1.5 !border-0"
       />
       <div
@@ -83,17 +93,25 @@ function AgentNodeComponent({ data }: NodeProps<Node<AgentNodeData>>) {
       </div>
       <Handle
         type="source"
-        position={Position.Bottom}
+        position={sideways ? Position.Right : Position.Bottom}
         className="!bg-muted-foreground/40 !w-1.5 !h-1.5 !border-0"
       />
     </>
   );
 }
 
-function ZoomControls() {
-  const { zoomIn, zoomOut, fitView } = useReactFlow();
+function ZoomControls({
+  onFit,
+  direction,
+  onCycleDirection,
+}: {
+  onFit: () => void;
+  direction: GraphDirectionSetting;
+  onCycleDirection: () => void;
+}) {
+  const { zoomIn, zoomOut } = useReactFlow();
   const btnClass =
-    "flex items-center justify-center size-7 rounded-md border bg-card text-muted-foreground shadow-sm hover:bg-accent hover:text-accent-foreground transition-colors";
+    "flex items-center justify-center size-8 pointer-coarse:size-10 rounded-md border bg-card text-muted-foreground shadow-sm hover:bg-accent hover:text-accent-foreground transition-colors";
   return (
     <div className="absolute bottom-3 right-3 z-10 flex flex-col gap-1">
       <button
@@ -112,15 +130,31 @@ function ZoomControls() {
       >
         <ZoomOutIcon className="size-4" />
       </button>
-      <button
-        type="button"
-        className={btnClass}
-        onClick={() => fitView({ duration: 200, padding: 0.3 })}
-        aria-label="Fit view"
-      >
+      <button type="button" className={btnClass} onClick={onFit} aria-label="Fit view">
         <Maximize2Icon className="size-4" />
       </button>
+      <AeGraphDirectionButton setting={direction} onCycle={onCycleDirection} className={btnClass} />
     </div>
+  );
+}
+
+// Lives inside <ReactFlow> because the readable fit needs its store.
+function ReadableZoomControls({
+  rootId,
+  direction,
+  pane,
+  directionSetting,
+  onCycleDirection,
+}: {
+  rootId: string;
+  direction: "tb" | "lr";
+  pane: { width: number; height: number };
+  directionSetting: GraphDirectionSetting;
+  onCycleDirection: () => void;
+}) {
+  const fit = useReadableFit(rootId, direction, pane);
+  return (
+    <ZoomControls onFit={fit} direction={directionSetting} onCycleDirection={onCycleDirection} />
   );
 }
 
@@ -195,19 +229,38 @@ export function SubagentsGraphView({ conversationId, rootSessionId }: SubagentsG
   const rootActivity = rootStatus.activity;
   const rootStatusLabel = rootStatus.label;
 
-  const { nodes: layoutNodes, edges: layoutEdges } = useMemo(
-    () =>
-      buildGraphLayout(
-        rootSessionId,
-        rootLabel,
-        rootActivity,
-        rootStatusLabel,
-        null,
-        childrenMap,
-        conversationId,
-      ),
-    [rootSessionId, rootLabel, rootActivity, rootStatusLabel, childrenMap, conversationId],
-  );
+  const [paneElement, setPaneElement] = useState<HTMLDivElement | null>(null);
+  const paneSize = useElementSize(paneElement);
+  const [directionSetting, cycleDirection] = useGraphDirectionSetting();
+  const direction = resolveDirection(directionSetting, paneSize.width, paneSize.height);
+
+  const { nodes: layoutNodes, edges: layoutEdges } = useMemo(() => {
+    const tree = buildTree(
+      rootSessionId,
+      rootLabel,
+      rootActivity,
+      rootStatusLabel,
+      null,
+      childrenMap,
+      0,
+    );
+    const layout =
+      direction === "lr"
+        ? layoutTreeLeftRight(tree, conversationId)
+        : layoutTree(tree, conversationId);
+    return {
+      nodes: layout.nodes.map((n) => ({ ...n, data: { ...n.data, direction } })),
+      edges: layout.edges,
+    };
+  }, [
+    rootSessionId,
+    rootLabel,
+    rootActivity,
+    rootStatusLabel,
+    childrenMap,
+    conversationId,
+    direction,
+  ]);
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -229,14 +282,12 @@ export function SubagentsGraphView({ conversationId, rootSessionId }: SubagentsG
       data-workspace-panel-surface
       className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-card"
     >
-      <div className="h-full w-full" style={{ minHeight: 200 }}>
+      <div ref={setPaneElement} className="h-full w-full" style={{ minHeight: 200 }}>
         <ReactFlow
           nodes={layoutNodes}
           edges={layoutEdges}
           nodeTypes={nodeTypes}
           onNodeClick={handleNodeClick}
-          fitView
-          fitViewOptions={{ padding: 0.3 }}
           panOnDrag
           panOnScroll
           zoomOnDoubleClick={false}
@@ -248,7 +299,13 @@ export function SubagentsGraphView({ conversationId, rootSessionId }: SubagentsG
           maxZoom={3}
         >
           <Background bgColor="var(--card)" />
-          <ZoomControls />
+          <ReadableZoomControls
+            rootId={rootSessionId}
+            direction={direction}
+            pane={paneSize}
+            directionSetting={directionSetting}
+            onCycleDirection={cycleDirection}
+          />
         </ReactFlow>
       </div>
       {rootChildren.map((child) => (

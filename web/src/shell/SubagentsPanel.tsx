@@ -49,7 +49,6 @@ import { OttoIcon } from "@/components/icons/OttoIcon";
 import { PiIcon } from "@/components/icons/PiIcon";
 import { Button } from "@/components/ui/button";
 import { RunningDot } from "@/components/RunningDot";
-import { shortModelName } from "@/components/CostRoutingControl";
 import { MAX_TREE_DEPTH, useChildSessions, type ChildSessionInfo } from "@/hooks/useChildSessions";
 import { useSession } from "@/hooks/useSession";
 import { sessionNavigationSearch } from "@/lib/sessionNavigation";
@@ -72,6 +71,13 @@ import {
   type AgentStatus,
 } from "./subagentStatus";
 import { AddAgentDialog } from "./AddAgentDialog";
+import {
+  AeAgentLastLine,
+  AeAgentRowMeta,
+  AeAgentsSections,
+  AeAgentStopButton,
+  AePlanSection,
+} from "./AeAgentsSections";
 
 const CODEX_NATIVE_SUBAGENT_WRAPPER = "codex-native-ui-subagent";
 const OPENCODE_NATIVE_SUBAGENT_WRAPPER = "opencode-native-ui-subagent";
@@ -156,17 +162,22 @@ export function SubagentsPanel({ conversationId, rootSessionId }: SubagentsPanel
       </button>
       <ul className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-1">
         <MainRow rootSessionId={rootSessionId} isActive={conversationId === rootSessionId} />
-        {children.map((child) => (
-          <SubagentRow
-            key={child.id}
-            child={child}
-            depth={1}
-            conversationId={conversationId}
-            collapsedRows={collapsedRows}
-            onToggleCollapsed={toggleCollapsedRow}
-          />
-        ))}
+        <AeAgentsSections
+          rootSessionId={rootSessionId}
+          agents={children}
+          renderRow={(child) => (
+            <SubagentRow
+              key={child.id}
+              child={child}
+              depth={1}
+              conversationId={conversationId}
+              collapsedRows={collapsedRows}
+              onToggleCollapsed={toggleCollapsedRow}
+            />
+          )}
+        />
       </ul>
+      <AePlanSection />
       {/* Mounted only while open so a closed rail issues no /v1/agents
           fetch and carries none of the dialog's query dependencies. */}
       {addOpen && (
@@ -651,31 +662,15 @@ function SubagentRow({
               />
             )}
             <Icon className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="shrink-0 truncate text-sm font-medium">{primary}</span>
-            {child.routed_model ? (
-              // Model the intelligent router picked for this sub-agent — the
-              // per-subagent half of routing visibility.
-              <span
-                data-testid="subagent-routed-model"
-                title={`Smart routing picked ${child.routed_model}`}
-                className="shrink-0 truncate font-mono text-[10px] text-muted-foreground"
-              >
-                {shortModelName(child.routed_model)}
-              </span>
-            ) : null}
-            <span className="flex-1" />
-            <StatusIndicator {...status} />
+            <span className="min-w-0 flex-1 truncate text-sm font-medium" title={primary}>
+              {primary}
+            </span>
+            <AeAgentRowMeta child={child} status={<StatusIndicator {...status} />} />
           </div>
-          {child.last_message_preview && (
-            // Preview indented to align with the title text on the row
-            // above: 12px connector - 12px (-ml-3) + 4px gap + 14px bot
-            // icon + 4px gap = 22px. Relative to the row's own padding,
-            // so it tracks the depth-stepped gutter automatically.
-            <p className="truncate pl-[22px] text-sm text-muted-foreground">
-              {child.last_message_preview}
-            </p>
-          )}
+          {/* Indented to align with the title: connector, icon and two gaps = 22px. */}
+          <AeAgentLastLine child={child} className="pl-[22px]" />
         </Link>
+        <AeAgentStopButton child={child} />
       </li>
       {!collapsed &&
         grandchildren.map((grandchild) => (
