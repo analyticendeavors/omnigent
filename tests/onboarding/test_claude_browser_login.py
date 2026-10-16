@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
 
@@ -111,7 +111,7 @@ def test_code_submitted_with_enter(monkeypatch):
     monkeypatch.setattr(login.shutil, "which", lambda _: "/usr/bin/claude")
     job = login.Login("Backup", code="dummy#state")
     login._run(job)
-    process.send.assert_called_once_with("dummy#state\r")
+    assert process.send.call_args_list == [call("dummy#state"), call("\r")]
     process.sendline.assert_not_called()
 
 
