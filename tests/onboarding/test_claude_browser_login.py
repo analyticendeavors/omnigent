@@ -106,7 +106,7 @@ def test_code_submitted_with_enter(monkeypatch):
     import pexpect
 
     process = Mock()
-    process.read_nonblocking.side_effect = pexpect.EOF
+    process.read_nonblocking.side_effect = pexpect.EOF("closed")
     monkeypatch.setattr(pexpect, "spawn", Mock(return_value=process))
     monkeypatch.setattr(login.shutil, "which", lambda _: "/usr/bin/claude")
     job = login.Login("Backup", code="dummy#state")
@@ -127,3 +127,38 @@ def test_cli_oauth_error_is_reported_without_secrets(monkeypatch):
     assert job.status == "failed"
     assert "rejected" in job.error
     assert "secret-provider-detail" not in repr(job.public())
+
+
+@pytest.mark.parametrize(
+    ("output", "message"),
+    [
+        ("", "process exited"),
+        ("authentication token created successfully!", "could not read the returned token"),
+        ("sk-ant-oat", "could not read the returned token"),
+        ("Invalid code. secret-value", "authorization error"),
+    ],
+)
+def test_incomplete_result_identifies_stage_without_logging_secrets(
+    monkeypatch, caplog, output, message
+):
+    import logging
+
+    import pexpect
+
+    process = Mock()
+    process.read_nonblocking.side_effect = [output, pexpect.EOF("closed")]
+    monkeypatch.setattr(pexpect, "spawn", Mock(return_value=process))
+    monkeypatch.setattr(login.shutil, "which", lambda _: "/usr/bin/claude")
+    job = login.Login("Private label", code="private-code#private-state")
+    with caplog.at_level(logging.INFO, logger=login.__name__):
+        login._run(job)
+    assert message in job.error
+    assert "submitted=True eof=True" in caplog.text
+    for private in [
+        "Private label",
+        "private-code",
+        "private-state",
+        "secret-value",
+        "sk-ant-oat",
+    ]:
+        assert private not in caplog.text
