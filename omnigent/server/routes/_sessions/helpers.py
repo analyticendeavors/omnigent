@@ -7372,7 +7372,11 @@ def _title_content_from_item(
         return []
     if item.data.is_meta:
         return []
-    return item.data.content
+    return [
+        block
+        for block in item.data.content
+        if not str(block.get("text", "")).lstrip().startswith("<system-reminder>")
+    ]
 
 
 async def _seed_missing_title(

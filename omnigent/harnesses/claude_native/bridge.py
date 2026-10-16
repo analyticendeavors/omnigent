@@ -7684,6 +7684,11 @@ def _transcript_items_from_entry(
     """
     if not include_sidechains and entry.get("isSidechain") is True:
         return current_response_id, []
+    # Claude Code 2.1.301+ logs the whole first API request (harness reminders
+    # included) as role "user"/"assistant" records of these types; they are
+    # not chat turns.
+    if entry.get("type") in ("api-request-blob", "api-request", "api-request-shape"):
+        return current_response_id, []
     if entry.get("type") == "attachment":
         return _attachment_transcript_items_from_entry(
             entry,

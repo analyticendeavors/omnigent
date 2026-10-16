@@ -1225,6 +1225,38 @@ def test_read_transcript_items_since_strips_inline_image_data(tmp_path: Path) ->
     assert len(output) < 300
 
 
+def test_read_transcript_items_since_ignores_api_request_blobs(tmp_path: Path) -> None:
+    reminder = "<system-reminder>\nGlobal rules from CLAUDE.md\n</system-reminder>"
+    lines = [
+        {
+            "type": "api-request-blob",
+            "uuid": "blob-user",
+            "message": {"role": "user", "content": [{"type": "text", "text": reminder}]},
+        },
+        {
+            "type": "api-request-blob",
+            "uuid": "blob-assistant",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "dup"}]},
+        },
+        {"type": "api-request", "message": {"role": "user", "content": reminder}},
+        {"type": "api-request-shape", "message": {"role": "user", "content": reminder}},
+        {"type": "user", "uuid": "real", "message": {"role": "user", "content": "real prompt"}},
+    ]
+    transcript_path = tmp_path / "session.jsonl"
+    transcript_path.write_text(
+        "\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8"
+    )
+
+    _cursor, _response_id, items = read_transcript_items_since(
+        transcript_path,
+        0,
+        agent_name="claude-native-ui",
+    )
+
+    assert [(item.item_type, item.data["role"]) for item in items] == [("message", "user")]
+    assert items[0].data["content"] == [{"type": "input_text", "text": "real prompt"}]
+
+
 def test_read_transcript_items_since_marks_task_notifications_meta(tmp_path: Path) -> None:
     task_notification = (
         "<task-notification>\n"

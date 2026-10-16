@@ -496,6 +496,6 @@ def background_title_prompt(event: SessionEventInput) -> str:
     for block in content:
         if isinstance(block, dict) and block.get("type") == "input_text":
             text = block.get("text", "")
-            if isinstance(text, str):
+            if isinstance(text, str) and not text.lstrip().startswith("<system-reminder>"):
                 parts.append(text)
     return " ".join(parts)[:4000]

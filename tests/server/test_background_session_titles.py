@@ -15,6 +15,7 @@ from omnigent.server.background_session_titles import (
     BackgroundTitleRequest,
     RunnerBackgroundTitleGenerator,
     background_session_titles_enabled,
+    background_title_prompt,
     normalize_background_title,
     prepare_background_session_title,
 )
@@ -670,3 +671,17 @@ async def test_seed_polling_is_bounded_by_generation_slots(db_uri: str) -> None:
 
     release.set()
     await coordinator.wait_for_idle()
+
+
+async def test_background_title_prompt_skips_system_reminder_blocks() -> None:
+    event = SessionEventInput(
+        type="message",
+        data={
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "<system-reminder>\nCLAUDE.md\n</system-reminder>"},
+                {"type": "input_text", "text": "fix the login bug"},
+            ],
+        },
+    )
+    assert background_title_prompt(event) == "fix the login bug"

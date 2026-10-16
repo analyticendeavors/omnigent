@@ -63,3 +63,18 @@ def test_user_message_still_titles() -> None:
         data=MessageData(role="user", content=[{"type": "input_text", "text": "hello there"}]),
     )
     assert _title_content_from_item(item) == [{"type": "input_text", "text": "hello there"}]
+
+
+def test_system_reminder_block_is_skipped_for_title() -> None:
+    item = NewConversationItem(
+        type="message",
+        response_id="turn_x",
+        data=MessageData(
+            role="user",
+            content=[
+                {"type": "input_text", "text": "<system-reminder>\nCLAUDE.md\n</system-reminder>"},
+                {"type": "input_text", "text": "fix the login bug"},
+            ],
+        ),
+    )
+    assert _title_content_from_item(item) == [{"type": "input_text", "text": "fix the login bug"}]
