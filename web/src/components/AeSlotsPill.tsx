@@ -15,7 +15,7 @@
 import { LayoutDashboardIcon } from "lucide-react";
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { type MouseEvent, useCallback, useEffect, useSyncExternalStore } from "react";
-import { AE_DASHBOARD_PREFIX, AE_PARKING_LOT_PATH, countAeSlots } from "@/lib/aeLabels";
+import { AE_PARKING_LOT_PATH, countAeSlots, isAeDashboardPath } from "@/lib/aeLabels";
 import { useAeSlotLimit } from "@/lib/aeSlotLimit";
 import { syncAeAppBadge } from "@/lib/aeAppBadge";
 import { useLocation } from "@/lib/routing";
@@ -59,7 +59,7 @@ export function AeSlotsPill({ onNavigate }: AeSlotsPillProps) {
       to={AE_PARKING_LOT_PATH}
       label="Dashboard"
       icon={LayoutDashboardIcon}
-      active={pathname.startsWith(AE_DASHBOARD_PREFIX)}
+      active={isAeDashboardPath(pathname)}
       onClick={onNavigate}
       componentId="sidebar.ae-slots"
       testId="ae-slots-pill"
