@@ -19,6 +19,7 @@ from pathlib import Path
 import httpx
 
 from omnigent.entities.session_resources import terminal_resource_id
+from omnigent.harnesses.claude_native.ae_subagent_model import report_subagent_model
 from omnigent.harnesses.claude_native.bridge import (
     BRIDGE_ID_LABEL_KEY,
     OBSERVER_HOOK_STDERR_FILE,
@@ -2062,6 +2063,12 @@ async def _forward_one_subagent(
         agent_name=agent_name,
         current_response_id=None,
         include_sidechains=True,
+    )
+    await report_subagent_model(
+        client,
+        _post_external_model_change,
+        child_session_id=entry.child_conversation_id,
+        latest_model=result.latest_model,
     )
     seen_source_ids = list(entry.seen_source_ids)
     seen = set(seen_source_ids)

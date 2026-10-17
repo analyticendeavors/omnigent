@@ -1579,7 +1579,7 @@ describe("SubagentsPanel", () => {
     const { container } = renderPanel({ rootSessionId: "conv_root" });
 
     const routed = childRow(container, "conv_routed");
-    expect(within(routed).getByTestId("subagent-routed-model").textContent).toBe("sonnet");
+    expect(within(routed).getByTestId("subagent-routed-model").textContent).toBe("Sonnet 5");
     expect(
       within(childRow(container, "conv_plain")).queryByTestId("subagent-routed-model"),
     ).toBeNull();
