@@ -124,7 +124,28 @@ def launch_config(
     raise ValueError("No live Claude process for this session. Resume it and try again.")
 
 
-def normalize(body: dict[str, Any], *, complete: bool) -> dict[str, Any]:
+MCP_STATUSES = ("connected", "failed", "needs-auth", "pending", "disabled")
+
+
+def mcp_rows(servers: object) -> list[dict[str, str]]:
+    """Each server's name and status only; config, URLs and error text stay on the runner."""
+    if not isinstance(servers, list):
+        return []
+    rows = []
+    for server in servers:
+        if not isinstance(server, dict) or not isinstance(server.get("name"), str):
+            continue
+        name = server["name"].strip()[:120]
+        if not name:
+            continue
+        status = server.get("status")
+        if status == "connecting":
+            status = "pending"
+        rows.append({"name": name, "status": status if status in MCP_STATUSES else "unknown"})
+    return rows
+
+
+def normalize(body: dict[str, Any], *, complete: bool, servers: object = None) -> dict[str, Any]:
     """Allow only display data across the runner boundary, never MCP configuration."""
     categories = body.get("categories")
     maximum = body.get("maxTokens")
@@ -173,6 +194,7 @@ def normalize(body: dict[str, Any], *, complete: bool) -> dict[str, Any]:
         "observedAt": datetime.now(UTC).isoformat(),
         "complete": complete,
         "details": detail_rows(body),
+        "mcpServers": mcp_rows(servers),
     }
 
 
@@ -304,6 +326,7 @@ async def _probe(command: list[str], env: dict[str, str], cwd: str) -> dict[str,
         async with asyncio.timeout(25):
             await request({"subtype": "initialize"})
             complete = False
+            servers: list[Any] = []
             # MCP discovery starts asynchronously after initialization.
             for attempt in range(16):
                 await asyncio.sleep(0.5)
@@ -316,7 +339,7 @@ async def _probe(command: list[str], env: dict[str, str], cwd: str) -> dict[str,
                     complete = all(s.get("status") == "connected" for s in servers)
                     break
             body = await request({"subtype": "get_context_usage", "detail": "summary"})
-            return normalize(body, complete=complete)
+            return normalize(body, complete=complete, servers=servers)
     finally:
         with contextlib.suppress(ProcessLookupError):
             os.killpg(proc.pid, signal.SIGKILL)

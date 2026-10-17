@@ -1,4 +1,13 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { type ReactElement, type ReactNode, useState } from "react";
+import {
+  cleanup,
+  fireEvent,
+  render as rtlRender,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
@@ -7,6 +16,9 @@ import { authenticatedFetch } from "@/lib/identity";
 import { useChatStore } from "@/store/chatStore";
 import { ComposerContextRing } from "@/components/composer/ComposerContextRing";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { useAeSessionRailStore } from "@/lib/aeSessionRail";
+import { type AeContextSnapshotState, resetAeContextSnapshots } from "./aeContextUsage";
+import { SNAPSHOT } from "./aeRailTestFixtures";
 import {
   type AeLimitsAnswer,
   AePlanLimitsPanel,
@@ -22,6 +34,15 @@ import {
   windowLabel,
 } from "./AePlanLimits";
 import type { AeSessionContextsState } from "./aeSessionContext";
+
+/** A fresh QueryClient per render, retries off, as the app's provider supplies one. */
+function QueryWrapper({ children }: { children: ReactNode }) {
+  const [client] = useState(
+    () => new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+  );
+  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+}
+const render = (ui: ReactElement) => rtlRender(ui, { wrapper: QueryWrapper });
 
 const NOW = Date.parse("2026-09-24T16:00:00Z");
 const iso = (ms: number) => new Date(ms).toISOString().replace(".000Z", "Z");
@@ -115,6 +136,11 @@ const FULL: AeLimitsAnswer = {
 
 afterEach(cleanup);
 
+/** A snapshot as `useAeContextSnapshot` hands it to the panel. */
+function snapshotState(overrides: Partial<AeContextSnapshotState> = {}): AeContextSnapshotState {
+  return { data: SNAPSHOT, loading: false, fresh: true, refresh: () => {}, ...overrides };
+}
+
 describe("formatting", () => {
   it("formats durations coarsely", () => {
     expect(formatDuration(30_000)).toBe("<1m");
@@ -179,11 +205,11 @@ describe("formatting", () => {
 });
 
 describe("AePlanLimitsPanel", () => {
-  it("renders bars, reset times, the stamp and a missing harness", () => {
+  it("renders bars, reset times and the stamp for the session's own plan only", () => {
     render(<AePlanLimitsPanel data={ANSWER} now={NOW} />);
-    const [claude, codex] = screen.getAllByTestId("ae-limits-harness");
-    expect(claude.getAttribute("data-harness")).toBe("claude");
-    expect(codex.getAttribute("data-harness")).toBe("codex");
+    const blocks = screen.getAllByTestId("ae-limits-harness");
+    expect(blocks.map((b) => b.getAttribute("data-harness"))).toEqual(["claude"]);
+    const [claude] = blocks;
     expect(within(claude).getByText("4m ago")).toBeTruthy();
     const bars = within(claude).getAllByRole("progressbar");
     expect(bars.map((bar) => bar.getAttribute("aria-label"))).toEqual([
@@ -197,9 +223,13 @@ describe("AePlanLimitsPanel", () => {
     expect(within(fiveHour).getByText("38%")).toBeTruthy();
     expect(fiveHour.getAttribute("title")).toMatch(/^Resets .+ \(in 2h\)$/);
     expect(within(claude).getByText("A note from the relay.")).toBeTruthy();
-    // The other plan waits, folded, behind the breakdown toggle.
-    expect(screen.getByTestId("ae-limits-details").hidden).toBe(true);
-    expect(codex.closest("[data-testid=ae-limits-details]")).toBeTruthy();
+    expect(screen.queryByText(/detailed breakdown/)).toBeNull();
+  });
+
+  it("says what to do when Codex has no reading", () => {
+    render(<AePlanLimitsPanel data={ANSWER} now={NOW} harness="codex-native" />);
+    const [codex] = screen.getAllByTestId("ae-limits-harness");
+    expect(codex.getAttribute("data-harness")).toBe("codex");
     // One plain line; what to do about it is the tooltip.
     const empty = within(codex).getByTestId("ae-limits-empty");
     expect(empty.textContent).toBe("No reading yet");
@@ -246,17 +276,67 @@ describe("AePlanLimitsPanel", () => {
     expect(screen.queryByTestId("ae-limits-hint")).toBeNull();
   });
 
-  it("offers native context categories even without another plan or collaborator", () => {
+  it("ends with a button that opens the session rail on Context", () => {
+    useAeSessionRailStore.setState({ open: false, sheetOpen: false, focus: null });
+    const onShowRail = vi.fn();
+    render(<AePlanLimitsPanel data={FULL} now={NOW} onShowRail={onShowRail} />);
+    const button = screen.getByRole("button", { name: "Show details in session rail" });
+    expect(button.querySelector("svg")).toBeTruthy();
+    fireEvent.click(button);
+    expect(onShowRail).toHaveBeenCalledTimes(1);
+    const rail = useAeSessionRailStore.getState();
+    expect(rail.open).toBe(true);
+    expect(rail.sheetOpen).toBe(false);
+    expect(rail.focus?.id).toBe("context");
+    expect(rail.folded.context).toBe(false);
+  });
+
+  it("draws Claude's categories from a fresh snapshot, with the top three plus Other", () => {
     render(
       <AePlanLimitsPanel
-        data={{ now: iso(NOW), harnesses: { claude: FULL.harnesses.claude } }}
-        now={NOW}
+        data={FULL}
+        now={Date.parse(SNAPSHOT.observedAt) + 60_000}
         conversationId="conv_a"
         harness="claude-native"
+        model="claude-opus-5-5[1m]"
+        contextWindow={1_000_000}
+        tokensUsed={216_800}
+        snapshot={snapshotState()}
       />,
     );
-    expect(screen.getByTestId("ae-limits-details-toggle")).toBeTruthy();
-    expect(screen.queryByTestId("ae-limits-in-use")).toBeNull();
+    expect(screen.getByTestId("ae-context-value").textContent).toBe("495.2k / 1M (50%)");
+    expect(screen.getByTestId("ae-category-bar")).toBeTruthy();
+    expect(screen.queryByTestId("ae-context-breakdown")).toBeNull();
+    expect(
+      within(screen.getByTestId("ae-category-legend"))
+        .getAllByRole("listitem")
+        .map((li) => li.textContent),
+    ).toEqual(["Messages40%", "MCP tools3%", "System tools2%", "Other5%"]);
+    expect(screen.getByTestId("ae-context-sub").textContent).toBe(
+      "472k until auto-compact · Claude Code · Opus 5.5 · 1m ago",
+    );
+  });
+
+  it("keeps the prompt cache bar until a snapshot is fresh, and for other harnesses", () => {
+    const panel = (harness: string, fresh: boolean) => {
+      cleanup();
+      render(
+        <AePlanLimitsPanel
+          data={FULL}
+          now={NOW}
+          conversationId="conv_a"
+          harness={harness}
+          contextWindow={1_000_000}
+          tokensUsed={216_800}
+          snapshot={snapshotState({ fresh })}
+        />,
+      );
+      return Boolean(screen.queryByTestId("ae-category-bar"));
+    };
+    expect(panel("claude-native", false)).toBe(false);
+    expect(screen.getByTestId("ae-context-breakdown")).toBeTruthy();
+    expect(panel("codex-native", true)).toBe(false);
+    expect(panel("claude-native", true)).toBe(true);
   });
 
   it("opens and closes each section's explainer with a tap", () => {
@@ -502,9 +582,9 @@ describe("AePlanLimitsPanel session contexts", () => {
     expect(contextLabels()).toEqual(["This session context (Codex): 30% used"]);
     const active = screen.getByTestId("ae-context-active");
     expect(within(active).getByTestId("ae-usage-who").textContent).toBe("Codex · gpt-5.5");
-    expect(planOrder()).toEqual(["codex", "claude"]);
-    const inUse = screen.getByTestId("ae-limits-in-use");
-    expect(inUse.closest("[data-harness]")?.getAttribute("data-harness")).toBe("codex");
+    expect(planOrder()).toEqual(["codex"]);
+    // Only one plan is listed, so it needs no "This session" tag.
+    expect(screen.queryByTestId("ae-limits-in-use")).toBeNull();
     // Context and plan limits are separate sections.
     expect(
       within(screen.getByTestId("ae-limits-plans")).queryByText(/This session context/),
@@ -541,13 +621,7 @@ describe("AePlanLimitsPanel session contexts", () => {
     );
     expect(contextLabels()).toEqual(["This session context (Claude Code): 22% used"]);
     expect(screen.getByTestId("ae-context-breakdown")).toBeTruthy();
-    expect(planOrder()).toEqual(["claude", "codex"]);
-    expect(
-      screen
-        .getByTestId("ae-limits-in-use")
-        .closest("[data-harness]")
-        ?.getAttribute("data-harness"),
-    ).toBe("claude");
+    expect(planOrder()).toEqual(["claude"]);
   });
 
   it("gives each collaborator its own row and never sums them", () => {
@@ -606,16 +680,8 @@ describe("AePlanLimitsPanel session contexts", () => {
         sessions={sessions}
       />,
     );
-    // Live store figures win over the snapshot for the active row; the
-    // collaborators wait behind the breakdown toggle.
-    expect(contextLabels()).toEqual(["This session context (Codex): 30% used"]);
-    const toggle = screen.getByTestId("ae-limits-details-toggle");
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect(toggle.textContent).toBe("See detailed breakdown");
-    expect(screen.queryByRole("progressbar", { name: /Review the diff/ })).toBeNull();
-    fireEvent.click(toggle);
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(toggle.textContent).toBe("Hide detailed breakdown");
+    // Live store figures win over the snapshot for the active row; each
+    // running collaborator is a lane under it with its own window.
     const collaborators = screen.getByTestId("ae-context-collaborators");
     expect(
       within(collaborators)
@@ -625,21 +691,15 @@ describe("AePlanLimitsPanel session contexts", () => {
       "Review the diff context (Claude Code): 22% used",
       "Write tests context (Pi): 10% used",
     ]);
-    const missing = within(collaborators).getAllByTestId("ae-context-unavailable");
-    expect(missing.map((row) => row.getAttribute("data-session"))).toEqual([
-      "conv_quiet",
-      "conv_gone",
+    const lanes = within(collaborators).getAllByTestId("ae-context-lane");
+    expect(lanes.map((lane) => lane.textContent)).toEqual([
+      "Review the diff · Claude Code22%",
+      "Write tests · Pi10%",
+      "Draft docs · Codex-",
+      "Lost child-",
     ]);
-    // One line each: the name and "No reading yet"; the why is the tooltip.
-    expect(missing.map((row) => row.textContent)).toEqual([
-      expect.stringMatching(/No reading yet$/),
-      expect.stringMatching(/No reading yet$/),
-    ]);
-    expect(missing[0].textContent).not.toContain("appears after");
-    expect(missing[1].getAttribute("title")).toContain(
-      "Could not load this session (404 Not Found)",
-    );
-    expect(collaborators.textContent).toContain("2 more collaborators not shown.");
+    // A lane without a reading says why in its tooltip.
+    expect(lanes[3].getAttribute("title")).toContain("Could not load this session (404 Not Found)");
     // No row reads a combined total of the windows above.
     expect(screen.queryByText(/2\.4M|336\.8k/)).toBeNull();
   });
@@ -691,7 +751,7 @@ describe("AePlanLimitsPanel session contexts", () => {
       />,
     );
     const left = screen.getByTestId("ae-context-autocompact");
-    expect(left.textContent).toBe("About 524k until auto-compact");
+    expect(left.textContent).toBe("524k until auto-compact");
     expect(left.getAttribute("title")).toContain("967k");
     expect(screen.getByTestId("ae-usage-who").textContent).toBe("Claude Code · Opus 5.5");
     // A 200k window has no documented compaction point to count down to.
@@ -743,7 +803,50 @@ describe("AePlanLimitsPanel session contexts", () => {
     expect(screen.queryByTestId("ae-context-breakdown")).toBeNull();
     const active = screen.getByTestId("ae-context-active");
     expect(within(active).getByTestId("ae-usage-who").textContent).toBe("Codex · gpt-5.5");
-    expect(planOrder()).toEqual(["codex", "claude"]);
+    expect(planOrder()).toEqual(["codex"]);
+  });
+
+  it("leaves finished agents out of the lanes and counts Claude Code's subagents", () => {
+    render(
+      <AePlanLimitsPanel
+        data={FULL}
+        now={NOW}
+        conversationId="conv_a"
+        harness="claude-native"
+        sessions={{
+          collaborators: [
+            {
+              id: "conv_done",
+              name: "Old review",
+              running: false,
+              snapshot: {
+                harness: "pi",
+                llmModel: "gemini-3-pro",
+                contextWindow: 1_000_000,
+                lastTotalTokens: 100_000,
+              },
+            },
+          ],
+          subagents: 3,
+        }}
+      />,
+    );
+    expect(screen.queryAllByTestId("ae-context-lane")).toEqual([]);
+    expect(screen.getByTestId("ae-context-subagents").textContent).toBe(
+      "+ 3 Claude Code subagents running (no reading)",
+    );
+  });
+
+  it("says how many agents past the cap are not shown", () => {
+    render(
+      <AePlanLimitsPanel
+        now={NOW}
+        conversationId="conv_a"
+        harness="claude-native"
+        sessions={{ collaborators: [], hidden: 2 }}
+      />,
+    );
+    expect(screen.getByTestId("ae-context-hidden").textContent).toBe("+ 2 more agents not shown");
   });
 });
 
@@ -769,6 +872,7 @@ function routeFetch(
 
 describe("AePlanLimitsPopover", () => {
   beforeEach(() => {
+    resetAeContextSnapshots();
     vi.mocked(authenticatedFetch).mockReset();
     routeFetch(ANSWER);
   });
@@ -880,7 +984,7 @@ describe("AePlanLimitsPopover", () => {
             tool: null,
             session_name: null,
             current_task_status: null,
-            busy: false,
+            busy: true,
           },
         ],
       },
@@ -901,19 +1005,19 @@ describe("AePlanLimitsPopover", () => {
       within(context)
         .getAllByRole("progressbar")
         .map((bar) => bar.getAttribute("aria-label")),
-    ).toEqual(["This session context (Codex): 25% used"]);
-    fireEvent.click(screen.getByTestId("ae-limits-details-toggle"));
+    ).toEqual([
+      "This session context (Codex): 25% used",
+      "Review the diff context (Claude Code): 5% used",
+    ]);
     expect(
-      within(screen.getByTestId("ae-context-collaborators"))
-        .getAllByRole("progressbar")
-        .map((bar) => bar.getAttribute("aria-label")),
-    ).toEqual(["Review the diff context (Claude Code): 5% used"]);
+      screen.getAllByTestId("ae-limits-harness").map((b) => b.getAttribute("data-harness")),
+    ).toEqual(["codex"]);
+    // A Codex session never asks for Claude's category snapshot.
     expect(
-      screen
-        .getByTestId("ae-limits-in-use")
-        .closest("[data-harness]")
-        ?.getAttribute("data-harness"),
-    ).toBe("codex");
+      vi
+        .mocked(authenticatedFetch)
+        .mock.calls.some(([url]) => String(url).endsWith("/context-usage")),
+    ).toBe(false);
     // Closing stops the polling: no request lands after the popover is gone.
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
     await waitFor(() => expect(screen.queryByTestId("ae-plan-limits")).toBeNull());
@@ -922,6 +1026,44 @@ describe("AePlanLimitsPopover", () => {
       setTimeout(resolve, 20);
     });
     expect(vi.mocked(authenticatedFetch).mock.calls.length).toBe(calls);
+  });
+
+  it("loads Claude's category snapshot on open and keeps the cache bar until it arrives", async () => {
+    let resolve!: (response: Response) => void;
+    routeFetch(FULL, { conv_a: { id: "conv_a", harness: "claude-native" } });
+    const route = vi.mocked(authenticatedFetch).getMockImplementation()!;
+    vi.mocked(authenticatedFetch).mockImplementation((input, init) =>
+      String(input) === "/v1/sessions/conv_a/context-usage"
+        ? new Promise<Response>((r) => {
+            resolve = r;
+          })
+        : route(input, init),
+    );
+    useChatStore.setState({
+      conversationId: "conv_a",
+      contextWindow: 1_000_000,
+      tokensUsed: 216_800,
+      sessionHarness: "claude-native",
+    });
+    renderRing();
+    fireEvent.click(screen.getByTestId("composer-context-ring"));
+    await waitFor(() => expect(screen.getByTestId("ae-context-breakdown")).toBeTruthy());
+    expect(screen.queryByTestId("ae-category-bar")).toBeNull();
+    resolve(new Response(JSON.stringify({ ...SNAPSHOT, observedAt: new Date().toISOString() })));
+    await waitFor(() => expect(screen.getByTestId("ae-category-bar")).toBeTruthy());
+    expect(screen.getByTestId("ae-context-value").textContent).toBe("495.2k / 1M (50%)");
+  });
+
+  it("closes and opens the rail on Context from its bottom button", async () => {
+    useAeSessionRailStore.setState({ open: false, sheetOpen: false, focus: null });
+    renderRing();
+    fireEvent.click(screen.getByTestId("composer-context-ring"));
+    fireEvent.click(await screen.findByRole("button", { name: "Show details in session rail" }));
+    await waitFor(() => expect(screen.queryByTestId("ae-plan-limits")).toBeNull());
+    expect(useAeSessionRailStore.getState()).toMatchObject({
+      open: true,
+      focus: { id: "context" },
+    });
   });
 
   it("ignores clicks anywhere else", () => {

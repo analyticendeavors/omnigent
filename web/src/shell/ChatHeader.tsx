@@ -43,6 +43,7 @@ import { TAB_BADGE_BASE } from "./railTabs";
 import { ViewModeMenuItems, ViewModeToggle } from "./ViewModeToggle";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AeSessionChip } from "@/components/AeSessionChip";
+import { AeSessionRailToggle, aeWithSessionRailItem } from "./AeSessionRailToggle";
 
 /**
  * Gating flags + handlers for the mobile workspace-rail entries (Files ·
@@ -375,7 +376,7 @@ export function ChatHeader({
   // own. Suppressed while a push panel already owns the right side — except in
   // a terminal-first session, where `panelOpen` means the terminal renders
   // inline in main and no drawer is mounted.
-  const workspaceItems =
+  const upstreamWorkspaceItems =
     conversationId &&
     !pending &&
     !mobileMenu.fileViewerOpen &&
@@ -472,6 +473,10 @@ export function ChatHeader({
         )}
       </>
     ) : null;
+  const workspaceItems = aeWithSessionRailItem(
+    isMobile && conversationId && !pending,
+    upstreamWorkspaceItems,
+  );
   const showShare = !pending && canShare;
   // Session actions (pin/share/rename/project/archive/delete). Desktop hangs
   // them off the breadcrumb title; mobile puts the kebab in the right-hand
@@ -831,6 +836,7 @@ export function ChatHeader({
             </TooltipContent>
           </Tooltip>
         )}
+        {conversationId && !pending && <AeSessionRailToggle />}
         {/* Mobile-only session-actions kebab, rightmost in the cluster. Same
             menu the desktop breadcrumb hangs off its title. */}
         {isMobile && conversationMenu}

@@ -5136,6 +5136,9 @@ def _publish_mcp_startup(session_id: str, servers: dict[str, McpServerStartup]) 
     :param servers: Latest per-server startup map, e.g.
         ``{"safe": McpServerStartup(status="starting", error=None)}``.
     """
+    from omnigent.server.routes.sessions.routes_ae_mcp_status import record_mcp_status
+
+    record_mcp_status(session_id, servers)
     if any(record.status != "ready" for record in servers.values()):
         _session_mcp_startup_cache[session_id] = servers
     else:

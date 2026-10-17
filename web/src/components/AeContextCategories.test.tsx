@@ -1,68 +1,99 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { AeCategoryBar, AeContextCategories } from "./AeContextCategories";
-import { contextCountdown, type ContextUsage } from "./aeContextUsage";
-
-const data: ContextUsage = {
-  available: true,
-  totalTokens: 100000,
-  maxTokens: 200000,
-  autoCompactThreshold: 167000,
-  isAutoCompactEnabled: true,
-  observedAt: "2026-10-15T20:00:00Z",
-  complete: false,
-  categories: [
-    { name: "Messages", tokens: 100000, kind: "used" },
-    { name: "MCP tools (deferred)", tokens: 50000, kind: "deferred" },
-    { name: "Free space", tokens: 67000, kind: "free" },
-    { name: "Autocompact buffer", tokens: 33000, kind: "buffer" },
-  ],
-  details: { "Memory files": [{ name: "/some/long/path/CLAUDE.md", tokens: 100 }] },
-};
+import {
+  AeCategoryBar,
+  AeCategoryLegend,
+  AeContextCategoryRows,
+  categoryLegend,
+  formatCategoryTokens,
+} from "./AeContextCategories";
+import { contextCountdown } from "./aeContextUsage";
+import { SNAPSHOT } from "./aeRailTestFixtures";
 
 describe("context categories", () => {
-  it("keeps legend colors consistent with detailed rows and omits deferred tools", () => {
-    render(
-      <>
-        <AeCategoryBar data={data} />
-        <AeContextCategories data={data} />
-      </>,
+  it("draws used categories largest first with the buffer at the end, never deferred or free", () => {
+    render(<AeCategoryBar data={SNAPSHOT} />);
+    const segments = Array.from(
+      screen.getByTestId("ae-category-bar").querySelectorAll<HTMLElement>("[data-category]"),
     );
+    expect(segments.map((s) => s.dataset.category)).toEqual([
+      "Messages",
+      "MCP tools",
+      "System tools",
+      "Memory files",
+      "System prompt",
+      "Skills",
+      "MCP server instructions",
+      "Autocompact buffer",
+    ]);
+    expect(segments[0]).toHaveStyle({ width: "39.97%" });
+    expect(segments.at(-1)).toHaveClass("ml-auto");
+  });
+
+  it("keys the bar with the top three categories plus Other, each as a share of the window", () => {
+    expect(categoryLegend(SNAPSHOT).map((r) => [r.name, Math.round(r.pct)])).toEqual([
+      ["Messages", 40],
+      ["MCP tools", 3],
+      ["System tools", 2],
+      ["Other", 5],
+    ]);
+    render(<AeCategoryLegend data={SNAPSHOT} />);
     const legend = screen.getByRole("list", { name: "Context window color legend" });
-    const details = screen.getByRole("region", { name: "Context categories" });
-    expect(within(legend).getAllByRole("listitem")).toHaveLength(3);
-    expect(within(legend).queryByText("MCP tools (deferred)")).toBeNull();
-    for (const [name, color] of [
-      ["Free space", "bg-muted"],
-      ["Autocompact buffer", "bg-muted-foreground/20"],
-    ]) {
-      expect(within(legend).getByText(name).previousElementSibling).toHaveClass(color);
-      expect(within(details).getByText(name).querySelector("span")).toHaveClass(color);
-    }
+    expect(
+      within(legend)
+        .getAllByRole("listitem")
+        .map((li) => li.textContent),
+    ).toEqual(["Messages40%", "MCP tools3%", "System tools2%", "Other5%"]);
   });
-  it("shows deferred tools without adding them to the used bar", () => {
-    render(
-      <>
-        <AeCategoryBar data={data} />
-        <AeContextCategories data={data} />
-      </>,
+
+  it("lists rows by size, buffer and free space last, deferred tools muted with a dash", () => {
+    render(<AeContextCategoryRows data={SNAPSHOT} />);
+    const rows = within(screen.getByRole("list", { name: "Context categories" })).getAllByTestId(
+      "ae-category-row",
     );
-    expect(screen.getByText("MCP tools (deferred)")).toBeInTheDocument();
-    expect(screen.getByText(/excluded from used space/)).toBeInTheDocument();
-    expect(screen.getByRole("img").children).toHaveLength(2);
-    expect(screen.getByRole("img").children[0]).toHaveStyle({ width: "50%" });
-    expect(screen.getByText(/Some MCP servers/)).toBeInTheDocument();
-    expect(screen.getByText("/some/long/path/CLAUDE.md")).toBeInTheDocument();
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "Messages399.7k40.0%",
+      "MCP tools25.9k2.6%",
+      "System tools23.5k2.4%",
+      "Memory files19.4k1.9%",
+      "System prompt17.5k1.8%",
+      "Skills5.7k0.6%",
+      "MCP server instructions4k0.4%",
+      "Autocompact buffer33k3.3%",
+      "Free space471.4k47.1%",
+    ]);
+    const deferred = screen.getByRole("list", { name: "Deferred tools" });
+    expect(within(deferred).getByTestId("ae-category-row").textContent).toBe(
+      "MCP tools (deferred)168.3k-",
+    );
   });
-  it("uses the returned threshold on smaller windows and honors disabled compaction", () => {
-    expect(contextCountdown(data, 100000)).toBe("About 67k until auto-compact");
-    expect(contextCountdown({ ...data, isAutoCompactEnabled: false }, 100000)).toBe(
+
+  it("opens a list from its category name or its own toggle, and hides empty lists", () => {
+    render(<AeContextCategoryRows data={SNAPSHOT} />);
+    expect(screen.queryByRole("button", { name: /Custom agents/ })).toBeNull();
+    const toggle = screen.getByRole("button", { name: /^MCP tools\s*2$/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(screen.getByRole("button", { name: "MCP tools" }));
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("list", { name: "MCP tools" }).textContent).toContain(
+      "mcp__ae__park_fork1.1k",
+    );
+    fireEvent.click(toggle);
+    expect(screen.queryByRole("list", { name: "MCP tools" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^Memory files\s*1$/ }));
+    expect(screen.getByText("/some/long/path/CLAUDE.md")).toBeInTheDocument();
+    // System prompt has no list, so its name is plain text.
+    expect(screen.queryByRole("button", { name: "System prompt" })).toBeNull();
+  });
+
+  it("formats tokens the popover's way and counts down with Claude's threshold", () => {
+    expect(formatCategoryTokens(950)).toBe("950");
+    expect(formatCategoryTokens(399_700)).toBe("399.7k");
+    expect(formatCategoryTokens(1_000_000)).toBe("1M");
+    expect(contextCountdown(SNAPSHOT, 495_200)).toBe("About 472k until auto-compact");
+    expect(contextCountdown({ ...SNAPSHOT, isAutoCompactEnabled: false }, 1)).toBe(
       "Auto-compact is off",
     );
-  });
-  it("shows an unavailable reading without inventing categories", () => {
-    render(<AeContextCategories data={{ ...data, available: false, reason: "Runner offline" }} />);
-    expect(screen.getByRole("status")).toHaveTextContent("Runner offline");
-    expect(screen.queryByText("Messages")).not.toBeInTheDocument();
+    expect(contextCountdown(SNAPSHOT, 970_000)).toBe("Auto-compact is due");
   });
 });

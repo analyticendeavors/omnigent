@@ -1,6 +1,7 @@
 import type { Decorator, Meta, StoryObj } from "@storybook/react-vite";
 import type { ComponentProps } from "react";
 import { type AeLimitsAnswer, AePlanLimitsPanel } from "./AePlanLimits";
+import { SNAPSHOT } from "./aeRailTestFixtures";
 
 const NOW = Date.parse("2026-10-13T16:00:00Z");
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -119,6 +120,35 @@ export const ClaudeActive: Story = {
   },
 };
 
+/** A fresh category snapshot: one bar by category, the top three plus Other. */
+export const ClaudeWithCategories: Story = {
+  decorators: [PopoverFrame],
+  args: {
+    ...ClaudeActive.args,
+    snapshot: {
+      data: { ...SNAPSHOT, observedAt: iso(NOW - 60_000) },
+      loading: false,
+      fresh: true,
+      refresh: () => {},
+    },
+    sessions: {
+      collaborators: [
+        {
+          id: "conv_reviewer",
+          name: "Review the diff",
+          snapshot: {
+            harness: "codex-native",
+            llmModel: "gpt-6-astra",
+            contextWindow: 400_000,
+            lastTotalTokens: 88_000,
+          },
+        },
+      ],
+      subagents: 3,
+    },
+  },
+};
+
 const TEAM: Partial<ComponentProps<typeof AePlanLimitsPanel>> = {
   conversationId: "conv_codex",
   harness: "codex-native",
@@ -165,10 +195,11 @@ const TEAM: Partial<ComponentProps<typeof AePlanLimitsPanel>> = {
       },
     ],
     hidden: 1,
+    subagents: 2,
   },
 };
 
-/** Codex leads with three collaborators: one live, one stale status line, one silent. */
+/** Codex leads with three collaborator lanes: one live, one stale status line, one silent. */
 export const WithCollaborators: Story = { decorators: [PopoverFrame], args: TEAM };
 
 /** No session yet and no limits reading: every row says unavailable, none reads 0%. */

@@ -250,3 +250,82 @@ def test_unknown_bridge_launch_rejected(tmp_path):
         usage.isolated_command(
             ["claude", "--mcp-config", json.dumps(config)], str(tmp_path), tmp_path
         )
+
+
+def test_mcp_rows_keep_only_name_and_known_status():
+    rows = usage.mcp_rows(
+        [
+            {
+                "name": "  ae  ",
+                "status": "connected",
+                "config": {"url": "https://secret.example", "headers": {"Authorization": "x"}},
+                "error": "HTTP 403 token=abc",
+                "serverInfo": {"name": "ae-server"},
+            },
+            {"name": "fabric", "status": "failed", "error": "bad header"},
+            {"name": "github", "status": "needs-auth"},
+            {"name": "slow", "status": "connecting"},
+            {"name": "off", "status": "disabled"},
+            {"name": "odd", "status": "exploded"},
+            {"name": "x" * 300, "status": "pending"},
+            {"name": "   ", "status": "connected"},
+            {"name": 7, "status": "connected"},
+            "not-a-server",
+        ]
+    )
+    assert rows[:6] == [
+        {"name": "ae", "status": "connected"},
+        {"name": "fabric", "status": "failed"},
+        {"name": "github", "status": "needs-auth"},
+        {"name": "slow", "status": "pending"},
+        {"name": "off", "status": "disabled"},
+        {"name": "odd", "status": "unknown"},
+    ]
+    assert rows[6] == {"name": "x" * 120, "status": "pending"}
+    assert len(rows) == 7
+    dumped = json.dumps(rows)
+    for leaked in ("secret.example", "Authorization", "403", "bad header", "ae-server"):
+        assert leaked not in dumped
+
+
+@pytest.mark.parametrize("servers", [None, {}, "connected", 3])
+def test_mcp_rows_ignore_malformed_lists(servers):
+    assert usage.mcp_rows(servers) == []
+
+
+def test_normalize_carries_sanitized_mcp_servers():
+    result = usage.normalize(
+        {
+            "categories": [{"name": "Messages", "tokens": 1, "kind": "used"}],
+            "maxTokens": 200000,
+            "totalTokens": 1,
+        },
+        complete=False,
+        servers=[{"name": "ae", "status": "failed", "error": "token=abc"}],
+    )
+    assert result["mcpServers"] == [{"name": "ae", "status": "failed"}]
+    assert "token=abc" not in json.dumps(result)
+
+
+@pytest.mark.asyncio
+async def test_probe_reports_mcp_server_status(tmp_path):
+    script = tmp_path / "cli.py"
+    script.write_text("""import json,sys
+for line in sys.stdin:
+ r=json.loads(line); kind=r['request']['subtype']
+ if kind=='mcp_status': body={'mcpServers':[
+  {'name':'ae','status':'connected','config':{'command':'secret-cmd'}},
+  {'name':'raymcp','status':'failed','error':'HTTP 403'}]}
+ elif kind=='get_context_usage':
+  body={'categories':[{'name':'Messages','tokens':50,'kind':'used'}],
+        'maxTokens':200000,'totalTokens':50}
+ else: body={}
+ print(json.dumps({'type':'control_response','response':{'subtype':'success','request_id':r['request_id'],'response':body}}),flush=True)
+""")
+    result = await usage.probe([sys.executable, str(script)], {}, str(tmp_path))
+    assert result["mcpServers"] == [
+        {"name": "ae", "status": "connected"},
+        {"name": "raymcp", "status": "failed"},
+    ]
+    assert result["complete"] is False
+    assert "secret-cmd" not in json.dumps(result)

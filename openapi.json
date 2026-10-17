@@ -11613,6 +11613,50 @@
         ]
       }
     },
+    "/v1/sessions/{session_id}/ae-mcp-status": {
+      "get": {
+        "operationId": "ae_mcp_status_v1_sessions__session_id__ae_mcp_status_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Ae Mcp Status V1 Sessions  Session Id  Ae Mcp Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ae Mcp Status",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
     "/v1/sessions/{session_id}/agent": {
       "get": {
         "description": "Return the `AgentObject` for the session's bound agent.\n\nReplaces the standalone `GET /api/agents/{id}` endpoint by\nresolving the agent through the session's `agent_id` foreign\nkey. The caller only needs to know the session id.\n\n**Returns:** The bound agent's `AgentObject`.\n\n**Raises**\n\n- `OmnigentError` \u2014 If the session or agent is not found.",
