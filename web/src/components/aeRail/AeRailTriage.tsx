@@ -369,7 +369,7 @@ function AeParkedTask({ taskId, active }: { taskId: string; active: boolean }) {
   let note = "";
   if (lot.isError) {
     const reason = lot.error instanceof Error ? lot.error.message : String(lot.error);
-    note = `Could not read the Parking Lot (${reason}); open it from the Dashboard.`;
+    note = `Could not read the Parking Lot (${reason}); open it from the Session Dashboard.`;
   } else if (lot.data) {
     note = "Not in the open Parking Lot; it may be done.";
   }
