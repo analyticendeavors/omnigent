@@ -9,6 +9,7 @@
 // catch — please add an SSE-parser test when you touch this.
 
 import { readSubagentActivity } from "./subagentActivity";
+import { aeParseSessionProgress } from "./aeSessionProgress";
 import { codexQuestionsFrom } from "./blocks";
 import type {
   BrowserActionRequestEvent,
@@ -880,6 +881,7 @@ export function parseEvent(rawType: string, data: Record<string, unknown>): Stre
       reason: "clear",
     } satisfies SessionSupersededEvent;
   }
+  if (eventType === "session.progress") return aeParseSessionProgress(data);
   if (eventType === "session.btw_sidechat") {
     const conversationId = data.conversation_id;
     const question = data.question;

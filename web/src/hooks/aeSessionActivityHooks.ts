@@ -20,6 +20,7 @@ import {
   type AeNextRun,
   type AeStep,
 } from "@/lib/aeSessionActivity";
+import { aeLiveProgress, type AeSessionProgress } from "@/lib/aeSessionProgress";
 import { listScheduledTasks, type ScheduledTask } from "@/lib/scheduledTasksApi";
 import type { AnyBlock } from "@/lib/blocks";
 import type { BackgroundTaskInfo } from "@/lib/types";
@@ -383,6 +384,8 @@ export interface AeChatActivity {
   step: AeStep | null;
   turnStartedAt: number | null;
   lastEventAt: number | null;
+  /** The terminal's live spinner line, while one shows and is being refreshed. */
+  progress: AeSessionProgress | null;
   agents: AeAgentChip[];
   shells: BackgroundTaskInfo[];
   nextRun: AeNextRun | null;
@@ -411,6 +414,7 @@ export function useAeChatActivity(showsWorking: boolean): AeChatActivity {
   const bgCount = useChatStore((s) => s.backgroundTaskCount);
   const bgTasks = useChatStore((s) => s.backgroundTasks);
   const storeLastEventAt = useChatStore((s) => s.lastEventAt);
+  const storeProgress = useChatStore((s) => s.aeProgress);
   const runningSince = useChatStore((s) => s.aeRunningSince);
   const pendingMessages = useChatStore((s) => s.pendingUserMessages);
   const { children } = useChildSessions(conversationId);
@@ -462,6 +466,7 @@ export function useAeChatActivity(showsWorking: boolean): AeChatActivity {
     step,
     turnStartedAt,
     lastEventAt,
+    progress: aeLiveProgress(storeProgress, now),
     agents,
     shells: showsWorking ? bgTasks.slice(0, bgCount) : [],
     nextRun,

@@ -21,6 +21,11 @@ import httpx
 from omnigent.debug_logging import debug_event
 from omnigent.entities.session_resources import terminal_resource_id
 from omnigent.errors import ErrorCode
+from omnigent.harnesses.claude_native.ae_pane_progress import (
+    ProgressRelayState,
+    clear_progress_on_rotation,
+    relay_progress,
+)
 from omnigent.harnesses.claude_native.ae_subagent_model import report_subagent_model
 from omnigent.harnesses.claude_native.bridge import (
     BRIDGE_ID_LABEL_KEY,
@@ -907,6 +912,8 @@ class _ForwardDedupeState:
     # Session already logged as moved off this runner, so the notice is not
     # repeated for every item dropped afterwards.
     session_not_bound_logged_for: str | None = None
+    # Live spinner line last relayed as ``external_session_progress``.
+    progress_relay: ProgressRelayState = field(default_factory=ProgressRelayState)
 
 
 @dataclass(frozen=True)
@@ -1348,6 +1355,9 @@ async def forward_claude_transcript_to_session(
                             new_session_id=rotation,
                             agent_name=agent_name,
                         )
+                        await clear_progress_on_rotation(
+                            client, old_session_id=session_id, state=dedupe.progress_relay
+                        )
                         session_id = rotation
                         state = None
                         hook_state = None
@@ -1389,6 +1399,9 @@ async def forward_claude_transcript_to_session(
                     if rotation is not None:
                         await _cancel_subagent_forward_task(subagent_task)
                         subagent_task = None
+                        await clear_progress_on_rotation(
+                            client, old_session_id=session_id, state=dedupe.progress_relay
+                        )
                         session_id = rotation
                         state = None
                         hook_state = None
@@ -5758,6 +5771,9 @@ async def _forward_pane_signals(
     )
     await _relay_btw_overlay(
         client, session_id=session_id, overlay=signals.btw_overlay, dedupe=dedupe
+    )
+    await relay_progress(
+        client, session_id=session_id, progress=signals.progress, state=dedupe.progress_relay
     )
 
 

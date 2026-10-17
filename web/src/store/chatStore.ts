@@ -83,7 +83,8 @@ import type {
   StreamEvent,
 } from "@/lib/events";
 import { createPresenceIdleTracker } from "@/lib/presenceIdle";
-import { aeStampLastEvent } from "@/lib/aeSessionActivity";
+import type { AeSessionProgress } from "@/lib/aeSessionProgress";
+import { aeObserveStreamEvent } from "@/lib/aeStreamObserver";
 import { randomUUID } from "@/lib/randomUUID";
 import { conversationRegistry, type ConversationEntry } from "./conversationRegistry";
 import { createInitialConversationState, isConversationStateKey } from "./conversationState";
@@ -688,6 +689,8 @@ export interface ConversationState {
   lastEventAt: number | null;
   /** Epoch ms `sessionStatus` last switched to running, or `null` when not seen. */
   aeRunningSince: number | null;
+  /** The terminal's live spinner line (`session.progress`), or `null` when none shows. */
+  aeProgress: AeSessionProgress | null;
   /**
    * Whether the active session is a native-terminal wrapper
    * (claude-native / codex-native), derived from the `omnigent.wrapper`
@@ -1881,6 +1884,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
   blockedOn: null,
   lastEventAt: null,
   aeRunningSince: null,
+  aeProgress: null,
   isNativeTerminalSession: false,
   nativeVendorOwnsModel: false,
   boundAgentId: null,
@@ -4534,6 +4538,7 @@ async function bindStream(
         blockedOn: null,
         // Events seen on an earlier visit are stale; the snapshot's blocks date it.
         lastEventAt: null,
+        aeProgress: null,
         // This conversation's own effective effort, which is what a warm switch
         // back re-projects (it does not re-bind, so it cannot recompute it).
         sessionReasoningEffort: effectiveEffort,
@@ -8198,7 +8203,9 @@ async function* tapSessionEvents(
   for await (const event of events) {
     if (!isConversationDisposed(conversationId)) {
       streamEventRevisions.set(conversationId, (streamEventRevisions.get(conversationId) ?? 0) + 1);
-      aeStampLastEvent(conversationId, setterFor(conversationId));
+      aeObserveStreamEvent(event, conversationId, setterFor(conversationId), () =>
+        setterForState(conversationId),
+      );
     }
     if (event.type === "session_status" || event.type === "session_interrupted") {
       beforeTurnEdge?.();

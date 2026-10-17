@@ -3770,6 +3770,35 @@ class SessionBtwSidechatEvent(_SSEEventBase):
     truncated: bool = False
 
 
+class SessionProgressEvent(_SSEEventBase):
+    """
+    The live spinner line a terminal-backed agent is drawing.
+
+    Claude Code writes a tool call to its transcript only after it finishes
+    streaming, so a long call leaves the chat with nothing to show. The
+    claude-native forwarder reads the pane's spinner line (``✻ Crunching…
+    (4m 42s · ↓ 24.5k tokens)``) and relays it so the Working row can show it.
+
+    Category: **transient** (SSE-only). Nothing is persisted and there is no
+    replay. ``label`` is ``None`` when the spinner went away.
+
+    :param type: Always ``"session.progress"``.
+    :param conversation_id: The conversation whose stream this rides.
+    :param label: The spinner verb, e.g. ``"Crunching"``, or ``None`` to clear.
+    :param elapsed: Elapsed text as drawn, e.g. ``"4m 42s"``.
+    :param elapsed_s: The same elapsed time in seconds, e.g. ``282``, so a
+        client can tick it between posts.
+    :param tokens: Token text, e.g. ``"24.5k tokens"``.
+    """
+
+    type: Literal["session.progress"]
+    conversation_id: str
+    label: str | None = None
+    elapsed: str | None = None
+    elapsed_s: int | None = None
+    tokens: str | None = None
+
+
 # ── Response pass-through events (response.*) ──────────────────────
 
 
@@ -4766,6 +4795,7 @@ ServerStreamEvent = Annotated[
     | SessionCreatedEvent
     | SessionSupersededEvent
     | SessionBtwSidechatEvent
+    | SessionProgressEvent
     | SessionPresenceEvent
     # ── Transient (SSE-only) — session resource lifecycle ─────
     | SessionResourceCreatedEvent

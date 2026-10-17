@@ -107,6 +107,10 @@ from omnigent.server.routes._auth_helpers import (
     require_user as _require_user,
 )
 from omnigent.server.routes._errors import session_not_found as _session_not_found
+from omnigent.server.routes._sessions.ae_session_progress import (
+    EXTERNAL_SESSION_PROGRESS_TYPE,
+    publish_external_session_progress,
+)
 from omnigent.server.routes._sessions.common import (
     _ALLOWED_EVENT_TYPES,
     _APPROVAL_TYPE,
@@ -318,6 +322,7 @@ _TRANSIENT_AUDIT_EVENT_TYPES = frozenset(
         _EXTERNAL_OUTPUT_REASONING_DELTA_TYPE,
         _EXTERNAL_TOOL_OUTPUT_DELTA_TYPE,
         _EXTERNAL_SESSION_USAGE_TYPE,
+        EXTERNAL_SESSION_PROGRESS_TYPE,
     }
 )
 
@@ -922,6 +927,10 @@ def register_events_routes(
         - ``"external_session_status"`` publishes a terminal-observed
           ``session.status`` edge without persisting an item or
           starting/steering a task.
+        - ``"external_session_progress"`` publishes a transient
+          ``session.progress`` event carrying the terminal's live spinner
+          line (``label``, ``elapsed``, ``tokens``; ``label`` null clears
+          it), without persisting an item or starting / steering a task.
         - ``"subagent.status"`` with ``data.idle=true`` publishes idle status
           for transcript inactivity without forwarding a completion
           to the runner.
@@ -1052,6 +1061,7 @@ def register_events_routes(
             _EXTERNAL_BTW_DISMISS_TYPE,
             _EXTERNAL_ELICITATION_RESOLVED_TYPE,
             _EXTERNAL_SESSION_STATUS_TYPE,
+            EXTERNAL_SESSION_PROGRESS_TYPE,
             _SUBAGENT_STATUS_TYPE,
             _EXTERNAL_SESSION_USAGE_TYPE,
             _EXTERNAL_COMPACTION_STATUS_TYPE,
@@ -1813,6 +1823,9 @@ def register_events_routes(
             return {"queued": False}
         if body.type == _EXTERNAL_TOOL_OUTPUT_DELTA_TYPE:
             _publish_external_tool_output_delta(session_id, body)
+            return {"queued": False}
+        if body.type == EXTERNAL_SESSION_PROGRESS_TYPE:
+            publish_external_session_progress(session_id, body)
             return {"queued": False}
         if body.type == _EXTERNAL_OUTPUT_REASONING_DELTA_TYPE:
             _publish_external_output_reasoning_delta(session_id, body)
