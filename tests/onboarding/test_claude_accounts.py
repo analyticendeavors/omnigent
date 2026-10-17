@@ -46,6 +46,22 @@ def test_native_subscription_env_uses_selected_account():
     assert env["OMNIGENT_CLAUDE_ACCOUNT"] == "Backup"
 
 
+def test_tests_never_touch_the_hosts_claude_accounts(monkeypatch, tmp_path):
+    # tests/conftest.py redirects the developer's real ~/.omnigent accounts
+    # file and secrets for a test that does not isolate itself.
+    from omnigent.onboarding import claude_accounts, secrets
+
+    monkeypatch.delenv("OMNIGENT_CONFIG_HOME")
+    real = Path.home() / ".omnigent"
+    assert claude_accounts._path().parent != real
+    assert Path(secrets._config_home()) != real
+    assert account_env() == {}
+    # A test that isolates itself through HOME keeps its own files.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert claude_accounts._path() == tmp_path / ".omnigent" / "claude-accounts.json"
+    assert Path(secrets._config_home()) == tmp_path / ".omnigent"
+
+
 def test_session_account_choice_does_not_change_host_active_account(monkeypatch):
     from omnigent.harnesses.claude_native.main import build_native_claude_terminal_env
     from omnigent.runner.native.orchestration import _claude_terminal_env_unset

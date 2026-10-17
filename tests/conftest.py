@@ -379,6 +379,48 @@ def _isolate_codex_native_state(
     monkeypatch.setenv("OMNIGENT_CODEX_NATIVE_STATE_DIR", str(state_dir))
 
 
+# The developer's real config home, read before any test moves HOME.
+_REAL_CONFIG_HOME = Path(os.path.expanduser("~")) / ".omnigent"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_claude_accounts(
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Keep the developer's Claude accounts and their tokens out of every test.
+
+    ``omnigent.onboarding.claude_accounts`` keeps ``claude-accounts.json`` and
+    its tokens in the user's ``~/.omnigent``. On a machine with a backup
+    account selected, every native Claude launch env a test built would carry
+    that account's real token, and a failing env assertion prints it. Only that
+    real home is redirected: a test isolated through ``OMNIGENT_CONFIG_HOME``
+    or ``HOME`` keeps its own files. An inherited account name is dropped too.
+
+    :param tmp_path_factory: Pytest's session-scoped temp factory.
+    :param monkeypatch: Pytest monkeypatch fixture; restores all three at teardown.
+    :returns: None.
+    """
+    from omnigent.onboarding import claude_accounts, secrets
+
+    empty = tmp_path_factory.mktemp("claude-accounts")
+    accounts_path = claude_accounts._path
+    config_home = secrets._config_home
+
+    def _path() -> Path:
+        path = accounts_path()
+        return empty / path.name if path.parent == _REAL_CONFIG_HOME else path
+
+    def _home() -> str:
+        home = config_home()
+        return str(empty) if Path(home) == _REAL_CONFIG_HOME else home
+
+    monkeypatch.setattr(claude_accounts, "_path", _path)
+    monkeypatch.setattr(secrets, "_config_home", _home)
+    monkeypatch.delenv("OMNIGENT_CLAUDE_ACCOUNT", raising=False)
+
+
 @pytest.fixture()
 def claude_managed_settings() -> None:
     """Opt back in to the host's real Claude Code managed-settings chain.
