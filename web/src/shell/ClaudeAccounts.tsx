@@ -10,6 +10,9 @@ export function ClaudeAccounts({ host }: { host: Host | null | undefined }) {
   const [token, setToken] = useState("");
   const [adding, setAdding] = useState(false);
   const [message, setMessage] = useState("");
+  const [messageIsError, setMessageIsError] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [accountLabel, setAccountLabel] = useState("");
   const accounts = useDetectedCredentials(host?.host_id, !!host);
   const store = useStoreCredential(host?.host_id ?? "");
   const addAccount = () => {
@@ -26,9 +29,13 @@ export function ClaudeAccounts({ host }: { host: Host | null | undefined }) {
           setToken("");
           setName("");
           setAdding(false);
+          setMessageIsError(false);
           setMessage("Account saved and selected for new chats.");
         },
-        onError: (error) => setMessage(error.message),
+        onError: (error) => {
+          setMessageIsError(true);
+          setMessage(error.message);
+        },
       },
     );
   };
@@ -47,32 +54,116 @@ export function ClaudeAccounts({ host }: { host: Host | null | undefined }) {
       {(accounts.isError || (accounts.isSuccess && rows.length === 0)) && (
         <p role="alert">Could not load Claude accounts. Check the host account configuration.</p>
       )}
-      {rows.map((row) => (
-        <Button
-          type="button"
-          key={row.env_var ?? ""}
-          variant="ghost"
-          size="sm"
-          className="h-auto min-h-8 w-full whitespace-normal break-words"
-          disabled={store.isPending || row.family === "claude-oauth-active"}
-          onClick={() =>
-            store.mutate(
-              {
-                harness: "claude-native",
-                kind: "claude-oauth-select",
-                account_name: row.env_var ?? "",
-              },
-              {
-                onSuccess: () => setMessage("Account selected for new chats."),
-                onError: (error) => setMessage(error.message),
-              },
-            )
-          }
-        >
-          {row.source}
-          {row.family === "claude-oauth-active" ? " (selected)" : ""}
-        </Button>
-      ))}
+      <div className="flex min-w-0 flex-wrap gap-2">
+        {rows.map((row) => {
+          const accountId = row.env_var ?? "";
+          const displayLabel = row.source;
+          return (
+            <div
+              key={accountId}
+              className="flex min-w-[10rem] flex-[1_1_10rem] flex-col gap-1 rounded border p-2"
+            >
+              <div className="flex min-w-0 flex-wrap items-center gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-auto min-h-8 min-w-0 flex-1 whitespace-normal break-words"
+                  disabled={store.isPending || row.family === "claude-oauth-active"}
+                  onClick={() =>
+                    store.mutate(
+                      {
+                        harness: "claude-native",
+                        kind: "claude-oauth-select",
+                        account_name: accountId,
+                      },
+                      {
+                        onSuccess: () => {
+                          setMessageIsError(false);
+                          setMessage("Account selected for new chats.");
+                        },
+                        onError: (error) => {
+                          setMessageIsError(true);
+                          setMessage(error.message);
+                        },
+                      },
+                    )
+                  }
+                >
+                  {displayLabel}
+                  {row.family === "claude-oauth-active" ? " (selected)" : ""}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  aria-label={`Rename ${displayLabel}`}
+                  disabled={store.isPending}
+                  onClick={() => {
+                    setEditingId(accountId);
+                    setAccountLabel(displayLabel);
+                    setMessage("");
+                  }}
+                >
+                  Rename
+                </Button>
+              </div>
+              {editingId === accountId && (
+                <div className="flex min-w-0 flex-wrap gap-1">
+                  <Input
+                    aria-label={`Account label for ${displayLabel}`}
+                    className="min-w-0 flex-1"
+                    value={accountLabel}
+                    maxLength={64}
+                    disabled={store.isPending}
+                    onChange={(event) => setAccountLabel(event.target.value)}
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={store.isPending || !accountLabel.trim()}
+                    onClick={() =>
+                      store.mutate(
+                        {
+                          harness: "claude-native",
+                          kind: "claude-oauth-rename",
+                          account_name: accountId,
+                          account_label: accountLabel.trim(),
+                        },
+                        {
+                          onSuccess: () => {
+                            setEditingId(null);
+                            setMessageIsError(false);
+                            setMessage("Account name saved.");
+                          },
+                          onError: (error) => {
+                            setMessageIsError(true);
+                            setMessage(error.message);
+                          },
+                        },
+                      )
+                    }
+                  >
+                    Save name
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={store.isPending}
+                    onClick={() => {
+                      setEditingId(null);
+                      setMessage("");
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
       <Button type="button" variant="outline" size="sm" onClick={() => setAdding(!adding)}>
         Add Claude account
       </Button>
@@ -92,6 +183,7 @@ export function ClaudeAccounts({ host }: { host: Host | null | undefined }) {
               setName("");
               setToken("");
               setAdding(false);
+              setMessageIsError(false);
               setMessage("Account saved and selected for new chats.");
             }}
           />
@@ -136,7 +228,7 @@ export function ClaudeAccounts({ host }: { host: Host | null | undefined }) {
         </div>
       )}
       {message && (
-        <p role="status" className="text-xs">
+        <p role={messageIsError ? "alert" : "status"} className="text-xs">
           {message}
         </p>
       )}

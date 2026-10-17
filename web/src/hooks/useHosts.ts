@@ -268,11 +268,13 @@ export interface StoreCredentialInput {
     | "adopt"
     | "claude-oauth-add"
     | "claude-oauth-select"
+    | "claude-oauth-rename"
     | "claude-login-start"
     | "claude-login-poll"
     | "claude-login-code"
     | "claude-login-cancel";
   account_name?: string;
+  account_label?: string;
   /** The API key / gateway token for `key` / `gateway`; omitted for `adopt`. */
   secret?: string;
   /** Gateway base URL (required for `kind: "gateway"`). */

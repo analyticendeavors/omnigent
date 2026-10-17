@@ -838,6 +838,7 @@ class HostStoreSecretFrame:
     wire_api: str | None = None
     env_var: str | None = None
     account_name: str | None = None
+    account_label: str | None = None
 
 
 @dataclass
@@ -1609,6 +1610,7 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "wire_api": frame.wire_api,
                 "env_var": frame.env_var,
                 "account_name": frame.account_name,
+                "account_label": frame.account_label,
             }
         )
     if isinstance(frame, HostStoreSecretResultFrame):
@@ -2645,6 +2647,7 @@ def _decode_store_secret(msg: _JsonObject) -> HostStoreSecretFrame:
         wire_api=_optional_nullable_str(msg, "wire_api"),
         env_var=_optional_nullable_str(msg, "env_var"),
         account_name=_optional_nullable_str(msg, "account_name"),
+        account_label=_optional_nullable_str(msg, "account_label"),
     )
 
 

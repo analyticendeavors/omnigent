@@ -538,6 +538,7 @@ class StoreHarnessCredentialRequest(BaseModel):
     wire_api: str | None = None
     env_var: str | None = None
     account_name: str | None = None
+    account_label: str | None = None
 
 
 class HostModelOptionsResponse(BaseModel):
@@ -1616,6 +1617,7 @@ def create_hosts_router(
             "adopt",
             "claude-oauth-add",
             "claude-oauth-select",
+            "claude-oauth-rename",
             "claude-login-start",
             "claude-login-poll",
             "claude-login-code",
@@ -1646,6 +1648,7 @@ def create_hosts_router(
             wire_api=body.wire_api,
             env_var=body.env_var,
             account_name=body.account_name,
+            account_label=body.account_label,
         )
         # Serialize credential writes to this host: the daemon's write is a
         # non-atomic load→merge→save of config.yaml (twice — entry, then

@@ -3100,7 +3100,7 @@ class HostProcess:
                 else None,
             )
 
-        if frame.kind in ("claude-oauth-add", "claude-oauth-select"):
+        if frame.kind in ("claude-oauth-add", "claude-oauth-select", "claude-oauth-rename"):
             from omnigent.onboarding.claude_accounts import change_account
 
             if install_key != ANTHROPIC_FAMILY:
@@ -3109,7 +3109,12 @@ class HostProcess:
                     status="failed",
                     error="OAuth accounts require Claude.",
                 )
-            result = change_account(frame.kind, frame.account_name or "", frame.secret_value or "")
+            result = change_account(
+                frame.kind,
+                frame.account_name or "",
+                frame.secret_value or "",
+                label=frame.account_label,
+            )
         elif frame.kind == "adopt":
             if not frame.env_var:
                 return HostStoreSecretResultFrame(
