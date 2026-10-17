@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sys
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -382,7 +383,7 @@ for line in sys.stdin:
 """)
     command = [sys.executable, str(script), "--mcp-config", json.dumps(_bridge_config(live))]
     await usage.probe(command, {}, str(tmp_path))
-    copy = type(live)(seen.read_text())
+    copy = Path(seen.read_text())
     assert copy.parent.parent == claude_bridge_root
     assert copy.parent.name.startswith("ae-context-")
     assert not copy.parent.exists()
@@ -399,10 +400,19 @@ def test_isolated_copy_passes_bridge_allowed_root_check(tmp_path, claude_bridge_
     command = usage.isolated_command(
         ["claude", "--mcp-config", json.dumps(_bridge_config(live))], str(tmp_path), scratch
     )
-    copy = type(live)(json.loads(command[2])["mcpServers"]["omnigent"]["args"][-1])
+    copy = Path(json.loads(command[2])["mcpServers"]["omnigent"]["args"][-1])
     assert claude_bridge._trusted_parent_for_bridge_dir(copy) == claude_bridge._TRUSTED_PARENT
     claude_bridge.ensure_secure_dir(copy)
     claude_bridge._write_json_file(copy / "server.json", {"pid": 1})
     # The old location is rejected, which is the failure this guards against.
     with pytest.raises(RuntimeError, match="not under an allowed bridge root"):
         claude_bridge.ensure_secure_dir(tmp_path / "ae-context-elsewhere" / "0-0")
+
+
+def test_unsafe_bridge_root_is_reported_as_unavailable(monkeypatch):
+    def refuse(_target):
+        raise RuntimeError("group-writable ancestor")
+
+    monkeypatch.setattr(claude_bridge, "ensure_secure_dir", refuse)
+    with pytest.raises(ValueError, match="group-writable ancestor"):
+        usage._scratch_parent()
