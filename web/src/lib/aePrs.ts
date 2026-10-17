@@ -152,7 +152,7 @@ export async function mergeAePr(
   return body as AeMergeResult;
 }
 
-/** "6/6 checks", "1 of 6 checks failing", "2 of 6 checks running", "No checks". */
+/** "6/6 checks", "1 of 6 checks failing", "4/6 passed, 2 running", "No checks". */
 export function aeCiText(ci: AePrCard["ci"]): string {
   switch (ci.state) {
     case "passing":
@@ -160,7 +160,7 @@ export function aeCiText(ci: AePrCard["ci"]): string {
     case "failing":
       return `${ci.failing} of ${ci.total} checks failing`;
     case "pending":
-      return `${ci.pending} of ${ci.total} checks running`;
+      return `${ci.passing}/${ci.total} passed, ${ci.pending} running`;
     case "none":
       return "No checks";
     default:
