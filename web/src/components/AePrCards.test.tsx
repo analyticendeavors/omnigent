@@ -499,7 +499,7 @@ describe("AePrCards", () => {
         methods: ["squash"],
         default_method: "squash",
         allowed: false,
-        reason: "CI is still running: 1 of 6 checks.",
+        reason: "CI is still running: 5 of 6 checks passed, 1 to go.",
       },
     });
     serve((path) =>
@@ -508,7 +508,7 @@ describe("AePrCards", () => {
             {
               error: {
                 code: "merge_blocked",
-                message: "CI is still running: 1 of 6 checks.",
+                message: "CI is still running: 5 of 6 checks passed, 1 to go.",
                 card: moved,
               },
             },
@@ -520,13 +520,13 @@ describe("AePrCards", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
     fireEvent.click(screen.getByRole("button", { name: "Squash into main" }));
     expect((await screen.findByRole("alert")).textContent).toBe(
-      "Not merged: CI is still running: 1 of 6 checks.",
+      "Not merged: CI is still running: 5 of 6 checks passed, 1 to go.",
     );
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect((screen.getByRole("button", { name: "Merge" }) as HTMLButtonElement).disabled).toBe(
       true,
     );
-    expect(screen.getByText("1 of 6 checks running").dataset.tone).toBe("wait");
+    expect(screen.getByText("5/6 passed, 1 running").dataset.tone).toBe("wait");
   });
 
   it("says Merged or Closed, with no chips and no Merge, once GitHub closed it", async () => {
