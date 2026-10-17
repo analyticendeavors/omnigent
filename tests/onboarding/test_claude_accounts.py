@@ -111,3 +111,39 @@ async def test_sdk_launch_subscription_and_explicit_key(monkeypatch, explicit_ke
         assert "CLAUDE_CODE_OAUTH_TOKEN" not in captured
     else:
         assert captured["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat-backup"
+
+
+def test_rename_labels_preserves_credentials_and_active_account():
+    assert change_account("claude-oauth-add", "Backup", "sk-ant-oat-backup").stored
+    assert change_account("claude-oauth-rename", "", label="Primary").stored
+    assert change_account("claude-oauth-rename", "Backup", label="Personal").stored
+    rows = account_descriptors()
+    assert [(r["source"], r["env_var"]) for r in rows] == [("Primary", ""), ("Personal", "Backup")]
+    assert rows[1]["family"] == "claude-oauth-active"
+    assert account_env()["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat-backup"
+    assert change_account("claude-oauth-select", "").stored
+    assert account_env() == {}
+    assert change_account("claude-oauth-select", "Backup").stored
+    assert account_env()["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat-backup"
+
+
+def test_rename_rejects_duplicate_invalid_and_missing_labels():
+    assert change_account("claude-oauth-add", "Backup", "sk-ant-oat-backup").stored
+    for label in [None, "", " ", "x" * 65, "../secret", "Default CLI account"]:
+        assert not change_account("claude-oauth-rename", "Backup", label=label).stored
+    assert not change_account("claude-oauth-rename", "missing", label="Personal").stored
+    assert change_account("claude-oauth-rename", "Backup", label="Backup").stored
+    assert account_env()["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat-backup"
+
+
+def test_rename_frame_roundtrip():
+    from omnigent.host.frames import HostStoreSecretFrame, decode_host_frame, encode_host_frame
+
+    frame = HostStoreSecretFrame(
+        request_id="request",
+        harness="claude-native",
+        kind="claude-oauth-rename",
+        account_name="",
+        account_label="Primary",
+    )
+    assert decode_host_frame(encode_host_frame(frame)) == frame

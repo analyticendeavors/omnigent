@@ -35,6 +35,12 @@ def _read() -> dict:
         or (state["active"] and state["active"] not in state["accounts"])
     ):
         raise RuntimeError("Invalid Claude accounts. Repair claude-accounts.json on this host.")
+    labels = state.get("labels", {})
+    if not isinstance(labels, dict) or any(
+        key not in ["", *state["accounts"]] or not isinstance(label, str) or not _valid_name(label)
+        for key, label in labels.items()
+    ):
+        raise RuntimeError("Invalid Claude account labels on this host.")
     return state
 
 
@@ -50,7 +56,7 @@ def account_descriptors() -> list[dict[str, str | None]]:
     return [
         {
             "family": "claude-oauth-active" if name == state["active"] else "claude-oauth",
-            "source": name or "Default CLI account",
+            "source": state.get("labels", {}).get(name, name or "Default CLI account"),
             "env_var": name,
         }
         for name in ["", *state["accounts"]]
@@ -60,12 +66,16 @@ def account_descriptors() -> list[dict[str, str | None]]:
 _ACCOUNT_LOCK = threading.RLock()
 
 
-def change_account(kind: str, name: str, token: str = "") -> StoreCredentialResult:
+def change_account(
+    kind: str, name: str, token: str = "", *, label: str | None = None
+) -> StoreCredentialResult:
     with _ACCOUNT_LOCK:
-        return _change_account(kind, name, token)
+        return _change_account(kind, name, token, label=label)
 
 
-def _change_account(kind: str, name: str, token: str = "") -> StoreCredentialResult:
+def _change_account(
+    kind: str, name: str, token: str = "", *, label: str | None = None
+) -> StoreCredentialResult:
     if name and not _valid_name(name):
         return StoreCredentialResult(
             False, None, "Use a name of up to 64 letters, digits, spaces, - or _."
@@ -76,7 +86,22 @@ def _change_account(kind: str, name: str, token: str = "") -> StoreCredentialRes
         )
     try:
         state = _read()
-        if kind == "claude-oauth-add":
+        if kind == "claude-oauth-rename":
+            if name and name not in state["accounts"]:
+                return StoreCredentialResult(False, None, "Unknown Claude account.")
+            label = (label or "").strip()
+            if not _valid_name(label):
+                return StoreCredentialResult(
+                    False, None, "Use a label of up to 64 letters, digits, spaces, - or _."
+                )
+            labels = state.setdefault("labels", {})
+            if any(
+                other != name and labels.get(other, other or "Default CLI account") == label
+                for other in ["", *state["accounts"]]
+            ):
+                return StoreCredentialResult(False, None, "That account label already exists.")
+            labels[name] = label
+        elif kind == "claude-oauth-add":
             if name in state["accounts"]:
                 return StoreCredentialResult(
                     False, None, "That account name already exists. Choose another name."
@@ -85,7 +110,8 @@ def _change_account(kind: str, name: str, token: str = "") -> StoreCredentialRes
             state["accounts"].append(name)
         elif kind != "claude-oauth-select" or (name and name not in state["accounts"]):
             return StoreCredentialResult(False, None, "Unknown Claude account.")
-        state["active"] = name
+        if kind != "claude-oauth-rename":
+            state["active"] = name
         path = _path()
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(".tmp")
