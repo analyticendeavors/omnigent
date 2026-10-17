@@ -760,6 +760,18 @@
             "description": "Error details from the child's most recent failed run, e.g. `{\"code\": \"required_terminal_exited\", \"message\": \"...\"}`. `None` when the child has no durable failure detail. This is the typed projection of runner-owned failure labels; clients should not parse those labels directly.",
             "title": "Last Task Error"
           },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Model the child actually ran on, e.g. `\"claude-sonnet-5-5\"`: the harness's own report, else the model its own usage was recorded against, else the requested override. `None` when nothing names one.",
+            "title": "Model"
+          },
           "object": {
             "default": "child_session",
             "description": "Fixed resource type, always `\"child_session\"`.",

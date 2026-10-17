@@ -5,7 +5,6 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { showToast } from "@/components/ui/toast";
-import { shortModelName } from "@/components/CostRoutingControl";
 import type { ChildSessionInfo } from "@/hooks/useChildSessions";
 import { AeTablerSvg } from "@/lib/aeTablerIcon";
 import {
@@ -21,6 +20,7 @@ import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chatStore";
 import { TodoPanel } from "./TodoPanel";
 import {
+  agentModelLabel,
   canStopChild,
   childElapsedSeconds,
   clearCutoff,
@@ -36,8 +36,10 @@ const ICON_BUTTON =
 // Widths shared by the column header and every row, so they line up as a table.
 export const MODEL_COLUMN = "w-16 shrink-0 truncate text-right";
 export const TIME_COLUMN = "w-14 shrink-0 whitespace-nowrap text-right tabular-nums";
-// The Stop square or the status dot sits in this slot.
-export const ACTION_COLUMN = "flex w-8 shrink-0 items-center justify-center pointer-coarse:w-10";
+// A bare status dot sits in this fixed slot right after Time; a running row keeps
+// one more slot at its right end for the Stop square.
+export const ACTION_COLUMN = "flex w-4 shrink-0 items-center justify-end";
+export const STOP_COLUMN = "w-8 shrink-0 pointer-coarse:w-10";
 
 const FINISHED_OPEN_KEY = "ae.agentsPane.finishedOpen";
 const clearedKey = (rootSessionId: string) => `ae.agentsPane.clearedAt.${rootSessionId}`;
@@ -79,7 +81,7 @@ function SectionHeader({ children }: { children: ReactNode }) {
   );
 }
 
-function ColumnHeader({ withAction }: { withAction: boolean }) {
+function ColumnHeader({ withStop }: { withStop: boolean }) {
   return (
     <li
       aria-hidden="true"
@@ -88,7 +90,8 @@ function ColumnHeader({ withAction }: { withAction: boolean }) {
       <span className="min-w-0 flex-1">Task</span>
       <span className={MODEL_COLUMN}>Model</span>
       <span className={TIME_COLUMN}>Time</span>
-      {withAction && <span className={ACTION_COLUMN} />}
+      <span className={ACTION_COLUMN} />
+      {withStop && <span className={STOP_COLUMN} />}
     </li>
   );
 }
@@ -155,7 +158,7 @@ function AgentsSectionsForRoot({ rootSessionId, agents, renderRow }: AeAgentsSec
           </SectionHeader>
         </li>
       )}
-      {running.length > 0 && <ColumnHeader withAction />}
+      {running.length > 0 && <ColumnHeader withStop />}
       {running.map(renderRow)}
       {(finished.length > 0 || clearedCount > 0) && (
         <li data-testid="agents-finished-section" className="mt-1 border-t border-border/60">
@@ -201,29 +204,43 @@ function AgentsSectionsForRoot({ rootSessionId, agents, renderRow }: AeAgentsSec
           </SectionHeader>
         </li>
       )}
-      {finishedOpen && finished.length > 0 && <ColumnHeader withAction={false} />}
+      {finishedOpen && finished.length > 0 && <ColumnHeader withStop={false} />}
       {finishedOpen && finished.map(renderRow)}
     </>
   );
 }
 
 /**
- * A child row's status, Model and Time columns, and on a running row the
- * slot the Stop square sits over (empty when the row cannot be stopped).
+ * A child row's Model and Time columns and its status dot, then on a running
+ * row the slot the Stop square sits over (empty when it cannot be stopped).
+ * A status that shows a word ("Failed", "Needs response") goes left of Model
+ * instead, so its width never pushes the columns out of line.
+ *
+ * @param statusHasWord - True when `status` renders a word beside its dot.
  */
-export function AeAgentRowMeta({ child, status }: { child: ChildSessionInfo; status: ReactNode }) {
+export function AeAgentRowMeta({
+  child,
+  status,
+  statusHasWord = false,
+}: {
+  child: ChildSessionInfo;
+  status: ReactNode;
+  statusHasWord?: boolean;
+}) {
   const finished = isChildFinished(child);
   const now = useNow(!finished);
+  // The model the agent ran on, else the one routing picked; blank when neither is known.
+  const model = child.model ?? child.routed_model ?? null;
+  const routed = child.routed_model != null && model === child.routed_model;
   return (
     <>
-      {status}
-      {/* Blank when the router picked no model: the row cannot tell which one runs. */}
+      {statusHasWord && status}
       <span
-        className={cn(MODEL_COLUMN, "font-mono text-[10px] text-muted-foreground")}
-        data-testid={child.routed_model ? "subagent-routed-model" : undefined}
-        title={child.routed_model ? `Smart routing picked ${child.routed_model}` : undefined}
+        className={cn(MODEL_COLUMN, "text-[11px] text-muted-foreground")}
+        data-testid={model ? (routed ? "subagent-routed-model" : "subagent-model") : undefined}
+        title={model ? (routed ? `Smart routing picked ${model}` : model) : undefined}
       >
-        {child.routed_model ? shortModelName(child.routed_model) : null}
+        {model ? agentModelLabel(model) : null}
       </span>
       <span
         className={cn(TIME_COLUMN, "text-xs text-muted-foreground")}
@@ -231,7 +248,8 @@ export function AeAgentRowMeta({ child, status }: { child: ChildSessionInfo; sta
       >
         {formatElapsed(childElapsedSeconds(child, now))}
       </span>
-      {!finished && <span aria-hidden="true" className={ACTION_COLUMN} />}
+      <span className={ACTION_COLUMN}>{statusHasWord ? null : status}</span>
+      {!finished && <span aria-hidden="true" className={STOP_COLUMN} />}
     </>
   );
 }

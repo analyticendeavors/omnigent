@@ -2,6 +2,7 @@
 // rows are live, how long each ran, what last line to show, and
 // which rows OmniGent can actually stop (2026-10-15).
 
+import { aeModelName } from "@/components/aeSessionContext";
 import type { ChildSessionInfo } from "@/hooks/useChildSessions";
 import { nativeCodingAgentForSubagentWrapper, WRAPPER_LABEL_KEY } from "@/lib/nativeCodingAgents";
 import { childStatus, type AgentActivity } from "./subagentStatus";
@@ -96,6 +97,16 @@ export function isNativeSubagentMirror(child: ChildSessionInfo): boolean {
  */
 export function canStopChild(child: ChildSessionInfo): boolean {
   return !isChildFinished(child) && !isNativeSubagentMirror(child);
+}
+
+/**
+ * A model id as the Model column prints it: "claude-sonnet-5-5" reads
+ * "Sonnet 5.5", a gateway's "databricks-" prefix is dropped, and any other
+ * id (a GPT model, say) prints as the harness spelled it.
+ */
+export function agentModelLabel(model: string): string {
+  const id = model.trim().replace(/^databricks-/i, "");
+  return aeModelName(id) ?? id;
 }
 
 const INJECTED_CONTEXT_PREFIX = "<system-reminder>";

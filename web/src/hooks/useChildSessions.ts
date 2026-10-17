@@ -62,6 +62,8 @@ export interface ChildSessionInfo {
    * not routed (routing off, or a server that predates the field).
    */
   routed_model?: string | null;
+  /** Model the child actually ran on, as the server reports it; absent on an older server. */
+  model?: string | null;
   /** Unix epoch seconds the child was created, or absent on an older server. */
   created_at?: number;
   /** Unix epoch seconds of the child's latest update, or absent on an older server. */
@@ -86,6 +88,7 @@ interface ChildSessionWire {
   last_message_preview?: string | null;
   pending_elicitations_count?: number;
   routed_model?: string | null;
+  model?: string | null;
   created_at?: number;
   updated_at?: number;
 }
@@ -232,6 +235,7 @@ export async function fetchChildSessions(sessionId: string): Promise<ChildSessio
     last_message_preview: row.last_message_preview ?? null,
     pending_elicitations_count: row.pending_elicitations_count ?? 0,
     routed_model: row.routed_model ?? null,
+    model: row.model ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   }));

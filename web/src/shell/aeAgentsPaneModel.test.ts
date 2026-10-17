@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ChildSessionInfo } from "@/hooks/useChildSessions";
 import {
+  agentModelLabel,
   canStopChild,
   childElapsedSeconds,
   childLastLine,
@@ -77,6 +78,15 @@ describe("splitAgentSections", () => {
     expect(sections.finished.map((c) => c.id)).toEqual(["new"]);
     expect(sections.running.map((c) => c.id)).toEqual(["busy"]);
     expect(sections.clearedCount).toBe(1);
+  });
+});
+
+describe("agentModelLabel", () => {
+  it("reads Claude ids as names and leaves other ids as the harness spelled them", () => {
+    expect(agentModelLabel("claude-sonnet-5-5")).toBe("Sonnet 5.5");
+    expect(agentModelLabel("databricks-claude-opus-5-5")).toBe("Opus 5.5");
+    expect(agentModelLabel("claude-opus-5-5[1m]")).toBe("Opus 5.5");
+    expect(agentModelLabel("gpt-5.6-sol")).toBe("gpt-5.6-sol");
   });
 });
 
