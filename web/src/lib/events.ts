@@ -10,6 +10,7 @@
 
 import type { RoutingDecisionExtras } from "./routingDecision";
 import type { CodexQuestion } from "./blocks";
+import type { AeSessionProgressEvent } from "./aeSessionProgress";
 import type {
   BackgroundTaskInfo,
   CodexPersistMode,
@@ -1034,4 +1035,5 @@ export type StreamEvent =
   | SessionModelOptionsEvent
   | SessionPresenceEvent
   | SessionBtwSidechatEvent
+  | AeSessionProgressEvent
   | BrowserActionRequestEvent;

@@ -109,6 +109,8 @@ _EXTERNAL_ELICITATION_RESOLVED_TYPE: str = "external_elicitation_resolved"
 
 
 _EXTERNAL_SESSION_STATUS_TYPE: str = "external_session_status"
+# The terminal's live spinner line; see ae_session_progress.
+_EXTERNAL_SESSION_PROGRESS_TYPE: str = "external_session_progress"
 
 
 _SUBAGENT_STATUS_TYPE: str = "subagent.status"
@@ -539,6 +541,7 @@ _ALLOWED_EVENT_TYPES: frozenset[str] = frozenset(ITEM_TYPE_TO_DATA_CLS.keys()) |
     _EXTERNAL_BTW_DISMISS_TYPE,
     _EXTERNAL_ELICITATION_RESOLVED_TYPE,
     _EXTERNAL_SESSION_STATUS_TYPE,
+    _EXTERNAL_SESSION_PROGRESS_TYPE,
     _SUBAGENT_STATUS_TYPE,
     _EXTERNAL_SESSION_USAGE_TYPE,
     _EXTERNAL_COMPACTION_STATUS_TYPE,

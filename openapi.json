@@ -4966,6 +4966,7 @@
             "session.model_options": "#/components/schemas/SessionModelOptionsEvent",
             "session.permission_mode": "#/components/schemas/SessionPermissionModeEvent",
             "session.presence": "#/components/schemas/SessionPresenceEvent",
+            "session.progress": "#/components/schemas/SessionProgressEvent",
             "session.reasoning_effort": "#/components/schemas/SessionReasoningEffortEvent",
             "session.resource.created": "#/components/schemas/SessionResourceCreatedEvent",
             "session.resource.deleted": "#/components/schemas/SessionResourceDeletedEvent",
@@ -5041,6 +5042,9 @@
           },
           {
             "$ref": "#/components/schemas/SessionBtwSidechatEvent"
+          },
+          {
+            "$ref": "#/components/schemas/SessionProgressEvent"
           },
           {
             "$ref": "#/components/schemas/SessionPresenceEvent"
@@ -6434,6 +6438,80 @@
           "viewers"
         ],
         "title": "SessionPresenceEvent",
+        "type": "object"
+      },
+      "SessionProgressEvent": {
+        "description": "The live spinner line a terminal-backed agent is drawing.\n\nClaude Code writes a tool call to its transcript only after it finishes\nstreaming, so a long call leaves the chat with nothing to show. The\nclaude-native forwarder reads the pane's spinner line (`\u273b Crunching\u2026 (4m 42s \u00b7 \u2193 24.5k tokens)`) and relays it so the Working row can show it.\n\nCategory: **transient** (SSE-only). Nothing is persisted and there is no\nreplay. `label` is `None` when the spinner went away.",
+        "properties": {
+          "conversation_id": {
+            "description": "The conversation whose stream this rides.",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "elapsed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Elapsed text as drawn, e.g. `\"4m 42s\"`.",
+            "title": "Elapsed"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The spinner verb, e.g. `\"Crunching\"`, or `None` to clear.",
+            "title": "Label"
+          },
+          "sequence_number": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sequence Number"
+          },
+          "tokens": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Token text, e.g. `\"24.5k tokens\"`.",
+            "title": "Tokens"
+          },
+          "type": {
+            "const": "session.progress",
+            "description": "Always `\"session.progress\"`.",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "conversation_id"
+        ],
+        "title": "SessionProgressEvent",
         "type": "object"
       },
       "SessionProjectSummary": {

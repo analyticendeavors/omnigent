@@ -68,6 +68,7 @@ from filelock import Timeout as FileLockTimeout
 
 from omnigent._platform import IS_WINDOWS, is_wsl, stable_user_id
 from omnigent.harnesses.claude_native import transcript_filters
+from omnigent.harnesses.claude_native.ae_pane_progress import PaneProgress, progress_from_pane
 from omnigent.harnesses.claude_native.message_display_hook import MESSAGE_DELTAS_FILE
 from omnigent.harnesses.claude_native.status import CONTEXT_RAW_FILE
 from omnigent.harnesses.diagnostics import detect_sign_in_prompt, sign_in_next_step
@@ -4643,10 +4644,12 @@ class PaneSignals:
         ``"auto"``, or ``None`` when no mode footer is visible.
     :param btw_overlay: A settled ``/btw`` side-chat overlay, or ``None``
         when none is shown / it is still generating.
+    :param progress: The live spinner line, or ``None`` when none is drawn.
     """
 
     permission_mode: str | None = None
     btw_overlay: BtwOverlay | None = None
+    progress: PaneProgress | None = None
 
 
 def _btw_overlay_from_pane(pane: str) -> BtwOverlay | None:
@@ -7461,6 +7464,7 @@ def read_pane_signals(bridge_dir: Path) -> PaneSignals:
     return PaneSignals(
         permission_mode=_permission_mode_from_pane(pane),
         btw_overlay=_btw_overlay_from_pane(pane),
+        progress=progress_from_pane(pane, _is_box_rule),
     )
 
 

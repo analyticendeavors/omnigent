@@ -48,7 +48,7 @@ afterEach(() => {
 });
 
 describe("chat store lastEventAt", () => {
-  it("starts empty and stamps each session event, at most once a second", async () => {
+  it("starts empty and stamps each content event, at most once a second", async () => {
     const { set, get } = bindConversationForTest("conv_last_a");
     expect(useChatStore.getState().lastEventAt).toBeNull();
     const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
@@ -56,7 +56,7 @@ describe("chat store lastEventAt", () => {
     const controller = new AbortController();
     void pumpStreamEvents("conv_last_a", sink.stream, controller, set, get, immediate);
 
-    sink.push("response.created", { id: "resp_1", status: "in_progress", output: [] });
+    sink.push("response.output_text.delta", { delta: "Hello", item_id: "m1", output_index: 0 });
     await tick();
     expect(useChatStore.getState().lastEventAt).toBe(1_000_000);
 
@@ -78,7 +78,7 @@ describe("chat store lastEventAt", () => {
     const sink = pushableStream();
     const controller = new AbortController();
     void pumpStreamEvents("conv_last_b", sink.stream, controller, a.set, a.get, immediate);
-    sink.push("response.created", { id: "resp_2", status: "in_progress", output: [] });
+    sink.push("response.output_text.delta", { delta: "Hi", item_id: "m2", output_index: 0 });
     await tick();
     expect(useChatStore.getState().lastEventAt).toBe(2_000_000);
 
@@ -111,7 +111,10 @@ describe("chat store lastEventAt", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     // An entry whose stream is gone: the next send rebinds it.
-    bindConversationForTest("conv_last_rebind", { lastEventAt: 1000 });
+    bindConversationForTest("conv_last_rebind", {
+      lastEventAt: 1000,
+      aeProgress: { label: "Crunching", elapsed: "4m 42s", tokens: null },
+    });
     vi.spyOn(Date, "now").mockReturnValue(9_000_000);
     const sent = useChatStore.getState().send("hello", "agent_xyz");
     expect(useChatStore.getState().lastEventAt).toBe(9_000_000);
@@ -121,6 +124,8 @@ describe("chat store lastEventAt", () => {
     );
     // The chat line then dates activity by the snapshot's blocks and the unsent message.
     await vi.waitFor(() => expect(useChatStore.getState().lastEventAt).toBeNull());
+    // A spinner line from the earlier visit is stale too.
+    expect(useChatStore.getState().aeProgress).toBeNull();
   });
 });
 

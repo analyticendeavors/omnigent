@@ -19,6 +19,7 @@ from pathlib import Path
 import httpx
 
 from omnigent.entities.session_resources import terminal_resource_id
+from omnigent.harnesses.claude_native.ae_pane_progress import ProgressRelayState, relay_progress
 from omnigent.harnesses.claude_native.ae_subagent_model import report_subagent_model
 from omnigent.harnesses.claude_native.bridge import (
     BRIDGE_ID_LABEL_KEY,
@@ -863,6 +864,8 @@ class _ForwardDedupeState:
     # partial answer.
     btw_pending_key: str | None = None
     posted_btw_keys: dict[str, None] = field(default_factory=dict)
+    # Live spinner line last relayed as ``external_session_progress``.
+    progress_relay: ProgressRelayState = field(default_factory=ProgressRelayState)
 
 
 @dataclass(frozen=True)
@@ -5411,6 +5414,9 @@ async def _forward_pane_signals(
     )
     await _relay_btw_overlay(
         client, session_id=session_id, overlay=signals.btw_overlay, dedupe=dedupe
+    )
+    await relay_progress(
+        client, session_id=session_id, progress=signals.progress, state=dedupe.progress_relay
     )
 
 
