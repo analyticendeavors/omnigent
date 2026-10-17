@@ -1,7 +1,13 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AE_RAIL_SECTIONS, useAeSessionRailStore } from "@/lib/aeSessionRail";
-import { AeSessionRail, aeRailFloats, workspaceTabOpener } from "./AeSessionRail";
+import { resetSharedWidthStoreForTesting } from "@/hooks/useResizablePanel";
+import {
+  AeSessionRail,
+  aeRailFloats,
+  aeRailReservedWidth,
+  workspaceTabOpener,
+} from "./AeSessionRail";
 
 const { isMobileMock } = vi.hoisted(() => ({ isMobileMock: vi.fn(() => false) }));
 
@@ -111,6 +117,22 @@ describe("AeSessionRail", () => {
     expect(aeRailFloats(1690, 500)).toBe(false);
   });
 
+  it("reserves the sidebar, the workspace panel with its 8 px gap, and a push panel", () => {
+    expect(aeRailReservedWidth(320, 0, 0)).toBe(320);
+    expect(aeRailReservedWidth(0, 500, 0)).toBe(508);
+    expect(aeRailReservedWidth(320, 0, 600)).toBe(920);
+  });
+
+  it("counts an open files or logs panel against the chat", () => {
+    resetSharedWidthStoreForTesting();
+    // Closed: jsdom's 1024 px window leaves the chat 720 px, so the rail docks.
+    const { rerender } = render(<AeSessionRail sessionId="s-1" />);
+    expect(screen.getByTestId("ae-session-rail")).not.toHaveAttribute("data-floating");
+    // Open at its default half of the window (512 px), 208 px are left: float.
+    rerender(<AeSessionRail sessionId="s-1" pushPanelOpen />);
+    expect(screen.getByTestId("ae-session-rail")).toHaveAttribute("data-floating", "true");
+  });
+
   it("docks in jsdom's 1024 px window with the sidebar closed", () => {
     render(<AeSessionRail sessionId="s-1" />);
     expect(screen.getByTestId("ae-session-rail")).not.toHaveAttribute("data-floating");
@@ -120,28 +142,29 @@ describe("AeSessionRail", () => {
     // 1024 - 220 - 304 leaves the chat 500 px: dock.
     const { rerender } = render(<AeSessionRail sessionId="s-1" sidebarWidth={220} />);
     expect(screen.getByTestId("ae-session-rail")).not.toHaveAttribute("data-floating");
-    // A 240 px workspace panel cuts that to 260 px: float.
+    // A 240 px workspace panel and its 8 px gap cut that to 252 px: float.
     rerender(<AeSessionRail sessionId="s-1" sidebarWidth={220} workspacePanelWidth={240} />);
     expect(screen.getByTestId("ae-session-rail")).toHaveAttribute("data-floating", "true");
   });
 
   it("re-decides when the window is resized", () => {
-    const original = window.innerWidth;
+    const own = Object.getOwnPropertyDescriptor(window, "innerWidth");
+    const resizeTo = (value: number) =>
+      act(() => {
+        Object.defineProperty(window, "innerWidth", { configurable: true, value });
+        window.dispatchEvent(new Event("resize"));
+      });
     render(<AeSessionRail sessionId="s-1" sidebarWidth={320} />);
     const rail = () => screen.getByTestId("ae-session-rail");
     try {
-      act(() => {
-        Object.defineProperty(window, "innerWidth", { configurable: true, value: 900 });
-        window.dispatchEvent(new Event("resize"));
-      });
+      resizeTo(900);
       expect(rail()).toHaveAttribute("data-floating", "true");
-      act(() => {
-        Object.defineProperty(window, "innerWidth", { configurable: true, value: 1400 });
-        window.dispatchEvent(new Event("resize"));
-      });
+      resizeTo(1400);
       expect(rail()).not.toHaveAttribute("data-floating");
     } finally {
-      Object.defineProperty(window, "innerWidth", { configurable: true, value: original });
+      // Put jsdom's own property back, accessor or not, for the tests after this one.
+      if (own) Object.defineProperty(window, "innerWidth", own);
+      else delete (window as { innerWidth?: number }).innerWidth;
     }
   });
 

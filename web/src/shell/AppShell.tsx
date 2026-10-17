@@ -2427,6 +2427,7 @@ export function AppShell() {
                   sessionId={serverConversationId}
                   sidebarWidth={sidebarOpen ? sidebarWidth : 0}
                   workspacePanelWidth={workspacePanelVisible ? inlinePanelWidth : 0}
+                  pushPanelOpen={executionLogsOpen || (showFilesPanel && filesPanelOpen)}
                   hidden={rightPanelMaximized}
                   workspace={{
                     open: rightPanelOpen,
