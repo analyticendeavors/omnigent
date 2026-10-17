@@ -77,6 +77,7 @@ import {
   AePrError,
   fetchAePrCard,
   mergeAePr,
+  markAePrReady,
   parseAePrUrl,
 } from "@/lib/aePrs";
 import { cn } from "@/lib/utils";
@@ -424,6 +425,62 @@ function ConfirmMerge({
   );
 }
 
+function ReviewDetails({ card }: { card: AePrCard }) {
+  const queryClient = useQueryClient();
+  const queryKey = ["ae-pr", card.repo, card.number] as const;
+  const ready = useMutation({
+    mutationFn: () => markAePrReady(card),
+    onSuccess: async (fresh) => {
+      await queryClient.cancelQueries({ queryKey, exact: true });
+      queryClient.setQueryData(queryKey, fresh);
+    },
+    onError: async (error) => {
+      if (error instanceof AePrError && error.card) {
+        await queryClient.cancelQueries({ queryKey, exact: true });
+        queryClient.setQueryData(queryKey, error.card);
+      }
+    },
+  });
+  return (
+    <details className="min-w-0 text-sm" data-testid="ae-pr-review-details">
+      <summary className="cursor-pointer py-1">Review details</summary>
+      <div className="flex min-w-0 flex-col gap-2 py-2">
+        <p className="text-muted-foreground">
+          {card.head_ref} → {card.base_ref}
+          {card.changed_files !== undefined && ` · ${card.changed_files} files`}
+          {card.additions !== undefined && ` · +${card.additions}`}
+          {card.deletions !== undefined && ` · −${card.deletions}`}
+        </p>
+        <p className="max-h-72 overflow-y-auto whitespace-pre-wrap wrap-anywhere">
+          {card.body || "No description provided."}
+        </p>
+        <p className="text-muted-foreground">
+          {aeCiText(card.ci)} · {AE_REVIEW_TEXT[card.review.state]}
+        </p>
+        {card.state === "open" && card.draft && (
+          <>
+            <p className="text-muted-foreground">
+              Marking ready opens this change for review. It does not merge it.
+            </p>
+            <Button
+              className={cn(TOUCH, "self-start")}
+              disabled={ready.isPending || !card.head_sha}
+              onClick={() => ready.mutate()}
+            >
+              {ready.isPending ? "Marking ready…" : "Mark ready for review"}
+            </Button>
+          </>
+        )}
+        {ready.isError && (
+          <p role="alert" className="text-destructive">
+            {ready.error.message}
+          </p>
+        )}
+      </div>
+    </details>
+  );
+}
+
 /**
  * One pull request's card. `panel` is the GitHub panel's full card; `inline`
  * is the compact one under a chat message, which stays silent on an error or
@@ -589,6 +646,7 @@ export function AePrCardView({
                 </>
               )}
             </div>
+            <ReviewDetails card={card} />
             {!result && confirming && (
               <ConfirmMerge
                 card={card}
