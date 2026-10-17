@@ -2425,7 +2425,8 @@ export function AppShell() {
               {serverConversationId && (
                 <AeSessionRail
                   sessionId={serverConversationId}
-                  workspacePanelOpen={workspacePanelVisible}
+                  sidebarWidth={sidebarOpen ? sidebarWidth : 0}
+                  workspacePanelWidth={workspacePanelVisible ? inlinePanelWidth : 0}
                   hidden={rightPanelMaximized}
                   workspace={{
                     open: rightPanelOpen,
