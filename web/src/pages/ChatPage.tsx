@@ -14,6 +14,7 @@ import {
   type ChangeEvent,
   type FormEvent,
   type KeyboardEvent,
+  type ReactNode,
   forwardRef,
   memo,
   useCallback,
@@ -49,7 +50,14 @@ import {
   ComposerPermissionPicker,
   ComposerConfigTooltipRows,
 } from "@/components/composer/ComposerControls";
-import { DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenuCheckboxItem,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useAppName } from "@/lib/branding";
 import { cn } from "@/lib/utils";
 import { QueuedMessagesStrip } from "@/pages/QueuedMessagesStrip";
@@ -226,7 +234,11 @@ import {
 } from "@/lib/smartRoutingAvailability";
 import { useHostModelOptions, useHosts } from "@/hooks/useHosts";
 import { nativeModelLabel } from "@/components/HarnessConfigControls";
-import { ComposerConfigSections } from "@/components/composer/ComposerConfigSections";
+import {
+  ComposerConfigSections,
+  type ComposerConfigChoice,
+} from "@/components/composer/ComposerConfigSections";
+import { PickerSectionHeader } from "@/components/composer/HarnessMenuRow";
 import { buildFusionSections } from "@/components/composer/fusionSections";
 import { fusionOption, isFusionModelUid } from "@/lib/devinFusion";
 import { ComposerWorkspaceStatus } from "@/components/composer/ComposerWorkspaceStatus";
@@ -267,6 +279,7 @@ import { useIsCoarsePointer } from "@/hooks/useIsCoarsePointer";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { ConnectionIndicator } from "./ChatIndicators";
 import { Transcript } from "@/components/chat/Transcript";
+import { useForkDialog } from "@/shell/ForkDialogContext";
 
 /** Server-info as consumers see it: the probe's result, or "loading". */
 type ServerInfoValue = ServerInfo | "loading";
@@ -4484,11 +4497,7 @@ export function shouldShowPollyCodexGoalControl(
   );
 }
 
-/**
- * Whether the session surfaces any run-config the gear modal can edit. Shared
- * render guard for the config gear and click-to-open gate for the model/effort
- * label half of the composer's split pill, so both halves stay in lockstep.
- */
+/** Whether the session offers model or effort controls. */
 function hasSessionConfig({
   showModels,
   showEffort,
@@ -4497,6 +4506,130 @@ function hasSessionConfig({
   showEffort: boolean;
 }): boolean {
   return showModels || showEffort;
+}
+
+function compactModelChoices(
+  choices: ComposerConfigChoice[],
+  kind: NativeModelPickerKind | null,
+): { primary: ComposerConfigChoice[]; more: ComposerConfigChoice[] } {
+  const codexModel = (id: string) =>
+    /^gpt-(\d+)(?:\.(\d+))?(?:-(codex|mini|nano|luna|sol|spark|astra))?(?:$|-)/i.exec(id);
+  const primary: ComposerConfigChoice[] = [];
+  const more: ComposerConfigChoice[] = [];
+  const seen = new Set<string>();
+  const latestCodexByFamily = new Map<string, { id: string; major: number; minor: number }>();
+  if (kind === "codex") {
+    for (const choice of choices) {
+      const id = choice.data?.["data-model-id"] ?? choice.key;
+      const match = codexModel(id);
+      if (!match) continue;
+      const family = match[3] ?? "base";
+      const major = Number(match[1]);
+      const minor = Number(match[2] ?? 0);
+      const latest = latestCodexByFamily.get(family);
+      if (!latest || major > latest.major || (major === latest.major && minor > latest.minor))
+        latestCodexByFamily.set(family, { id, major, minor });
+    }
+  }
+  const claudeAliases = new Set(
+    choices
+      .map((choice) => choice.data?.["data-model-id"] ?? choice.key)
+      .filter((id) => /^(fable|opus|sonnet|haiku)$/i.test(id)),
+  );
+  for (const choice of choices) {
+    const id = choice.data?.["data-model-id"] ?? choice.key;
+    const claudeFamily =
+      kind === "claude" ? /(?:^|[-_])(fable|opus|sonnet|haiku)(?:$|[-_])/i.exec(id)?.[1] : null;
+    const codexFamily = kind === "codex" ? codexModel(id) : null;
+    const family = claudeFamily
+      ? `claude:${claudeFamily.toLowerCase()}`
+      : codexFamily
+        ? `codex:${codexFamily[1] ?? "base"}`
+        : id;
+    const hasAlias = kind === "claude" && claudeAliases.has(claudeFamily ?? "");
+    const latestCodex =
+      codexFamily !== null && latestCodexByFamily.get(codexFamily[3] ?? "base")?.id === id;
+    if (
+      choice.checked ||
+      (codexFamily ? latestCodex : (!hasAlias || id === claudeFamily) && !seen.has(family))
+    ) {
+      primary.push(choice);
+      seen.add(family);
+    } else {
+      more.push(choice);
+    }
+  }
+  return { primary, more };
+}
+
+function CompactConfigChoice({ choice }: { choice: ComposerConfigChoice }) {
+  return (
+    <DropdownMenuCheckboxItem
+      checked={choice.checked}
+      disabled={choice.disabled}
+      onSelect={(event) => event.preventDefault()}
+      onCheckedChange={choice.onSelect}
+      data-testid={choice.testId}
+      className={cn("min-h-8 whitespace-normal break-words", choice.className)}
+      {...choice.data}
+    >
+      {choice.label}
+    </DropdownMenuCheckboxItem>
+  );
+}
+
+function CompactSessionChoices({
+  models,
+  efforts,
+  kind,
+}: {
+  models?: { leading?: ReactNode; choices: ComposerConfigChoice[] };
+  efforts?: { label: string; choices: ComposerConfigChoice[] };
+  kind: NativeModelPickerKind | null;
+}) {
+  const { primary, more } = compactModelChoices(models?.choices ?? [], kind);
+  return (
+    <>
+      {models && (
+        <div data-testid="composer-agent-models">
+          <PickerSectionHeader>Models</PickerSectionHeader>
+          {models.leading}
+          <div className="grid grid-cols-2 gap-0.5 max-[480px]:grid-cols-1">
+            {primary.map((choice) => (
+              <CompactConfigChoice key={choice.key} choice={choice} />
+            ))}
+          </div>
+          {more.length > 0 && (
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger data-testid="composer-agent-more-models">
+                More models
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="max-h-[70vh] max-w-[calc(100vw-2rem)] overflow-y-auto">
+                {more.map((choice) => (
+                  <CompactConfigChoice key={choice.key} choice={choice} />
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+          )}
+        </div>
+      )}
+      {efforts && (
+        <div data-testid="composer-agent-efforts">
+          {models && <DropdownMenuSeparator />}
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger data-testid="composer-agent-effort-trigger">
+              {efforts.label}
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="max-h-[70vh] overflow-y-auto">
+              {efforts.choices.map((choice) => (
+                <CompactConfigChoice key={choice.key} choice={choice} />
+              ))}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        </div>
+      )}
+    </>
+  );
 }
 
 function SessionHarnessPicker({
@@ -4548,6 +4681,8 @@ function SessionHarnessPicker({
   const pendingModelChange = useChatStore((state) => state.pendingModelChange);
   // A pending fast mode flip blocks model and effort picks, not the menu itself.
   const picksBusy = useAeFastModePending(conversationId) || busy;
+  // Switching harness forks the session; in-place agent switching is not available.
+  const forkDialog = useForkDialog();
   const sessionModelSeeded = useChatStore((state) => state.sessionModelSeeded);
   const selectedEffort = useSessionEffort();
   const costControlModeOverride = useChatStore((state) => state.costControlModeOverride);
@@ -4594,7 +4729,8 @@ function SessionHarnessPicker({
     hasSessionConfig({
       showModels,
       showEffort,
-    });
+    }) ||
+    (conversationId !== null && subAgentName === null);
   const effortLabel = showEffort && !routingOn ? formatStatusEffortLabel(selectedEffort) : null;
   const label = routingOn
     ? SMART_ROUTING_LABEL
@@ -4685,12 +4821,11 @@ function SessionHarnessPicker({
           <DropdownMenuSeparator />
         </>
       )}
-      <ComposerConfigSections
+      <CompactSessionChoices
+        kind={modelPickerKind}
         models={
           showModels
             ? {
-                testId: "composer-agent-models",
-                header: "Models",
                 leading:
                   (inferenceConfigured && inferenceError) || modelOptions.length === 0 ? (
                     <div className="px-2 py-1 text-xs text-muted-foreground" role="status">
@@ -4750,8 +4885,7 @@ function SessionHarnessPicker({
         efforts={
           showEffort && availableEfforts.length > 0
             ? {
-                testId: "composer-agent-efforts",
-                header: modelPickerKind === "pi" ? "Thinking level" : "Effort",
+                label: `${modelPickerKind === "pi" ? "Thinking level" : "Effort"}${effortLabel ? `: ${effortLabel}` : ""}`,
                 choices: availableEfforts.map((effort) => ({
                   key: effort,
                   label: formatStatusEffortLabel(effort) ?? effort,
@@ -4764,24 +4898,50 @@ function SessionHarnessPicker({
               }
             : undefined
         }
-        extra={
-          composerFusion !== undefined && fusionSelected && !routingOn
-            ? buildFusionSections({
-                descriptor: composerFusion,
-                modelUid: pickerSelectedModel ?? composerFusion.default,
-                testIdPrefix: "composer-agent",
-                onChange: selectFusionModel,
-                disabled: busy || pendingModelChange !== null,
-              })
-            : undefined
-        }
       />
+      {composerFusion !== undefined && fusionSelected && !routingOn && (
+        <>
+          <DropdownMenuSeparator />
+          <ComposerConfigSections
+            extra={buildFusionSections({
+              descriptor: composerFusion,
+              modelUid: pickerSelectedModel ?? composerFusion.default,
+              testIdPrefix: "composer-agent",
+              onChange: selectFusionModel,
+              disabled: busy || pendingModelChange !== null,
+            })}
+          />
+        </>
+      )}
       <AeFastModeSection
         pickerKind={modelPickerKind}
         model={effectiveModel}
         modelLabel={modelSummary}
         busy={busy}
       />
+      {conversationId && forkDialog && (
+        <>
+          {(showClaudeAccounts || showModels || (showEffort && availableEfforts.length > 0)) && (
+            <DropdownMenuSeparator />
+          )}
+          <DropdownMenuItem
+            data-testid="composer-switch-harness"
+            disabled={
+              !forkDialog.canFork ||
+              picksBusy ||
+              pendingModelChange !== null ||
+              subAgentName !== null
+            }
+            title={forkDialog.disabledReason}
+            onSelect={() => {
+              setMenuOpen(false);
+              forkDialog.openForkDialog({ sourceSessionId: conversationId });
+            }}
+          >
+            Switch harness…
+          </DropdownMenuItem>
+        </>
+      )}
     </>
   );
   return (
@@ -4829,6 +4989,7 @@ function SessionHarnessPicker({
           valueTestId="composer-agent-model-summary"
           testId="composer-agent-edit"
           configTestId="composer-agent-config-menu"
+          configClassName="w-[19rem]"
         >
           {configContent}
         </HarnessPickerConfigRow>

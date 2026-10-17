@@ -261,7 +261,11 @@ function* closeReasoning(state: ReducerState): Generator<AnyBlock> {
  * non-message boundary (tool call, terminal event without a preceding
  * message_done).
  */
-function* closeText(state: ReducerState, itemId: string | null = null): Generator<AnyBlock> {
+function* closeText(
+  state: ReducerState,
+  itemId: string | null = null,
+  codexQuestions?: TextDone["codexQuestions"],
+): Generator<AnyBlock> {
   if (!state.inText) return;
   if (state.accumulated) {
     yield {
@@ -276,6 +280,7 @@ function* closeText(state: ReducerState, itemId: string | null = null): Generato
     ctx: ctx(state, itemId),
     fullText: state.fullText,
     hasCodeBlocks: state.fullText.includes("```"),
+    ...(codexQuestions?.length ? { codexQuestions } : {}),
   } satisfies TextDone;
   state.inText = false;
   state.fullText = "";
@@ -706,13 +711,18 @@ function* processEvent(state: ReducerState, event: StreamEvent): Generator<AnyBl
       // either empty or carries the previous turn's id, so isResponseSwitch
       // spuriously fires for an in-fact same-response message_done.
       const accumulatedFromDeltas = state.fullText;
+      const text = outputTextFromMessageContent(event.content);
 
       // Close prior blocks under the OLD responseId before stamping the new one.
       yield* closeReasoning(state);
       if (hadOpenText) {
         // On a response switch, event.itemId belongs to the new message — don't
         // attach it to the old text block being closed.
-        yield* closeText(state, isResponseSwitch ? null : event.itemId || null);
+        yield* closeText(
+          state,
+          !isResponseSwitch || text === accumulatedFromDeltas ? event.itemId || null : null,
+          !isResponseSwitch || text === accumulatedFromDeltas ? event.codexQuestions : undefined,
+        );
       }
 
       // A message_done with a new id is a genuine turn transition (the
@@ -732,8 +742,6 @@ function* processEvent(state: ReducerState, event: StreamEvent): Generator<AnyBl
       // avoid duplication. Response-switch: emit event.content as the new body.
       if (hadOpenText && !isResponseSwitch) return;
 
-      const text = outputTextFromMessageContent(event.content);
-
       // Race-safe dedup: even on a perceived response switch, if the deltas
       // that just closed accumulated EXACTLY the text in ``event.content``,
       // both belong to the same response and emitting a second ``text_done``
@@ -742,12 +750,13 @@ function* processEvent(state: ReducerState, event: StreamEvent): Generator<AnyBl
       // race against fresh subscribe registration).
       if (hadOpenText && text === accumulatedFromDeltas) return;
 
-      if (text) {
+      if (text || event.codexQuestions?.length) {
         yield {
           type: "text_done",
           ctx: ctx(state, event.itemId || null),
           fullText: text,
           hasCodeBlocks: text.includes("```"),
+          ...(event.codexQuestions?.length ? { codexQuestions: event.codexQuestions } : {}),
         } satisfies TextDone;
       }
       return;

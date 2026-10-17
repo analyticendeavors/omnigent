@@ -316,6 +316,7 @@ class MessageData(BaseModel):
     subagent_return_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
     interrupted: bool = Field(default=False, exclude_if=lambda value: value is False)
     stream_message_id: str | None = None
+    codex_questions: list[dict[str, Any]] | None = None
 
     @field_validator("content")
     @classmethod

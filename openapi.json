@@ -3782,6 +3782,21 @@
       "MessageData": {
         "description": "Data for a message item (user or assistant).\n\n**Parameters**\n\n- `agent` \u2014 Agent name (required for assistant messages, absent for user). Serialized as `\"model\"` in JSON.",
         "properties": {
+          "codex_questions": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Codex Questions"
+          },
           "content": {
             "description": "Heterogeneous content blocks, e.g. `[{\"type\": \"input_text\", \"text\": \"Hello\"}]`.",
             "items": {

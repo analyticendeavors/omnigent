@@ -6,7 +6,33 @@
 
 import { describe, expect, it } from "vitest";
 import type { Bubble } from "@/lib/renderItems";
-import { activeTurnIdAtBubbleIndex } from "./Transcript";
+import type { ConversationItem } from "@/lib/conversationItems";
+import { itemsToBlocks } from "@/lib/itemsToBlocks";
+import { activeTurnIdAtBubbleIndex, pendingCodexQuestions } from "./Transcript";
+
+it("keeps a repeated Codex question pending after an earlier answer", () => {
+  const question = (id: string): ConversationItem => ({
+    id,
+    type: "message",
+    response_id: id,
+    status: "completed",
+    role: "assistant",
+    model: "codex",
+    content: [{ type: "output_text", text: "Choose" }],
+    codex_questions: [{ title: "Which path?", options: ["A", "B"] }],
+  });
+  const answer: ConversationItem = {
+    id: "answer_1",
+    type: "message",
+    response_id: "answer_1",
+    status: "completed",
+    role: "user",
+    content: [{ type: "input_text", text: "Answer to Codex questions:\nWhich path?: A" }],
+  };
+  expect(pendingCodexQuestions(itemsToBlocks([question("q_1"), answer, question("q_2")]))).toEqual([
+    { itemId: "q_2", questions: [{ title: "Which path?", options: ["A", "B"] }] },
+  ]);
+});
 
 function user(itemId: string): Extract<Bubble, { kind: "user" }> {
   return { kind: "user", itemId, content: [{ type: "input_text", text: `msg ${itemId}` }] };

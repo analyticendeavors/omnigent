@@ -164,6 +164,21 @@ describe("parseEvent — response.output_text.delta", () => {
 });
 
 describe("parseEvent — response.output_item.done (message)", () => {
+  it("keeps structured Codex questions on the live message", () => {
+    const ev = parseEvent("response.output_item.done", {
+      item: {
+        id: "q_1",
+        type: "message",
+        response_id: "resp_1",
+        content: [],
+        codex_questions: [{ title: "Which path?", options: ["A", "B"] }],
+      },
+    });
+    expect(ev).toMatchObject({
+      type: "message_done",
+      codexQuestions: [{ title: "Which path?", options: ["A", "B"] }],
+    });
+  });
   it("carries the native preview id finalized by the item", () => {
     const ev = parseEvent("response.output_item.done", {
       message_id: "codex:thread_1:turn_1:agentMessage:item_1",

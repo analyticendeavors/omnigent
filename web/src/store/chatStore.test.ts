@@ -3060,7 +3060,9 @@ describe("chatStore — send (first-send ordering)", () => {
       return defaultFetchHandler(input, init);
     });
 
-    await useChatStore.getState().send("blocked by policy", "agent_xyz");
+    const onError = vi.fn();
+    await useChatStore.getState().send("blocked by policy", "agent_xyz", undefined, { onError });
+    expect(onError).toHaveBeenCalledWith("Message was denied by policy.");
 
     const state = useChatStore.getState();
     // A denied INPUT policy does not persist the user message, so no

@@ -84,6 +84,13 @@ function functionCallOutput(
 }
 
 describe("itemsToBlocks — flat shape", () => {
+  it("keeps Codex questions on a history message", () => {
+    const item = {
+      ...assistantMessage("resp_1", "Pick one", "question_1"),
+      codex_questions: [{ title: "Which path?", options: ["A", "B"] }],
+    };
+    expect((itemsToBlocks([item])[0] as TextDone).codexQuestions).toEqual(item.codex_questions);
+  });
   it("skips meta messages so hidden skill context is not rendered on reload", () => {
     const items: ConversationItem[] = [
       {

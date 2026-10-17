@@ -6256,17 +6256,46 @@ async def _post_agent_message(
     :returns: Whether the item was accepted by the server.
     """
     text = item.get("text")
-    if not isinstance(text, str) or not text:
+    questions = item.get("questions")
+    valid_questions = (
+        [
+            {
+                "title": question["title"],
+                **(
+                    {"options": question["options"]} if question.get("options") is not None else {}
+                ),
+            }
+            for question in questions
+            if isinstance(question, dict)
+            and isinstance(question.get("title"), str)
+            and question["title"].strip()
+            and (
+                question.get("options") is None
+                or (
+                    isinstance(question["options"], list)
+                    and all(isinstance(option, str) for option in question["options"])
+                )
+            )
+        ]
+        if isinstance(questions, list)
+        else []
+    )
+    if (not isinstance(text, str) or not text) and not valid_questions:
         return False
+    item_data: _JsonObject = {
+        "role": "assistant",
+        "agent": _AGENT_NAME,
+        "content": (
+            [{"type": "output_text", "text": text}] if isinstance(text, str) and text else []
+        ),
+    }
+    if valid_questions:
+        item_data["codex_questions"] = valid_questions
     return await _post_external_item(
         client,
         session_id,
         item_type="message",
-        item_data={
-            "role": "assistant",
-            "agent": _AGENT_NAME,
-            "content": [{"type": "output_text", "text": text}],
-        },
+        item_data=item_data,
         response_id=_response_id(params),
         message_id=_completed_streaming_message_id(params, item, "agentMessage"),
         source_id=source_id or _source_id(params, item),

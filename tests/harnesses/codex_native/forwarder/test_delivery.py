@@ -618,3 +618,37 @@ async def test_post_session_event_records_connectivity_failure_for_watchdog(
         assert "No route to host" in detail
     finally:
         health.clear()
+
+
+@pytest.mark.asyncio
+async def test_agent_message_preserves_async_questions(monkeypatch) -> None:
+    post = AsyncMock(return_value=True)
+    monkeypatch.setattr(fwd, "_post_external_item", post)
+    item = {
+        "type": "agentMessage",
+        "id": "item_question",
+        "text": "Choose a path.",
+        "questions": [{"title": "Which path?", "options": ["A", "B"]}],
+    }
+
+    assert await fwd._post_agent_message(None, "conv_1", {"turnId": "turn_1"}, item)
+    assert post.await_args.kwargs["item_data"] == {
+        "role": "assistant",
+        "agent": fwd._AGENT_NAME,
+        "content": [{"type": "output_text", "text": "Choose a path."}],
+        "codex_questions": [{"title": "Which path?", "options": ["A", "B"]}],
+    }
+
+    post.reset_mock()
+    assert await fwd._post_agent_message(
+        None,
+        "conv_1",
+        {"turnId": "turn_2"},
+        {
+            "type": "agentMessage",
+            "id": "item_2",
+            "text": "",
+            "questions": [{"title": "Explain?", "options": None}],
+        },
+    )
+    assert post.await_args.kwargs["item_data"]["codex_questions"] == [{"title": "Explain?"}]

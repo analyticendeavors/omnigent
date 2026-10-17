@@ -89,7 +89,7 @@ export function AeFastModeSection({
   const checked = state.pending ?? state.enabled ?? false;
   // Why turning it on is unavailable; off stays allowed while it is on or unknown.
   const onBlocked = !aeFastModeModelSupported(model, modelLabel)
-    ? "Opus only"
+    ? "Choose a supported Opus model to turn on fast mode"
     : state.perSession === false
       ? AE_FAST_MODE_NEEDS_PER_SESSION
       : null;
@@ -112,6 +112,7 @@ export function AeFastModeSection({
           disabled={disabled}
           aria-labelledby={labelId}
           aria-describedby={note ? `${hintId} ${noteId}` : hintId}
+          title={AE_FAST_MODE_HINT}
           aria-busy={pending || undefined}
           data-testid="composer-fast-mode-switch"
           onSelect={(event) => event.preventDefault()}
@@ -123,7 +124,7 @@ export function AeFastModeSection({
             <span id={labelId} className={cn("leading-5", disabled && "text-muted-foreground")}>
               Fast mode
             </span>
-            <span id={hintId} className="text-xs leading-4 text-muted-foreground">
+            <span id={hintId} className="sr-only">
               {AE_FAST_MODE_HINT}
             </span>
             {note && (
