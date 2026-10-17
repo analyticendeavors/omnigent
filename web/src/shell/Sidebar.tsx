@@ -1100,7 +1100,7 @@ function SidebarImpl({
         {!peek && (
           <div
             {...resizeHandleProps}
-            className="absolute inset-y-0 right-0 z-10 hidden w-1 cursor-col-resize transition-colors hover:bg-primary/30 active:bg-primary/50 md:block"
+            className="absolute inset-y-0 right-0 z-10 hidden w-2 cursor-col-resize after:absolute after:inset-y-0 after:right-0 after:w-0.5 after:transition-colors hover:after:bg-primary/70 focus-visible:after:bg-primary/70 active:after:bg-primary md:block"
           />
         )}
         {inSettings ? (
@@ -1337,7 +1337,7 @@ function SidebarImpl({
                 // without a gutter the last row's always-visible kebab parks
                 // underneath it and can't be tapped.
                 className={cn(
-                  "relative flex-1 overflow-y-auto px-2 pt-4 pb-3 max-md:pb-16",
+                  "relative flex-1 overflow-y-auto px-2 pt-4 pb-3 max-md:pb-16 md:mr-2",
                   // Reserve the gutter so toggling the thumb never reflows the list.
                   "[scrollbar-width:thin] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent",
                   isScrolling

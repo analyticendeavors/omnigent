@@ -36,17 +36,31 @@ function ChatPlaceholder() {
   );
 }
 
+/** A column of grey rows standing in for the session list, at the rail's sidebarWidth. */
+function SidebarPlaceholder({ width }: { width: number }) {
+  return (
+    <div
+      className="flex shrink-0 flex-col gap-2 border-r border-border bg-sidebar p-3"
+      style={{ width }}
+    >
+      {[0, 1, 2, 3, 4, 5].map((row) => (
+        <div key={row} className="h-8 rounded-md bg-muted" />
+      ))}
+    </div>
+  );
+}
+
 const meta = {
   title: "Shell/AeSessionRail",
   component: AeSessionRail,
   parameters: { layout: "fullscreen" },
-  args: { sessionId: AE_STORY_SESSION, workspacePanelOpen: false },
+  args: { sessionId: AE_STORY_SESSION, sidebarWidth: 0 },
 } satisfies Meta<typeof AeSessionRail>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** The rail docked beside the chat. At 1440 wide it takes its own 304 px column. */
+/** The rail docked beside the chat in its own 304 px column; the sidebar is closed. */
 export const Docked: Story = {
   decorators: [seeded()],
   render: (args) => (
@@ -57,11 +71,26 @@ export const Docked: Story = {
   ),
 };
 
-/** Narrow window: the rail floats over the chat's right edge with a small "Session" header. */
+/** The sidebar open as well: the rail still docks while the chat keeps 480 px. */
+export const DockedWithSidebar: Story = {
+  decorators: [seeded()],
+  args: { sidebarWidth: 320 },
+  render: (args) => (
+    <div className="fixed inset-0 flex bg-background text-foreground">
+      <SidebarPlaceholder width={args.sidebarWidth ?? 0} />
+      <ChatPlaceholder />
+      <AeSessionRail {...args} />
+    </div>
+  ),
+};
+
+/** Too narrow for both (under 1104 px with a 320 px sidebar): the rail floats over the chat. */
 export const Floating: Story = {
   decorators: [seeded()],
+  args: { sidebarWidth: 320 },
   render: (args) => (
     <div className="fixed inset-0 flex overflow-hidden bg-background text-foreground">
+      <SidebarPlaceholder width={args.sidebarWidth ?? 0} />
       <ChatPlaceholder />
       <AeSessionRail {...args} />
     </div>

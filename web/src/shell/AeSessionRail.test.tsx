@@ -58,7 +58,7 @@ describe("AeSessionRail", () => {
         ...AE_RAIL_SECTIONS.filter((id) => id !== "usage" && id !== "triage"),
       ],
     });
-    render(<AeSessionRail sessionId="s-1" workspacePanelOpen={false} />);
+    render(<AeSessionRail sessionId="s-1" />);
     expect(sectionOrder().slice(0, 3)).toEqual(["usage", "triage", "environment"]);
     expect(screen.getByText("usage body for s-1")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /^Drag to reorder/ })).toHaveLength(
@@ -68,15 +68,15 @@ describe("AeSessionRail", () => {
 
   it("renders nothing while closed or while the right panel is maximized", () => {
     useAeSessionRailStore.setState({ open: false });
-    const { rerender } = render(<AeSessionRail sessionId="s-1" workspacePanelOpen={false} />);
+    const { rerender } = render(<AeSessionRail sessionId="s-1" />);
     expect(screen.queryByTestId("ae-session-rail")).toBeNull();
     act(() => useAeSessionRailStore.setState({ open: true }));
-    rerender(<AeSessionRail sessionId="s-1" workspacePanelOpen={false} hidden />);
+    rerender(<AeSessionRail sessionId="s-1" hidden />);
     expect(screen.queryByTestId("ae-session-rail")).toBeNull();
   });
 
   it("reorders through a section menu's Move up", () => {
-    render(<AeSessionRail sessionId="s-1" workspacePanelOpen={false} />);
+    render(<AeSessionRail sessionId="s-1" />);
     const context = screen.getByRole("region", { name: "Context" });
     const menu = within(context).getByRole("button", { name: "Context options" });
     fireEvent.pointerDown(menu, { button: 0 });
@@ -87,7 +87,7 @@ describe("AeSessionRail", () => {
   it("scrolls a focused section into view and flashes it", async () => {
     const scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView");
     useAeSessionRailStore.setState({ folded: { agents: true } });
-    render(<AeSessionRail sessionId="s-1" workspacePanelOpen={false} />);
+    render(<AeSessionRail sessionId="s-1" />);
     act(() => useAeSessionRailStore.getState().focusSection("agents"));
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
     const item = document.querySelector('[data-ae-rail-item="agents"]');
@@ -98,39 +98,67 @@ describe("AeSessionRail", () => {
     scrollIntoView.mockRestore();
   });
 
-  it("docks when wide and floats when the window is narrow", () => {
-    expect(aeRailFloats(true, true, false)).toBe(true);
-    expect(aeRailFloats(false, true, true)).toBe(true);
-    expect(aeRailFloats(false, true, false)).toBe(false);
-    expect(aeRailFloats(false, false, true)).toBe(false);
-    // jsdom's matchMedia matches nothing, so the rail docks.
-    render(<AeSessionRail sessionId="s-1" workspacePanelOpen />);
+  it("docks while the chat keeps 480 px beside it, and floats below that", () => {
+    // A 1210 px window with the sidebar closed leaves the chat 906 px: dock.
+    expect(aeRailFloats(1210, 0)).toBe(false);
+    // The same window with a 320 px sidebar still leaves 586 px.
+    expect(aeRailFloats(1210, 320)).toBe(false);
+    // Exactly 480 px left docks; one pixel less floats.
+    expect(aeRailFloats(1104, 320)).toBe(false);
+    expect(aeRailFloats(1103, 320)).toBe(true);
+    // The workspace panel shares the row, so it counts against the chat too.
+    expect(aeRailFloats(1440, 320 + 500)).toBe(true);
+    expect(aeRailFloats(1690, 500)).toBe(false);
+  });
+
+  it("docks in jsdom's 1024 px window with the sidebar closed", () => {
+    render(<AeSessionRail sessionId="s-1" />);
     expect(screen.getByTestId("ae-session-rail")).not.toHaveAttribute("data-floating");
   });
 
-  it("floating, closes from its header button and from Escape", () => {
-    const original = window.matchMedia;
-    window.matchMedia = ((query: string) => ({
-      ...original(query),
-      matches: query.includes("1279.98px"),
-    })) as typeof window.matchMedia;
+  it("floats once the sidebar and workspace panel leave the chat too little room", () => {
+    // 1024 - 220 - 304 leaves the chat 500 px: dock.
+    const { rerender } = render(<AeSessionRail sessionId="s-1" sidebarWidth={220} />);
+    expect(screen.getByTestId("ae-session-rail")).not.toHaveAttribute("data-floating");
+    // A 240 px workspace panel cuts that to 260 px: float.
+    rerender(<AeSessionRail sessionId="s-1" sidebarWidth={220} workspacePanelWidth={240} />);
+    expect(screen.getByTestId("ae-session-rail")).toHaveAttribute("data-floating", "true");
+  });
+
+  it("re-decides when the window is resized", () => {
+    const original = window.innerWidth;
+    render(<AeSessionRail sessionId="s-1" sidebarWidth={320} />);
+    const rail = () => screen.getByTestId("ae-session-rail");
     try {
-      render(<AeSessionRail sessionId="s-1" workspacePanelOpen={false} />);
-      const rail = screen.getByTestId("ae-session-rail");
-      expect(rail).toHaveAttribute("data-floating", "true");
-      fireEvent.keyDown(document.body, { key: "Escape" });
-      expect(useAeSessionRailStore.getState().open).toBe(false);
-      act(() => useAeSessionRailStore.setState({ open: true }));
-      fireEvent.click(screen.getByRole("button", { name: "Hide session rail" }));
-      expect(useAeSessionRailStore.getState().open).toBe(false);
+      act(() => {
+        Object.defineProperty(window, "innerWidth", { configurable: true, value: 900 });
+        window.dispatchEvent(new Event("resize"));
+      });
+      expect(rail()).toHaveAttribute("data-floating", "true");
+      act(() => {
+        Object.defineProperty(window, "innerWidth", { configurable: true, value: 1400 });
+        window.dispatchEvent(new Event("resize"));
+      });
+      expect(rail()).not.toHaveAttribute("data-floating");
     } finally {
-      window.matchMedia = original;
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: original });
     }
+  });
+
+  it("floating, closes from its header button and from Escape", () => {
+    render(<AeSessionRail sessionId="s-1" sidebarWidth={600} />);
+    const rail = screen.getByTestId("ae-session-rail");
+    expect(rail).toHaveAttribute("data-floating", "true");
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(useAeSessionRailStore.getState().open).toBe(false);
+    act(() => useAeSessionRailStore.setState({ open: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Hide session rail" }));
+    expect(useAeSessionRailStore.getState().open).toBe(false);
   });
 
   it("shows the phone sheet only while sheetOpen, and its close button closes it", () => {
     isMobileMock.mockReturnValue(true);
-    render(<AeSessionRail sessionId="s-1" workspacePanelOpen={false} />);
+    render(<AeSessionRail sessionId="s-1" />);
     const sheet = screen.getByTestId("ae-session-rail-sheet");
     expect(sheet).toHaveAttribute("data-state", "closed");
     expect(screen.queryByTestId("ae-session-rail-list")).toBeNull();

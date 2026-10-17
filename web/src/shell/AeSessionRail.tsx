@@ -1,6 +1,6 @@
 // The session rail's container: the sections in the saved order, sortable by
 // their grips. Desktop docks it as a 304 px column (or floats it over the
-// chat's right edge when the window is narrow); a phone shows it as a sheet.
+// chat's right edge when docking would squeeze the chat); a phone shows it as a sheet.
 
 import {
   type Announcements,
@@ -23,7 +23,6 @@ import {
 import {
   type CSSProperties,
   type RefObject,
-  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -48,25 +47,21 @@ import {
 } from "@/lib/aeSessionRail";
 import { cn } from "@/lib/utils";
 
-/** Below this width the rail floats over the chat instead of taking a column. */
-const NARROW_QUERY = "(max-width: 1279.98px)";
-/** Below this width the rail floats while the workspace panel is also open. */
-const MEDIUM_QUERY = "(max-width: 1599.98px)";
+/** The docked column's width, as in its `w-[304px]` class. */
+const RAIL_WIDTH_PX = 304;
+/** The narrowest chat the rail docks beside: the floor upstream's workspace panel keeps too. */
+const CHAT_MIN_WIDTH_PX = 480;
 
-function useMediaQuery(query: string): boolean {
-  const subscribe = useCallback(
-    (listener: () => void) => {
-      if (typeof window === "undefined" || !window.matchMedia) return () => {};
-      const mql = window.matchMedia(query);
-      mql.addEventListener("change", listener);
-      return () => mql.removeEventListener("change", listener);
-    },
-    [query],
-  );
+function subscribeToResize(listener: () => void): () => void {
+  window.addEventListener("resize", listener);
+  return () => window.removeEventListener("resize", listener);
+}
+
+function useViewportWidth(): number {
   return useSyncExternalStore(
-    subscribe,
-    () => (typeof window !== "undefined" && window.matchMedia?.(query).matches) || false,
-    () => false,
+    subscribeToResize,
+    () => window.innerWidth,
+    () => Number.POSITIVE_INFINITY,
   );
 }
 
@@ -74,29 +69,34 @@ function prefersReducedMotion(): boolean {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 }
 
-/** Whether the rail floats over the chat rather than docking beside it. */
-export function aeRailFloats(narrow: boolean, medium: boolean, workspacePanelOpen: boolean) {
-  return narrow || (medium && workspacePanelOpen);
+/**
+ * Whether the rail floats over the chat rather than docking beside it: only when
+ * the window, less the sidebar and workspace panel, cannot fit the rail and the chat.
+ */
+export function aeRailFloats(viewportWidth: number, reservedWidth: number) {
+  return viewportWidth - reservedWidth - RAIL_WIDTH_PX < CHAT_MIN_WIDTH_PX;
 }
 
 export function AeSessionRail({
   sessionId,
-  workspacePanelOpen,
+  sidebarWidth = 0,
+  workspacePanelWidth = 0,
   hidden = false,
   workspace,
 }: {
   /** A real (server) session id; the shell skips the rail for `temp:` ids. */
   sessionId: string;
-  /** The workspace panel shares the row, so the rail floats sooner. */
-  workspacePanelOpen: boolean;
+  /** The docked sidebar's width, 0 while it is closed. */
+  sidebarWidth?: number;
+  /** The open workspace panel's width, 0 while it is closed; it shares the chat's row. */
+  workspacePanelWidth?: number;
   /** The right panel is maximized over the chat. */
   hidden?: boolean;
   /** Lets the Changes and Agents rows open their workspace tabs. */
   workspace?: AeRailWorkspace;
 }) {
   const isMobile = useIsMobileViewport();
-  const narrow = useMediaQuery(NARROW_QUERY);
-  const medium = useMediaQuery(MEDIUM_QUERY);
+  const viewportWidth = useViewportWidth();
   const open = useAeSessionRailStore((s) => s.open);
   const sheetOpen = useAeSessionRailStore((s) => s.sheetOpen);
   const setSheetOpen = useAeSessionRailStore((s) => s.setSheetOpen);
@@ -129,7 +129,7 @@ export function AeSessionRail({
       ) : (
         <AeSessionRailColumn
           sessionId={sessionId}
-          floating={aeRailFloats(narrow, medium, workspacePanelOpen)}
+          floating={aeRailFloats(viewportWidth, sidebarWidth + workspacePanelWidth)}
         />
       )}
     </AeRailActionsContext.Provider>
