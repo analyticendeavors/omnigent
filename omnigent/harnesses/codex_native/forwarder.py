@@ -371,6 +371,8 @@ class _CodexForwarderState:
         against sending ``null`` before the first successful config read).
     :param effort: Latest known Codex reasoning effort for this thread, e.g.
         ``"medium"``. ``None`` means Codex is using its model/default effort.
+    :param effort_known: Whether Codex or its config explicitly supplied an
+        effort value, including ``None`` for a default-effort clear.
     :param posted_effort: Last reasoning effort already mirrored to Omnigent
         via ``external_reasoning_effort_change``. ``None`` is a valid mirrored
         value, so ``posted_effort_known`` tracks whether the baseline has been
@@ -452,6 +454,7 @@ class _CodexForwarderState:
     developer_instructions: str | None = None
     developer_instructions_known: bool = False
     effort: str | None = None
+    effort_known: bool = False
     posted_effort: str | None = None
     posted_effort_known: bool = False
     # The config.toml effort as of the last _refresh_effort_from_config read,
@@ -512,6 +515,7 @@ class _CodexForwarderState:
         if not isinstance(result, dict):
             return
         self._note_model_fields(result)
+        self._note_effort_fields(result)
         self._note_approval_mode_fields(result)
         # Do NOT seed ``posted_model`` here. Omnigent must learn the session's
         # ACTUAL model — including the spawn default — because the cost-budget
@@ -916,6 +920,7 @@ class _CodexForwarderState:
             effort = payload[key]
             if effort is None or (isinstance(effort, str) and effort):
                 self.effort = effort
+                self.effort_known = True
             return
 
     def _note_collaboration_mode_fields(self, payload: _JsonObject) -> None:
@@ -2673,12 +2678,9 @@ async def _subscribe_until_ready_inner(
             # starts, so that turn's ``turn/started`` is missed: mirror the
             # config.toml effort here too (an in-TUI ``/model`` effort change
             # before the first turn would otherwise never reach the composer).
-            # Gated on a seen config effort: without one the unseeded baseline
-            # would mirror a spurious ``None`` on every session. On a fresh
-            # session this first sync posts the launch effort itself — a
-            # redundant-but-harmless mirror of the value Omnigent launched
-            # with, not a terminal change.
-            if forwarder_state.last_config_effort is not None:
+            # Sync only an observed effort; an absent value must not clear the
+            # session's persisted choice.
+            if forwarder_state.effort_known:
                 await _sync_reasoning_effort_change(
                     ap_client, session_id=session_id, forwarder_state=forwarder_state
                 )
@@ -3377,6 +3379,7 @@ def _refresh_effort_from_config(bridge_dir: Path, forwarder_state: _CodexForward
     # "unchanged" and the live B wins. Narrow race; the next real change heals it.
     if config_effort != forwarder_state.last_config_effort:
         forwarder_state.effort = config_effort
+        forwarder_state.effort_known = True
     forwarder_state.last_config_effort = config_effort
 
 
@@ -3460,6 +3463,8 @@ async def _sync_reasoning_effort_change(
     :returns: None.
     """
     effort = forwarder_state.effort
+    if effort is None and not forwarder_state.effort_known:
+        return
     if forwarder_state.posted_effort_known and effort == forwarder_state.posted_effort:
         return
     response = await _post_session_event(
@@ -3719,12 +3724,9 @@ async def _maybe_handle_turn_event(
                 await _sync_model_change(
                     client, session_id=session_id, forwarder_state=forwarder_state
                 )
-                # Only sync once config.toml has revealed an effort: without one the
-                # unseeded baseline would mirror a spurious ``None`` on every session.
-                # A fresh session's first turn/started posts the launch effort itself
-                # (baseline ``None`` → changed) — redundant but harmless, not the
-                # terminal-change path.
-                if forwarder_state.last_config_effort is not None:
+                # An absent config value is not a clear; wait for an observed
+                # effort before mirroring into the session.
+                if forwarder_state.effort_known:
                     await _sync_reasoning_effort_change(
                         client,
                         session_id=session_id,

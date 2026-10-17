@@ -10273,6 +10273,7 @@ def _reject_server_reserved_label_seed(labels: dict[str, str] | None) -> None:
     """
     if not labels:
         return
+    from omnigent.onboarding.claude_accounts import CLAUDE_ACCOUNT_LABEL_KEY
     from omnigent.server.routes._host_worktree import WORKTREE_ROOT_LABEL_KEY
     from omnigent.stores.conversation_store import SIDE_CHAT_SOURCE_LABEL_KEY
 
@@ -10286,6 +10287,11 @@ def _reject_server_reserved_label_seed(labels: dict[str, str] | None) -> None:
     if WORKTREE_ROOT_LABEL_KEY in labels:
         raise OmnigentError(
             f"label {WORKTREE_ROOT_LABEL_KEY!r} is server-internal and cannot be set by clients",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    if CLAUDE_ACCOUNT_LABEL_KEY in labels:
+        raise OmnigentError(
+            f"label {CLAUDE_ACCOUNT_LABEL_KEY!r} is server-internal and cannot be set by clients",
             code=ErrorCode.INVALID_INPUT,
         )
     if _TURN_ACTOR_LABEL in labels:

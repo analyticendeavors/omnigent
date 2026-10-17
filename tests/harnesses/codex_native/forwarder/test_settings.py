@@ -468,6 +468,7 @@ async def test_sync_reasoning_effort_change_posts_clear() -> None:
     client = _RecordingClient()
     state = fwd._CodexForwarderState(
         effort=None,
+        effort_known=True,
         posted_effort="high",
         posted_effort_known=True,
     )
@@ -601,3 +602,44 @@ def test_codex_permission_settings_fall_back_to_legacy_policy_args() -> None:
         "-c",
         'approvals_reviewer="user"',
     ]
+
+
+def test_resume_response_records_explicit_effort() -> None:
+    state = fwd._CodexForwarderState()
+
+    state.note_resume_response({"result": {"model": "gpt-5.4", "effort": "high"}})
+
+    assert state.effort == "high"
+    assert state.effort_known is True
+
+
+@pytest.mark.asyncio
+async def test_settings_without_effort_does_not_clear_session_effort() -> None:
+    client = _RecordingClient()
+    state = fwd._CodexForwarderState()
+    state.note_thread_settings_updated({"threadSettings": {"model": "gpt-5.4"}})
+
+    await fwd._sync_reasoning_effort_change(client, session_id="conv_x", forwarder_state=state)
+
+    assert client.posts == []
+    assert state.posted_effort_known is False
+
+
+@pytest.mark.asyncio
+async def test_explicit_null_effort_still_clears_session_effort() -> None:
+    client = _RecordingClient()
+    state = fwd._CodexForwarderState()
+    state.note_thread_settings_updated({"threadSettings": {"effort": None}})
+
+    await fwd._sync_reasoning_effort_change(client, session_id="conv_x", forwarder_state=state)
+
+    assert client.posts == [
+        (
+            "/v1/sessions/conv_x/events",
+            {
+                "type": "external_reasoning_effort_change",
+                "data": {"reasoning_effort": None},
+            },
+        )
+    ]
+    assert state.posted_effort_known is True

@@ -3784,7 +3784,9 @@ export function NewChatLandingScreen() {
   const selectedConfigContent =
     selectedAgent && isEntryConfigurable(selectedAgent) ? (
       <>
-        {selectedNativeHarness === "claude-native" && <ClaudeAccounts host={harnessWarningHost} />}
+        {selectedNativeHarness === "claude-native" && (
+          <ClaudeAccounts host={harnessWarningHost} compact />
+        )}
         {smartRoutingEligible && (
           <>
             <DropdownMenuCheckboxItem

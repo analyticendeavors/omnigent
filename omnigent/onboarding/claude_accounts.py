@@ -12,6 +12,15 @@ from omnigent.onboarding import secrets
 from omnigent.onboarding.harness_auth import StoreCredentialResult
 from omnigent.onboarding.provider_config import _config_path
 
+CLAUDE_ACCOUNT_LABEL_KEY = "omnigent.claude_native.account"
+CLAUDE_PROVIDER_ENV_KEYS = (
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+)
+
 
 def _path() -> Path:
     return Path(_config_path()).with_name("claude-accounts.json")
@@ -53,13 +62,20 @@ def account_descriptors() -> list[dict[str, str | None]]:
         state = _read()
     except RuntimeError:
         return []
+    available = []
+    for name in state["accounts"]:
+        try:
+            if secrets.load_secret(f"claude-oauth-{name}"):
+                available.append(name)
+        except Exception:
+            continue
     return [
         {
             "family": "claude-oauth-active" if name == state["active"] else "claude-oauth",
             "source": state.get("labels", {}).get(name, name or "Default CLI account"),
             "env_var": name,
         }
-        for name in ["", *state["accounts"]]
+        for name in ["", *available]
     ]
 
 
@@ -126,10 +142,14 @@ def _change_account(
         )
 
 
-def account_env() -> dict[str, str]:
-    name = _read()["active"]
+def account_env(name: str | None = None) -> dict[str, str]:
+    state = _read()
+    if name is None:
+        name = state["active"]
     if not name:
         return {}
+    if name not in state["accounts"]:
+        raise RuntimeError("The selected Claude account is unavailable on this host.")
     token = secrets.load_secret(f"claude-oauth-{name}")
     if not token:
         raise RuntimeError(
@@ -138,15 +158,12 @@ def account_env() -> dict[str, str]:
     return {"CLAUDE_CODE_OAUTH_TOKEN": token, "ANTHROPIC_API_KEY": "", "ANTHROPIC_AUTH_TOKEN": ""}
 
 
-def account_env_for_launch(env: dict[str, str]) -> dict[str, str]:
+def account_env_for_launch(
+    env: dict[str, str], *, account_name: str | None = None
+) -> dict[str, str]:
     """Apply subscription choice only when no explicit provider owns authentication."""
-    provider_keys = (
-        "ANTHROPIC_BASE_URL",
-        "ANTHROPIC_API_KEY",
-        "ANTHROPIC_AUTH_TOKEN",
-        "CLAUDE_CODE_USE_BEDROCK",
-        "CLAUDE_CODE_USE_VERTEX",
-    )
-    if any(env.get(key, os.environ.get(key)) for key in provider_keys):
+    if any(env.get(key, os.environ.get(key)) for key in CLAUDE_PROVIDER_ENV_KEYS):
+        if account_name is not None:
+            raise RuntimeError("Claude account selection conflicts with provider authentication.")
         return {}
-    return account_env()
+    return account_env(account_name)

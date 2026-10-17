@@ -43,6 +43,53 @@ def test_native_subscription_env_uses_selected_account():
     assert env["ANTHROPIC_API_KEY"] == ""
 
 
+def test_session_account_choice_does_not_change_host_active_account(monkeypatch):
+    from omnigent.harnesses.claude_native.main import build_native_claude_terminal_env
+    from omnigent.runner.native.orchestration import _claude_terminal_env_unset
+
+    monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_USE_BEDROCK", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_USE_VERTEX", raising=False)
+    assert change_account("claude-oauth-add", "Work", "sk-ant-oat-work").stored
+    assert change_account("claude-oauth-add", "Backup", "sk-ant-oat-backup").stored
+    assert (
+        build_native_claude_terminal_env(None, account_name="Work")["CLAUDE_CODE_OAUTH_TOKEN"]
+        == "sk-ant-oat-work"
+    )
+    assert account_env()["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat-backup"
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in _claude_terminal_env_unset(None, "")
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in _claude_terminal_env_unset(None, "Work")
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in build_native_claude_terminal_env(None, account_name="")
+    inherited = {"CLAUDE_CODE_OAUTH_TOKEN": "inherited"}
+    inherited.update(build_native_claude_terminal_env(None, account_name=""))
+    for key in _claude_terminal_env_unset(None, ""):
+        inherited.pop(key, None)
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in inherited
+
+
+def test_session_account_missing_at_launch_fails(monkeypatch):
+    from omnigent.harnesses.claude_native.main import build_native_claude_terminal_env
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="unavailable"):
+        build_native_claude_terminal_env(None, account_name="Missing")
+
+
+def test_discovery_omits_account_when_secret_is_missing(monkeypatch):
+    from omnigent.onboarding import secrets
+
+    assert change_account("claude-oauth-add", "Work", "sk-ant-oat-work").stored
+    original = secrets.load_secret
+    monkeypatch.setattr(
+        secrets,
+        "load_secret",
+        lambda name: None if name == "claude-oauth-Work" else original(name),
+    )
+    assert all(row["env_var"] != "Work" for row in account_descriptors())
+
+
 def test_frame_roundtrip_preserves_account_name():
     from omnigent.host.frames import HostStoreSecretFrame, decode_host_frame, encode_host_frame
 

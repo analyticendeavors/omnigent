@@ -23,6 +23,43 @@ beforeEach(() => {
   isPending = false;
 });
 describe("ClaudeAccounts", () => {
+  it("shows only compact account choices with the new-chat default identified", () => {
+    rows = [...rows, { family: "claude-oauth", source: "Personal", env_var: "Personal" }];
+    render(<ClaudeAccounts host={host} compact />);
+
+    const picker = screen.getByTestId("claude-accounts");
+    expect(picker.querySelector(".grid-cols-2")).toBeTruthy();
+    expect(screen.getAllByRole("button")).toHaveLength(3);
+    expect(screen.queryByText("Claude subscription account")).toBeNull();
+    expect(screen.queryByText(/Used for new Claude subscription chats/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /Rename/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add Claude account" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Default CLI account (selected)" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Default CLI account (selected)" })).toHaveAttribute(
+      "title",
+      "Default CLI account: current new-chat default",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Personal" }));
+    expect(mutate.mock.calls[0][0]).toEqual({
+      harness: "claude-native",
+      kind: "claude-oauth-select",
+      account_name: "Personal",
+    });
+    act(() => mutate.mock.calls[0][1].onError(new Error("Selection failed.")));
+    expect(screen.getByRole("alert")).toHaveTextContent("Selection failed.");
+  });
+
+  it("keeps account management and explanation in the default view", () => {
+    render(<ClaudeAccounts host={host} />);
+    expect(screen.getByText("Claude subscription account")).toBeTruthy();
+    expect(screen.getByText(/Used for new Claude subscription chats/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Rename Backup" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Add Claude account" })).toBeTruthy();
+  });
+
   it("selects the backup account without a token", () => {
     render(<ClaudeAccounts host={host} />);
     fireEvent.click(screen.getByText("Backup"));

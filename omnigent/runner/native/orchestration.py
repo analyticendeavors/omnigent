@@ -7482,6 +7482,7 @@ def _build_claude_native_base_args(
 
 def _claude_terminal_env_unset(
     claude_config: ClaudeNativeUcodeConfig | None,
+    account_name: str | None = None,
 ) -> list[str]:
     """
     Env vars to strip from a native Claude terminal child.
@@ -7503,6 +7504,8 @@ def _claude_terminal_env_unset(
         ``["DATABRICKS_CONFIG_PROFILE", "CLAUDECODE", "ANTHROPIC_API_KEY"]``.
     """
     env_unset = ["DATABRICKS_CONFIG_PROFILE", "CLAUDECODE"]
+    if account_name == "":
+        env_unset.append("CLAUDE_CODE_OAUTH_TOKEN")
     if claude_config is not None and claude_config.api_key_helper:
         env_unset.append("ANTHROPIC_API_KEY")
     return env_unset
@@ -8053,6 +8056,7 @@ class _ClaudeSessionLaunchMetadata:
     external_session_id: str | None = None
     fork_source_external_id: str | None = None
     fork_carry_history: bool = False
+    claude_account: str | None = None
     #: Both routing fields come from ``routing_class_from_snapshot``, so an
     #: auto-harness session always reads as routing-enabled too. Deriving them
     #: separately was the bug: a sub-agent child of a routed parent carries the
@@ -8075,6 +8079,7 @@ def _claude_launch_metadata_from_envelope(
     session_init: RunnerSessionInitEnvelope,
 ) -> _ClaudeSessionLaunchMetadata:
     """Project Claude launch metadata without server callbacks."""
+    from omnigent.onboarding.claude_accounts import CLAUDE_ACCOUNT_LABEL_KEY
     from omnigent.runner.subagent_routing import routing_class_from_snapshot
     from omnigent.stores.conversation_store import (
         FORK_CARRY_HISTORY_LABEL_KEY,
@@ -8100,6 +8105,7 @@ def _claude_launch_metadata_from_envelope(
             fork_source if isinstance(fork_source, str) and fork_source else None
         ),
         fork_carry_history=snapshot.labels.get(FORK_CARRY_HISTORY_LABEL_KEY) == "1",
+        claude_account=snapshot.labels.get(CLAUDE_ACCOUNT_LABEL_KEY),
     )
 
 
@@ -8108,6 +8114,7 @@ async def _load_legacy_claude_launch_metadata(
     session_id: str,
 ) -> _ClaudeSessionLaunchMetadata:
     """Fetch Claude launch metadata for servers predating the init envelope."""
+    from omnigent.onboarding.claude_accounts import CLAUDE_ACCOUNT_LABEL_KEY
     from omnigent.runner.subagent_routing import routing_class_from_snapshot
     from omnigent.stores.conversation_store import (
         FORK_CARRY_HISTORY_LABEL_KEY,
@@ -8166,6 +8173,7 @@ async def _load_legacy_claude_launch_metadata(
             fork_source if isinstance(fork_source, str) and fork_source else None
         ),
         fork_carry_history=labels.get(FORK_CARRY_HISTORY_LABEL_KEY) == "1",
+        claude_account=labels.get(CLAUDE_ACCOUNT_LABEL_KEY),
     )
     permission_mode = _claude_launch_permission_mode(metadata.terminal_launch_args)
     _logger.info(
@@ -8462,6 +8470,7 @@ async def _auto_create_claude_terminal(
     session_external_id = launch_metadata.external_session_id
     fork_source_external_id = launch_metadata.fork_source_external_id
     fork_carry_history = launch_metadata.fork_carry_history
+    claude_account = launch_metadata.claude_account
 
     # The server GET may miss the external_session_id binding when the
     # reconnect request arrives without a workspace-scoped context (the
@@ -9001,7 +9010,7 @@ async def _auto_create_claude_terminal(
     if resolved_claude is not None:
         validate_claude_hook_interpreter_compatibility(resolved_claude)
 
-    claude_terminal_env_unset = _claude_terminal_env_unset(claude_config)
+    claude_terminal_env_unset = _claude_terminal_env_unset(claude_config, claude_account)
 
     # Inherit the agent's os_env so its sandbox (e.g. ``type: none``),
     # egress_rules and env_passthrough are honoured. Without ``sandbox`` here
@@ -9020,7 +9029,7 @@ async def _auto_create_claude_terminal(
         # Tool Search env plus ucode gateway env (ANTHROPIC_BASE_URL
         # etc.) when derived. Empty provider config still forces
         # ENABLE_TOOL_SEARCH=true so MCP schemas are loaded on demand.
-        env=build_native_claude_terminal_env(claude_config),
+        env=build_native_claude_terminal_env(claude_config, account_name=claude_account),
         # Names to strip (see ``_claude_terminal_env_unset``). Dropping
         # ``DATABRICKS_CONFIG_PROFILE`` matters because Claude's MCP servers
         # inherit this env and several build ``WorkspaceClient`` without pinning

@@ -5,7 +5,13 @@ import { Input } from "@/components/ui/input";
 import { useDetectedCredentials, useStoreCredential, type Host } from "@/hooks/useHosts";
 
 /** Host-owned subscription choices; no token is returned by the discovery API. */
-export function ClaudeAccounts({ host }: { host: Host | null | undefined }) {
+export function ClaudeAccounts({
+  host,
+  compact = false,
+}: {
+  host: Host | null | undefined;
+  compact?: boolean;
+}) {
   const [name, setName] = useState("");
   const [token, setToken] = useState("");
   const [adding, setAdding] = useState(false);
@@ -43,32 +49,55 @@ export function ClaudeAccounts({ host }: { host: Host | null | undefined }) {
   const rows = (accounts.data ?? []).filter((row) => row.family.startsWith("claude-oauth"));
   return (
     <div
-      className="flex min-w-0 max-w-full flex-col gap-2 whitespace-normal [overflow-wrap:anywhere] border-t px-3 py-3"
+      className={
+        compact
+          ? "flex min-w-0 max-w-full flex-col gap-2"
+          : "flex min-w-0 max-w-full flex-col gap-2 whitespace-normal [overflow-wrap:anywhere] border-t px-3 py-3"
+      }
       data-testid="claude-accounts"
     >
-      <span className="text-sm font-medium">Claude subscription account</span>
-      <p className="text-xs text-muted-foreground">
-        Used for new Claude subscription chats on {host.name}, including team members. Start a new
-        chat to switch a running conversation. Gateway connections keep their own credentials.
-      </p>
+      {!compact && (
+        <>
+          <span className="text-sm font-medium">Claude subscription account</span>
+          <p className="text-xs text-muted-foreground">
+            Used for new Claude subscription chats on {host.name}, including team members. Start a
+            new chat to switch a running conversation. Gateway connections keep their own
+            credentials.
+          </p>
+        </>
+      )}
       {(accounts.isError || (accounts.isSuccess && rows.length === 0)) && (
         <p role="alert">Could not load Claude accounts. Check the host account configuration.</p>
       )}
-      <div className="flex min-w-0 flex-wrap gap-2">
+      <div className={compact ? "grid min-w-0 grid-cols-2 gap-1" : "flex min-w-0 flex-wrap gap-2"}>
         {rows.map((row) => {
           const accountId = row.env_var ?? "";
           const displayLabel = row.source;
           return (
             <div
               key={accountId}
-              className="flex min-w-[10rem] flex-[1_1_10rem] flex-col gap-1 rounded border p-2"
+              className={
+                compact
+                  ? "min-w-0"
+                  : "flex min-w-[10rem] flex-[1_1_10rem] flex-col gap-1 rounded border p-2"
+              }
             >
-              <div className="flex min-w-0 flex-wrap items-center gap-1">
+              <div className={compact ? "min-w-0" : "flex min-w-0 flex-wrap items-center gap-1"}>
                 <Button
                   type="button"
-                  variant="ghost"
+                  variant={compact && row.family === "claude-oauth-active" ? "secondary" : "ghost"}
                   size="sm"
-                  className="h-auto min-h-8 min-w-0 flex-1 whitespace-normal break-words"
+                  className={
+                    compact
+                      ? "h-8 w-full min-w-0 justify-start overflow-hidden text-ellipsis whitespace-nowrap px-2"
+                      : "h-auto min-h-8 min-w-0 flex-1 whitespace-normal break-words"
+                  }
+                  aria-pressed={compact ? row.family === "claude-oauth-active" : undefined}
+                  title={
+                    compact
+                      ? `${displayLabel}: ${row.family === "claude-oauth-active" ? "current" : "select as"} new-chat default`
+                      : undefined
+                  }
                   disabled={store.isPending || row.family === "claude-oauth-active"}
                   onClick={() =>
                     store.mutate(
@@ -93,22 +122,24 @@ export function ClaudeAccounts({ host }: { host: Host | null | undefined }) {
                   {displayLabel}
                   {row.family === "claude-oauth-active" ? " (selected)" : ""}
                 </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  aria-label={`Rename ${displayLabel}`}
-                  disabled={store.isPending}
-                  onClick={() => {
-                    setEditingId(accountId);
-                    setAccountLabel(displayLabel);
-                    setMessage("");
-                  }}
-                >
-                  Rename
-                </Button>
+                {!compact && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    aria-label={`Rename ${displayLabel}`}
+                    disabled={store.isPending}
+                    onClick={() => {
+                      setEditingId(accountId);
+                      setAccountLabel(displayLabel);
+                      setMessage("");
+                    }}
+                  >
+                    Rename
+                  </Button>
+                )}
               </div>
-              {editingId === accountId && (
+              {!compact && editingId === accountId && (
                 <div className="flex min-w-0 flex-wrap gap-1">
                   <Input
                     aria-label={`Account label for ${displayLabel}`}
@@ -164,10 +195,12 @@ export function ClaudeAccounts({ host }: { host: Host | null | undefined }) {
           );
         })}
       </div>
-      <Button type="button" variant="outline" size="sm" onClick={() => setAdding(!adding)}>
-        Add Claude account
-      </Button>
-      {adding && (
+      {!compact && (
+        <Button type="button" variant="outline" size="sm" onClick={() => setAdding(!adding)}>
+          Add Claude account
+        </Button>
+      )}
+      {!compact && adding && (
         <div className="flex min-w-0 flex-col gap-2">
           <Input
             aria-label="Claude account name"

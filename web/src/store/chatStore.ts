@@ -4126,7 +4126,7 @@ function sessionBindingPatch(
   session: Session,
   state: Pick<
     ConversationState,
-    "mcpStartupLaunch" | "sessionModelSeeded" | "llmModel" | "sessionModelOverride"
+    "mcpStartupLaunch" | "sessionModelSeeded" | "llmModel" | "sessionModelOverride" | "boundAgentId"
   >,
   launchBeforeFetch: ConversationState["mcpStartupLaunch"] | undefined,
 ): Pick<
@@ -4139,6 +4139,7 @@ function sessionBindingPatch(
   | "llmModel"
   | "pendingModelChange"
   | "sessionModelOverride"
+  | "sessionReasoningEffort"
   | "sessionHarness"
   | "subAgentName"
   | "costControlModeOverride"
@@ -4154,7 +4155,10 @@ function sessionBindingPatch(
   | "mcpStartup"
   | "mcpStartupLaunch"
 > {
-  const retainModelSeed = state.sessionModelSeeded && session.llmModel == null;
+  const retainModelSeed =
+    state.sessionModelSeeded &&
+    session.llmModel == null &&
+    (state.boundAgentId == null || state.boundAgentId === session.agentId);
   return {
     isNativeTerminalSession: isNativeTerminalSessionFn(session),
     // Native wrapper whose model lives in the vendor TUI (no Omnigent picker):
@@ -4170,6 +4174,9 @@ function sessionBindingPatch(
     sessionModelOverride: retainModelSeed
       ? state.sessionModelOverride
       : (session.modelOverride ?? null),
+    sessionReasoningEffort: supportsEffortControl(session)
+      ? (session.reasoningEffort ?? null)
+      : null,
     sessionHarness: session.harness ?? null,
     subAgentName: session.subAgentName ?? null,
     costControlModeOverride: session.costControlModeOverride ?? null,
@@ -7272,6 +7279,9 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
         contextWindow: null,
         tokensUsed: null,
         llmModel: null,
+        sessionModelOverride: null,
+        sessionReasoningEffort: null,
+        sessionModelSeeded: false,
         sessionHarness: null,
       });
       void refreshSessionBinding(event.conversationId);
