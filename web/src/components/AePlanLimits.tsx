@@ -76,12 +76,6 @@ export interface AeSessionContext {
   input_tokens: number;
   cache_write_tokens: number;
   cache_read_tokens: number;
-  // Absent from a server older than per-session accounts.
-  /** The backup account this session runs on; null or absent = the box's default login. */
-  account?: string | null;
-  account_label?: string | null;
-  /** That account's own plan windows, when the session is on a backup account. */
-  windows?: AeLimitWindow[];
 }
 
 export interface AeLimitSnapshot {
