@@ -816,6 +816,10 @@ class ChildSessionSummary(BaseModel):
         ``RoutingDecisionData.decision_id``. Read from the child's
         ``omnigent.routing.decision_id`` label, stamped when routing pins
         the model. ``None`` when the child was not routed.
+    :param model: Model the child actually ran on, e.g.
+        ``"claude-sonnet-5-5"``: the harness's own report, else the model
+        its own usage was recorded against, else the requested override.
+        ``None`` when nothing names one.
     """
 
     id: str
@@ -839,6 +843,7 @@ class ChildSessionSummary(BaseModel):
     pending_elicitations_count: int = 0
     routed_model: str | None = None
     routing_decision_id: str | None = None
+    model: str | None = None
 
 
 # ── Responses ───────────────────────────────────────────────────

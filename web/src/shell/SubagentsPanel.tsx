@@ -665,7 +665,11 @@ function SubagentRow({
             <span className="min-w-0 flex-1 truncate text-sm font-medium" title={primary}>
               {primary}
             </span>
-            <AeAgentRowMeta child={child} status={<StatusIndicator {...status} />} />
+            <AeAgentRowMeta
+              child={child}
+              status={<StatusIndicator {...status} />}
+              statusHasWord={!QUIET_STATE[status.activity]}
+            />
           </div>
           {/* Indented to align with the title: connector, icon and two gaps = 22px. */}
           <AeAgentLastLine child={child} className="pl-[22px]" />

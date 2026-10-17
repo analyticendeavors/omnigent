@@ -134,9 +134,8 @@ describe("row pieces", () => {
           />
         </div>,
       );
-      expect(screen.getByTestId("subagent-routed-model")).toHaveTextContent("sonnet");
+      expect(screen.getByTestId("subagent-routed-model")).toHaveTextContent("Sonnet 5");
       expect(screen.getByTestId("subagent-elapsed")).toHaveTextContent("1m 05s");
-      expect(screen.getByTestId("dot")).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
@@ -145,6 +144,55 @@ describe("row pieces", () => {
     expect(screen.queryByTestId("subagent-routed-model")).toBeNull();
     expect(container).not.toHaveTextContent("default");
     expect(screen.getByTestId("subagent-elapsed")).toHaveTextContent("1m 40s");
+  });
+
+  it("shows the model the agent ran on, ahead of a routed one", () => {
+    render(
+      <AeAgentRowMeta
+        child={child({ id: "c", model: "claude-opus-5-5[1m]", routed_model: "claude-haiku-5-5" })}
+        status={null}
+      />,
+    );
+    const cell = screen.getByTestId("subagent-model");
+    expect(cell).toHaveTextContent("Opus 5.5");
+    expect(cell).toHaveAttribute("title", "claude-opus-5-5[1m]");
+    cleanup();
+    render(<AeAgentRowMeta child={child({ id: "x", model: "gpt-6-astra" })} status={null} />);
+    expect(screen.getByTestId("subagent-model")).toHaveTextContent("gpt-6-astra");
+  });
+
+  it("puts the status dot right after Time, and keeps a Stop slot after it while running", () => {
+    const { container } = render(
+      <div>
+        <AeAgentRowMeta child={child({ id: "f" })} status={<span data-testid="dot" />} />
+      </div>,
+    );
+    const finishedCells = container.firstElementChild!.children;
+    expect(finishedCells[finishedCells.length - 1]).toContainElement(screen.getByTestId("dot"));
+    cleanup();
+    const { container: live } = render(
+      <div>
+        <AeAgentRowMeta child={running("r")} status={<span data-testid="dot" />} />
+      </div>,
+    );
+    const runningCells = live.firstElementChild!.children;
+    expect(runningCells[runningCells.length - 2]).toContainElement(screen.getByTestId("dot"));
+    expect(runningCells[runningCells.length - 1]).toBeEmptyDOMElement();
+  });
+
+  it("puts a status word left of Model so the columns stay in line", () => {
+    const { container } = render(
+      <div>
+        <AeAgentRowMeta
+          child={child({ id: "f", current_task_status: "failed" })}
+          status={<span data-testid="word">Failed</span>}
+          statusHasWord
+        />
+      </div>,
+    );
+    const cells = container.firstElementChild!.children;
+    expect(cells[0]).toBe(screen.getByTestId("word"));
+    expect(cells[cells.length - 1]).toBeEmptyDOMElement();
   });
 
   it("says No output yet while running and hides the harness context block", () => {
