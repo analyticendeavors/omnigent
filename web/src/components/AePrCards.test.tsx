@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
@@ -43,8 +43,11 @@ function serve(route: Route) {
   );
 }
 
-function renderCards(prs: { url: string }[], sessionId = "s1") {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function renderCards(
+  prs: { url: string }[],
+  sessionId = "s1",
+  qc = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+) {
   return render(
     <QueryClientProvider client={qc}>
       <AePrCards sessionId={sessionId} prs={prs} />
@@ -601,5 +604,98 @@ describe("AePrCards", () => {
     renderCards([{ url: url(1) }, { url: url(2) }]);
     expect((await screen.findAllByTestId("ae-pr-off")).length).toBe(1);
     expect(screen.queryAllByTestId("ae-pr-card")).toHaveLength(0);
+  });
+});
+
+describe("in-app review", () => {
+  it.each(["success", "stale head"])(
+    "keeps the %s card when an older GET finishes afterward",
+    async (outcome) => {
+      const key = ["ae-pr", REPO, 5];
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const draft = card(5, {
+        draft: true,
+        merge: { ...card(5).merge, allowed: false, reason: "Draft" },
+      });
+      const fresh = card(5, { head_sha: outcome === "success" ? SHA : "f".repeat(40) });
+      let getCount = 0;
+      let finishOldGet: ((response: Response) => void) | undefined;
+      const oldGet = new Promise<Response>((resolve) => {
+        finishOldGet = resolve;
+      });
+      serve((path) => {
+        if (path.endsWith("/ready")) {
+          return outcome === "success"
+            ? json(fresh)
+            : json(
+                { error: { code: "merge_head_moved", message: "Head moved", card: fresh } },
+                409,
+              );
+        }
+        if (path.endsWith("/5")) return ++getCount === 1 ? json(draft) : oldGet;
+        throw new Error(`Unexpected request ${path}`);
+      });
+      renderCards([{ url: url(5) }], "s1", qc);
+      await screen.findByRole("button", { name: "Mark ready for review" });
+      void qc.invalidateQueries({ queryKey: key, exact: true });
+      await waitFor(() => expect(getCount).toBe(2));
+      fireEvent.click(screen.getByRole("button", { name: "Mark ready for review" }));
+      await waitFor(() => expect(qc.getQueryData(key)).toEqual(fresh));
+      await act(async () => {
+        finishOldGet?.(new Response(JSON.stringify(draft)));
+        await oldGet;
+      });
+      expect(qc.getQueryData(key)).toEqual(fresh);
+      expect(screen.queryByRole("button", { name: "Mark ready for review" })).toBeNull();
+    },
+  );
+
+  it("shows the description and marks a draft ready without merging", async () => {
+    const draft = card(5, {
+      draft: true,
+      body: "Change summary\nValidation: tests passed",
+      changed_files: 2,
+      additions: 10,
+      deletions: 3,
+      merge: { methods: ["squash"], default_method: "squash", allowed: false, reason: "Draft" },
+    });
+    let request: RequestInit | undefined;
+    serve((path, init) => {
+      if (path.endsWith("/ready")) {
+        request = init;
+        return json(card(5));
+      }
+      if (path.endsWith("/5")) return json(draft);
+      throw new Error(`Unexpected request ${path}`);
+    });
+    renderCards([{ url: url(5) }]);
+    await screen.findByText("Review details");
+    fireEvent.click(screen.getByText("Review details"));
+    expect(screen.getByText(/Validation: tests passed/)).toBeTruthy();
+    expect(screen.getByText(/2 files/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Mark ready for review" }));
+    await waitFor(() => expect(request?.method).toBe("POST"));
+    expect(JSON.parse(request?.body as string)).toEqual({ sha: SHA });
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Mark ready for review" })).toBeNull(),
+    );
+    expect(screen.getByRole("button", { name: "Merge" })).toBeEnabled();
+  });
+
+  it("keeps a draft unchanged and shows a failed ready request", async () => {
+    serve((path) =>
+      path.endsWith("/ready")
+        ? json(
+            { error: { code: "head_changed", message: "The branch changed. Review it again." } },
+            409,
+          )
+        : json(card(5, { draft: true })),
+    );
+    renderCards([{ url: url(5) }]);
+    await screen.findByText("Review details");
+    fireEvent.click(screen.getByText("Review details"));
+    fireEvent.click(screen.getByRole("button", { name: "Mark ready for review" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The branch changed");
+    expect(screen.getByRole("button", { name: "Mark ready for review" })).toBeEnabled();
   });
 });

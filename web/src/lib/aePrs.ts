@@ -26,6 +26,10 @@ export interface AePrCard {
   number: number;
   url: string;
   title: string;
+  body?: string;
+  additions?: number;
+  deletions?: number;
+  changed_files?: number;
   state: "open" | "merged" | "closed";
   draft: boolean;
   author: string | null;
@@ -111,6 +115,18 @@ export async function fetchAePrCard(
     `/v1/ae/prs/${repo}/${number}${fresh ? "?fresh=true" : ""}`,
     { method: "GET" },
   );
+  const body = await readJson(res);
+  if (!res.ok) throw new AePrError(res.status, body);
+  return body as AePrCard;
+}
+
+/** Mark the displayed revision ready without merging it. */
+export async function markAePrReady(card: AePrCard): Promise<AePrCard> {
+  const res = await authenticatedFetch(`/v1/ae/prs/${card.repo}/${card.number}/ready`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sha: card.head_sha }),
+  });
   const body = await readJson(res);
   if (!res.ok) throw new AePrError(res.status, body);
   return body as AePrCard;
