@@ -36,6 +36,11 @@ import { composerContextToLabels } from "@/lib/composerContextAdapters";
 import { CHAT_COLUMN_WIDTH } from "./chatLayout";
 
 vi.mock("@/shell/ClaudeAccounts", () => ({ ClaudeAccounts: () => null }));
+vi.mock("@/shell/SwitchAgentDialog", () => ({
+  SwitchAgentDialog: ({ sessionId }: { sessionId: string }) => (
+    <div data-testid="switch-agent-dialog" data-session-id={sessionId} />
+  ),
+}));
 
 // Composer reads workspace files via a TanStack query hook (for "@"-file
 // mentions). These slash-command tests don't exercise that, so stub the hook
@@ -217,6 +222,7 @@ async function openSessionEfforts() {
   if (!screen.queryByTestId("composer-agent-menu")) openSessionConfig();
   fireEvent.click(screen.getByTestId("composer-agent-edit"));
   await screen.findByTestId("composer-agent-efforts");
+  fireEvent.keyDown(screen.getByTestId("composer-agent-effort-trigger"), { key: "ArrowRight" });
 }
 
 function openSessionConfig() {
@@ -1757,7 +1763,110 @@ describe("Composer model/effort label", () => {
     fireEvent.keyDown(row, { key: "ArrowRight" });
     expect(screen.getByTestId("composer-agent-model-opus")).toHaveTextContent("Opus");
     expect(screen.getByTestId("composer-agent-efforts")).toBeVisible();
+    fireEvent.keyDown(screen.getByTestId("composer-agent-effort-trigger"), { key: "ArrowRight" });
     expect(screen.getByTestId("composer-agent-effort-high")).toBeVisible();
+  });
+
+  it("keeps Claude family aliases up front and puts extra variants under More models", async () => {
+    useChatStore.setState({ llmModel: "sonnet" });
+    renderWithTooltips(
+      <Composer
+        {...composerProps({
+          showModels: true,
+          modelPickerKind: "claude",
+          codexModelOptions: CLAUDE_MODEL_OPTIONS,
+        })}
+      />,
+    );
+    await openSessionModels();
+    const models = screen.getByTestId("composer-agent-models");
+    expect(models.querySelector(".grid-cols-2")).toBeTruthy();
+    expect(within(models).getByTestId("composer-agent-model-sonnet")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.queryByTestId("composer-agent-model-sonnet_5")).toBeNull();
+    fireEvent.keyDown(screen.getByTestId("composer-agent-more-models"), { key: "ArrowRight" });
+    expect(screen.getByTestId("composer-agent-model-sonnet_5")).toHaveTextContent("Sonnet 5");
+  });
+
+  it("keeps a selected extra variant visible in the primary grid", async () => {
+    useChatStore.setState({ llmModel: "sonnet_5" });
+    renderWithTooltips(
+      <Composer
+        {...composerProps({
+          showModels: true,
+          modelPickerKind: "claude",
+          codexModelOptions: CLAUDE_MODEL_OPTIONS,
+        })}
+      />,
+    );
+    await openSessionModels();
+    expect(
+      within(screen.getByTestId("composer-agent-models")).getByTestId(
+        "composer-agent-model-sonnet_5",
+      ),
+    ).toHaveAttribute("aria-checked", "true");
+  });
+
+  it.each([null, "gpt-5.6-sol"])(
+    "keeps newest Codex family rows primary with selected older model %s",
+    async (selectedModel) => {
+      useChatStore.setState({ llmModel: selectedModel, sessionHarness: "codex-native" });
+      renderWithTooltips(
+        <Composer
+          {...composerProps({
+            showModels: true,
+            modelPickerKind: "codex",
+            codexModelOptions: [
+              { id: "gpt-5.6-sol", displayName: "GPT-5.6-Sol" },
+              { id: "gpt-5.5-luna", displayName: "GPT-5.5-Luna" },
+              { id: "gpt-5.6-astra", displayName: "GPT-5.6-Astra" },
+              { id: "gpt-6-sol", displayName: "GPT-6-Sol" },
+              { id: "gpt-6-luna", displayName: "GPT-6-Luna" },
+              { id: "gpt-6-astra", displayName: "GPT-6-Astra" },
+            ],
+          })}
+        />,
+      );
+      await openSessionModels();
+      const models = within(screen.getByTestId("composer-agent-models"));
+      for (const id of ["gpt-6-sol", "gpt-6-luna", "gpt-6-astra"])
+        expect(models.getByTestId(`composer-agent-model-${id}`)).toBeVisible();
+      if (selectedModel) {
+        expect(models.getByTestId(`composer-agent-model-${selectedModel}`)).toHaveAttribute(
+          "aria-checked",
+          "true",
+        );
+      } else {
+        expect(screen.queryByTestId("composer-agent-model-gpt-5.6-sol")).toBeNull();
+      }
+      fireEvent.keyDown(screen.getByTestId("composer-agent-more-models"), {
+        key: "ArrowRight",
+      });
+      expect(screen.getByTestId("composer-agent-model-gpt-5.5-luna")).toBeVisible();
+      expect(screen.getByTestId("composer-agent-model-gpt-5.6-astra")).toBeVisible();
+    },
+  );
+
+  it("opens Switch harness for the current session and disables it for a sub-agent", async () => {
+    renderWithTooltips(
+      <Composer {...composerProps({ showModels: true, modelPickerKind: "claude" })} />,
+    );
+    await openSessionModels();
+    fireEvent.click(screen.getByTestId("composer-switch-harness"));
+    expect(screen.getByTestId("switch-agent-dialog")).toHaveAttribute(
+      "data-session-id",
+      "conv_test",
+    );
+    cleanup();
+
+    useChatStore.setState({ subAgentName: "worker" });
+    renderWithTooltips(
+      <Composer {...composerProps({ showModels: true, modelPickerKind: "claude" })} />,
+    );
+    await openSessionModels();
+    expect(screen.getByTestId("composer-switch-harness")).toHaveAttribute("data-disabled");
   });
 
   it("shows the model in the foreground and effort muted", () => {
@@ -2183,9 +2292,8 @@ describe("Composer model/effort label", () => {
     expect(screen.queryByTestId("composer-config-modal")).toBeNull();
   });
 
-  it("keeps the harness identity visible in a disabled shared trigger", () => {
-    // SDK/bundle identity fallback with no config surface: there's no modal
-    // to open, no button in the pill, and thus no hover highlight to honor.
+  it("keeps the harness identity visible when only switch action is available", () => {
+    // The gear opens Switch harness; the model label remains plain text.
     useChatStore.setState({
       sessionModelOverride: null,
       sessionReasoningEffort: null,
@@ -2204,7 +2312,7 @@ describe("Composer model/effort label", () => {
       />,
     );
 
-    expect(screen.getByTestId("composer-config-gear")).toBeDisabled();
+    expect(screen.getByTestId("composer-config-gear")).not.toBeDisabled();
     expect(label().tagName).toBe("SPAN");
   });
 });
@@ -4688,14 +4796,16 @@ describe("Composer config gear", () => {
     expect(gear()).not.toBeNull();
   });
 
-  it("keeps the shared trigger disabled when there is nothing to configure", () => {
-    // No models, no effort, not routable → nothing to configure.
+  it("offers switching on a session with no model or effort controls", () => {
     renderWithTooltips(
       <Composer
         {...composerProps({ showEffort: false, showModels: false, costRoutingEligible: false })}
       />,
     );
-    expect(gear()).toBeDisabled();
+    expect(gear()).not.toBeDisabled();
+    openSessionConfig();
+    fireEvent.keyDown(screen.getByTestId("composer-agent-edit"), { key: "ArrowRight" });
+    expect(screen.getByTestId("composer-switch-harness")).toBeVisible();
   });
 
   it("soft-disables the gear on a read-only session (aria-disabled, click no-ops)", () => {
@@ -4822,7 +4932,7 @@ describe("Composer config gear", () => {
       expect(screen.queryByRole("menuitem", { name: "Smart Routing" })).toBeNull();
       const configMenu = within(screen.getByTestId("composer-agent-config-menu"));
       // Only the Models | Effort divider remains, plus Effort | Fast mode.
-      expect(configMenu.queryAllByRole("separator")).toHaveLength((showModels ? 1 : 0) + 1);
+      expect(configMenu.queryAllByRole("separator")).toHaveLength((showModels ? 1 : 0) + 2);
       expect(configMenu.getByTestId("composer-agent-efforts")).toBeVisible();
     },
   );
@@ -4850,7 +4960,7 @@ describe("Composer config gear", () => {
         "data-disabled",
       );
       // Smart Routing | Models, Models | Effort, then Effort | Fast mode.
-      expect(menu.getAllByRole("separator")).toHaveLength(3);
+      expect(menu.getAllByRole("separator")).toHaveLength(4);
       expect(useChatStore.getState().costControlModeOverride).toBe(costControlModeOverride);
       if (costControlModeOverride === "on") {
         for (const choice of menu.getAllByRole("menuitemcheckbox")) {
@@ -4878,9 +4988,8 @@ describe("Composer config gear", () => {
       await openSessionModels();
       const menu = within(screen.getByTestId("composer-agent-config-menu"));
       const picks = () => [
-        ...CLAUDE_MODEL_OPTIONS.map(({ id }) => menu.getByTestId(`composer-agent-model-${id}`)),
-        ...["low", "medium", "high"].map((level) =>
-          menu.getByTestId(`composer-agent-effort-${level}`),
+        ...["fable", "opus", "sonnet", "haiku"].map((id) =>
+          menu.getByTestId(`composer-agent-model-${id}`),
         ),
       ];
       for (const pick of picks()) expect(pick).not.toHaveAttribute("data-disabled");
@@ -4888,6 +4997,12 @@ describe("Composer config gear", () => {
       act(() => void changeAeFastMode("conv_test", false));
 
       for (const pick of picks()) expect(pick).toHaveAttribute("data-disabled");
+      fireEvent.keyDown(menu.getByTestId("composer-agent-effort-trigger"), { key: "ArrowRight" });
+      for (const level of ["low", "medium", "high"]) {
+        expect(screen.getByTestId(`composer-agent-effort-${level}`)).toHaveAttribute(
+          "data-disabled",
+        );
+      }
       // The menu stays open on the pending switch.
       expect(menu.getByTestId("composer-fast-mode-switch")).toHaveAttribute("aria-busy", "true");
     } finally {
@@ -4975,6 +5090,7 @@ describe("Composer config gear", () => {
     fireEvent.keyDown(screen.getByTestId("composer-config-gear"), { key: "ArrowDown" });
     fireEvent.keyDown(screen.getByTestId("composer-agent-edit"), { key: "ArrowRight" });
     expect(await screen.findByTestId("composer-agent-models")).toBeVisible();
+    fireEvent.keyDown(screen.getByTestId("composer-agent-effort-trigger"), { key: "ArrowRight" });
     expect(await screen.findByTestId("composer-agent-effort-xhigh")).toHaveAttribute(
       "aria-checked",
       "true",

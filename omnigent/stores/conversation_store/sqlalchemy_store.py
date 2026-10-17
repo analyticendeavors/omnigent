@@ -4854,6 +4854,7 @@ class SqlAlchemyConversationStore(ConversationStore):
         carry_history_into_native: bool,
         presentation_labels: dict[str, str],
         previous_builtin_id: str | None,
+        inference_snapshot: dict[str, Any] | None = None,
     ) -> Conversation:
         """
         Rebind a session in place to a different (cloned) agent.
@@ -4875,9 +4876,16 @@ class SqlAlchemyConversationStore(ConversationStore):
         :param presentation_labels: Target-harness ui/wrapper labels.
         :param previous_builtin_id: Built-in switched away from, or
             ``None``.
+        :param inference_snapshot: Validated replacement snapshot; ``None``
+            preserves the existing snapshot.
         :returns: The updated :class:`Conversation`.
         :raises LookupError: If *conversation_id* does not exist.
         """
+        encoded_inference_snapshot = (
+            json.dumps(inference_snapshot) if inference_snapshot is not None else None
+        )
+        if encoded_inference_snapshot is not None:
+            _validate_inference_snapshot(encoded_inference_snapshot)
         now = now_epoch()
         drop_keys = (
             set(_INSTANCE_SCOPED_LABEL_KEYS)
@@ -4975,7 +4983,11 @@ class SqlAlchemyConversationStore(ConversationStore):
             if self._meta_supports_for_update:
                 meta_query = meta_query.with_for_update()
             meta = session.scalars(meta_query).first()
+            if meta is None and encoded_inference_snapshot is not None:
+                raise LookupError(f"session metadata not found: {conversation_id!r}")
             if meta is not None:
+                if encoded_inference_snapshot is not None:
+                    meta.inference_snapshot = encoded_inference_snapshot
                 meta.external_session_id = None
                 state, _ = _decode_session_state(meta.session_state)
                 meta.session_state = _encode_session_state(state, None)

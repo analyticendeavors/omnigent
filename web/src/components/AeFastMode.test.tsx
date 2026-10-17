@@ -89,7 +89,8 @@ describe("AeFastModeSection", () => {
     renderSection();
 
     await waitFor(() => expect(fastSwitch()).toHaveAttribute("aria-checked", "true"));
-    expect(screen.getByText(AE_FAST_MODE_HINT)).toBeInTheDocument();
+    expect(screen.getByText(AE_FAST_MODE_HINT)).toHaveClass("sr-only");
+    expect(fastSwitch()).toHaveAttribute("title", AE_FAST_MODE_HINT);
     expect(fastSwitch()).toHaveAccessibleDescription(AE_FAST_MODE_HINT);
     expect(note()).toBeNull();
     expect(mocks.fetch).toHaveBeenCalledWith(PATH, { method: "GET" });
@@ -140,7 +141,7 @@ describe("AeFastModeSection", () => {
     serve(false, () => Promise.resolve(json(200, { enabled: true })));
     renderSection({ model, modelLabel });
 
-    await waitFor(() => expect(note()).toHaveTextContent("Opus only"));
+    await waitFor(() => expect(note()).toHaveTextContent("Choose a supported Opus model"));
     expect(fastSwitch()).toHaveAttribute("data-disabled");
     fireEvent.click(fastSwitch());
     expect(puts()).toHaveLength(0);
@@ -152,7 +153,7 @@ describe("AeFastModeSection", () => {
   ])("can be turned off on a model without fast mode while %s", async (_label, state) => {
     serve(state, () => Promise.resolve(json(200, { enabled: false })));
     renderSection({ model: "claude-sonnet-5", modelLabel: "Sonnet 5" });
-    await waitFor(() => expect(note()).toHaveTextContent("Opus only"));
+    await waitFor(() => expect(note()).toHaveTextContent("Choose a supported Opus model"));
     expect(fastSwitch()).toHaveAttribute("aria-checked", state ? "true" : "false");
     expect(fastSwitch()).not.toHaveAttribute("data-disabled");
 

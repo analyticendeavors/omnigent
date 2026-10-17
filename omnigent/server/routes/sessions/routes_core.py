@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import json
 import secrets
 import time
@@ -3640,13 +3641,6 @@ def register_core_routes(
                 code=ErrorCode.INVALID_INPUT,
             )
 
-        if session.inference_snapshot is not None:
-            raise OmnigentError(
-                "This session has a saved harness and provider configuration. "
-                "Start a new session to choose another agent.",
-                code=ErrorCode.INVALID_INPUT,
-            )
-
         # Switching mid-turn would tear the running harness subprocess out
         # from under an active stream. Reject; the caller retries when idle.
         if _session_status_from_cache(session_id) == "running":
@@ -3690,7 +3684,7 @@ def register_core_routes(
         try:
             from omnigent.server.routes import sessions as _sessions_facade
 
-            await asyncio.to_thread(
+            target_bundle = await asyncio.to_thread(
                 _sessions_facade.get_agent_cache().load,
                 target_agent.id,
                 target_agent.bundle_location,
@@ -3733,6 +3727,56 @@ def register_core_routes(
         copy_model_settings = await asyncio.to_thread(
             _same_provider_family, current_agent, target_agent
         )
+        replacement_snapshot: dict[str, Any] | None = None
+        if session.inference_snapshot is not None:
+            from omnigent.inference_config import resolve_bound_provider
+            from omnigent.server.auth import RESERVED_USER_LOCAL
+            from omnigent.server.routes.sandbox_inference import (
+                actual_harness,
+                configured_snapshot,
+                inference_service,
+                selected_catalog_model,
+            )
+
+            source_snapshot = session.inference_snapshot
+            if not configured_snapshot(source_snapshot):
+                raise OmnigentError(
+                    "The saved inference configuration has no source harness binding",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            if source_snapshot["owner_id"] != (user_id or RESERVED_USER_LOCAL):
+                raise OmnigentError(
+                    "This session's inference configuration belongs to another user. "
+                    "Start a new session to use your own provider connection.",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            target_spec = target_bundle.spec
+            target_harness = actual_harness(target_spec)
+            replacement_snapshot = copy.deepcopy(source_snapshot)
+            replacement_snapshot["harness"] = target_harness
+            bound_provider = resolve_bound_provider(
+                replacement_snapshot["runtime_config"], target_harness, target_spec.executor.auth
+            )
+            if bound_provider is None:
+                raise OmnigentError(
+                    f"Harness {target_harness!r} is not bound in this session's saved inference configuration",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            if target_spec.executor.profile:
+                raise OmnigentError(
+                    "The target agent's Databricks profile conflicts with the saved provider",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            if session.cost_control_mode_override == "on":
+                raise OmnigentError(
+                    "Automatic provider routing is unavailable for a bound inference profile",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            catalog = await inference_service(request).catalog(replacement_snapshot)
+            selected_catalog_model(catalog, None)
+            if copy_model_settings and session.model_override is not None:
+                selected_catalog_model(catalog, session.model_override)
+            replacement_snapshot["catalog"] = catalog
         # claude/codex/pi native can replay fork history (each rebuilds its
         # resumable session file from the copied items); cursor-native can't
         # (no resumable session file), so don't stamp a carry-history promise
@@ -3775,6 +3819,11 @@ def register_core_routes(
                 carry_history_into_native=carry_history_into_native,
                 presentation_labels=presentation_labels,
                 previous_builtin_id=previous_builtin_id,
+                **(
+                    {"inference_snapshot": replacement_snapshot}
+                    if replacement_snapshot is not None
+                    else {}
+                ),
             )
         except LookupError as exc:
             raise OmnigentError(

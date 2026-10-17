@@ -9,6 +9,7 @@
 // Python class name lowercased (e.g. ResponseCreated → "response_created").
 
 import type { RoutingDecisionExtras } from "./routingDecision";
+import type { CodexQuestion } from "./blocks";
 import type {
   BackgroundTaskInfo,
   CodexPersistMode,
@@ -322,6 +323,7 @@ export interface NativeToolCall {
 export interface MessageDone {
   type: "message_done";
   content: Record<string, unknown>[];
+  codexQuestions?: CodexQuestion[];
   itemId: string;
   responseId: string;
   /** Native live-preview stream finalized by this item. */

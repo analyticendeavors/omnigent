@@ -10,6 +10,7 @@ import {
 } from "@/components/ai-elements/conversation";
 import { Message, MessageContent } from "@/components/ai-elements/message";
 import { ElicitationCard } from "@/components/blocks/ApprovalCard";
+import { CodexQuestionCard, isCodexQuestionAnswer } from "./CodexQuestionCard";
 import { cn } from "@/lib/utils";
 import { getCurrentAuthorId } from "@/lib/identity";
 import { hasCommandModifier } from "@/lib/hotkeys";
@@ -22,6 +23,7 @@ import {
   liveCandidateAssistantIndex,
 } from "@/lib/renderItems";
 import { useChatStore } from "@/store/chatStore";
+import type { AnyBlock, CodexQuestion } from "@/lib/blocks";
 import { TranscriptScrollbar } from "@/pages/TranscriptScrollbar";
 import { TurnRail, type Turn } from "@/pages/TurnRail";
 import { StreamBudgetBanner } from "@/components/StreamBudgetBanner";
@@ -79,6 +81,25 @@ export interface TranscriptProps {
   sandboxLaunching: boolean;
   /** Pub/sub ref for the LatestTurnSpacer's synchronous re-measure handle. */
   spacerMeasureRef: React.RefObject<(() => void) | null>;
+}
+
+export function pendingCodexQuestions(
+  blocks: AnyBlock[],
+): { itemId: string; questions: CodexQuestion[] }[] {
+  return blocks.flatMap((block, index) => {
+    if (block.type !== "text_done" || !block.ctx.itemId || !block.codexQuestions?.length) return [];
+    const answered = blocks
+      .slice(index + 1)
+      .some(
+        (later) =>
+          later.type === "user_message" &&
+          later.content.some(
+            (part) =>
+              part.type === "input_text" && isCodexQuestionAnswer(part.text, block.codexQuestions!),
+          ),
+      );
+    return answered ? [] : [{ itemId: block.ctx.itemId, questions: block.codexQuestions }];
+  });
 }
 
 export function isNativeFindShortcut(
@@ -160,6 +181,7 @@ function TranscriptImpl({
   ]);
 
   const pendingElicitations = useMemo(() => collectPendingElicitations(bubbles), [bubbles]);
+  const codexQuestions = useMemo(() => pendingCodexQuestions(blocks), [blocks]);
   const streamBubbles = useMemo(
     () => (pendingElicitations.length === 0 ? bubbles : stripPendingElicitations(bubbles)),
     [bubbles, pendingElicitations.length],
@@ -386,6 +408,19 @@ function TranscriptImpl({
                     </MessageContent>
                   </Message>
                 ))}
+                {display.conversationId &&
+                  codexQuestions.map(({ itemId, questions }, index) => (
+                    <Message key={itemId} from="assistant" className="max-w-full">
+                      <MessageContent className="w-full">
+                        <CodexQuestionCard
+                          conversationId={display.conversationId!}
+                          itemId={itemId}
+                          questions={questions}
+                          autoOpen={index === codexQuestions.length - 1}
+                        />
+                      </MessageContent>
+                    </Message>
+                  ))}
                 {/* Working… shimmer, lit for the whole busy turn. */}
                 {showWorkingIndicator && <WorkingIndicator />}
                 {/* Managed-sandbox stage cue; only when Working is absent. */}

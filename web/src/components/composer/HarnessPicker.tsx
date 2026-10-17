@@ -503,6 +503,7 @@ export function HarnessPickerConfigRow({
   testId,
   valueTestId,
   configTestId,
+  configClassName,
   children,
 }: {
   label: string;
@@ -514,6 +515,7 @@ export function HarnessPickerConfigRow({
   testId: string;
   valueTestId?: string;
   configTestId: string;
+  configClassName?: string;
   children: ReactNode;
 }) {
   const content = (
@@ -564,7 +566,10 @@ export function HarnessPickerConfigRow({
         {content}
       </DropdownMenuSubTrigger>
       <HarnessPickerSubContent
-        className="composer-agent-menu composer-agent-config-menu max-h-[var(--radix-dropdown-menu-content-available-height)] w-[13.75rem] max-w-[calc(100vw-2rem)] overflow-y-auto p-2"
+        className={cn(
+          "composer-agent-menu composer-agent-config-menu max-h-[var(--radix-dropdown-menu-content-available-height)] w-[13.75rem] max-w-[calc(100vw-2rem)] overflow-y-auto p-2",
+          configClassName,
+        )}
         sideOffset={-4}
         data-testid={configTestId}
         onFocusOutside={(event) => {

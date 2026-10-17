@@ -1847,6 +1847,7 @@ class ConversationStore(ABC):
         carry_history_into_native: bool,
         presentation_labels: dict[str, str],
         previous_builtin_id: str | None,
+        inference_snapshot: dict[str, Any] | None = None,
     ) -> Conversation:
         """
         Rebind a session in place to a different (cloned) agent.
@@ -1897,6 +1898,8 @@ class ConversationStore(ABC):
             switching away from, stamped as
             :data:`SWITCH_PREVIOUS_BUILTIN_LABEL_KEY` for a one-click
             "Switch back". ``None`` leaves it unset.
+        :param inference_snapshot: Validated replacement snapshot. ``None``
+            preserves the existing snapshot.
         :returns: The updated :class:`Conversation`.
         :raises LookupError: If no conversation with *conversation_id*
             exists.

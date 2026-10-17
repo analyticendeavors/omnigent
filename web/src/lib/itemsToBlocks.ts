@@ -30,6 +30,7 @@ import {
   type ToolGroup,
   type ToolResultBlock,
   type UserMessageBlock,
+  codexQuestionsFrom,
   answeredElicitationItemId,
   slashCommandEchoItemId,
   slashCommandEchoText,
@@ -344,6 +345,9 @@ function assistantMessageToBlock(item: MessageItem): TextDone {
     ctx: ctxFor(item),
     fullText: text,
     hasCodeBlocks: text.includes("```"),
+    ...(item.codex_questions?.length
+      ? { codexQuestions: codexQuestionsFrom(item.codex_questions) }
+      : {}),
     ...(item.interrupted === true ? { interrupted: true } : {}),
   };
 }

@@ -311,6 +311,7 @@ class MessageData(BaseModel):
     is_meta: bool = Field(default=False, exclude_if=lambda value: value is False)
     interrupted: bool = Field(default=False, exclude_if=lambda value: value is False)
     stream_message_id: str | None = None
+    codex_questions: list[dict[str, Any]] | None = None
 
     @field_validator("content")
     @classmethod

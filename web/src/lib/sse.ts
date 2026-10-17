@@ -8,6 +8,7 @@
 // reducer never seeing certain events, which the reducer's tests can't
 // catch — please add an SSE-parser test when you touch this.
 
+import { codexQuestionsFrom } from "./blocks";
 import type {
   BrowserActionRequestEvent,
   ClientTaskCancel,
@@ -1210,6 +1211,9 @@ function parseOutputItem(data: Record<string, unknown>): StreamEvent | null {
     return {
       type: "message_done",
       content: Array.isArray(content) ? (content as Record<string, unknown>[]) : [],
+      ...(codexQuestionsFrom(rec.codex_questions).length
+        ? { codexQuestions: codexQuestionsFrom(rec.codex_questions) }
+        : {}),
       itemId,
       responseId,
       ...(messageId !== undefined ? { messageId } : {}),

@@ -18,6 +18,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient, MockTransport, Request, Response
 
 from omnigent.db.utils import generate_agent_id
+from omnigent.entities import MessageData, NewConversationItem
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.server.app import create_app
 from omnigent.server.managed_hosts import ManagedSandboxConfig, ManagedSandboxDeployment
@@ -690,7 +691,7 @@ async def test_configured_session_rejects_agent_switch_before_mutation(
         f"/v1/sessions/{session_id}/switch-agent", json={"agent_id": target_id}
     )
     assert response.status_code == 400, response.text
-    assert "Start a new session" in response.text
+    assert "not bound" in response.text or "no source harness binding" in response.text
     assert env.persisted() == before
     saved = env.store.get_conversation(session_id)
     assert saved is not None and original is not None
@@ -698,6 +699,80 @@ async def test_configured_session_rejects_agent_switch_before_mutation(
     assert saved.model_override == original.model_override
     assert saved.inference_snapshot == original.inference_snapshot
     assert env.app.state.agent_store.get(original.agent_id) is not None
+
+
+@pytest.mark.parametrize("target_harness", ["codex-native", "claude-native"])
+async def test_configured_switch_keeps_saved_map_and_history(env: _Env, target_harness: str):
+    env.catalog.runtime_config["providers"]["bifrost"]["anthropic"] = {
+        "base_url": "https://gateway.example/anthropic",
+        "api_key_ref": "env:POD_GATEWAY_KEY",
+    }
+    env.catalog.runtime_config["inference"]["harnesses"][target_harness] = copy.deepcopy(
+        env.catalog.runtime_config["inference"]["harnesses"]["codex"]
+    )
+    created = await _json_create(env, model_override="gateway/fast")
+    assert created.status_code == 201, created.text
+    session_id = created.json()["id"]
+    env.store.update_conversation(session_id, reasoning_effort="high")
+    env.store.append(
+        session_id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="resp_switch_history",
+                data=MessageData(role="user", content=[{"type": "input_text", "text": "keep me"}]),
+            )
+        ],
+    )
+    before = env.store.get_conversation(session_id)
+    assert before is not None and before.inference_snapshot is not None
+    saved_map = copy.deepcopy(before.inference_snapshot["runtime_config"])
+    target_id = await _builtin(env, target_harness)
+    response = await env.client.post(
+        f"/v1/sessions/{session_id}/switch-agent", json={"agent_id": target_id}
+    )
+    assert response.status_code == 200, response.text
+    after = env.store.get_conversation(session_id)
+    assert after is not None and after.inference_snapshot is not None
+    assert after.id == before.id
+    assert after.agent_id != before.agent_id
+    assert after.inference_snapshot["harness"] == target_harness
+    assert after.inference_snapshot["runtime_config"] == saved_map
+    assert after.model_override == ("gateway/fast" if target_harness == "codex-native" else None)
+    assert after.reasoning_effort == ("high" if target_harness == "codex-native" else None)
+    assert len(env.store.list_items(session_id).data) == 1
+
+
+async def test_configured_switch_rejects_unavailable_target_model_without_mutation(env: _Env):
+    env.catalog.runtime_config["inference"]["harnesses"]["codex-native"] = copy.deepcopy(
+        env.catalog.runtime_config["inference"]["harnesses"]["codex"]
+    )
+    created = await _json_create(env, model_override="gateway/fast")
+    assert created.status_code == 201, created.text
+    session_id = created.json()["id"]
+    target_id = await _builtin(env, "codex-native")
+    before = env.store.get_conversation(session_id)
+    assert before is not None
+
+    async def unavailable_catalog(snapshot: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "status": "ready",
+            "default_model": "gateway/main",
+            "models": [{"id": "gateway/main"}],
+        }
+
+    env.catalog.catalog = unavailable_catalog  # type: ignore[method-assign]
+    response = await env.client.post(
+        f"/v1/sessions/{session_id}/switch-agent", json={"agent_id": target_id}
+    )
+    assert response.status_code == 400, response.text
+    assert "configured model list" in response.text
+    after = env.store.get_conversation(session_id)
+    assert after is not None
+    assert after.agent_id == before.agent_id
+    assert after.inference_snapshot == before.inference_snapshot
+    assert after.model_override == before.model_override
+    assert env.app.state.agent_store.get(before.agent_id) is not None
 
 
 @pytest.mark.parametrize("unbound_harness", [False, True])

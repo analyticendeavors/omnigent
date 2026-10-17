@@ -12,7 +12,7 @@
 // passed through silently as `BaseItem & Record<string, unknown>` so the
 // translator can skip them without crashing.
 
-import type { MessageContentBlock } from "./blocks";
+import type { CodexQuestion, MessageContentBlock } from "./blocks";
 
 export interface BaseItem {
   id: string;
@@ -38,6 +38,7 @@ export interface MessageItem extends BaseItem {
   interrupted?: boolean;
   /** Native live-preview stream finalized by this persisted assistant message. */
   stream_message_id?: string;
+  codex_questions?: CodexQuestion[];
 }
 
 export interface FunctionCallItem extends BaseItem {

@@ -79,6 +79,27 @@ export type MessageContentBlock =
   | { type: "input_file"; file_id?: string; filename?: string }
   | { type: "output_text"; text: string };
 
+export interface CodexQuestion {
+  title: string;
+  options?: string[];
+}
+
+export function codexQuestionsFrom(value: unknown): CodexQuestion[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((raw): CodexQuestion[] => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+    const question = raw as Record<string, unknown>;
+    if (typeof question.title !== "string" || !question.title.trim()) return [];
+    if (
+      question.options !== undefined &&
+      (!Array.isArray(question.options) ||
+        !question.options.every((option): option is string => typeof option === "string"))
+    )
+      return [];
+    return [{ title: question.title, ...(question.options ? { options: question.options } : {}) }];
+  });
+}
+
 /** Marks an attachment whose upload has not returned a file id yet. Shared so
  * the writer that mints the sentinel and the readers that strip it can't drift. */
 export const PENDING_FILE_PREFIX = "pending:";
@@ -373,6 +394,7 @@ export interface TextDone {
   ctx: BlockContext;
   fullText: string;
   hasCodeBlocks: boolean;
+  codexQuestions?: CodexQuestion[];
   /** True when this persisted assistant text came from an interrupted turn. */
   interrupted?: boolean;
 }

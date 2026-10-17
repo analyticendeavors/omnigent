@@ -46,6 +46,37 @@ function blockTypes(blocks: AnyBlock[]): string[] {
 }
 
 describe("BlockStream — response_start", () => {
+  it("preserves questions when a text message was already streamed", () => {
+    const blocks = reduce([
+      { type: "text_delta", delta: "Choose" },
+      {
+        type: "message_done",
+        itemId: "q_1",
+        responseId: "resp_1",
+        content: [{ type: "output_text", text: "Choose" }],
+        codexQuestions: [{ title: "Which path?", options: ["A", "B"] }],
+      },
+    ]);
+    expect(blocks.find((block) => block.type === "text_done")).toMatchObject({
+      ctx: { itemId: "q_1" },
+      codexQuestions: [{ title: "Which path?", options: ["A", "B"] }],
+    });
+  });
+  it("renders a question-only agent message", () => {
+    const blocks = reduce([
+      {
+        type: "message_done",
+        itemId: "q_2",
+        responseId: "resp_2",
+        content: [],
+        codexQuestions: [{ title: "Explain?" }],
+      },
+    ]);
+    expect(blocks.find((block) => block.type === "text_done")).toMatchObject({
+      ctx: { itemId: "q_2" },
+      codexQuestions: [{ title: "Explain?" }],
+    });
+  });
   it("populates conversationId from response.created", () => {
     const blocks = reduce([
       {

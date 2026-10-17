@@ -2291,6 +2291,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       // bubble. Settle local state from the POST response instead of
       // depending on the live stream being connected.
       if (postResult.denied) {
+        opts?.onError?.("Message was denied by policy.");
         // Target the session this send posted to: the user may have navigated
         // away while the POST was open, and settling the VISIBLE conversation
         // would clobber an unrelated chat's composer state.
