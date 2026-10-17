@@ -38,7 +38,7 @@ function child(id: string, extra: Record<string, unknown> = {}) {
 function route(children: Record<string, unknown>[] | null, sessions: Record<string, object> = {}) {
   vi.mocked(authenticatedFetch).mockImplementation((input) => {
     const url = String(input);
-    if (url === "/v1/ae/limits") return json({ now: "", harnesses: {} });
+    if (url.split("?")[0] === "/v1/ae/limits") return json({ now: "", harnesses: {} });
     if (url.endsWith("/child_sessions")) {
       return children ? json({ object: "list", data: children }) : json({ detail: "x" }, 500);
     }

@@ -155,7 +155,23 @@ def account_env(name: str | None = None) -> dict[str, str]:
         raise RuntimeError(
             "The selected Claude account token is unavailable. Select another account."
         )
-    return {"CLAUDE_CODE_OAUTH_TOKEN": token, "ANTHROPIC_API_KEY": "", "ANTHROPIC_AUTH_TOKEN": ""}
+    # ``OMNIGENT_CLAUDE_ACCOUNT`` names the account to the statusLine shim, so
+    # usage readers can tell a backup account's windows from the default login's.
+    return {
+        "CLAUDE_CODE_OAUTH_TOKEN": token,
+        "ANTHROPIC_API_KEY": "",
+        "ANTHROPIC_AUTH_TOKEN": "",
+        "OMNIGENT_CLAUDE_ACCOUNT": name,
+    }
+
+
+def account_label(name: str) -> str:
+    """Return the editable label for *name*, or *name* itself; never loads secrets."""
+    try:
+        label = _read().get("labels", {}).get(name)
+    except Exception:
+        return name
+    return label if isinstance(label, str) and label else name
 
 
 def account_env_for_launch(

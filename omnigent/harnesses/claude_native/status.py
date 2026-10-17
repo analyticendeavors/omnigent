@@ -24,6 +24,9 @@ _CONTEXT_FILE = "context.json"
 # (no Python spawn on Claude's blocking statusLine path). The forwarder
 # normalizes it into ``context.json`` via :func:`sync_raw_status_context`.
 CONTEXT_RAW_FILE = "context_raw.json"
+# Backup account name the session runs on, rewritten on every statusLine
+# render; empty for the box's default login.
+CLAUDE_ACCOUNT_FILE = "claude_account"
 
 
 def normalize_status_payload(payload: dict[str, object]) -> dict[str, object] | None:

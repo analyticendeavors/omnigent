@@ -11100,7 +11100,11 @@ def test_statusline_shell_command_captures_and_chains(
     forwarder-side sync, and the chained command must receive the exact
     stdin Claude sent.
     """
-    from omnigent.harnesses.claude_native.status import CONTEXT_RAW_FILE, sync_raw_status_context
+    from omnigent.harnesses.claude_native.status import (
+        CLAUDE_ACCOUNT_FILE,
+        CONTEXT_RAW_FILE,
+        sync_raw_status_context,
+    )
 
     chain_out = tmp_path / "chain_out.json"
     monkeypatch.setattr(
@@ -11118,12 +11122,30 @@ def test_statusline_shell_command_captures_and_chains(
             "model": {"id": "claude-opus-4-8"},
         }
     )
+    default_env = {k: v for k, v in os.environ.items() if k != "OMNIGENT_CLAUDE_ACCOUNT"}
     result = subprocess.run(
-        ["/bin/sh", "-c", command], input=payload, capture_output=True, text=True
+        ["/bin/sh", "-c", command],
+        input=payload,
+        capture_output=True,
+        text=True,
+        env=default_env,
     )
     assert result.returncode == 0, result.stderr
     assert (tmp_path / CONTEXT_RAW_FILE).read_text("utf-8") == payload
     assert chain_out.read_text("utf-8") == payload
+    # The default login records an empty account sidecar on every render.
+    assert (tmp_path / CLAUDE_ACCOUNT_FILE).read_text("utf-8") == ""
+
+    backup = subprocess.run(
+        ["/bin/sh", "-c", command],
+        input=payload,
+        capture_output=True,
+        text=True,
+        env={**default_env, "OMNIGENT_CLAUDE_ACCOUNT": "AE Backup"},
+    )
+    assert backup.returncode == 0, backup.stderr
+    assert (tmp_path / CLAUDE_ACCOUNT_FILE).read_text("utf-8") == "AE Backup"
+    assert not list(tmp_path.glob(f"{CLAUDE_ACCOUNT_FILE}.*.tmp"))
 
     sync_raw_status_context(tmp_path, None)
     written = json.loads((tmp_path / "context.json").read_text("utf-8"))
