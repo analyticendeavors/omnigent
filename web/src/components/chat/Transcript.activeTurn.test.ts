@@ -34,6 +34,53 @@ it("keeps a repeated Codex question pending after an earlier answer", () => {
   ]);
 });
 
+function codexQuestion(id: string): ConversationItem {
+  return {
+    id,
+    type: "message",
+    response_id: id,
+    status: "completed",
+    role: "assistant",
+    model: "codex",
+    content: [{ type: "output_text", text: "Choose" }],
+    codex_questions: [{ title: `Which path for ${id}?` }],
+  };
+}
+
+function userItem(id: string, text: string): ConversationItem {
+  return {
+    id,
+    type: "message",
+    response_id: id,
+    status: "completed",
+    role: "user",
+    content: [{ type: "input_text", text }],
+  };
+}
+
+it("retires a Codex question once a plain chat reply follows it", () => {
+  const blocks = itemsToBlocks([codexQuestion("q_1"), userItem("u_1", "Do the first one")]);
+  expect(pendingCodexQuestions(blocks)).toEqual([]);
+});
+
+it("shows only the newest of several unanswered Codex questions", () => {
+  const blocks = itemsToBlocks([codexQuestion("q_1"), codexQuestion("q_2")]);
+  expect(pendingCodexQuestions(blocks).map((q) => q.itemId)).toEqual(["q_2"]);
+});
+
+it("lets a newer Codex question with no item id supersede an older one", () => {
+  const blocks = itemsToBlocks([codexQuestion("q_1"), codexQuestion("q_2")]);
+  const newest = blocks.findLast((block) => block.type === "text_done" && block.codexQuestions);
+  if (!newest || newest.type !== "text_done") throw new Error("no question block");
+  newest.ctx = { ...newest.ctx, itemId: null };
+  expect(pendingCodexQuestions(blocks)).toEqual([]);
+});
+
+it("keeps a Codex question pending after a system notice", () => {
+  const blocks = itemsToBlocks([codexQuestion("q_1"), userItem("u_1", "[System: interrupted]")]);
+  expect(pendingCodexQuestions(blocks).map((q) => q.itemId)).toEqual(["q_1"]);
+});
+
 function user(itemId: string): Extract<Bubble, { kind: "user" }> {
   return { kind: "user", itemId, content: [{ type: "input_text", text: `msg ${itemId}` }] };
 }

@@ -16,6 +16,20 @@ beforeEach(() => {
 });
 
 describe("CodexQuestionCard", () => {
+  it("renders inline in Claude's question form, with no dialog", () => {
+    render(
+      <CodexQuestionCard
+        conversationId="conv_1"
+        itemId="item_0"
+        questions={[{ title: "Which path?", options: ["A", "B"] }]}
+      />,
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByTestId("ask-user-question-form")).toBeTruthy();
+    expect(screen.getByText("Which path?")).toBeTruthy();
+    expect(screen.getByRole("radio", { name: "B" })).toBeTruthy();
+  });
+
   it("sends one normal user answer and stays answered after reload", async () => {
     send.mockResolvedValue(undefined);
     const props = {
@@ -24,22 +38,43 @@ describe("CodexQuestionCard", () => {
       questions: [{ title: "Which path?", options: ["A", "B"] }],
     };
     const view = render(<CodexQuestionCard {...props} />);
-    fireEvent.click(screen.getByRole("button", { name: "B" }));
-    fireEvent.click(screen.getByRole("button", { name: "Send answer" }));
-    expect(screen.getByRole("button", { name: "Sending..." })).toBeDisabled();
+    fireEvent.click(screen.getByRole("radio", { name: "B" }));
+    fireEvent.click(screen.getByTestId("ask-user-question-submit"));
     await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
     expect(send.mock.calls[0][0]).toBe("Answer to Codex questions:\nWhich path?: B");
     expect(send.mock.calls[0][3]).toMatchObject({
       pinnedConversationId: "conv_1",
       stableId: "07070707070707070707070707070707",
     });
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Send answer" })).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("codex-question-card")).toBeNull());
     view.unmount();
     render(<CodexQuestionCard {...props} />);
-    expect(screen.queryByRole("button", { name: "Send answer" })).toBeNull();
+    expect(screen.queryByTestId("codex-question-card")).toBeNull();
   });
 
-  it("accepts free text and leaves failed answers available to retry", async () => {
+  it("answers several questions in one message, free text included", async () => {
+    send.mockResolvedValue(undefined);
+    render(
+      <CodexQuestionCard
+        conversationId="conv_1"
+        itemId="item_5"
+        questions={[{ title: "Which path?", options: ["A", "B"] }, { title: "Why?" }]}
+      />,
+    );
+    fireEvent.click(screen.getByRole("radio", { name: "A" }));
+    fireEvent.click(screen.getByTestId("ask-user-question-next"));
+    fireEvent.change(screen.getByTestId("ask-user-question-custom-input"), {
+      target: { value: "  Faster\n  and safer  " },
+    });
+    fireEvent.click(screen.getByTestId("ask-user-question-submit"));
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    // A line break in a typed answer must not start a line of its own.
+    expect(send.mock.calls[0][0]).toBe(
+      "Answer to Codex questions:\nWhich path?: A\nWhy?: Faster and safer",
+    );
+  });
+
+  it("leaves a failed answer on screen to retry", async () => {
     send.mockImplementation(async (_text, _agent, _files, opts) => opts.onError("Offline"));
     render(
       <CodexQuestionCard
@@ -48,45 +83,46 @@ describe("CodexQuestionCard", () => {
         questions={[{ title: "Describe it" }]}
       />,
     );
-    fireEvent.change(screen.getByRole("textbox", { name: "Free text answer for Describe it" }), {
+    fireEvent.change(screen.getByTestId("ask-user-question-custom-input"), {
       target: { value: "My answer" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Send answer" }));
+    fireEvent.click(screen.getByTestId("ask-user-question-submit"));
     await waitFor(() => expect(screen.getByRole("alert").textContent).toBe("Offline"));
-    expect(screen.getByRole("button", { name: "Send answer" })).toBeEnabled();
+    expect(screen.getByTestId("ask-user-question-submit")).toBeEnabled();
     expect(localStorage.getItem("codex-question:conv_1:item_2:sent")).toBeNull();
   });
 
-  it("reopens a dismissed prompt without answering it", () => {
+  it("cancel folds the card to a link that brings it back, without sending", () => {
+    const props = {
+      conversationId: "conv_1",
+      itemId: "item_3",
+      questions: [{ title: "Describe it" }],
+    };
+    const view = render(<CodexQuestionCard {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByTestId("codex-question-card")).toBeNull();
+    expect(send).not.toHaveBeenCalled();
+    view.unmount();
+    render(<CodexQuestionCard {...props} />);
+    expect(screen.queryByTestId("codex-question-card")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show Codex's question" }));
+    expect(screen.getByTestId("codex-question-card")).toBeTruthy();
+    expect(localStorage.getItem("codex-question:conv_1:item_3:dismissed")).toBeNull();
+  });
+
+  it("disables the form while the answer is sending", async () => {
+    send.mockReturnValue(new Promise(() => {}));
     render(
       <CodexQuestionCard
         conversationId="conv_1"
-        itemId="item_3"
-        questions={[{ title: "Describe it" }]}
+        itemId="item_6"
+        questions={[{ title: "Which path?", options: ["A", "B"] }]}
       />,
     );
-    expect(screen.getByRole("dialog", { name: "Codex has questions" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    expect(screen.queryByRole("dialog")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Answer Codex questions" }));
-    expect(screen.getByRole("dialog", { name: "Codex has questions" })).toBeTruthy();
-    expect(send).not.toHaveBeenCalled();
-  });
-
-  it("opens when an older pending prompt becomes newest", () => {
-    const props = {
-      conversationId: "conv_1",
-      itemId: "item_4",
-      questions: [{ title: "What next?" }],
-    };
-    const view = render(<CodexQuestionCard {...props} autoOpen={false} />);
-    expect(screen.queryByRole("dialog")).toBeNull();
-    view.rerender(<CodexQuestionCard {...props} autoOpen />);
-    expect(screen.getByRole("dialog", { name: "Codex has questions" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    view.unmount();
-    render(<CodexQuestionCard {...props} autoOpen />);
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(screen.getByRole("button", { name: "Answer Codex questions" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: "A" }));
+    fireEvent.click(screen.getByTestId("ask-user-question-submit"));
+    await waitFor(() => expect(screen.getByText("Sending...")).toBeTruthy());
+    expect(screen.getByTestId("ask-user-question-submit")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
   });
 });

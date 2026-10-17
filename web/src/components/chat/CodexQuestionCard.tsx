@@ -1,46 +1,53 @@
-import { useEffect, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import {
+  AskUserQuestionForm,
+  type AskUserQuestionAnswers,
+} from "@/components/blocks/AskUserQuestionForm";
 import type { CodexQuestion } from "@/lib/blocks";
 import { useChatStore } from "@/store/chatStore";
+import { aeCodexAnswerText, aeCodexAsClaudeQuestions } from "./aeCodexQuestions";
 
-export function isCodexQuestionAnswer(text: string, questions: CodexQuestion[]): boolean {
-  return (
-    text.startsWith("Answer to Codex questions:\n") &&
-    questions.every((question) => text.includes(`\n${question.title}: `))
-  );
-}
-
+/** Codex's questions inline in the chat, in the same form Claude's questions use. */
 export function CodexQuestionCard({
   conversationId,
   itemId,
   questions,
-  autoOpen = true,
 }: {
   conversationId: string;
   itemId: string;
   questions: CodexQuestion[];
-  autoOpen?: boolean;
 }) {
   const storageKey = `codex-question:${conversationId}:${itemId}`;
-  const [answers, setAnswers] = useState(() => questions.map(() => ""));
+  const formQuestions = useMemo(() => aeCodexAsClaudeQuestions(questions), [questions]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [sent, setSent] = useState(() => localStorage.getItem(`${storageKey}:sent`) === "1");
-  const [open, setOpen] = useState(
-    () => autoOpen && localStorage.getItem(`${storageKey}:dismissed`) !== "1",
+  const [dismissed, setDismissed] = useState(
+    () => localStorage.getItem(`${storageKey}:dismissed`) === "1",
   );
   const submitting = useRef(false);
 
-  useEffect(() => {
-    setOpen(autoOpen && localStorage.getItem(`${storageKey}:dismissed`) !== "1");
-  }, [autoOpen, storageKey]);
-
   if (sent) return null;
+  if (dismissed) {
+    return (
+      <Button
+        type="button"
+        variant="link"
+        size="sm"
+        className="h-auto self-start p-0 text-muted-foreground"
+        onClick={() => {
+          localStorage.removeItem(`${storageKey}:dismissed`);
+          setDismissed(false);
+        }}
+      >
+        Show Codex's question
+      </Button>
+    );
+  }
 
-  const submit = async () => {
-    if (submitting.current || answers.some((answer) => !answer.trim())) return;
+  const submit = async (answers: AskUserQuestionAnswers) => {
+    if (submitting.current) return;
     const chat = useChatStore.getState();
     if (chat.conversationId !== conversationId || !chat.boundAgentId) {
       setError("Open this session to answer the question.");
@@ -62,11 +69,7 @@ export function CodexQuestionCard({
         ).join("");
         localStorage.setItem(`${storageKey}:send-id`, stableId);
       }
-      const answer = [
-        "Answer to Codex questions:",
-        ...questions.map((question, index) => `${question.title}: ${answers[index]!.trim()}`),
-      ].join("\n");
-      await chat.send(answer, chat.boundAgentId, undefined, {
+      await chat.send(aeCodexAnswerText(questions, answers), chat.boundAgentId, undefined, {
         stableId,
         pinnedConversationId: conversationId,
         onError: (message) => {
@@ -87,85 +90,29 @@ export function CodexQuestionCard({
   };
 
   return (
-    <>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={() => {
-          localStorage.removeItem(`${storageKey}:dismissed`);
-          setOpen(true);
-        }}
-      >
-        Answer Codex questions
-      </Button>
-      <Dialog
-        open={open}
-        onOpenChange={(next) => {
-          if (pending) return;
-          setOpen(next);
-          if (!next) localStorage.setItem(`${storageKey}:dismissed`, "1");
-        }}
-      >
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Codex has questions</DialogTitle>
-          </DialogHeader>
-          {questions.map((question, index) => (
-            <div
-              className="mb-3 space-y-2"
-              key={`${question.title}:${question.options?.join("|") ?? ""}`}
-            >
-              <p className="text-sm">{question.title}</p>
-              {!!question.options?.length && (
-                <div className="flex flex-wrap gap-2">
-                  {question.options.map((option) => (
-                    <Button
-                      type="button"
-                      variant={answers[index] === option ? "default" : "outline"}
-                      size="sm"
-                      key={option}
-                      disabled={pending}
-                      aria-pressed={answers[index] === option}
-                      onClick={() =>
-                        setAnswers((current) =>
-                          current.map((value, i) => (i === index ? option : value)),
-                        )
-                      }
-                    >
-                      {option}
-                    </Button>
-                  ))}
-                </div>
-              )}
-              <Input
-                aria-label={`Free text answer for ${question.title}`}
-                placeholder="Or type an answer"
-                value={answers[index]}
-                disabled={pending}
-                onChange={(event) =>
-                  setAnswers((current) =>
-                    current.map((value, i) => (i === index ? event.target.value : value)),
-                  )
-                }
-              />
-            </div>
-          ))}
-          {error && (
-            <p role="alert" className="mb-2 text-sm text-destructive">
-              {error}
-            </p>
-          )}
-          <Button
-            type="button"
-            size="sm"
-            disabled={pending || answers.some((answer) => !answer.trim())}
-            onClick={() => void submit()}
-          >
-            {pending ? "Sending..." : "Send answer"}
-          </Button>
-        </DialogContent>
-      </Dialog>
-    </>
+    <div
+      className="flex flex-col gap-2 rounded-lg border border-border p-3"
+      data-testid="codex-question-card"
+      aria-busy={pending}
+    >
+      <p className="text-sm font-medium">Codex has questions</p>
+      <fieldset disabled={pending} className="contents">
+        <AskUserQuestionForm
+          questions={formQuestions}
+          onSubmit={(answers) => void submit(answers)}
+          onReject={() => {
+            if (pending) return;
+            localStorage.setItem(`${storageKey}:dismissed`, "1");
+            setDismissed(true);
+          }}
+        />
+      </fieldset>
+      {pending && <p className="text-sm text-muted-foreground">Sending...</p>}
+      {error && (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }

@@ -10,7 +10,8 @@ import {
 } from "@/components/ai-elements/conversation";
 import { Message, MessageContent } from "@/components/ai-elements/message";
 import { ElicitationCard } from "@/components/blocks/ApprovalCard";
-import { CodexQuestionCard, isCodexQuestionAnswer } from "./CodexQuestionCard";
+import { aePendingCodexQuestions } from "./aeCodexQuestions";
+import { CodexQuestionCard } from "./CodexQuestionCard";
 import { cn } from "@/lib/utils";
 import { getCurrentAuthorId } from "@/lib/identity";
 import { hasCommandModifier } from "@/lib/hotkeys";
@@ -89,20 +90,7 @@ export interface TranscriptProps {
 export function pendingCodexQuestions(
   blocks: AnyBlock[],
 ): { itemId: string; questions: CodexQuestion[] }[] {
-  return blocks.flatMap((block, index) => {
-    if (block.type !== "text_done" || !block.ctx.itemId || !block.codexQuestions?.length) return [];
-    const answered = blocks
-      .slice(index + 1)
-      .some(
-        (later) =>
-          later.type === "user_message" &&
-          later.content.some(
-            (part) =>
-              part.type === "input_text" && isCodexQuestionAnswer(part.text, block.codexQuestions!),
-          ),
-      );
-    return answered ? [] : [{ itemId: block.ctx.itemId, questions: block.codexQuestions }];
-  });
+  return aePendingCodexQuestions(blocks);
 }
 
 export function isNativeFindShortcut(
@@ -185,7 +173,11 @@ function TranscriptImpl({
   ]);
 
   const pendingElicitations = useMemo(() => collectPendingElicitations(bubbles), [bubbles]);
-  const codexQuestions = useMemo(() => pendingCodexQuestions(blocks), [blocks]);
+  // A reply still on its way retires the question too.
+  const codexQuestions = useMemo(
+    () => (pendingUserMessages.length > 0 ? [] : pendingCodexQuestions(blocks)),
+    [blocks, pendingUserMessages.length],
+  );
   const streamBubbles = useMemo(
     () => (pendingElicitations.length === 0 ? bubbles : stripPendingElicitations(bubbles)),
     [bubbles, pendingElicitations.length],
@@ -423,14 +415,13 @@ function TranscriptImpl({
                   </Message>
                 ))}
                 {display.conversationId &&
-                  codexQuestions.map(({ itemId, questions }, index) => (
+                  codexQuestions.map(({ itemId, questions }) => (
                     <Message key={itemId} from="assistant" className="max-w-full">
                       <MessageContent className="w-full">
                         <CodexQuestionCard
                           conversationId={display.conversationId!}
                           itemId={itemId}
                           questions={questions}
-                          autoOpen={index === codexQuestions.length - 1}
                         />
                       </MessageContent>
                     </Message>
