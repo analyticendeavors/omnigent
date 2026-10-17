@@ -9,7 +9,7 @@
 // The status line is used only for a Claude Code session, so a conversation
 // that moved to Codex never shows its old Claude reading.
 
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { type ChildSessionInfo, fetchChildSessions } from "@/hooks/useChildSessions";
 import { BRAIN_HARNESS_LABELS } from "@/lib/agentLabels";
 import type { harnessFamily } from "@/lib/forkHarness";
@@ -17,6 +17,7 @@ import { nativeCodingAgentForHarness } from "@/lib/nativeCodingAgents";
 import { getSessionSlim } from "@/lib/sessionsApi";
 import { isTempConvId } from "@/lib/tempConversationId";
 import type { Session } from "@/lib/types";
+import { childStatus } from "@/shell/subagentStatus";
 import type { AeHarness, AeSessionContext } from "./AePlanLimits";
 
 /** A status line reading older than this is shown, but marked as possibly out of date. */
@@ -42,6 +43,8 @@ export interface AeCollaboratorInput {
   /** Router pick from the child list, used when the snapshot names no model. */
   routedModel?: string | null;
   error?: string | null;
+  /** Working, launching or waiting on an answer; absent counts as running. */
+  running?: boolean;
 }
 
 /** What the popover fetched for the session it was opened on. */
@@ -51,6 +54,8 @@ export interface AeSessionContextsState {
   collaborators: AeCollaboratorInput[];
   /** Children past `AE_MAX_COLLABORATORS`. */
   hidden?: number;
+  /** Claude Code's own subagents running now; they report no context of their own. */
+  subagents?: number;
   loading?: boolean;
   error?: string | null;
 }
@@ -275,6 +280,12 @@ function isNativeSubagent(child: ChildSessionInfo): boolean {
   return child.labels?.["omnigent.wrapper"] === NATIVE_SUBAGENT_WRAPPER;
 }
 
+/** The Agents pane's Running test: working, launching or waiting on an answer. */
+function isRunning(child: ChildSessionInfo): boolean {
+  const { activity } = childStatus(child);
+  return activity === "working" || activity === "launching" || activity === "awaiting";
+}
+
 /** The task summary or title, never a bare "type:hexid" such as "general-purpose:a45b4b17". */
 function childName(child: ChildSessionInfo): string {
   const title = child.title?.trim();
@@ -299,11 +310,21 @@ export async function fetchAeSessionContexts(
       (error: unknown) => ({ rows: [] as ChildSessionInfo[], error: errorText(error) }),
     ),
   ]);
-  const rows = children.rows.filter((child) => !isNativeSubagent(child));
+  const subagents = children.rows.filter((child) => isNativeSubagent(child) && isRunning(child));
+  // Running children first, so the cap drops finished ones before live ones.
+  const rows = children.rows
+    .filter((child) => !isNativeSubagent(child))
+    .map((child) => ({ child, running: isRunning(child) }))
+    .sort((a, b) => Number(b.running) - Number(a.running));
   const shown = rows.slice(0, AE_MAX_COLLABORATORS);
   const collaborators = await Promise.all(
-    shown.map(async (child): Promise<AeCollaboratorInput> => {
-      const base = { id: child.id, name: childName(child), routedModel: child.routed_model };
+    shown.map(async ({ child, running }): Promise<AeCollaboratorInput> => {
+      const base = {
+        id: child.id,
+        name: childName(child),
+        routedModel: child.routed_model,
+        running,
+      };
       try {
         return { ...base, snapshot: toSnapshot(await getSessionSlim(child.id, { signal })) };
       } catch (error) {
@@ -315,13 +336,15 @@ export async function fetchAeSessionContexts(
     self,
     collaborators,
     hidden: rows.length - shown.length,
+    subagents: subagents.length,
     error: children.error,
   };
 }
 
 /**
  * This session's and its collaborators' snapshots while `active` (the popover
- * is open), refreshed once a minute; nothing is fetched while it is closed.
+ * or a rail section is open), refreshed once a minute and shared by every
+ * caller with the same session and binding; nothing is fetched while inactive.
  * A new session id drops the previous session's rows at once.
  */
 export function useAeSessionContexts(
@@ -331,35 +354,17 @@ export function useAeSessionContexts(
   binding = "",
 ): AeSessionContextsState {
   const id = sessionId && !isTempConvId(sessionId) ? sessionId : null;
-  const key = JSON.stringify([id, binding]);
-  const [state, setState] = useState<{ id: string | null; value: AeSessionContextsState }>({
-    id: null,
-    value: { collaborators: [] },
+  const enabled = active && id !== null;
+  const query = useQuery({
+    queryKey: ["ae-session-contexts", id, binding],
+    queryFn: ({ signal }) => fetchAeSessionContexts(id ?? "", signal),
+    enabled,
+    refetchInterval: enabled ? refreshMs : false,
+    staleTime: refreshMs / 2,
+    retry: false,
   });
-  useEffect(() => {
-    if (!active || !id) return undefined;
-    const controller = new AbortController();
-    const load = () => {
-      setState((prev) =>
-        prev.id === key
-          ? { id: key, value: { ...prev.value, loading: true } }
-          : { id: key, value: { collaborators: [], loading: true } },
-      );
-      fetchAeSessionContexts(id, controller.signal)
-        .then((value) => !controller.signal.aborted && setState({ id: key, value }))
-        .catch(
-          (error: unknown) =>
-            !controller.signal.aborted &&
-            setState({ id: key, value: { collaborators: [], error: errorText(error) } }),
-        );
-    };
-    load();
-    const timer = window.setInterval(load, refreshMs);
-    return () => {
-      controller.abort();
-      window.clearInterval(timer);
-    };
-  }, [active, id, key, refreshMs]);
-  if (!id || state.id !== key) return { collaborators: [], loading: active && id !== null };
-  return state.value;
+  if (!id) return { collaborators: [] };
+  if (query.data) return { ...query.data, loading: enabled && query.isFetching };
+  if (query.error) return { collaborators: [], error: errorText(query.error) };
+  return { collaborators: [], loading: enabled };
 }

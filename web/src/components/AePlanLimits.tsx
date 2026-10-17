@@ -9,20 +9,23 @@
 // docs/PLAN-LIMITS.md). omnigent-ae patch P6, 2026-09-24; the context row,
 // per-model rows, credits and plan added the same day in a second pass.
 //
-// 2026-10-14, Reid: the popover had outgrown a screen. It now follows Claude
-// Desktop's own: the context as one bar with the prompt cache parts joined in
-// it, each limit on two lines (label, reset and percentage, then the bar), the
-// explainers behind an info toggle, and the other plan and the collaborators
-// behind "See detailed breakdown".
+// The popover is the short view: the context window as one bar (Claude's
+// categories when a fresh snapshot exists, else the prompt cache parts), the
+// running agents as lanes under it, and the session's own plan. The session
+// rail holds the rest; the button at the bottom opens it on Context.
 
-import { type ReactNode, useEffect, useId, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
+import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { type AeTone, contextTone } from "@/lib/aeContextTone";
+import { useAeSessionRailStore } from "@/lib/aeSessionRail";
 import { authenticatedFetch } from "@/lib/identity";
 import { AeTablerSvg } from "@/lib/aeTablerIcon";
 import type { AeTablerIconNode } from "@/lib/aeTablerIconData";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chatStore";
+import { AeRailIcon } from "./aeRail/aeRailUi";
 import {
   type AeContextEntry,
   type AeContextReading,
@@ -33,9 +36,14 @@ import {
   buildCollaboratorContext,
   useAeSessionContexts,
 } from "./aeSessionContext";
-
-import { AeCategoryBar, AeContextCategories } from "./AeContextCategories";
-import { contextCountdown, useContextUsage, type ContextUsage } from "./aeContextUsage";
+import { AeCategoryBar, AeCategoryLegend } from "./AeContextCategories";
+import {
+  type AeContextSnapshotState,
+  aeContextIdentity,
+  contextCountdown,
+  type ContextUsage,
+  useAeContextSnapshot,
+} from "./aeContextUsage";
 
 export const AE_LIMITS_PATH = "/v1/ae/limits";
 
@@ -322,7 +330,7 @@ function SectionHeader({
   return (
     <div className="flex flex-col gap-0.5">
       <div className="flex items-center gap-2">
-        <h3 className="flex min-w-0 items-center gap-1 text-sm font-normal text-muted-foreground">
+        <h3 className="flex min-w-0 items-center gap-1 text-sm font-medium text-foreground">
           <span className="min-w-0 truncate">{title}</span>
           {info && (
             <button
@@ -331,7 +339,7 @@ function SectionHeader({
               aria-expanded={open}
               aria-controls={infoId}
               data-testid="ae-limits-info-toggle"
-              className="-my-1 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 aria-expanded:text-foreground"
+              className="-my-1 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 aria-expanded:text-foreground"
               onClick={() => setOpen(!open)}
             >
               <AeTablerSvg node={INFO_ICON} className="size-3.5" />
@@ -408,22 +416,32 @@ function LimitRow({
   );
 }
 
-function WindowRow({ window: w, now }: { window: AeLimitWindow; now: number }) {
+/** One plan window; `short` drops the "Resets" word where the rail is narrow. */
+export function AeLimitWindowRow({
+  window: w,
+  now,
+  short = false,
+}: {
+  window: AeLimitWindow;
+  now: number;
+  short?: boolean;
+}) {
   const passed = w.resets_at !== null && Date.parse(w.resets_at) <= now;
+  const reset = formatResetShort(w.resets_at, now);
   return (
     <LimitRow
       id={w.id}
       label={windowLabel(w)}
       value={`${Math.round(w.used_percent)}%`}
       pct={w.used_percent}
-      reset={formatResetShort(w.resets_at, now)}
+      reset={short && reset ? reset.replace(/^Resets /, "") : reset}
       resetFull={formatReset(w.resets_at, now)}
       muted={passed}
     />
   );
 }
 
-function CreditsRow({ credits, now }: { credits: AeCredits; now: number }) {
+export function AeCreditsRow({ credits, now }: { credits: AeCredits; now: number }) {
   const used = credits.used_minor;
   if (!credits.enabled) {
     return (
@@ -566,122 +584,223 @@ function ContextValue({ reading }: { reading: AeContextReading }) {
   );
 }
 
+/** Tabler's `corner-down-right`, the lead-in of each agent lane. */
+const LANE_ICON: AeTablerIconNode = [["path", { d: "M6 6v6a3 3 0 0 0 3 3h10l-4 -4m0 8l4 -4" }]];
+
+/** A snapshot, read as the active row's context. */
+function snapshotReading(categories: ContextUsage, now: number): AeContextReading {
+  return {
+    source: "snapshot",
+    used: categories.totalTokens,
+    size: categories.maxTokens,
+    observedAt: categories.observedAt,
+    stale: now - Date.parse(categories.observedAt) > 180_000,
+  };
+}
+
 /**
- * One session's own context window, or a plain "unavailable" in place of a
- * bar. `lead` is this session's row: its head is the section's header.
+ * The active session's context window: the header with tokens and percent,
+ * one bar, its legend, then `children` (the agent lanes) and the line with the
+ * auto-compact countdown, the model and the reading's age.
  */
-function ContextEntryRow({
+function ActiveContextRow({
   entry,
   now,
-  lead = false,
   categories,
+  children,
 }: {
-  categories?: ContextUsage;
   entry: AeContextEntry;
   now: number;
-  lead?: boolean;
+  categories?: ContextUsage;
+  children?: ReactNode;
 }) {
   const who = [entry.agent, aeModelName(entry.model)].filter(Boolean).join(" · ") || null;
-  const ariaLabel = `${entry.name} context${entry.agent ? ` (${entry.agent})` : ""}`;
-  const reading: AeContextReading | null = categories
-    ? {
-        source: "snapshot",
-        used: categories.totalTokens,
-        size: categories.maxTokens,
-        observedAt: categories.observedAt,
-        stale: now - Date.parse(categories.observedAt) > 180_000,
-      }
-    : entry.reading;
+  const reading = categories ? snapshotReading(categories, now) : entry.reading;
   const value = reading ? (
     <ContextValue reading={reading} />
   ) : (
     <span className="text-sm text-muted-foreground">No reading yet</span>
   );
-  const head = lead ? (
+  const head = (
     <SectionHeader
       title="Context window"
       info={CONTEXT_INFO}
       infoLabel="About the context window"
       right={value}
     />
-  ) : (
-    <div className="flex items-baseline justify-between gap-3">
-      <span className="min-w-0 truncate">{entry.name}</span>
-      <span className="shrink-0">{value}</span>
-    </div>
   );
   if (!reading) {
-    // A collaborator without a reading is one line; the why sits in its tooltip.
     return (
-      <li
-        className="flex flex-col gap-1"
-        data-testid="ae-context-unavailable"
-        data-session={entry.key}
-        data-role={entry.role}
-        title={lead ? undefined : [who, entry.unavailable].filter(Boolean).join(" · ")}
-      >
-        {head}
-        {lead && (
+      <>
+        <li
+          className="flex flex-col gap-1"
+          data-testid="ae-context-unavailable"
+          data-session={entry.key}
+          data-role={entry.role}
+        >
+          {head}
           <p className="text-sm text-muted-foreground">
             {who && <span data-testid="ae-usage-who">{who}</span>}
             {who && <span aria-hidden="true"> · </span>}
             <span>{entry.unavailable}</span>
           </p>
-        )}
-      </li>
+        </li>
+        {children}
+      </>
     );
   }
   const pct = (reading.used / reading.size) * 100;
-  const detail = categories
-    ? `Estimated category snapshot · ${formatAgo(categories.observedAt, now)}`
-    : readingDetail(reading, now);
-  const autoCompact = lead
-    ? categories
-      ? contextCountdown(categories, reading.used)
-      : autoCompactText(entry, reading)
-    : null;
+  const detail = categories ? formatAgo(categories.observedAt, now) : readingDetail(reading, now);
+  const autoCompact = (
+    categories ? contextCountdown(categories, reading.used) : autoCompactText(entry, reading)
+  )?.replace(/^About /, "");
+  const ariaLabel = `${entry.name} context${entry.agent ? ` (${entry.agent})` : ""}`;
+  const sep = <span aria-hidden="true"> · </span>;
+  const shownDetail =
+    detail && (who || autoCompact ? detail.charAt(0).toLowerCase() + detail.slice(1) : detail);
   return (
-    <li
-      className="flex flex-col gap-1.5"
-      data-testid="ae-limit-window"
-      data-window={`context:${entry.key}`}
-    >
-      {head}
-      {categories ? (
-        <AeCategoryBar data={categories} />
-      ) : (
-        <Meter
-          label={`${ariaLabel}: ${Math.round(pct)}% used`}
-          pct={pct}
-          segments={contextSegments(pct, reading.stale, entry.breakdown)}
-          thick
-        />
+    <>
+      <li
+        className="flex flex-col gap-1.5"
+        data-testid="ae-limit-window"
+        data-window={`context:${entry.key}`}
+      >
+        {head}
+        {categories ? (
+          <AeCategoryBar data={categories} />
+        ) : (
+          <Meter
+            label={`${ariaLabel}: ${Math.round(pct)}% used`}
+            pct={pct}
+            segments={contextSegments(pct, reading.stale, entry.breakdown)}
+            thick
+          />
+        )}
+        {categories ? (
+          <AeCategoryLegend data={categories} />
+        ) : (
+          entry.breakdown && (
+            <ContextLegend
+              context={entry.breakdown}
+              now={now}
+              dots={!reading.stale && contextTone(pct) === "normal"}
+            />
+          )
+        )}
+      </li>
+      {children}
+      {(autoCompact || who || shownDetail) && (
+        <li className="text-sm text-muted-foreground tabular-nums" data-testid="ae-context-sub">
+          {autoCompact && (
+            <span
+              data-testid="ae-context-autocompact"
+              title={
+                categories
+                  ? "From Claude Code's context snapshot"
+                  : "Claude Code compacts a 1M context window at about 967k tokens by default"
+              }
+            >
+              {autoCompact}
+            </span>
+          )}
+          {autoCompact && who && sep}
+          {who && <span data-testid="ae-usage-who">{who}</span>}
+          {(autoCompact || who) && shownDetail && sep}
+          {shownDetail && <span>{shownDetail}</span>}
+        </li>
       )}
-      {entry.breakdown && !categories && (
-        <ContextLegend
-          context={entry.breakdown}
-          now={now}
-          dots={!reading.stale && contextTone(pct) === "normal"}
-        />
-      )}
-      {autoCompact && (
-        <p
-          className="text-sm text-muted-foreground tabular-nums"
-          data-testid="ae-context-autocompact"
-          title={
-            categories
-              ? "From Claude Code’s context snapshot"
-              : "Claude Code compacts a 1M context window at about 967k tokens by default"
-          }
+    </>
+  );
+}
+
+/** "Codex", or a Claude Code lane's model ("Sonnet 5.5"): what tells two lanes apart. */
+function laneWho(entry: AeContextEntry): string | null {
+  if (entry.agent && entry.agent !== "Claude Code") return entry.agent;
+  return aeModelName(entry.model) ?? entry.agent;
+}
+
+/**
+ * Running agents under the context bar, each its own window and percent,
+ * never added together, then a count of Claude Code's own subagents.
+ */
+function AgentLanes({
+  entries,
+  subagents,
+  hidden,
+  error,
+}: {
+  entries: AeContextEntry[];
+  subagents: number;
+  /** Collaborators past the fetch cap, counted but not drawn. */
+  hidden: number;
+  error?: string | null;
+}) {
+  if (entries.length === 0 && subagents === 0 && hidden === 0 && !error) return null;
+  return (
+    <li className="flex flex-col gap-1.5" data-testid="ae-context-collaborators">
+      {entries.length > 0 && (
+        <ul
+          aria-label="Running agents"
+          className="grid grid-cols-[auto_minmax(0,1fr)_4rem_2.25rem] items-center gap-x-2 gap-y-1 text-xs"
         >
-          {autoCompact}
+          {entries.map((entry) => {
+            const who = laneWho(entry);
+            const pct = entry.reading ? (entry.reading.used / entry.reading.size) * 100 : null;
+            return (
+              <li
+                key={entry.key}
+                className="contents"
+                data-testid="ae-context-lane"
+                data-session={entry.key}
+                title={entry.unavailable ?? undefined}
+              >
+                <AeTablerSvg node={LANE_ICON} className="size-3.5 text-muted-foreground" />
+                <span className="min-w-0 truncate">
+                  {entry.name}
+                  {who && <span className="text-muted-foreground"> · {who}</span>}
+                </span>
+                {pct === null ? (
+                  <span className="h-1 rounded-full bg-foreground/10" />
+                ) : (
+                  <Meter
+                    label={`${entry.name} context${entry.agent ? ` (${entry.agent})` : ""}: ${Math.round(pct)}% used`}
+                    pct={pct}
+                    segments={[
+                      {
+                        key: "used",
+                        className: entry.reading?.stale ? MUTED_BAR : TONE_BAR[contextTone(pct)],
+                        share: 1,
+                      },
+                    ]}
+                  />
+                )}
+                <span
+                  className={cn(
+                    "text-right tabular-nums",
+                    pct === null ? "text-muted-foreground" : "font-semibold",
+                  )}
+                >
+                  {pct === null ? "-" : `${Math.round(pct)}%`}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {subagents > 0 && (
+        <p className="text-sm text-muted-foreground" data-testid="ae-context-subagents">
+          + {subagents} Claude Code {subagents === 1 ? "subagent" : "subagents"} running (no
+          reading)
         </p>
       )}
-      {(who || detail) && (
+      {hidden > 0 && (
+        <p className="text-sm text-muted-foreground" data-testid="ae-context-hidden">
+          + {hidden} more {hidden === 1 ? "agent" : "agents"} not shown
+        </p>
+      )}
+      {error && (
         <p className="text-sm text-muted-foreground">
-          {who && <span data-testid="ae-usage-who">{who}</span>}
-          {who && detail && <span aria-hidden="true"> · </span>}
-          {detail && <span>{who ? detail.charAt(0).toLowerCase() + detail.slice(1) : detail}</span>}
+          Could not list this session's agents ({error}).
         </p>
       )}
     </li>
@@ -699,12 +818,14 @@ const EMPTY_TEXT: Record<AeHarness, string> = {
     "as the box user.",
 };
 
-function HarnessBlock({
+/** One plan's limits: the popover shows the session's own, the rail both. */
+export function AeLimitsHarnessBlock({
   harness,
   snapshot,
   now,
   inUse = false,
   lead = false,
+  short = false,
   infoOpen,
   onInfoOpenChange,
 }: {
@@ -715,6 +836,8 @@ function HarnessBlock({
   inUse?: boolean;
   /** The block that heads the section, which carries the section's info toggle. */
   lead?: boolean;
+  /** Narrow rows: resets without the "Resets" word. */
+  short?: boolean;
   infoOpen?: boolean;
   onInfoOpenChange?: (open: boolean) => void;
 }) {
@@ -740,7 +863,7 @@ function HarnessBlock({
         tag={
           inUse ? (
             <span
-              className="ml-1 shrink-0 rounded bg-foreground/10 px-1 text-sm text-foreground"
+              className="ml-1 shrink-0 rounded border border-border px-1 text-xs font-normal text-muted-foreground"
               data-testid="ae-limits-in-use"
             >
               This session
@@ -752,7 +875,7 @@ function HarnessBlock({
         infoOpen={infoOpen}
         onInfoOpenChange={onInfoOpenChange}
         right={
-          snapshot ? (
+          snapshot && !short ? (
             <span
               className="text-sm text-muted-foreground"
               title={`Updated ${new Date(snapshot.observed_at).toLocaleString()}`}
@@ -775,12 +898,20 @@ function HarnessBlock({
           {(snapshot.windows.length > 0 || snapshot.credits) && (
             <ul className="flex flex-col gap-2.5">
               {snapshot.windows.map((w) => (
-                <WindowRow key={w.id} window={w} now={now} />
+                <AeLimitWindowRow key={w.id} window={w} now={now} short={short} />
               ))}
-              {snapshot.credits && <CreditsRow credits={snapshot.credits} now={now} />}
+              {snapshot.credits && <AeCreditsRow credits={snapshot.credits} now={now} />}
             </ul>
           )}
           {snapshot.note && <p className="text-sm text-muted-foreground">{snapshot.note}</p>}
+          {short && (
+            <p
+              className="text-xs text-muted-foreground"
+              title={`Updated ${new Date(snapshot.observed_at).toLocaleString()}`}
+            >
+              Updated {formatAgo(snapshot.observed_at, now)}
+            </p>
+          )}
           {snapshot.hint && (
             <p className="text-sm text-muted-foreground" data-testid="ae-limits-hint">
               {snapshot.hint}
@@ -792,7 +923,16 @@ function HarnessBlock({
   );
 }
 
+/** What `/v1/ae/limits` failed with, and where to look. */
+export function aeLimitsErrorText(error: unknown): string {
+  return `Could not load plan limits (${error instanceof Error ? error.message : String(error)}). The /v1/ae/limits route belongs to omnigent-ae; check the server is on a current tag.`;
+}
+
 const NO_SESSIONS: AeSessionContextsState = { collaborators: [] };
+
+function isClaudeCode(harness: string | null | undefined): boolean {
+  return harness === "claude-native" || harness === "native-claude";
+}
 
 /** The popover body; exported so tests and stories render it without a click. */
 export function AePlanLimitsPanel({
@@ -806,6 +946,8 @@ export function AePlanLimitsPanel({
   harness = null,
   model = null,
   sessions = NO_SESSIONS,
+  snapshot,
+  onShowRail,
 }: {
   data?: AeLimitsAnswer;
   error?: unknown;
@@ -820,11 +962,14 @@ export function AePlanLimitsPanel({
   model?: string | null;
   /** This session's snapshot and its collaborators', from `useAeSessionContexts`. */
   sessions?: AeSessionContextsState;
+  /** Claude Code's category snapshot, from `useAeContextSnapshot`. */
+  snapshot?: AeContextSnapshotState;
+  /** Runs before the rail opens: the popover closes itself here. */
+  onShowRail?: () => void;
 }) {
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const detailsId = useId();
-  // 2026-10-14: the loading, error and loaded states each draw their own plan
-  // header, so the panel keeps its explainer open across them.
+  const isMobile = useIsMobileViewport();
+  // The loading, error and loaded states each draw their own plan header, so
+  // the panel keeps its explainer open across them.
   const [planInfoOpen, setPlanInfoOpen] = useState(false);
   const planInfo = { infoOpen: planInfoOpen, onInfoOpenChange: setPlanInfoOpen };
   const statusLines = data?.harnesses.claude?.contexts;
@@ -834,34 +979,31 @@ export function AePlanLimitsPanel({
     statusLines,
     now,
   );
-  const native = active.harness === "claude-native" || active.harness === "native-claude";
-  const context = useContextUsage(
-    conversationId ?? null,
-    detailsOpen && native,
-    `${active.harness}:${active.model}`,
-  );
   const categories =
-    context.data?.available && now - Date.parse(context.data.observedAt) < 240_000
-      ? context.data
+    isClaudeCode(active.harness) && snapshot?.fresh && snapshot.data?.available
+      ? snapshot.data
       : undefined;
-  const collaborators = sessions.collaborators.map((c) =>
-    buildCollaboratorContext(c, statusLines, now),
-  );
+  const lanes = sessions.collaborators
+    .filter((c) => c.running !== false)
+    .map((c) => buildCollaboratorContext(c, statusLines, now));
   // The active row's harness, so a stale store harness cannot pick the block.
-  const inUse = aeLimitsHarnessFor(active.harness);
-  const order: AeHarness[] = inUse === "codex" ? ["codex", "claude"] : ["claude", "codex"];
-  const [primary] = order;
-  // Another plan the server answered for (a reading, or null with its hint)
-  // waits behind the breakdown toggle, after Claude Desktop's own.
-  const others =
-    error || !data ? [] : order.slice(1).filter((h) => Object.hasOwn(data.harnesses, h));
-  const hidden = sessions.hidden ?? 0;
-  const hasCollaborators = collaborators.length > 0 || Boolean(sessions.error) || hidden > 0;
+  const primary: AeHarness = aeLimitsHarnessFor(active.harness) === "codex" ? "codex" : "claude";
+  const showRail = () => {
+    onShowRail?.();
+    useAeSessionRailStore.getState().focusSection("context", { sheet: isMobile });
+  };
   return (
     <div className="flex flex-col gap-3" data-testid="ae-plan-limits">
       <section className="flex flex-col gap-2" data-testid="ae-limits-context">
-        <ul data-testid="ae-context-active">
-          <ContextEntryRow entry={active} now={now} lead categories={categories} />
+        <ul data-testid="ae-context-active" className="flex flex-col gap-1.5">
+          <ActiveContextRow entry={active} now={now} categories={categories}>
+            <AgentLanes
+              entries={lanes}
+              subagents={sessions.subagents ?? 0}
+              hidden={sessions.hidden ?? 0}
+              error={sessions.error}
+            />
+          </ActiveContextRow>
         </ul>
       </section>
       <div className="flex flex-col gap-2.5 border-t pt-3" data-testid="ae-limits-plans">
@@ -873,10 +1015,7 @@ export function AePlanLimitsPanel({
               infoLabel="About plan limits"
               {...planInfo}
             />
-            <p className="text-sm text-destructive">
-              Could not load plan limits ({error instanceof Error ? error.message : String(error)}).
-              The /v1/ae/limits route belongs to omnigent-ae; check the server is on a current tag.
-            </p>
+            <p className="text-sm text-destructive">{aeLimitsErrorText(error)}</p>
           </>
         ) : loading && !data ? (
           <>
@@ -889,92 +1028,49 @@ export function AePlanLimitsPanel({
             <p className="text-sm text-muted-foreground">Loading…</p>
           </>
         ) : (
-          <HarnessBlock
+          <AeLimitsHarnessBlock
             harness={primary}
             snapshot={data?.harnesses[primary]}
             now={now}
-            inUse={inUse === primary && others.length > 0}
             lead
             {...planInfo}
           />
         )}
       </div>
-      {(native || hasCollaborators || others.length > 0) && (
-        <div className="flex flex-col gap-3 border-t pt-3">
-          <button
-            type="button"
-            aria-expanded={detailsOpen}
-            aria-controls={detailsId}
-            data-testid="ae-limits-details-toggle"
-            className="min-h-8 pointer-coarse:min-h-10 cursor-pointer self-start rounded-md border border-border px-2.5 py-1 text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 pointer-coarse:py-2"
-            onClick={() => setDetailsOpen((open) => !open)}
-          >
-            {detailsOpen ? "Hide detailed breakdown" : "See detailed breakdown"}
-          </button>
-          <div
-            id={detailsId}
-            hidden={!detailsOpen}
-            className="flex flex-col gap-4"
-            data-testid="ae-limits-details"
-          >
-            {native && <AeContextCategories data={context.data} error={context.error} />}
-            {hasCollaborators && (
-              <div className="flex flex-col gap-2" data-testid="ae-context-collaborators">
-                <h4 className="text-sm text-muted-foreground">Collaborators</h4>
-                <ul className="flex flex-col gap-2.5">
-                  {collaborators.map((c) => (
-                    <ContextEntryRow key={c.key} entry={c} now={now} />
-                  ))}
-                </ul>
-                {hidden > 0 && (
-                  <p className="text-sm text-muted-foreground">
-                    {hidden} more {hidden === 1 ? "collaborator" : "collaborators"} not shown.
-                  </p>
-                )}
-                {sessions.error && (
-                  <p className="text-sm text-muted-foreground">
-                    Could not list collaborators ({sessions.error}).
-                  </p>
-                )}
-              </div>
-            )}
-            {others.map((h) => (
-              <HarnessBlock key={h} harness={h} snapshot={data?.harnesses[h]} now={now} />
-            ))}
-          </div>
-        </div>
-      )}
+      <div className="border-t pt-3">
+        <button
+          type="button"
+          data-testid="ae-limits-show-rail"
+          className="flex min-h-8 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-border bg-muted px-2.5 py-1.5 text-sm outline-none hover:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring/50 pointer-coarse:min-h-10"
+          onClick={showRail}
+        >
+          <AeRailIcon name="rail" />
+          Show details in session rail
+        </button>
+      </div>
     </div>
   );
 }
 
-/** `GET /v1/ae/limits` while `active`, then once a minute; plain state, no query cache,
- * so the composer renders the same under tests that mount it without a QueryClient. */
+/** `GET /v1/ae/limits` while `active`, then once a minute; one shared query for every caller. */
 export function useAeLimits(active: boolean): {
   data?: AeLimitsAnswer;
   error?: unknown;
   loading: boolean;
 } {
-  const [state, setState] = useState<{ data?: AeLimitsAnswer; error?: unknown }>({});
-  const [loading, setLoading] = useState(false);
-  useEffect(() => {
-    if (!active) return undefined;
-    let cancelled = false;
-    const load = () => {
-      setLoading(true);
-      fetchAeLimits()
-        .then((data) => !cancelled && setState({ data }))
-        .catch((error: unknown) => !cancelled && setState((prev) => ({ ...prev, error })))
-        .finally(() => !cancelled && setLoading(false));
-    };
-    load();
-    const timer = window.setInterval(load, MINUTE);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [active]);
-  return { ...state, loading };
+  const query = useQuery({
+    queryKey: ["ae-limits"],
+    queryFn: fetchAeLimits,
+    enabled: active,
+    refetchInterval: active ? MINUTE : false,
+    staleTime: MINUTE / 2,
+    retry: false,
+  });
+  return {
+    data: query.data,
+    error: query.error ?? undefined,
+    loading: active && query.isFetching,
+  };
 }
 
 /**
@@ -1013,8 +1109,7 @@ export function AePlanLimitsPopover() {
   const model = useChatStore((s) => s.llmModel);
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const open = anchor !== null;
-  const { data, error, loading } = useAeLimits(open);
-  const sessions = useAeSessionContexts(open, conversationId, 60_000, `${harness}:${model}`);
+  const toRail = useRef(false);
   useEffect(() => {
     const onClick = (event: MouseEvent) => {
       const target = event.target instanceof Element ? event.target : null;
@@ -1055,23 +1150,65 @@ export function AePlanLimitsPopover() {
         onInteractOutside={keepOpenOnRing}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
-          // Not after a blur: focusing the ring would pull focus back from
-          // the pane or window the click went to.
-          if (document.hasFocus()) anchorRef.current?.focus();
+          // Not after a blur (focus went to another pane or window) or a
+          // move to the rail (focus belongs there).
+          if (document.hasFocus() && !toRail.current) anchorRef.current?.focus();
+          toRail.current = false;
         }}
       >
-        <AePlanLimitsPanel
-          data={data}
-          error={error}
-          loading={loading}
+        <AePlanLimitsPopoverBody
           conversationId={conversationId}
           contextWindow={contextWindow}
           tokensUsed={tokensUsed}
           harness={harness}
           model={model}
-          sessions={sessions}
+          onShowRail={() => {
+            toRail.current = true;
+            setAnchor(null);
+          }}
         />
       </PopoverContent>
     </Popover>
+  );
+}
+
+/** The popover's data, read only while it is open (Radix mounts the content on open). */
+function AePlanLimitsPopoverBody({
+  conversationId,
+  contextWindow,
+  tokensUsed,
+  harness,
+  model,
+  onShowRail,
+}: {
+  conversationId: string | null;
+  contextWindow: number | null;
+  tokensUsed: number | null;
+  harness: string | null;
+  model: string | null;
+  onShowRail: () => void;
+}) {
+  const identity = aeContextIdentity(harness, model);
+  const { data, error, loading } = useAeLimits(true);
+  const sessions = useAeSessionContexts(true, conversationId, 60_000, identity);
+  // A cached category snapshot shows at once; a stale one refreshes.
+  const snapshot = useAeContextSnapshot(conversationId, {
+    enabled: isClaudeCode(harness),
+    identity,
+  });
+  return (
+    <AePlanLimitsPanel
+      data={data}
+      error={error}
+      loading={loading}
+      conversationId={conversationId}
+      contextWindow={contextWindow}
+      tokensUsed={tokensUsed}
+      harness={harness}
+      model={model}
+      sessions={sessions}
+      snapshot={snapshot}
+      onShowRail={onShowRail}
+    />
   );
 }

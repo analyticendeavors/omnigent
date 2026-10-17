@@ -147,6 +147,7 @@ import { resolveDefaultShell } from "./preferredShell";
 import { useAeRunInTerminal } from "./useAeRunInTerminal";
 import { WorkspacePanel } from "./WorkspacePanel";
 import { SessionRail } from "./SessionRail";
+import { AeSessionRail } from "./AeSessionRail";
 import type { RightRailTab } from "./railTabs";
 import { isAeSplitPane } from "@/lib/aeSplitLayout";
 
@@ -2708,6 +2709,20 @@ export function AppShell() {
                     sort={filesPanelSort}
                   />
                 </div>
+              )}
+              {serverConversationId && (
+                <AeSessionRail
+                  sessionId={serverConversationId}
+                  workspacePanelOpen={workspacePanelVisible}
+                  hidden={rightPanelMaximized}
+                  workspace={{
+                    open: rightPanelOpen,
+                    available: hasRailContent,
+                    toggle: toggleRightPanel,
+                    showTab: handleRightRailTabChange,
+                    mobile: { changes: openChangesPanel, subagents: openSubagentsPanel },
+                  }}
+                />
               )}
             </CanvasWorkspace>
           </div>

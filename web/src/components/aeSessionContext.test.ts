@@ -1,4 +1,6 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { renderHook as rtlRenderHook, waitFor } from "@testing-library/react";
+import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
@@ -16,6 +18,14 @@ import {
   useAeSessionContexts,
   usesClaudeStatusLine,
 } from "./aeSessionContext";
+
+/** A fresh QueryClient per hook render, retries off, as the app's provider supplies one. */
+const renderHook: typeof rtlRenderHook = (callback, options) => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const wrapper = ({ children }: { children: ReactNode }) =>
+    createElement(QueryClientProvider, { client }, children);
+  return rtlRenderHook(callback, { wrapper, ...options });
+};
 
 const NOW = Date.parse("2026-10-13T16:00:00Z");
 
@@ -210,6 +220,29 @@ describe("fetchAeSessionContexts", () => {
     expect(state.collaborators[1]).toMatchObject({ snapshot: null });
     expect(state.collaborators[0].snapshot).toMatchObject({ contextWindow: 200_000 });
     expect(state.error).toBeNull();
+  });
+
+  it("puts running children first and counts running Claude Code subagents", async () => {
+    const subagent = { "omnigent.wrapper": "claude-code-native-ui-subagent" };
+    const rows = [
+      { ...child("conv_done"), task_summary: "Old review" },
+      { ...child("conv_live"), task_summary: "Write the docs", busy: true },
+      { ...child("conv_sub1"), labels: subagent, busy: true },
+      { ...child("conv_sub2"), labels: subagent, current_task_status: "launching" },
+      { ...child("conv_sub3"), labels: subagent, current_task_status: "completed" },
+    ];
+    vi.mocked(authenticatedFetch).mockImplementation((url) => {
+      const path = String(url);
+      if (path.endsWith("/child_sessions")) return json({ object: "list", data: rows });
+      const id = path.match(/^\/v1\/sessions\/([^/?]+)\?/)?.[1] ?? "";
+      return json(wire(id, "codex-native"));
+    });
+    const state = await fetchAeSessionContexts("conv_root");
+    expect(state.collaborators.map((c) => [c.id, c.running])).toEqual([
+      ["conv_live", true],
+      ["conv_done", false],
+    ]);
+    expect(state.subagents).toBe(2);
   });
 
   it("reports a failed child list without failing the whole read", async () => {
