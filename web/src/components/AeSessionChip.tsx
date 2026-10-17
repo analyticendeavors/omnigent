@@ -1,8 +1,8 @@
 // The session header's slots chip (omnigent-ae, 2026-09-24): the session's
 // own `ae.status` icon and the slot count, "n/3", red at the limit; a tap
-// opens the Dashboard. Reid asked for the slot count on every session and on
-// the phone, where the sidebar (and its "Dashboard n/3" row) is a closed
-// drawer, so the header was the only place a session could show it.
+// opens the Session Dashboard. Reid asked for the slot count on every session
+// and on the phone, where the sidebar (and its "Session Dashboard n/3" row) is
+// a closed drawer, so the header was the only place a session could show it.
 //
 // Both numbers come from the `["conversations"]` query cache the sidebar
 // already keeps warm (the row for this session, and the same count the
@@ -51,7 +51,7 @@ export function AeSessionChip({ conversationId }: { conversationId: string }) {
   const Icon = status ? AE_STATUS_ICONS[status] : null;
   // The link's label carries the status word, so the icon is decorative (no
   // AeStatusIcon tooltip nested inside a link).
-  const label = `${status ? `${AE_STATUS_WORDS[status]}; ` : ""}slots ${count} of ${limit}; open the Dashboard`;
+  const label = `${status ? `${AE_STATUS_WORDS[status]}; ` : ""}slots ${count} of ${limit}; open the Session Dashboard`;
   return (
     <Link
       to={AE_PARKING_LOT_PATH}
