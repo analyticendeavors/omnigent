@@ -51,6 +51,40 @@ export function isAeGithubLinkUrl(url: unknown): url is string {
   }
 }
 
+// Fabric Admin links (omnigent-ae patch, 2026-10-16). The AE Fabric Admin
+// extension page offers "Open in Azure" and "Open in Fabric" for a capacity and
+// asks the host to open them, which the allowlist above refused. Exactly two
+// shapes are admitted, both https, with no userinfo, port, query or extra path:
+// one capacity's overview blade on portal.azure.com (the fragment names the
+// resource, so the guid is strict and the resource group and capacity name
+// are limited to Azure's name characters), and Fabric's capacity settings page.
+const GUID = "[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}";
+const AZURE_CAPACITY_LINK = new RegExp(
+  `^https://portal\\.azure\\.com/#resource/subscriptions/${GUID}` +
+    "/resourceGroups/[A-Za-z0-9._()-]{1,90}" +
+    "/providers/Microsoft\\.Fabric/capacities/[A-Za-z0-9-]{1,63}/overview$",
+);
+const FABRIC_CAPACITIES_LINK = "https://app.fabric.microsoft.com/admin-portal/capacities";
+
+/**
+ * True for one Fabric capacity's Azure portal overview link
+ * (`https://portal.azure.com/#resource/subscriptions/<guid>/resourceGroups/<rg>/providers/Microsoft.Fabric/capacities/<name>/overview`)
+ * and for `https://app.fabric.microsoft.com/admin-portal/capacities`, and nothing else.
+ */
+export function isAeFabricAdminLinkUrl(url: unknown): url is string {
+  if (typeof url !== "string") return false;
+  if (url === FABRIC_CAPACITIES_LINK) return true;
+  if (!AZURE_CAPACITY_LINK.test(url)) return false;
+  // A segment of dots is a path step, not a name.
+  if (/\/resourceGroups\/\.+\//.test(url)) return false;
+  // The browser must read the string as the same URL, character for character.
+  try {
+    return new URL(url).href === url;
+  } catch {
+    return false;
+  }
+}
+
 /** The error code `navigation.openExternal` rejects with when no tab opened. */
 export const AE_POPUP_BLOCKED = "PopupBlocked";
 
