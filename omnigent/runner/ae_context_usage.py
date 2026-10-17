@@ -273,8 +273,26 @@ def isolated_command(command: list[str], cwd: str, scratch: Path) -> list[str]:
     return result
 
 
+def _scratch_parent() -> Path:
+    """Return the claude-native bridge root, created owner-only, to hold probe copies.
+
+    The bridge refuses any ``--bridge-dir`` outside its allowed roots, so copies in the
+    system temp dir make the probe's omnigent MCP server fail to start. The orphan
+    sweep skips children without an ``owner.pid`` marker, which the copies lack.
+    """
+    from omnigent.harnesses.claude_native.bridge import (
+        bridge_dir_for_bridge_id,
+        ensure_secure_dir,
+    )
+
+    root = bridge_dir_for_bridge_id("ae-context-probe").parent
+    ensure_secure_dir(root)
+    return root
+
+
 async def probe(command: list[str], env: dict[str, str], cwd: str) -> dict[str, Any]:
-    with tempfile.TemporaryDirectory(prefix="ae-context-") as scratch:
+    parent = await asyncio.to_thread(_scratch_parent)
+    with tempfile.TemporaryDirectory(prefix="ae-context-", dir=parent) as scratch:
         isolated = await asyncio.to_thread(isolated_command, command, cwd, Path(scratch))
         return await _probe(isolated, env, cwd)
 
