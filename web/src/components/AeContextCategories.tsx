@@ -1,28 +1,51 @@
-import { categoryColor, type ContextUsage } from "./aeContextUsage";
+import { categoryColor, type ContextCategory, type ContextUsage } from "./aeContextUsage";
 
 const tokens = (value: number) =>
   new Intl.NumberFormat("en", { maximumFractionDigits: 1, notation: "compact" }).format(value);
 
+const swatch = (category: ContextCategory) =>
+  category.kind === "free"
+    ? "bg-muted"
+    : category.kind === "buffer"
+      ? "bg-muted-foreground/20"
+      : categoryColor(category.name);
+
 export function AeCategoryBar({ data }: { data: ContextUsage }) {
   return (
-    <div
-      className="flex h-2 w-full overflow-hidden rounded-full bg-muted"
-      role="img"
-      aria-label="Estimated context by category"
-    >
-      {data.categories
-        .filter((c) => c.kind === "used" || c.kind === "buffer")
-        .map((c) => (
-          <span
-            key={c.name}
-            title={`${c.name}: ${tokens(c.tokens)}`}
-            className={
-              c.kind === "buffer" ? "ml-auto bg-muted-foreground/20" : categoryColor(c.name)
-            }
-            style={{ width: `${Math.min(100, (c.tokens / data.maxTokens) * 100)}%` }}
-          />
-        ))}
-    </div>
+    <>
+      <div
+        className="flex h-2 w-full overflow-hidden rounded-full bg-muted"
+        role="img"
+        aria-label="Estimated context by category"
+      >
+        {data.categories
+          .filter((c) => c.kind === "used" || c.kind === "buffer")
+          .map((c) => (
+            <span
+              key={c.name}
+              title={`${c.name}: ${tokens(c.tokens)}`}
+              className={`${c.kind === "buffer" ? "ml-auto " : ""}${swatch(c)}`}
+              style={{ width: `${Math.min(100, (c.tokens / data.maxTokens) * 100)}%` }}
+            />
+          ))}
+      </div>
+      <ul
+        aria-label="Context window color legend"
+        className="flex min-w-0 flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground"
+      >
+        {data.categories
+          .filter((c) => c.kind !== "deferred")
+          .map((c) => (
+            <li key={c.name} className="flex min-w-0 items-center gap-1.5">
+              <span
+                aria-hidden="true"
+                className={`size-2 shrink-0 rounded-full ring-1 ring-inset ring-foreground/10 ${swatch(c)}`}
+              />
+              <span className="break-words">{c.name}</span>
+            </li>
+          ))}
+      </ul>
+    </>
   );
 }
 
