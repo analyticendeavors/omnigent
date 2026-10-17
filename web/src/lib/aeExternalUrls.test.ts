@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isAeGithubLinkUrl } from "./aeExternalUrls";
+import { isAeFabricAdminLinkUrl, isAeGithubLinkUrl } from "./aeExternalUrls";
 
 describe("isAeGithubLinkUrl", () => {
   it.each([
@@ -59,5 +59,61 @@ describe("isAeGithubLinkUrl", () => {
     ["a non-ASCII owner", "https://github.com/ａ/b/pull/1"],
   ])("rejects %s", (_name, url) => {
     expect(isAeGithubLinkUrl(url)).toBe(false);
+  });
+});
+
+describe("isAeFabricAdminLinkUrl", () => {
+  const GUID = "0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d";
+  const AZURE = `https://portal.azure.com/#resource/subscriptions/${GUID}/resourceGroups/rg-fabric.prod_1/providers/Microsoft.Fabric/capacities/aetraining/overview`;
+
+  it.each([
+    AZURE,
+    "https://app.fabric.microsoft.com/admin-portal/capacities",
+    `https://portal.azure.com/#resource/subscriptions/${GUID.toUpperCase()}/resourceGroups/RG(1)/providers/Microsoft.Fabric/capacities/A-b/overview`,
+  ])("accepts %s", (url) => {
+    expect(isAeFabricAdminLinkUrl(url)).toBe(true);
+  });
+
+  it.each([
+    ["not a string", 42],
+    ["null", null],
+    ["javascript", "javascript:alert(1)//https://portal.azure.com/"],
+    ["http azure", AZURE.replace("https:", "http:")],
+    ["http fabric", "http://app.fabric.microsoft.com/admin-portal/capacities"],
+    ["another host", AZURE.replace("portal.azure.com", "portal.azure.com.evil.example")],
+    ["a lookalike host", AZURE.replace("portal.azure.com", "evilportal.azure.com")],
+    ["a subdomain", AZURE.replace("portal.azure.com", "x.portal.azure.com")],
+    ["userinfo", AZURE.replace("https://", "https://evil.example@")],
+    ["userinfo on fabric", "https://x@app.fabric.microsoft.com/admin-portal/capacities"],
+    ["a port", AZURE.replace("azure.com", "azure.com:8443")],
+    ["a query on azure", AZURE.replace("/#", "/?x=1#")],
+    ["a query on fabric", "https://app.fabric.microsoft.com/admin-portal/capacities?x=1"],
+    ["a fragment on fabric", "https://app.fabric.microsoft.com/admin-portal/capacities#x"],
+    ["a trailing slash on fabric", "https://app.fabric.microsoft.com/admin-portal/capacities/"],
+    ["a longer fabric path", "https://app.fabric.microsoft.com/admin-portal/capacities/x"],
+    ["another fabric page", "https://app.fabric.microsoft.com/admin-portal/tenantSettings"],
+    ["an extra azure path", AZURE.replace("/overview", "/overview/delete")],
+    ["a trailing azure query", `${AZURE}?x=1`],
+    ["another blade", AZURE.replace("/overview", "/configuration")],
+    [
+      "another provider",
+      AZURE.replace("Microsoft.Fabric/capacities", "Microsoft.Compute/virtualMachines"),
+    ],
+    ["another Fabric type", AZURE.replace("capacities/aetraining", "workspaces/aetraining")],
+    ["different case provider", AZURE.replace("Microsoft.Fabric", "microsoft.fabric")],
+    ["different case type", AZURE.replace("capacities", "Capacities")],
+    ["a short guid", AZURE.replace(GUID, "0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4")],
+    ["a non-hex guid", AZURE.replace(GUID, "zb1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d")],
+    ["a slash in the group", AZURE.replace("rg-fabric.prod_1", "rg/x")],
+    ["an encoded group", AZURE.replace("rg-fabric.prod_1", "rg%2Fx")],
+    ["a dot group", AZURE.replace("rg-fabric.prod_1", "..")],
+    ["an empty name", AZURE.replace("capacities/aetraining", "capacities/")],
+    ["an underscore name", AZURE.replace("aetraining", "ae_training")],
+    ["a long name", AZURE.replace("aetraining", "a".repeat(64))],
+    ["a missing hash", AZURE.replace("/#resource", "/resource")],
+    ["whitespace", ` ${AZURE}`],
+    ["a trailing newline", `${AZURE}\n`],
+  ])("rejects %s", (_name, url) => {
+    expect(isAeFabricAdminLinkUrl(url)).toBe(false);
   });
 });
