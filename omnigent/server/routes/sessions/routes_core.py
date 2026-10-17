@@ -43,6 +43,10 @@ from omnigent.entities import (
 from omnigent.entities.permission import SessionPermission
 from omnigent.errors import ErrorCategory, ErrorCode, ErrorImpact, ErrorPhase, OmnigentError
 from omnigent.models.model_override import validate_model_override
+from omnigent.onboarding.claude_accounts import (
+    CLAUDE_ACCOUNT_LABEL_KEY,
+    CLAUDE_PROVIDER_ENV_KEYS,
+)
 from omnigent.runner.identity import (
     RUNNER_TUNNEL_TOKEN_HEADER,
 )
@@ -3672,7 +3676,11 @@ def register_core_routes(
         # down for nothing. The contract is that the target differs from the
         # current agent; the picker already hides the current one, so this only
         # guards a direct API call.
-        if target_agent.bundle_location == current_agent.bundle_location:
+        same_agent = target_agent.bundle_location == current_agent.bundle_location
+        if same_agent and (
+            body.claude_account is None
+            or body.claude_account == session.labels.get(CLAUDE_ACCOUNT_LABEL_KEY)
+        ):
             raise OmnigentError(
                 "Session is already running this agent — pick a different one.",
                 code=ErrorCode.INVALID_INPUT,
@@ -3695,6 +3703,92 @@ def register_core_routes(
                 f"Target agent bundle could not be loaded: {body.agent_id!r}",
                 code=ErrorCode.INVALID_INPUT,
             ) from exc
+
+        if body.claude_account is not None:
+            from omnigent.harness_aliases import canonicalize_harness
+            from omnigent.server.routes.hosts import _proxy_detect_credentials
+
+            executor = target_bundle.spec.executor
+            if canonicalize_harness(executor.harness_kind) != "claude-native":
+                raise OmnigentError(
+                    "Claude account selection requires a Claude native target.",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            spec_envs = (
+                getattr(target_bundle.spec, "env", None),
+                getattr(executor, "env", None),
+                executor.config.get("env") if isinstance(executor.config, dict) else None,
+            )
+            has_provider_env = any(
+                isinstance(env, dict) and any(env.get(key) for key in CLAUDE_PROVIDER_ENV_KEYS)
+                for env in spec_envs
+            )
+            if (
+                session.inference_snapshot is not None
+                or getattr(executor, "auth", None) is not None
+                or getattr(executor, "profile", None)
+                or has_provider_env
+            ):
+                raise OmnigentError(
+                    "Claude account selection conflicts with bound provider authentication.",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            if session.host_id is None:
+                raise OmnigentError(
+                    "Claude account selection requires a local connected host.",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            host_store = getattr(request.app.state, "host_store", None)
+            host = (
+                await asyncio.to_thread(host_store.get_host, session.host_id)
+                if host_store is not None
+                else None
+            )
+            from omnigent.server.auth import RESERVED_USER_LOCAL
+
+            if host is None or host.sandbox_provider is not None:
+                raise OmnigentError(
+                    "Claude account selection requires a local registered host.",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            if host.user_id != (user_id or RESERVED_USER_LOCAL):
+                raise OmnigentError(
+                    "Claude account selection requires ownership of the session's host.",
+                    code=ErrorCode.FORBIDDEN,
+                )
+            connected_hosts = host_registry or getattr(request.app.state, "host_registry", None)
+            if connected_hosts is None:
+                raise OmnigentError(
+                    "Claude account selection requires a connected host.",
+                    code=ErrorCode.CONFLICT,
+                )
+            host_conn = connected_hosts.get(session.host_id)
+            if host_conn is None:
+                raise OmnigentError(
+                    "Claude account selection requires a connected host.",
+                    code=ErrorCode.CONFLICT,
+                )
+            detected = await _proxy_detect_credentials(
+                host_registry=connected_hosts, host_conn=host_conn
+            )
+            if any(
+                item.get("family") in {"claude-provider-env", "claude-provider-config"}
+                for item in detected.get("credentials", [])
+            ):
+                raise OmnigentError(
+                    "Claude account selection conflicts with host provider authentication.",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            available = {
+                item.get("env_var")
+                for item in detected.get("credentials", [])
+                if item.get("family") in {"claude-oauth", "claude-oauth-active"}
+            }
+            if body.claude_account not in available:
+                raise OmnigentError(
+                    "Selected Claude account is unavailable on this host.",
+                    code=ErrorCode.INVALID_INPUT,
+                )
 
         retained_attachment = await asyncio.to_thread(
             _require_attachment_compatible_history,
@@ -3819,6 +3913,7 @@ def register_core_routes(
                 carry_history_into_native=carry_history_into_native,
                 presentation_labels=presentation_labels,
                 previous_builtin_id=previous_builtin_id,
+                claude_account=body.claude_account,
                 **(
                     {"inference_snapshot": replacement_snapshot}
                     if replacement_snapshot is not None

@@ -32,7 +32,12 @@ import type {
 import type { ConversationItem, MessageItem } from "@/lib/conversationItems";
 import { itemsToBlocks } from "@/lib/itemsToBlocks";
 import { buildBubbles } from "@/lib/renderItems";
-import { getSessionSlim, INITIAL_WINDOW_ITEMS, SESSION_HISTORY_PAGE_SIZE } from "@/lib/sessionsApi";
+import {
+  getSessionSlim,
+  INITIAL_WINDOW_ITEMS,
+  SESSION_HISTORY_PAGE_SIZE,
+  switchSessionAgent,
+} from "@/lib/sessionsApi";
 import { SSE_STALL_TIMEOUT_MS } from "@/lib/sse";
 import { serializeReplyDraft, type StoredReplyDraft } from "@/lib/replyDraft";
 import {
@@ -5949,6 +5954,170 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
         return defaultFetchHandler(input, init);
       });
     }
+
+    it("applies a cross-provider switch response before the live event arrives", async () => {
+      seedSession("conv_sw", []);
+      await useChatStore.getState().switchTo("conv_sw");
+      useChatStore.setState({
+        boundAgentId: "ag_codex",
+        llmModel: "gpt-6-astra",
+        sessionModelOverride: "gpt-6-astra",
+        sessionReasoningEffort: "xhigh",
+        sessionModelSeeded: true,
+        sessionHarness: "codex-native",
+      });
+      const target = {
+        id: "conv_sw",
+        agent_id: "ag_claude",
+        agent_name: "Claude Code",
+        status: "idle",
+        created_at: 0,
+        items: [],
+        labels: { "omnigent.wrapper": "claude-code-native-ui" },
+        harness: "claude-native",
+        llm_model: "claude-sonnet-4-6",
+        model_override: null,
+        reasoning_effort: "medium",
+      };
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.split("?")[0] === "/v1/sessions/conv_sw/switch-agent") {
+          expect(init?.method).toBe("POST");
+          expect(JSON.parse(String(init?.body))).toEqual({ agent_id: "ag_claude" });
+          return mockResponse(target);
+        }
+        if (url.split("?")[0] === "/v1/sessions/conv_sw" && (init?.method ?? "GET") === "GET") {
+          return mockResponse(target);
+        }
+        return defaultFetchHandler(input, init);
+      });
+
+      const switched = await switchSessionAgent("conv_sw", "ag_claude");
+      useChatStore.getState().applyAgentSwitchSession(switched);
+
+      expect(useChatStore.getState()).toMatchObject({
+        boundAgentId: "ag_claude",
+        llmModel: "claude-sonnet-4-6",
+        sessionModelOverride: null,
+        sessionReasoningEffort: "medium",
+        sessionModelSeeded: false,
+        sessionHarness: "claude-native",
+      });
+      handleSessionEvent({
+        type: "session_agent_changed",
+        conversationId: "conv_sw",
+        agentId: "ag_claude",
+        agentName: "Claude Code",
+      });
+      await vi.waitFor(() => {
+        expect(useChatStore.getState()).toMatchObject({
+          llmModel: "claude-sonnet-4-6",
+          sessionModelOverride: null,
+          sessionReasoningEffort: "medium",
+        });
+      });
+      expect(useChatStore.getState().llmModel).not.toBe("gpt-6-astra");
+    });
+
+    it("replaces the previous provider's model and effort after an in-place switch", async () => {
+      seedSession("conv_sw", []);
+      await useChatStore.getState().switchTo("conv_sw");
+      useChatStore.setState({
+        llmModel: "gpt-6-astra",
+        sessionModelOverride: "gpt-6-astra",
+        sessionReasoningEffort: "xhigh",
+        sessionModelSeeded: true,
+        sessionHarness: "codex-native",
+      });
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.split("?")[0] === "/v1/sessions/conv_sw" && (init?.method ?? "GET") === "GET") {
+          return mockResponse({
+            id: "conv_sw",
+            agent_id: "ag_claude",
+            agent_name: "Claude Code",
+            status: "idle",
+            created_at: 0,
+            items: [],
+            labels: { "omnigent.wrapper": "claude-code-native-ui" },
+            harness: "claude-native",
+            llm_model: "claude-opus-4-6",
+            model_override: null,
+            reasoning_effort: "medium",
+          });
+        }
+        return defaultFetchHandler(input, init);
+      });
+
+      handleSessionEvent({
+        type: "session_agent_changed",
+        conversationId: "conv_sw",
+        agentId: "ag_claude",
+        agentName: "Claude Code",
+      });
+      expect(useChatStore.getState()).toMatchObject({
+        llmModel: null,
+        sessionModelOverride: null,
+        sessionReasoningEffort: null,
+        sessionModelSeeded: false,
+      });
+      await vi.waitFor(() => {
+        expect(useChatStore.getState()).toMatchObject({
+          llmModel: "claude-opus-4-6",
+          sessionModelOverride: null,
+          sessionReasoningEffort: "medium",
+          sessionHarness: "claude-native",
+        });
+      });
+
+      useChatStore.setState({ llmModel: "gpt-6-astra", sessionReasoningEffort: "xhigh" });
+      await useChatStore.getState().refreshSessionState("conv_sw");
+      expect(useChatStore.getState()).toMatchObject({
+        llmModel: "claude-opus-4-6",
+        sessionReasoningEffort: "medium",
+      });
+    });
+
+    it("drops a Codex model seed when a direct refresh finds a different bound agent", async () => {
+      seedSession("conv_sw", []);
+      await useChatStore.getState().switchTo("conv_sw");
+      useChatStore.setState({
+        boundAgentId: "ag_codex",
+        llmModel: "gpt-6-astra",
+        sessionModelOverride: "gpt-6-astra",
+        sessionReasoningEffort: "xhigh",
+        sessionModelSeeded: true,
+      });
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.split("?")[0] === "/v1/sessions/conv_sw" && (init?.method ?? "GET") === "GET") {
+          return mockResponse({
+            id: "conv_sw",
+            agent_id: "ag_claude",
+            agent_name: "Claude Code",
+            status: "idle",
+            created_at: 0,
+            items: [],
+            labels: { "omnigent.wrapper": "claude-code-native-ui" },
+            harness: "claude-native",
+            llm_model: null,
+            model_override: null,
+            reasoning_effort: null,
+          });
+        }
+        return defaultFetchHandler(input, init);
+      });
+
+      await useChatStore.getState().refreshSessionState("conv_sw");
+
+      expect(useChatStore.getState()).toMatchObject({
+        boundAgentId: "ag_claude",
+        llmModel: null,
+        sessionModelOverride: null,
+        sessionReasoningEffort: null,
+        sessionModelSeeded: false,
+      });
+    });
 
     it("sdk→native switch: refreshed binding stops idle from clearing the optimistic bubble (first-message regression)", async () => {
       // The reported bug: a session bound while on an SDK agent (debby,

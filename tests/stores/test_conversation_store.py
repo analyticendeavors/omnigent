@@ -5708,6 +5708,34 @@ def test_switch_conversation_agent_same_family_keeps_model_settings(
     assert SWITCH_PREVIOUS_BUILTIN_LABEL_KEY not in updated.labels
 
 
+def test_switch_conversation_agent_stores_claude_account_label(
+    conversation_store: SqlAlchemyConversationStore,
+) -> None:
+    from omnigent.onboarding.claude_accounts import CLAUDE_ACCOUNT_LABEL_KEY
+
+    created = conversation_store.create_session_with_agent(
+        agent_id="074aa57a462d9ee65d8d19c3a5eb747a",
+        agent_name="claude-native-ui",
+        agent_bundle_location="bundle/claude-native",
+        agent_description=None,
+    )
+    conv_id = created.conversation.id
+    updated = conversation_store.switch_conversation_agent(
+        conv_id,
+        new_agent_id="98928e25bc96fa06666ea0a4e2b27e15",
+        new_agent_name="claude-native-ui (switch)",
+        new_agent_bundle_location="bundle/claude-native",
+        new_agent_description=None,
+        copy_model_settings=True,
+        carry_history_into_native=True,
+        presentation_labels={},
+        previous_builtin_id=None,
+        claude_account="Work",
+    )
+    assert updated.labels[CLAUDE_ACCOUNT_LABEL_KEY] == "Work"
+    assert conversation_store.get_conversation(conv_id).labels[CLAUDE_ACCOUNT_LABEL_KEY] == "Work"
+
+
 def test_get_session_connectivity_batches_runner_and_host(
     conversation_store: SqlAlchemyConversationStore,
     db_uri: str,

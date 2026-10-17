@@ -1236,6 +1236,7 @@ export interface ChatActions {
    * snapshot. No-ops for inactive or missing conversations.
    */
   refreshSessionState: (conversationId?: string) => Promise<void>;
+  applyAgentSwitchSession: (session: Session) => void;
   /** Dismiss the too-many-tabs banner for the current over-budget episode. */
   dismissStreamBudgetBanner: () => void;
   /**
@@ -2852,6 +2853,16 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     });
   },
 
+  applyAgentSwitchSession: (session) => {
+    const previous = setterForState(session.id);
+    if (previous === null) return;
+    const launchBeforeFetch = mcpStartupBeforeSnapshot(session.id, previous);
+    setterFor(session.id)((state) => ({
+      ...sessionBindingPatch(session, state, launchBeforeFetch),
+      tokensUsed: null,
+    }));
+  },
+
   setEffort: async (effort) => {
     setActive({ sessionReasoningEffort: effort });
     const { conversationId } = get();
@@ -3779,7 +3790,7 @@ function sessionBindingPatch(
   session: Session,
   state: Pick<
     ConversationState,
-    "mcpStartupLaunch" | "sessionModelSeeded" | "llmModel" | "sessionModelOverride"
+    "mcpStartupLaunch" | "sessionModelSeeded" | "llmModel" | "sessionModelOverride" | "boundAgentId"
   >,
   launchBeforeFetch: ConversationState["mcpStartupLaunch"] | undefined,
 ): Pick<
@@ -3792,6 +3803,7 @@ function sessionBindingPatch(
   | "llmModel"
   | "pendingModelChange"
   | "sessionModelOverride"
+  | "sessionReasoningEffort"
   | "sessionHarness"
   | "subAgentName"
   | "costControlModeOverride"
@@ -3807,7 +3819,10 @@ function sessionBindingPatch(
   | "mcpStartup"
   | "mcpStartupLaunch"
 > {
-  const retainModelSeed = state.sessionModelSeeded && session.llmModel == null;
+  const retainModelSeed =
+    state.sessionModelSeeded &&
+    session.llmModel == null &&
+    (state.boundAgentId == null || state.boundAgentId === session.agentId);
   return {
     isNativeTerminalSession: isNativeTerminalSessionFn(session),
     // Native wrapper whose model lives in the vendor TUI (no Omnigent picker):
@@ -3823,6 +3838,9 @@ function sessionBindingPatch(
     sessionModelOverride: retainModelSeed
       ? state.sessionModelOverride
       : (session.modelOverride ?? null),
+    sessionReasoningEffort: supportsEffortControl(session)
+      ? (session.reasoningEffort ?? null)
+      : null,
     sessionHarness: session.harness ?? null,
     subAgentName: session.subAgentName ?? null,
     costControlModeOverride: session.costControlModeOverride ?? null,
@@ -6422,6 +6440,9 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
         contextWindow: null,
         tokensUsed: null,
         llmModel: null,
+        sessionModelOverride: null,
+        sessionReasoningEffort: null,
+        sessionModelSeeded: false,
         sessionHarness: null,
       });
       void refreshSessionBinding(event.conversationId);

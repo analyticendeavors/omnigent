@@ -3056,15 +3056,44 @@ class HostProcess:
         :param frame: The detect request (carries only a request id).
         :returns: Result frame with the non-secret credential descriptors.
         """
-        from omnigent.onboarding.claude_accounts import account_descriptors
+        from omnigent.onboarding.claude_accounts import (
+            CLAUDE_PROVIDER_ENV_KEYS,
+            account_descriptors,
+        )
 
         detected = detect_adoptable_credentials()
+        provider_env_descriptors: list[dict[str, str | None]] = [
+            {"family": "claude-provider-env", "source": key, "env_var": key}
+            for key in CLAUDE_PROVIDER_ENV_KEYS
+            if os.environ.get(key)
+        ]
+        from omnigent.harnesses.claude_native.main import resolve_native_claude_config
+
+        try:
+            provider_bound = (
+                resolve_native_claude_config(spec=None, refresh_models=False) is not None
+            )
+        except Exception:  # noqa: BLE001 - Detection fails closed for provider configuration errors.
+            provider_bound = True
+        provider_config_descriptors: list[dict[str, str | None]] = (
+            [
+                {
+                    "family": "claude-provider-config",
+                    "source": "Configured provider",
+                    "env_var": None,
+                }
+            ]
+            if provider_bound
+            else []
+        )
         return HostDetectCredentialsResultFrame(
             request_id=frame.request_id,
             credentials=[
                 {"family": d.family, "source": d.source, "env_var": d.env_var} for d in detected
             ]
-            + account_descriptors(),
+            + account_descriptors()
+            + provider_env_descriptors
+            + provider_config_descriptors,
         )
 
     def _handle_fs_request(self, frame: HostFsRequestFrame) -> HostFsResultFrame:

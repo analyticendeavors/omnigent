@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useChatStore } from "@/store/chatStore";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Dialog,
@@ -12,12 +13,17 @@ import {
   Select,
   SelectContent,
   SelectItem,
+  SelectGroup,
+  SelectLabel,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { switchSessionAgent } from "@/lib/sessionsApi";
 import { useAvailableAgents } from "@/hooks/useAvailableAgents";
+import { useDetectedCredentials } from "@/hooks/useHosts";
+import { useSession } from "@/hooks/useSession";
 import { useSessionAgent } from "@/hooks/useAgents";
 import { agentRootName, harnessFamily, switchTargetCarriesHistory } from "@/lib/forkHarness";
 
@@ -100,7 +106,23 @@ export function SwitchAgentDialog({
       switchTargetCarriesHistory(a.harness),
   );
 
-  const chosen = switchableAgents.find((a) => a.id === agentChoice) ?? null;
+  const { session } = useSession(open ? sessionId : null);
+  const { data: credentials = [] } = useDetectedCredentials(session?.hostId, open);
+  const claudeTarget = (agents ?? []).find((agent) => agent.harness === "claude-native");
+  const accountChoices =
+    claudeTarget && !session?.inferenceConfigured
+      ? credentials
+          .filter((row) => row.family.startsWith("claude-oauth"))
+          .map((row) => ({
+            key: `claude-account:${row.env_var ?? ""}`,
+            account: row.env_var ?? "",
+            label: row.source,
+          }))
+      : [];
+  const selectedAccount = accountChoices.find((account) => account.key === agentChoice);
+  const chosen = selectedAccount
+    ? (claudeTarget ?? null)
+    : (switchableAgents.find((a) => a.id === agentChoice) ?? null);
   // A cross-family switch can't carry the provider-bound model id, so the
   // server resets model_override / reasoning_effort to the target's defaults.
   const resetsModelSettings =
@@ -120,7 +142,11 @@ export function SwitchAgentDialog({
     setSubmitting(true);
     setError(null);
     try {
-      await switchSessionAgent(sessionId, agentChoice);
+      const switchedSession =
+        selectedAccount && claudeTarget
+          ? await switchSessionAgent(sessionId, claudeTarget.id, selectedAccount.account)
+          : await switchSessionAgent(sessionId, agentChoice);
+      useChatStore.getState().applyAgentSwitchSession(switchedSession);
       // The bound agent changed; refresh it and the sidebar so the new
       // harness shows. Same session, so no navigation. The per-session
       // snapshot (["session", sessionId], staleTime: Infinity) carries the
@@ -180,16 +206,32 @@ export function SwitchAgentDialog({
               />
             </SelectTrigger>
             <SelectContent position="popper" align="start">
-              {switchableAgents.map((agent) => (
-                <SelectItem
-                  key={agent.id}
-                  value={agent.id}
-                  data-testid={`switch-agent-option-${agent.id}`}
-                  className="text-sm"
-                >
-                  {agent.display_name}
-                </SelectItem>
-              ))}
+              {accountChoices.length > 0 && (
+                <>
+                  <SelectGroup>
+                    <SelectLabel>Your Claude accounts</SelectLabel>
+                    {accountChoices.map((account) => (
+                      <SelectItem key={account.key} value={account.key} className="text-sm">
+                        {account.label} (Claude Code)
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                  <SelectSeparator />
+                </>
+              )}
+              <SelectGroup>
+                {accountChoices.length > 0 && <SelectLabel>Other agents</SelectLabel>}
+                {switchableAgents.map((agent) => (
+                  <SelectItem
+                    key={agent.id}
+                    value={agent.id}
+                    data-testid={`switch-agent-option-${agent.id}`}
+                    className="text-sm"
+                  >
+                    {agent.display_name}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
             </SelectContent>
           </Select>
         </div>

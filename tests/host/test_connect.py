@@ -4733,10 +4733,15 @@ def test_handle_store_secret_surfaces_core_failure(monkeypatch: pytest.MonkeyPat
 
 def test_handle_detect_credentials_returns_non_secret_descriptors(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """The detect handler returns the core's descriptors as plain dicts."""
     import omnigent.host.connect as connect
+    from omnigent.harnesses.claude_native import main as claude_main
     from omnigent.onboarding.harness_auth import DetectedCredential
+
+    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(claude_main, "resolve_native_claude_config", lambda **kwargs: None)
 
     monkeypatch.setattr(
         connect,
@@ -4750,6 +4755,35 @@ def test_handle_detect_credentials_returns_non_secret_descriptors(
         {"family": "anthropic", "source": "$ANTHROPIC_API_KEY", "env_var": "ANTHROPIC_API_KEY"},
         {"family": "claude-oauth-active", "source": "Default CLI account", "env_var": ""},
     ]
+
+
+def test_detect_credentials_reports_provider_env_without_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://private.example.invalid/token")
+    host = _make_host_process()
+    result = host._handle_detect_credentials(HostDetectCredentialsFrame(request_id="d2"))
+    assert {
+        "family": "claude-provider-env",
+        "source": "ANTHROPIC_BASE_URL",
+        "env_var": "ANTHROPIC_BASE_URL",
+    } in result.credentials
+    assert "private.example.invalid" not in repr(result.credentials)
+
+
+def test_detect_credentials_reports_configured_provider_without_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from omnigent.harnesses.claude_native import main as claude_main
+
+    monkeypatch.setattr(claude_main, "resolve_native_claude_config", lambda **kwargs: object())
+    host = _make_host_process()
+    result = host._handle_detect_credentials(HostDetectCredentialsFrame(request_id="d3"))
+    assert {
+        "family": "claude-provider-config",
+        "source": "Configured provider",
+        "env_var": None,
+    } in result.credentials
 
 
 # --- Fail-loud on permanent tunnel failures ----------------------------

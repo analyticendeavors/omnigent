@@ -5,7 +5,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SwitchAgentDialog } from "./SwitchAgentDialog";
 import { switchSessionAgent } from "@/lib/sessionsApi";
 import { useAvailableAgents } from "@/hooks/useAvailableAgents";
+import { useDetectedCredentials } from "@/hooks/useHosts";
 import { useSessionAgent } from "@/hooks/useAgents";
+
+vi.mock("@/store/chatStore", () => ({
+  useChatStore: { getState: () => ({ applyAgentSwitchSession: applySwitch }) },
+}));
+const { applySwitch } = vi.hoisted(() => ({ applySwitch: vi.fn() }));
 
 vi.mock("@/lib/sessionsApi", () => ({ switchSessionAgent: vi.fn() }));
 vi.mock("@/hooks/useAvailableAgents", () => ({
@@ -13,6 +19,9 @@ vi.mock("@/hooks/useAvailableAgents", () => ({
   prefetchAvailableAgentDetails: vi.fn(),
 }));
 vi.mock("@/hooks/useAgents", () => ({ useSessionAgent: vi.fn() }));
+
+vi.mock("@/hooks/useSession", () => ({ useSession: () => ({ session: { hostId: "host-1" } }) }));
+vi.mock("@/hooks/useHosts", () => ({ useDetectedCredentials: vi.fn(() => ({ data: [] })) }));
 
 const switchSessionAgentMock = vi.mocked(switchSessionAgent);
 const useAvailableAgentsMock = vi.mocked(useAvailableAgents);
@@ -81,6 +90,10 @@ function openAgentSelect(): void {
 
 beforeEach(() => {
   switchSessionAgentMock.mockReset();
+  applySwitch.mockReset();
+  vi.mocked(useDetectedCredentials).mockReturnValue({ data: [] } as unknown as ReturnType<
+    typeof useDetectedCredentials
+  >);
   // Default: the session currently runs claude-sdk (anthropic).
   setAgents({ id: "ag_source", name: "source", harness: "claude-sdk" });
 });
@@ -267,5 +280,27 @@ describe("SwitchAgentDialog", () => {
     );
     // A failed switch must not close the dialog (so the user can retry).
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
+  });
+});
+
+describe("named subscription accounts", () => {
+  it("puts named accounts first and sends the chosen account only with its switch", async () => {
+    vi.mocked(useDetectedCredentials).mockReturnValue({
+      data: [
+        { family: "claude-oauth", source: "Personal", env_var: "" },
+        { family: "claude-oauth-active", source: "AE Backup", env_var: "backup" },
+      ],
+    } as unknown as ReturnType<typeof useDetectedCredentials>);
+    setAgents({ id: "ag_source", name: "Codex", harness: "codex-native" });
+    switchSessionAgentMock.mockResolvedValue({} as never);
+    renderDialog();
+    openAgentSelect();
+    expect(screen.getAllByRole("option")[0]).toHaveTextContent("Personal (Claude Code)");
+    fireEvent.click(screen.getByRole("option", { name: "AE Backup (Claude Code)" }));
+    fireEvent.click(screen.getByTestId("switch-agent-submit"));
+    await waitFor(() =>
+      expect(switchSessionAgentMock).toHaveBeenCalledWith("conv_src", "ag_claude_native", "backup"),
+    );
+    expect(applySwitch).toHaveBeenCalledWith({});
   });
 });

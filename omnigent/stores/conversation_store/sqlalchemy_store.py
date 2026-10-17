@@ -4854,6 +4854,7 @@ class SqlAlchemyConversationStore(ConversationStore):
         carry_history_into_native: bool,
         presentation_labels: dict[str, str],
         previous_builtin_id: str | None,
+        claude_account: str | None = None,
         inference_snapshot: dict[str, Any] | None = None,
     ) -> Conversation:
         """
@@ -4876,6 +4877,8 @@ class SqlAlchemyConversationStore(ConversationStore):
         :param presentation_labels: Target-harness ui/wrapper labels.
         :param previous_builtin_id: Built-in switched away from, or
             ``None``.
+        :param claude_account: Non-secret Claude account name for this
+            session. ``None`` removes the previous selection.
         :param inference_snapshot: Validated replacement snapshot; ``None``
             preserves the existing snapshot.
         :returns: The updated :class:`Conversation`.
@@ -4887,6 +4890,8 @@ class SqlAlchemyConversationStore(ConversationStore):
         if encoded_inference_snapshot is not None:
             _validate_inference_snapshot(encoded_inference_snapshot)
         now = now_epoch()
+        from omnigent.onboarding.claude_accounts import CLAUDE_ACCOUNT_LABEL_KEY
+
         drop_keys = (
             set(_INSTANCE_SCOPED_LABEL_KEYS)
             | {FORK_SOURCE_LABEL_KEY, FORK_SOURCE_EXTERNAL_SESSION_LABEL_KEY}
@@ -4895,7 +4900,7 @@ class SqlAlchemyConversationStore(ConversationStore):
             # only when this switch supplies one — otherwise a stale pointer
             # from an earlier switch survives and offers the wrong "switch
             # back" target (the label is overwritten on each switch).
-            | {SWITCH_PREVIOUS_BUILTIN_LABEL_KEY}
+            | {SWITCH_PREVIOUS_BUILTIN_LABEL_KEY, CLAUDE_ACCOUNT_LABEL_KEY}
         )
         if not carry_history_into_native:
             drop_keys.add(FORK_CARRY_HISTORY_LABEL_KEY)
@@ -4904,6 +4909,8 @@ class SqlAlchemyConversationStore(ConversationStore):
             upserts[FORK_CARRY_HISTORY_LABEL_KEY] = "1"
         if previous_builtin_id is not None:
             upserts[SWITCH_PREVIOUS_BUILTIN_LABEL_KEY] = previous_builtin_id
+        if claude_account is not None:
+            upserts[CLAUDE_ACCOUNT_LABEL_KEY] = claude_account
         encoded_agent_kind = encode_agent_kind("session")
 
         # AP holds the conversation (agent binding + overrides) + labels;

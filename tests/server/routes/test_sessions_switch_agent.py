@@ -9,6 +9,7 @@ computes the same-family model/history/label deltas, and forwards them to
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -99,6 +100,7 @@ class _ConversationStore:
         carry_history_into_native: bool,
         presentation_labels: dict[str, str],
         previous_builtin_id: str | None,
+        claude_account: str | None = None,
     ) -> Conversation:
         """Record the call and return the updated conversation.
 
@@ -125,6 +127,7 @@ class _ConversationStore:
                 "carry_history_into_native": carry_history_into_native,
                 "presentation_labels": presentation_labels,
                 "previous_builtin_id": previous_builtin_id,
+                "claude_account": claude_account,
             }
         )
         src = self._convs.get(conversation_id)
@@ -199,6 +202,9 @@ class _LoadedAgentStub:
         class _Executor:
             def __init__(self, hk: str) -> None:
                 self.harness_kind = hk
+                self.config: dict[str, Any] = {}
+                self.auth = None
+                self.profile = None
 
         class _Spec:
             def __init__(self, hk: str) -> None:
@@ -1058,3 +1064,159 @@ def test_switch_checks_attachment_history_before_mutation(
         assert source.agent_id == _CURRENT.id
     else:
         assert len(conv_store.switch_calls) == 1
+
+
+@pytest.mark.parametrize(
+    "account,available,host_id,harness,owner,provider_env,expected_status",
+    [
+        ("Work", True, "host-local", "claude-native", "local", False, 200),
+        ("", True, "host-local", "claude-native", "local", False, 200),
+        ("Missing", True, "host-local", "claude-native", "local", False, 400),
+        ("Work", False, "host-local", "claude-native", "local", False, 409),
+        ("Work", True, None, "claude-native", "local", False, 400),
+        ("Work", True, "host-local", "codex-native", "local", False, 400),
+        ("Work", True, "host-local", "claude-native", "another-user", False, 403),
+        ("Work", True, "host-local", "claude-native", "local", True, 400),
+    ],
+)
+def test_switch_claude_account_validates_host_before_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+    account: str,
+    available: bool,
+    host_id: str | None,
+    harness: str,
+    owner: str,
+    provider_env: bool,
+    expected_status: int,
+) -> None:
+    from omnigent.server.routes import hosts
+    from omnigent.server.routes.sessions import routes_core
+
+    source = _conv()
+    source.host_id = host_id
+    conv_store = _ConversationStore({source.id: source})
+    agent_store = _AgentStore({_CURRENT.id: _CURRENT, _BUILTIN_CLAUDE.id: _BUILTIN_CLAUDE})
+    _patch_family_helpers(monkeypatch, same_family=True, native=True, labels={})
+    monkeypatch.setattr(
+        sessions_mod,
+        "get_agent_cache",
+        lambda: _HarnessAgentCacheStub({_BUILTIN_CLAUDE.id: harness}),
+    )
+
+    async def detect_credentials(**kwargs: Any) -> dict[str, Any]:
+        assert kwargs["host_conn"] is connection
+        credentials = [
+            {"family": "claude-oauth", "source": "Work", "env_var": "Work"},
+            {"family": "claude-oauth", "source": "Default CLI account", "env_var": ""},
+        ]
+        if provider_env:
+            credentials.append(
+                {
+                    "family": "claude-provider-env",
+                    "source": "ANTHROPIC_API_KEY",
+                    "env_var": "ANTHROPIC_API_KEY",
+                }
+            )
+        return {"credentials": credentials}
+
+    monkeypatch.setattr(hosts, "_proxy_detect_credentials", detect_credentials)
+
+    async def no_reset(*args: Any) -> None:
+        return None
+
+    monkeypatch.setattr(routes_core, "_reset_runner_and_clear_todos_after_switch", no_reset)
+    connection = object()
+
+    class _Hosts:
+        def get(self, host: str) -> object | None:
+            return connection if available and host == "host-local" else None
+
+    app = _build_app(conv_store, agent_store)
+    app.state.host_registry = _Hosts()
+    app.state.host_store = SimpleNamespace(
+        get_host=lambda host: SimpleNamespace(user_id=owner, sandbox_provider=None)
+    )
+    response = TestClient(app).post(
+        f"/v1/sessions/{source.id}/switch-agent",
+        json={"agent_id": _BUILTIN_CLAUDE.id, "claude_account": account},
+    )
+    assert response.status_code == expected_status, response.text
+    assert len(conv_store.switch_calls) == (1 if expected_status == 200 else 0)
+    if expected_status == 200:
+        assert conv_store.switch_calls[0]["claude_account"] == account
+
+
+def test_same_claude_agent_can_change_explicit_account(monkeypatch: pytest.MonkeyPatch) -> None:
+    from omnigent.server.routes import hosts
+    from omnigent.server.routes.sessions import routes_core
+
+    source = _conv()
+    source.host_id = "host-local"
+    source.labels["omnigent.claude_native.account"] = "Work"
+    current = _agent(_CURRENT.id, _CURRENT.name, _BUILTIN_CLAUDE.bundle_location, source.id)
+    conv_store = _ConversationStore({source.id: source})
+    agent_store = _AgentStore({current.id: current, _BUILTIN_CLAUDE.id: _BUILTIN_CLAUDE})
+    _patch_family_helpers(monkeypatch, same_family=True, native=True, labels={})
+    monkeypatch.setattr(
+        sessions_mod,
+        "get_agent_cache",
+        lambda: _HarnessAgentCacheStub({_BUILTIN_CLAUDE.id: "claude-native"}),
+    )
+
+    async def detect_credentials(**kwargs: Any) -> dict[str, Any]:
+        return {"credentials": [{"family": "claude-oauth", "env_var": "Personal"}]}
+
+    monkeypatch.setattr(hosts, "_proxy_detect_credentials", detect_credentials)
+
+    async def no_reset(*args: Any) -> None:
+        return None
+
+    monkeypatch.setattr(routes_core, "_reset_runner_and_clear_todos_after_switch", no_reset)
+
+    class _Hosts:
+        def get(self, host: str) -> object:
+            return object()
+
+    app = _build_app(conv_store, agent_store)
+    app.state.host_registry = _Hosts()
+    app.state.host_store = SimpleNamespace(
+        get_host=lambda host: SimpleNamespace(user_id="local", sandbox_provider=None)
+    )
+    response = TestClient(app).post(
+        f"/v1/sessions/{source.id}/switch-agent",
+        json={"agent_id": _BUILTIN_CLAUDE.id, "claude_account": "Personal"},
+    )
+    assert response.status_code == 200, response.text
+    assert conv_store.switch_calls[0]["claude_account"] == "Personal"
+
+
+@pytest.mark.parametrize("binding", ["session", "auth", "profile", "env"])
+def test_switch_claude_account_rejects_bound_provider_before_host_lookup(
+    monkeypatch: pytest.MonkeyPatch, binding: str
+) -> None:
+    source = _conv()
+    source.host_id = "host-local"
+    if binding == "session":
+        source.inference_snapshot = {"harness": "claude-native"}
+    conv_store = _ConversationStore({source.id: source})
+    agent_store = _AgentStore({_CURRENT.id: _CURRENT, _BUILTIN_CLAUDE.id: _BUILTIN_CLAUDE})
+    _patch_family_helpers(monkeypatch, same_family=True, native=True, labels={})
+    loaded = _LoadedAgentStub("claude-native")
+    if binding == "auth":
+        loaded.spec.executor.auth = object()
+    elif binding == "profile":
+        loaded.spec.executor.profile = "gateway"
+    elif binding == "env":
+        loaded.spec.executor.config["env"] = {"ANTHROPIC_BASE_URL": "https://gateway"}
+
+    class _Cache:
+        def load(self, agent_id: str, bundle_location: str) -> _LoadedAgentStub:
+            return loaded
+
+    monkeypatch.setattr(sessions_mod, "get_agent_cache", lambda: _Cache())
+    response = TestClient(_build_app(conv_store, agent_store)).post(
+        f"/v1/sessions/{source.id}/switch-agent",
+        json={"agent_id": _BUILTIN_CLAUDE.id, "claude_account": "Work"},
+    )
+    assert response.status_code == 400, response.text
+    assert conv_store.switch_calls == []

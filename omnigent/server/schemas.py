@@ -2696,10 +2696,14 @@ class SessionSwitchAgentRequest(BaseModel):
     :param agent_id: Built-in agent to switch the session to, e.g.
         ``"ag_builtin_codex"``. Must be a built-in agent (one listed by
         ``GET /v1/agents``) and different from the session's current
-        agent.
+        agent unless a different Claude account is selected.
+    :param claude_account: Optional host account name for Claude native.
+        An empty string selects the default Claude CLI login. Omit to use
+        the host's normal account selection.
     """
 
     agent_id: str
+    claude_account: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 

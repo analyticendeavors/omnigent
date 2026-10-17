@@ -4573,16 +4573,98 @@ function hasSessionConfig({
   return showModels || showEffort;
 }
 
+function claudeVersion(value: string) {
+  const match = /(?:^|[-_.])(fable|opus|sonnet|haiku)[-_ ](\d+)(?:[-_.](\d+))?(?=$|[-_[\s])/i.exec(
+    value,
+  );
+  return match
+    ? {
+        family: match[1].toLowerCase(),
+        major: Number(match[2]),
+        minor: Number(match[3] ?? 0),
+        minorText: match[3] ?? null,
+      }
+    : null;
+}
+
 function compactModelChoices(
   choices: ComposerConfigChoice[],
   kind: NativeModelPickerKind | null,
-): { primary: ComposerConfigChoice[]; more: ComposerConfigChoice[] } {
+): {
+  primary: ComposerConfigChoice[];
+  more: ComposerConfigChoice[];
+  unresolvedCurrent?: ComposerConfigChoice;
+} {
+  const claudeChoiceVersion = (choice: ComposerConfigChoice) =>
+    claudeVersion(choice.data?.["data-model-wire"] ?? "") ??
+    claudeVersion(choice.data?.["data-model-id"] ?? choice.key) ??
+    (typeof choice.label === "string" ? claudeVersion(choice.label) : null);
   const codexModel = (id: string) =>
     /^gpt-(\d+)(?:\.(\d+))?(?:-(codex|mini|nano|luna|sol|spark|astra))?(?:$|-)/i.exec(id);
   const primary: ComposerConfigChoice[] = [];
   const more: ComposerConfigChoice[] = [];
   const seen = new Set<string>();
   const latestCodexByFamily = new Map<string, { id: string; major: number; minor: number }>();
+  const latestClaudeByFamily = new Map<string, { major: number; minor: number }>();
+  if (kind === "claude") {
+    let unresolvedCurrent: ComposerConfigChoice | undefined;
+    for (const choice of choices) {
+      const version = claudeChoiceVersion(choice);
+      if (!version) continue;
+      const latest = latestClaudeByFamily.get(version.family);
+      if (
+        !latest ||
+        version.major > latest.major ||
+        (version.major === latest.major && version.minor > latest.minor)
+      )
+        latestClaudeByFamily.set(version.family, version);
+    }
+    const primaryIndex = new Map<string, number>();
+    for (const choice of choices) {
+      const id = choice.data?.["data-model-id"] ?? choice.key;
+      const version = claudeChoiceVersion(choice);
+      const alias = /^(fable|opus|sonnet|haiku)$/i.exec(id)?.[1]?.toLowerCase();
+      const latest = latestClaudeByFamily.get(version?.family ?? alias ?? "");
+      if (
+        version &&
+        latest &&
+        (version.major < latest.major ||
+          (version.major === latest.major && version.minor < latest.minor))
+      ) {
+        more.push(choice);
+        continue;
+      }
+      // An unversioned alias cannot claim the newest version when the catalog has a versioned row.
+      if (!version && alias && latest) {
+        if (choice.checked)
+          unresolvedCurrent = {
+            ...choice,
+            label: <>{choice.label} (current, version unknown)</>,
+            disabled: true,
+            testId: "composer-agent-current-model",
+          };
+        continue;
+      }
+      const variant = /\[[^\]]+\]/.exec(id)?.[0] ?? "";
+      const key = version && `${version.family}:${version.major}.${version.minor}:${variant}`;
+      const existingIndex = key ? primaryIndex.get(key) : undefined;
+      if (existingIndex !== undefined) {
+        const existing = primary[existingIndex];
+        const existingId = existing.data?.["data-model-id"] ?? existing.key;
+        if (
+          (choice.checked && !existing.checked) ||
+          (choice.checked === existing.checked &&
+            alias &&
+            !/^(fable|opus|sonnet|haiku)$/i.test(existingId))
+        )
+          primary[existingIndex] = choice;
+        continue;
+      }
+      if (key) primaryIndex.set(key, primary.length);
+      primary.push(choice);
+    }
+    return { primary, more, unresolvedCurrent };
+  }
   if (kind === "codex") {
     for (const choice of choices) {
       const id = choice.data?.["data-model-id"] ?? choice.key;
@@ -4596,28 +4678,13 @@ function compactModelChoices(
         latestCodexByFamily.set(family, { id, major, minor });
     }
   }
-  const claudeAliases = new Set(
-    choices
-      .map((choice) => choice.data?.["data-model-id"] ?? choice.key)
-      .filter((id) => /^(fable|opus|sonnet|haiku)$/i.test(id)),
-  );
   for (const choice of choices) {
     const id = choice.data?.["data-model-id"] ?? choice.key;
-    const claudeFamily =
-      kind === "claude" ? /(?:^|[-_])(fable|opus|sonnet|haiku)(?:$|[-_])/i.exec(id)?.[1] : null;
     const codexFamily = kind === "codex" ? codexModel(id) : null;
-    const family = claudeFamily
-      ? `claude:${claudeFamily.toLowerCase()}`
-      : codexFamily
-        ? `codex:${codexFamily[1] ?? "base"}`
-        : id;
-    const hasAlias = kind === "claude" && claudeAliases.has(claudeFamily ?? "");
+    const family = codexFamily ? `codex:${codexFamily[1] ?? "base"}` : id;
     const latestCodex =
       codexFamily !== null && latestCodexByFamily.get(codexFamily[3] ?? "base")?.id === id;
-    if (
-      choice.checked ||
-      (codexFamily ? latestCodex : (!hasAlias || id === claudeFamily) && !seen.has(family))
-    ) {
+    if (choice.checked || (codexFamily ? latestCodex : !seen.has(family))) {
       primary.push(choice);
       seen.add(family);
     } else {
@@ -4652,13 +4719,14 @@ function CompactSessionChoices({
   efforts?: { label: string; choices: ComposerConfigChoice[] };
   kind: NativeModelPickerKind | null;
 }) {
-  const { primary, more } = compactModelChoices(models?.choices ?? [], kind);
+  const { primary, more, unresolvedCurrent } = compactModelChoices(models?.choices ?? [], kind);
   return (
     <>
       {models && (
         <div data-testid="composer-agent-models">
           <PickerSectionHeader>Models</PickerSectionHeader>
           {models.leading}
+          {unresolvedCurrent && <CompactConfigChoice choice={unresolvedCurrent} />}
           <div className="grid grid-cols-2 gap-0.5 max-[480px]:grid-cols-1">
             {primary.map((choice) => (
               <CompactConfigChoice key={choice.key} choice={choice} />
@@ -4876,7 +4944,7 @@ function SessionHarnessPicker({
     });
   const configContent = (
     <>
-      {showClaudeAccounts && <ClaudeAccounts host={accountHost} />}
+      {showClaudeAccounts && <ClaudeAccounts host={accountHost} compact />}
       {costRoutingEligible && showModels && (
         <>
           <DropdownMenuItem
@@ -4921,7 +4989,19 @@ function SessionHarnessPicker({
                     : []),
                   ...modelOptions.map((model) => ({
                     key: model.id,
-                    label: nativeModelLabel(model),
+                    label: (() => {
+                      const modelLabelText = nativeModelLabel(model);
+                      if (modelPickerKind !== "claude") return modelLabelText;
+                      const version = claudeVersion(model.model ?? "") ?? claudeVersion(model.id);
+                      if (
+                        !version ||
+                        !/^(fable|opus|sonnet|haiku)(?:[\s_-]\d+(?:[.\-_]\d+)?)?$/i.test(
+                          modelLabelText,
+                        )
+                      )
+                        return modelLabelText;
+                      return `${version.family[0].toUpperCase()}${version.family.slice(1)} ${version.major}${version.minorText !== null ? `.${version.minorText}` : ""}`;
+                    })(),
                     checked:
                       !routingOn &&
                       (composerFusion !== undefined && model.id === composerFusionOption?.id
@@ -4934,7 +5014,7 @@ function SessionHarnessPicker({
                         : selectModel(supportsModelReset && model.isDefault ? null : model.id),
                     testId: `composer-agent-model-${model.id}`,
                     className: "whitespace-normal break-words",
-                    data: { "data-model-id": model.id },
+                    data: { "data-model-id": model.id, "data-model-wire": model.model },
                   })),
                   ...(pickerSelectedModel &&
                   !isFusionModelUid(pickerSelectedModel) &&

@@ -1767,7 +1767,7 @@ describe("Composer model/effort label", () => {
     expect(screen.getByTestId("composer-agent-effort-high")).toBeVisible();
   });
 
-  it("keeps Claude family aliases up front and puts extra variants under More models", async () => {
+  it("keeps the newest Claude versions in the grid and older versions under More models", async () => {
     useChatStore.setState({ llmModel: "sonnet" });
     renderWithTooltips(
       <Composer
@@ -1781,33 +1781,105 @@ describe("Composer model/effort label", () => {
     await openSessionModels();
     const models = screen.getByTestId("composer-agent-models");
     expect(models.querySelector(".grid-cols-2")).toBeTruthy();
-    expect(within(models).getByTestId("composer-agent-model-sonnet")).toHaveAttribute(
+    expect(within(models).getByTestId("composer-agent-model-sonnet_5")).toHaveTextContent(
+      "Sonnet 5",
+    );
+    expect(screen.queryByTestId("composer-agent-model-sonnet")).toBeNull();
+    fireEvent.keyDown(screen.getByTestId("composer-agent-more-models"), { key: "ArrowRight" });
+    expect(screen.getByTestId("composer-agent-model-sonnet")).toHaveTextContent("Sonnet 4.6");
+    expect(screen.getByTestId("composer-agent-model-sonnet")).toHaveAttribute(
       "aria-checked",
       "true",
     );
-    expect(screen.queryByTestId("composer-agent-model-sonnet_5")).toBeNull();
-    fireEvent.keyDown(screen.getByTestId("composer-agent-more-models"), { key: "ArrowRight" });
-    expect(screen.getByTestId("composer-agent-model-sonnet_5")).toHaveTextContent("Sonnet 5");
   });
 
-  it("keeps a selected extra variant visible in the primary grid", async () => {
-    useChatStore.setState({ llmModel: "sonnet_5" });
+  it("resolves alias labels from shuffled host versions and keeps a selected old model in More", async () => {
+    useChatStore.setState({ llmModel: "opus-4-10" });
     renderWithTooltips(
       <Composer
         {...composerProps({
           showModels: true,
           modelPickerKind: "claude",
-          codexModelOptions: CLAUDE_MODEL_OPTIONS,
+          codexModelOptions: [
+            { id: "opus-4-10", model: "claude-opus-4-10", displayName: "Opus 4.10" },
+            { id: "opus-5-5", model: "claude-opus-5-5", displayName: "Opus 5.5" },
+            { id: "haiku-4-5", model: "claude-haiku-4-5", displayName: "Haiku 4.5" },
+            { id: "sonnet", model: "claude-sonnet-5-5", displayName: "Sonnet" },
+            { id: "opus", model: "claude-opus-5-5", displayName: "Opus" },
+            {
+              id: "opus[1m]",
+              model: "claude-opus-5-5[1m]",
+              displayName: "Opus 5.5 (1M context)",
+            },
+            { id: "sonnet-4-6", model: "claude-sonnet-4-6", displayName: "Sonnet 4.6" },
+            { id: "haiku", model: "claude-haiku-5-5", displayName: "Haiku" },
+          ],
         })}
       />,
     );
     await openSessionModels();
-    expect(
-      within(screen.getByTestId("composer-agent-models")).getByTestId(
-        "composer-agent-model-sonnet_5",
-      ),
-    ).toHaveAttribute("aria-checked", "true");
+    const models = within(screen.getByTestId("composer-agent-models"));
+    for (const family of ["Opus", "Sonnet", "Haiku"])
+      expect(models.getByTestId(`composer-agent-model-${family.toLowerCase()}`)).toHaveTextContent(
+        `${family} 5.5`,
+      );
+    expect(screen.queryByTestId("composer-agent-model-opus-5-5")).toBeNull();
+    expect(models.getByTestId("composer-agent-model-opus[1m]")).toHaveTextContent(
+      "Opus 5.5 (1M context)",
+    );
+    expect(screen.queryByTestId("composer-agent-model-opus-4-10")).toBeNull();
+    fireEvent.keyDown(screen.getByTestId("composer-agent-more-models"), { key: "ArrowRight" });
+    expect(screen.getByTestId("composer-agent-model-opus-4-10")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.getByTestId("composer-agent-model-haiku-4-5")).toBeVisible();
+    expect(screen.getByTestId("composer-agent-model-sonnet-4-6")).toBeVisible();
   });
+
+  it.each([null, "opus"])(
+    "keeps an unresolved selected alias separate from numbered choices (%s)",
+    async (selectedModel) => {
+      useChatStore.setState({ llmModel: selectedModel });
+      renderWithTooltips(
+        <Composer
+          {...composerProps({
+            showModels: true,
+            modelPickerKind: "claude",
+            codexModelOptions: [
+              { id: "opus", displayName: "Opus" },
+              { id: "opus-4-10", model: "claude-opus-4-10", displayName: "Opus 4.10" },
+              { id: "fable", displayName: "Fable" },
+              { id: "opus-5-5", model: "claude-opus-5-5", displayName: "Opus 5.5" },
+            ],
+          })}
+        />,
+      );
+      await openSessionModels();
+      const models = within(screen.getByTestId("composer-agent-models"));
+      expect(models.getByTestId("composer-agent-model-opus-5-5")).toHaveTextContent("Opus 5.5");
+      expect(models.getByTestId("composer-agent-model-opus-5-5")).toHaveAttribute(
+        "aria-checked",
+        "false",
+      );
+      expect(models.getByTestId("composer-agent-model-fable")).toHaveTextContent("Fable");
+      expect(screen.queryByTestId("composer-agent-model-opus")).toBeNull();
+      if (selectedModel) {
+        expect(models.getByTestId("composer-agent-current-model")).toHaveTextContent(
+          "Opus (current, version unknown)",
+        );
+        expect(models.getByTestId("composer-agent-current-model")).toHaveAttribute(
+          "aria-checked",
+          "true",
+        );
+      } else {
+        expect(models.queryByTestId("composer-agent-current-model")).toBeNull();
+      }
+      fireEvent.keyDown(screen.getByTestId("composer-agent-more-models"), { key: "ArrowRight" });
+      expect(screen.getByTestId("composer-agent-model-opus-4-10")).toBeVisible();
+      expect(screen.queryByTestId("composer-agent-model-opus")).toBeNull();
+    },
+  );
 
   it.each([null, "gpt-5.6-sol"])(
     "keeps newest Codex family rows primary with selected older model %s",
@@ -4988,7 +5060,7 @@ describe("Composer config gear", () => {
       await openSessionModels();
       const menu = within(screen.getByTestId("composer-agent-config-menu"));
       const picks = () => [
-        ...["fable", "opus", "sonnet", "haiku"].map((id) =>
+        ...["fable", "opus", "sonnet_5", "haiku"].map((id) =>
           menu.getByTestId(`composer-agent-model-${id}`),
         ),
       ];

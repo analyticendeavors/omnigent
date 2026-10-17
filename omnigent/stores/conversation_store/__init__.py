@@ -1847,6 +1847,7 @@ class ConversationStore(ABC):
         carry_history_into_native: bool,
         presentation_labels: dict[str, str],
         previous_builtin_id: str | None,
+        claude_account: str | None = None,
         inference_snapshot: dict[str, Any] | None = None,
     ) -> Conversation:
         """
@@ -1898,6 +1899,8 @@ class ConversationStore(ABC):
             switching away from, stamped as
             :data:`SWITCH_PREVIOUS_BUILTIN_LABEL_KEY` for a one-click
             "Switch back". ``None`` leaves it unset.
+        :param claude_account: Non-secret Claude account name to bind to this
+            session. ``None`` clears an earlier selection.
         :param inference_snapshot: Validated replacement snapshot. ``None``
             preserves the existing snapshot.
         :returns: The updated :class:`Conversation`.

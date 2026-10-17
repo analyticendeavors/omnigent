@@ -941,13 +941,20 @@ export async function createSideChat(sourceId: string): Promise<{ childSessionId
  * @throws Error carrying the server's failure detail (e.g. 409 when a turn
  *   is running) so the caller can surface it inline.
  */
-export async function switchSessionAgent(sessionId: string, agentId: string): Promise<Session> {
+export async function switchSessionAgent(
+  sessionId: string,
+  agentId: string,
+  claudeAccount?: string,
+): Promise<Session> {
   const res = await authenticatedFetch(
     `/v1/sessions/${encodeURIComponent(sessionId)}/switch-agent`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agent_id: agentId }),
+      body: JSON.stringify({
+        agent_id: agentId,
+        ...(claudeAccount !== undefined ? { claude_account: claudeAccount } : {}),
+      }),
     },
   );
   return sessionFromWire(await readJsonOrThrow<SessionResponseWire>(res));

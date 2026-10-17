@@ -1500,6 +1500,8 @@ def claude_launch_catalog_is_stale(claude_config: ClaudeNativeUcodeConfig | None
 
 def build_native_claude_terminal_env(
     claude_config: ClaudeNativeUcodeConfig | None,
+    *,
+    account_name: str | None = None,
 ) -> dict[str, str]:
     """
     Build env overrides for a native Claude Code terminal process.
@@ -1537,10 +1539,12 @@ def build_native_claude_terminal_env(
                 f"carries a raw {_ANTHROPIC_API_KEY_ENV}; the credential must reach "
                 "Claude Code via the helper, not the environment."
             )
+    if account_name is not None and claude_config is not None:
+        raise RuntimeError("Claude account selection conflicts with provider authentication.")
     if claude_config is None:
         from omnigent.onboarding.claude_accounts import account_env_for_launch
 
-        terminal_env.update(account_env_for_launch(terminal_env))
+        terminal_env.update(account_env_for_launch(terminal_env, account_name=account_name))
     return terminal_env
 
 
