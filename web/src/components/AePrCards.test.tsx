@@ -6,7 +6,7 @@ vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
 
 import { authenticatedFetch } from "@/lib/identity";
 import { type AePrCard, parseAePrUrl } from "@/lib/aePrs";
-import { AePrCards } from "./AePrCards";
+import { AePrCards, AePrCardView } from "./AePrCards";
 
 const SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
 const REPO = "analyticendeavors/omnigent-ae";
@@ -731,5 +731,337 @@ describe("in-app review", () => {
     fireEvent.click(screen.getByRole("button", { name: "Mark ready for review" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("The branch changed");
     expect(screen.getByRole("button", { name: "Mark ready for review" })).toBeEnabled();
+  });
+
+  it("pins Update branch to the displayed SHA and waits for a changed revision after acceptance", async () => {
+    const behind = card(5, { update_branch: { allowed: true, reason: null } });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let accept!: (response: Response) => void;
+    let request: RequestInit | undefined;
+    serve((path, init) => {
+      if (path.endsWith("/update-branch")) {
+        request = init;
+        return new Promise((resolve) => {
+          accept = resolve;
+        });
+      }
+      return json(behind);
+    });
+    renderCards([{ url: url(5) }], "s1", qc);
+    fireEvent.click(await screen.findByRole("button", { name: "Update branch" }));
+    await waitFor(() => expect(request?.method).toBe("POST"));
+    expect(JSON.parse(request!.body as string)).toEqual({ sha: SHA });
+    expect(await screen.findByRole("button", { name: "Updating branch..." })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Merge" })).toBeDisabled();
+    await act(async () =>
+      accept(
+        new Response(JSON.stringify({ accepted: true, head_sha: SHA, message: "Accepted" }), {
+          status: 202,
+        }),
+      ),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent("Waiting for GitHub");
+    expect(screen.getByRole("button", { name: "Merge" })).toBeDisabled();
+    act(() =>
+      qc.setQueryData(["ae-pr", REPO, 5], {
+        ...behind,
+        head_sha: "b".repeat(40),
+        update_branch: { allowed: false, reason: "Up to date" },
+      }),
+    );
+    expect(await screen.findByText(/Branch revision changed/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Update branch" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Merge" })).toBeEnabled();
+    expect(
+      vi.mocked(authenticatedFetch).mock.calls.filter(([, init]) => init?.method === "POST"),
+    ).toHaveLength(1);
+  });
+
+  it("shows an update refusal and replaces a stale card before retry", async () => {
+    const newSha = "b".repeat(40);
+    const before = card(5, { update_branch: { allowed: true, reason: null } });
+    const writes: string[] = [];
+    serve((path, init) => {
+      if (path.endsWith("/update-branch")) {
+        writes.push(JSON.parse(init!.body as string).sha);
+        return json(
+          {
+            error: {
+              code: "head_moved",
+              message: "New commits arrived. Review again.",
+              card: { ...before, head_sha: newSha },
+            },
+          },
+          409,
+        );
+      }
+      return json(before);
+    });
+    renderCards([{ url: url(5) }]);
+    fireEvent.click(await screen.findByRole("button", { name: "Update branch" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("New commits arrived");
+    fireEvent.click(screen.getByRole("button", { name: "Update branch" }));
+    await waitFor(() => expect(writes).toEqual([SHA, newSha]));
+  });
+
+  it("shares update progress across inline and panel cards, including an open merge confirmation", async () => {
+    const qc = new QueryClient();
+    let accept!: (response: Response) => void;
+    serve((path) =>
+      path.endsWith("/update-branch")
+        ? new Promise((resolve) => {
+            accept = resolve;
+          })
+        : json(card(5, { update_branch: { allowed: true, reason: null } })),
+    );
+    render(
+      <QueryClientProvider client={qc}>
+        <AePrCardView repo={REPO} number={5} url={url(5)} />
+        <AePrCardView repo={REPO} number={5} url={url(5)} variant="inline" />
+      </QueryClientProvider>,
+    );
+    const panel = await screen.findByTestId("ae-pr-card");
+    const inline = await screen.findByTestId("ae-pr-inline");
+    fireEvent.click(within(panel).getByRole("button", { name: "Merge" }));
+    expect(within(panel).getByRole("button", { name: "Squash into main" })).toBeEnabled();
+    fireEvent.click(within(inline).getByRole("button", { name: "Update branch" }));
+    await waitFor(() =>
+      expect(within(panel).getByRole("button", { name: "Squash into main" })).toBeDisabled(),
+    );
+    await act(async () =>
+      accept(
+        new Response(JSON.stringify({ accepted: true, head_sha: SHA, message: "Accepted" }), {
+          status: 202,
+        }),
+      ),
+    );
+    await waitFor(() =>
+      expect(within(panel).getByRole("status")).toHaveTextContent("Waiting for GitHub"),
+    );
+    fireEvent.click(within(panel).getByRole("button", { name: "Cancel" }));
+    expect(within(panel).getByRole("button", { name: "Updating branch..." })).toBeDisabled();
+    expect(within(panel).getByRole("button", { name: "Merge" })).toBeDisabled();
+  });
+
+  it("does not offer an enabled branch update when conflicts prevent it", async () => {
+    serve(() =>
+      json(card(5, { update_branch: { allowed: false, reason: "Resolve conflicts first." } })),
+    );
+    renderCards([{ url: url(5) }]);
+    const button = await screen.findByRole("button", { name: "Update branch" });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("title", "Resolve conflicts first.");
+  });
+
+  it("offers a read-only status check after a slow update instead of repeating the write", async () => {
+    const behind = card(5, { update_branch: { allowed: true, reason: null } });
+    let writes = 0;
+    serve((path) => {
+      if (path.endsWith("/update-branch")) {
+        writes++;
+        return json({ accepted: true, head_sha: SHA, message: "Accepted" }, 202);
+      }
+      return json(behind);
+    });
+    renderCards([{ url: url(5) }]);
+    await screen.findByRole("button", { name: "Update branch" });
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Update branch" }));
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(61_000);
+      });
+      expect(screen.getByRole("button", { name: "Check update" })).toBeEnabled();
+      expect(screen.getByRole("status")).toHaveTextContent("not confirmed a new revision");
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Check update" }));
+        await vi.advanceTimersByTimeAsync(10);
+      });
+      expect(writes).toBe(1);
+      expect(screen.getByRole("button", { name: "Merge" })).toBeDisabled();
+    } finally {
+      cleanup();
+      vi.useRealTimers();
+    }
+  });
+
+  it("loads the full compliance report only when its separate disclosure opens", async () => {
+    const report = {
+      body: "## AE Compliance Review\n\n**APPROVED**\n\n### Compliance checks\n\n- `tracking.js` present\n\nFinal finding: preserved",
+      verdict: "approved",
+      url: `${url(5)}#issuecomment-123`,
+      updated_at: "2026-10-17T12:00:00Z",
+      reviewed_sha: null,
+      revision: "unknown",
+    };
+    serve((path) => (path.includes("/compliance") ? json({ report }) : json(card(5))));
+    renderCards([{ url: url(5) }]);
+    const summary = await screen.findByText("AE compliance review");
+    expect(
+      vi
+        .mocked(authenticatedFetch)
+        .mock.calls.some(([path]) => String(path).includes("/compliance")),
+    ).toBe(false);
+    fireEvent.click(summary);
+    expect(await screen.findByText(/Approval for this revision is unverified/)).toBeTruthy();
+    const body = screen.getByTestId("ae-pr-compliance-body");
+    expect(within(body).getByRole("heading", { name: "Compliance checks" })).toBeTruthy();
+    expect(within(body).getByText("tracking.js").tagName).toBe("CODE");
+    expect(within(body).getByText("Final finding: preserved")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Source comment" })).toHaveAttribute(
+      "href",
+      report.url,
+    );
+    expect(screen.getByTestId("ae-pr-review-details")).not.toHaveAttribute("open");
+    fireEvent.click(summary);
+    await waitFor(() => expect(screen.queryByTestId("ae-pr-compliance-body")).toBeNull());
+  });
+
+  it.each([
+    ["current", "matches this branch"],
+    ["stale", "older revision"],
+  ])(
+    "labels a blocking report's %s revision without altering the merge gate",
+    async (revision, wording) => {
+      serve((path) =>
+        path.includes("/compliance")
+          ? json({
+              report: {
+                body: "## AE Compliance Review\n\nBLOCKED\n\nFix missing disclosure.",
+                verdict: "blocked",
+                url: `${url(5)}#issuecomment-123`,
+                updated_at: "2026-10-17T12:00:00Z",
+                reviewed_sha: SHA,
+                revision,
+              },
+            })
+          : json(card(5)),
+      );
+      renderCards([{ url: url(5) }]);
+      fireEvent.click(await screen.findByText("AE compliance review"));
+      expect(await screen.findByText("Blocking findings")).toBeTruthy();
+      expect(await screen.findByText(new RegExp(wording))).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Merge" })).toBeEnabled();
+    },
+  );
+
+  it("distinguishes a failed compliance read from a missing report and retries in the card", async () => {
+    let fail = true;
+    serve((path) =>
+      path.includes("/compliance")
+        ? fail
+          ? json({ error: { code: "github_failed", message: "GitHub unavailable" } }, 502)
+          : json({ report: null })
+        : json(card(5)),
+    );
+    renderCards([{ url: url(5) }]);
+    fireEvent.click(await screen.findByText("AE compliance review"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("GitHub unavailable");
+    expect(screen.queryByText("No AE compliance review posted yet.")).toBeNull();
+    fail = false;
+    fireEvent.click(screen.getByRole("button", { name: "Refresh review" }));
+    expect(await screen.findByText("No AE compliance review posted yet.")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("does not carry a cached approval into a new head revision", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let reportReads = 0;
+    serve((path) => {
+      if (!path.includes("/compliance")) return json(card(5));
+      reportReads++;
+      if (reportReads > 1) return new Promise(() => {});
+      return json({
+        report: {
+          body: "APPROVED",
+          verdict: "approved",
+          url: `${url(5)}#issuecomment-123`,
+          updated_at: "2026-10-17T12:00:00Z",
+          reviewed_sha: SHA,
+          revision: "current",
+        },
+      });
+    });
+    renderCards([{ url: url(5) }], "s1", qc);
+    fireEvent.click(await screen.findByText("AE compliance review"));
+    await screen.findByText("Approved report");
+    act(() => qc.setQueryData(["ae-pr", REPO, 5], card(5, { head_sha: "b".repeat(40) })));
+    await screen.findByText("Reading compliance review...");
+    expect(screen.queryByText("Approved report")).toBeNull();
+    expect(screen.queryByText(/matches this branch/)).toBeNull();
+  });
+
+  it("does not label a report current when its fresh head differs from the displayed card", async () => {
+    serve((path) =>
+      path.includes("/compliance")
+        ? json({
+            report: {
+              body: "APPROVED",
+              verdict: "approved",
+              url: `${url(5)}#issuecomment-123`,
+              updated_at: "2026-10-17T12:00:00Z",
+              reviewed_sha: "b".repeat(40),
+              revision: "current",
+            },
+          })
+        : json(card(5)),
+    );
+    renderCards([{ url: url(5) }]);
+    fireEvent.click(await screen.findByText("AE compliance review"));
+    expect(await screen.findByText(/does not match this card/)).toBeTruthy();
+    expect(screen.queryByText(/matches this branch/)).toBeNull();
+  });
+
+  it("marks a cached approval unverified when refreshing the report fails", async () => {
+    let fail = false;
+    serve((path) =>
+      path.includes("/compliance")
+        ? fail
+          ? json({ error: { code: "github_failed", message: "GitHub unavailable" } }, 502)
+          : json({
+              report: {
+                body: "APPROVED",
+                verdict: "approved",
+                url: `${url(5)}#issuecomment-123`,
+                updated_at: "2026-10-17T12:00:00Z",
+                reviewed_sha: SHA,
+                revision: "current",
+              },
+            })
+        : json(card(5)),
+    );
+    renderCards([{ url: url(5) }]);
+    fireEvent.click(await screen.findByText("AE compliance review"));
+    await screen.findByText("Approved report");
+    fail = true;
+    fireEvent.click(screen.getByRole("button", { name: "Refresh review" }));
+    await screen.findByRole("alert");
+    expect(screen.queryByText("Approved report")).toBeNull();
+    expect(screen.queryByText(/matches this branch/)).toBeNull();
+    expect(screen.getByText(/Approval for the current revision is unverified/)).toBeTruthy();
+  });
+
+  it("preserves the end of an oversized compliance report in the plain-text fallback", async () => {
+    const body = "x".repeat(210_000) + "\nFinal blocking finding";
+    serve((path) =>
+      path.includes("/compliance")
+        ? json({
+            report: {
+              body,
+              verdict: "blocked",
+              url: `${url(5)}#issuecomment-123`,
+              updated_at: "2026-10-17T12:00:00Z",
+              reviewed_sha: null,
+              revision: "unknown",
+            },
+          })
+        : json(card(5)),
+    );
+    renderCards([{ url: url(5) }]);
+    fireEvent.click(await screen.findByText("AE compliance review"));
+    expect((await screen.findByTestId("ae-pr-compliance-body")).textContent).toBe(body);
   });
 });

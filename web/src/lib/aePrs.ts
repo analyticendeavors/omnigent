@@ -36,6 +36,7 @@ export interface AePrCard {
   head_ref: string | null;
   base_ref: string | null;
   head_sha: string | null;
+  update_branch?: { allowed: boolean; reason: string | null };
   ci: { state: AePrCiState; passing: number; failing: number; pending: number; total: number };
   mergeable: { state: AePrMergeableState; detail: string };
   review: {
@@ -54,6 +55,36 @@ export interface AePrCard {
     allowed: boolean;
     reason: string | null;
   };
+}
+
+export interface AePrComplianceReport {
+  body: string;
+  verdict: "approved" | "blocked" | "unknown";
+  url: string;
+  updated_at: string;
+  reviewed_sha: string | null;
+  revision: "current" | "stale" | "unknown";
+}
+
+export async function fetchAePrCompliance(repo: string, number: number) {
+  const res = await authenticatedFetch(`/v1/ae/prs/${repo}/${number}/compliance?fresh=true`, {
+    method: "GET",
+  });
+  const body = await readJson(res);
+  if (!res.ok) throw new AePrError(res.status, body);
+  return body as { report: AePrComplianceReport | null };
+}
+
+/** Request a base-branch merge into the displayed head. Acceptance is asynchronous. */
+export async function updateAePrBranch(card: AePrCard) {
+  const res = await authenticatedFetch(`/v1/ae/prs/${card.repo}/${card.number}/update-branch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sha: card.head_sha }),
+  });
+  const body = await readJson(res);
+  if (!res.ok) throw new AePrError(res.status, body);
+  return body as { accepted: true; message: string; head_sha: string };
 }
 
 export interface AeMergeResult {
