@@ -30,6 +30,12 @@ import {
   type AeSessionState,
   type AeStep,
 } from "@/lib/aeSessionActivity";
+import {
+  AE_NO_OUTPUT_HINT,
+  aeProgressText,
+  aeShowsNoOutputHint,
+  type AeSessionProgress,
+} from "@/lib/aeSessionProgress";
 import { AeTablerSvg } from "@/lib/aeTablerIcon";
 import type { AeTablerIconNode } from "@/lib/aeTablerIconData";
 import type { BackgroundTaskInfo } from "@/lib/types";
@@ -155,6 +161,48 @@ function StepText({ step, now, lead }: { step: AeStep; now: number; lead: "Now" 
       </code>
       {elapsed !== null && (lead === "Now" ? ` for ${elapsed}` : ` (${elapsed})`)}
     </>
+  );
+}
+
+function ProgressText({ progress, now }: { progress: AeSessionProgress; now: number }) {
+  return (
+    <div data-testid="ae-activity-progress" className="truncate text-xs text-muted-foreground">
+      {aeProgressText(progress, now)}
+    </div>
+  );
+}
+
+/** The later of two optional epoch-ms times; a turn that just started is not silent. */
+function aeLatest(a: number | null, b: number | null): number | null {
+  if (a === null) return b;
+  return b === null ? a : Math.max(a, b);
+}
+
+/** Under "Working": the running tool, else the terminal's spinner, else a hint after a silent minute. */
+function WorkingDetail({
+  step,
+  progress,
+  lastContentAt,
+  now,
+}: {
+  step: AeStep | null;
+  progress: AeSessionProgress | null;
+  lastContentAt: number | null;
+  now: number;
+}) {
+  if (step?.running) {
+    return (
+      <div className="truncate text-xs text-muted-foreground">
+        <StepText step={step} now={now} lead="Now" />
+      </div>
+    );
+  }
+  if (progress) return <ProgressText progress={progress} now={now} />;
+  if (!aeShowsNoOutputHint(lastContentAt, now)) return null;
+  return (
+    <div data-testid="ae-activity-no-output" className="text-xs text-muted-foreground">
+      {AE_NO_OUTPUT_HINT}
+    </div>
   );
 }
 
@@ -296,11 +344,12 @@ export function AeSessionActivityLine({ showsWorking }: { showsWorking: boolean 
             <WorkingLabel blockedOn={data.blockedOn} />
             {elapsed && <span className="text-sm text-muted-foreground">· {elapsed}</span>}
           </div>
-          {data.step?.running && (
-            <div className="truncate text-xs text-muted-foreground">
-              <StepText step={data.step} now={now} lead="Now" />
-            </div>
-          )}
+          <WorkingDetail
+            step={data.step}
+            progress={data.progress}
+            lastContentAt={aeLatest(data.lastEventAt, data.turnStartedAt)}
+            now={now}
+          />
         </StatusRow>
       </>
     );
@@ -329,6 +378,7 @@ export function AeSessionActivityLine({ showsWorking }: { showsWorking: boolean 
               · no new output for {aeDuration(activity.quietForMs, true)}
             </span>
           </div>
+          {data.progress && <ProgressText progress={data.progress} now={now} />}
           <div className="text-xs text-muted-foreground">
             {data.step && (
               <>

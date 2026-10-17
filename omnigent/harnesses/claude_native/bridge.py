@@ -68,6 +68,11 @@ from filelock import Timeout as FileLockTimeout
 
 from omnigent._platform import IS_WINDOWS, is_wsl, stable_user_id
 from omnigent.harnesses.claude_native import transcript_filters
+from omnigent.harnesses.claude_native.ae_pane_progress import (
+    PROGRESS_UNKNOWN,
+    PaneProgressRead,
+    progress_from_pane,
+)
 from omnigent.harnesses.claude_native.message_display_hook import MESSAGE_DELTAS_FILE
 from omnigent.harnesses.claude_native.status import CONTEXT_RAW_FILE
 from omnigent.harnesses.diagnostics import detect_sign_in_prompt, sign_in_next_step
@@ -4643,10 +4648,13 @@ class PaneSignals:
         ``"auto"``, or ``None`` when no mode footer is visible.
     :param btw_overlay: A settled ``/btw`` side-chat overlay, or ``None``
         when none is shown / it is still generating.
+    :param progress: The live spinner line, ``None`` when none is drawn, or
+        :data:`PROGRESS_UNKNOWN` when the capture cannot tell.
     """
 
     permission_mode: str | None = None
     btw_overlay: BtwOverlay | None = None
+    progress: PaneProgressRead = PROGRESS_UNKNOWN
 
 
 def _btw_overlay_from_pane(pane: str) -> BtwOverlay | None:
@@ -5569,17 +5577,28 @@ def _composer_row(pane: str) -> str | None:
         mode, or ``None`` when no input box is on screen.
     """
     non_empty = [line for line in pane.splitlines() if line.strip()]
+    opening = _composer_opening_rule(non_empty)
+    return None if opening is None else non_empty[opening + 1]
+
+
+def _composer_opening_rule(non_empty: list[str]) -> int | None:
+    """
+    Index of the input box's opening rule among a pane's non-blank lines.
+
+    See :func:`_composer_row` for why the opening rule is the second-lowest
+    rule, or the lowest when the pane is too short to show the closing one.
+
+    :param non_empty: The pane's non-blank lines, top to bottom.
+    :returns: The opening rule's index, or ``None`` when no input box shows.
+    """
     rules = [idx for idx, line in enumerate(non_empty) if _is_box_rule(line)]
     if not rules:
         return None
-    candidates = [rules[-2] + 1] if len(rules) >= 2 else []
-    candidates.append(rules[-1] + 1)
+    candidates = [rules[-2]] if len(rules) >= 2 else []
+    candidates.append(rules[-1])
     for idx in candidates:
-        if idx >= len(non_empty):
-            continue
-        row = non_empty[idx]
-        if row.strip()[:1] in _COMPOSER_MODE_GLYPHS:
-            return row
+        if idx + 1 < len(non_empty) and non_empty[idx + 1].strip()[:1] in _COMPOSER_MODE_GLYPHS:
+            return idx
     return None
 
 
@@ -7461,6 +7480,11 @@ def read_pane_signals(bridge_dir: Path) -> PaneSignals:
     return PaneSignals(
         permission_mode=_permission_mode_from_pane(pane),
         btw_overlay=_btw_overlay_from_pane(pane),
+        progress=progress_from_pane(
+            pane,
+            find_box_opener=_composer_opening_rule,
+            btw_overlay_shown=_btw_overlay_present,
+        ),
     )
 
 
