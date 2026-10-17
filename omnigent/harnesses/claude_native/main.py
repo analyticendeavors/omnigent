@@ -1542,7 +1542,8 @@ def build_native_claude_terminal_env(
     if account_name is not None and claude_config is not None:
         raise RuntimeError("Claude account selection conflicts with provider authentication.")
     # A backup account names itself below; blank any name the runner inherited.
-    terminal_env["OMNIGENT_CLAUDE_ACCOUNT"] = ""
+    if "OMNIGENT_CLAUDE_ACCOUNT" in os.environ:
+        terminal_env["OMNIGENT_CLAUDE_ACCOUNT"] = ""
     if claude_config is None:
         from omnigent.onboarding.claude_accounts import account_env_for_launch
 

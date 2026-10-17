@@ -34,16 +34,28 @@ def test_reject_duplicate_and_invalid_account():
     assert account_env()["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat-first"
 
 
-def test_native_subscription_env_uses_selected_account():
+def test_native_subscription_env_uses_selected_account(monkeypatch):
     from omnigent.harnesses.claude_native.main import build_native_claude_terminal_env
 
-    # The default login blanks an account name the runner may have inherited.
+    # The default login adds no account name, and blanks one the runner inherited.
+    assert "OMNIGENT_CLAUDE_ACCOUNT" not in build_native_claude_terminal_env(None)
+    monkeypatch.setenv("OMNIGENT_CLAUDE_ACCOUNT", "Backup")
     assert build_native_claude_terminal_env(None)["OMNIGENT_CLAUDE_ACCOUNT"] == ""
     assert change_account("claude-oauth-add", "Backup", "sk-ant-oat-backup").stored
     env = build_native_claude_terminal_env(None)
     assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat-backup"
     assert env["ANTHROPIC_API_KEY"] == ""
     assert env["OMNIGENT_CLAUDE_ACCOUNT"] == "Backup"
+
+
+def test_tests_never_read_the_hosts_accounts_file(monkeypatch):
+    # tests/conftest.py gives a test without its own OMNIGENT_CONFIG_HOME an
+    # empty accounts file, never the developer's real one.
+    from omnigent.onboarding import claude_accounts
+
+    monkeypatch.delenv("OMNIGENT_CONFIG_HOME")
+    assert Path.home() / ".omnigent" not in claude_accounts._path().parents
+    assert account_env() == {}
 
 
 def test_session_account_choice_does_not_change_host_active_account(monkeypatch):

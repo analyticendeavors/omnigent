@@ -379,6 +379,36 @@ def _isolate_codex_native_state(
     monkeypatch.setenv("OMNIGENT_CODEX_NATIVE_STATE_DIR", str(state_dir))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_claude_accounts(
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Keep the developer's Claude accounts out of every launch env a test builds.
+
+    ``omnigent.onboarding.claude_accounts`` reads ``claude-accounts.json`` beside
+    the user's ``config.yaml``. On a machine with a backup account selected,
+    every native Claude launch env would carry that account's real token, and a
+    failing env assertion prints it. A test that sets ``OMNIGENT_CONFIG_HOME``
+    keeps its own file; the account name a session's shell inherits is dropped.
+
+    :param tmp_path_factory: Pytest's session-scoped temp factory.
+    :param monkeypatch: Pytest monkeypatch fixture; restores both at teardown.
+    :returns: None.
+    """
+    from omnigent.onboarding import claude_accounts
+
+    empty = tmp_path_factory.mktemp("claude-accounts") / "claude-accounts.json"
+    own_path = claude_accounts._path
+
+    def _path() -> Path:
+        return own_path() if os.environ.get("OMNIGENT_CONFIG_HOME") else empty
+
+    monkeypatch.setattr(claude_accounts, "_path", _path)
+    monkeypatch.delenv("OMNIGENT_CLAUDE_ACCOUNT", raising=False)
+
+
 @pytest.fixture()
 def claude_managed_settings() -> None:
     """Opt back in to the host's real Claude Code managed-settings chain.
