@@ -84,7 +84,10 @@ export const DockedWithSidebar: Story = {
   ),
 };
 
-/** Too narrow for both (under 1104 px with a 320 px sidebar): the rail floats over the chat. */
+/**
+ * Too narrow for both: with a 320 px sidebar the rail floats in any canvas under
+ * 1104 px (the docs screenshot is 1009 px wide), and docks again in a wider one.
+ */
 export const Floating: Story = {
   decorators: [seeded()],
   args: { sidebarWidth: 320 },

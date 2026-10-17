@@ -23,6 +23,7 @@ import {
 import {
   type CSSProperties,
   type RefObject,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -39,6 +40,7 @@ import { AeRailIcon } from "@/components/aeRail/aeRailUi";
 import { AE_RAIL_COMPONENTS } from "@/components/aeRail/registry";
 import { Button } from "@/components/ui/button";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
+import { useResizablePanel } from "@/hooks/useResizablePanel";
 import {
   AE_RAIL_TITLES,
   type AeRailFocus,
@@ -47,22 +49,25 @@ import {
 } from "@/lib/aeSessionRail";
 import { cn } from "@/lib/utils";
 
-/** The docked column's width, as in its `w-[304px]` class. */
+/** The docked column's width. */
 const RAIL_WIDTH_PX = 304;
 /** The narrowest chat the rail docks beside: the floor upstream's workspace panel keeps too. */
 const CHAT_MIN_WIDTH_PX = 480;
+/** The gap upstream keeps between the chat and the open workspace panel. */
+const WORKSPACE_GAP_PX = 8;
 
 function subscribeToResize(listener: () => void): () => void {
   window.addEventListener("resize", listener);
   return () => window.removeEventListener("resize", listener);
 }
 
-function useViewportWidth(): number {
-  return useSyncExternalStore(
-    subscribeToResize,
-    () => window.innerWidth,
-    () => Number.POSITIVE_INFINITY,
+/** Re-renders only when a window resize flips the decision, not on every pixel. */
+function useRailFloats(reservedWidth: number): boolean {
+  const getSnapshot = useCallback(
+    () => aeRailFloats(window.innerWidth, reservedWidth),
+    [reservedWidth],
   );
+  return useSyncExternalStore(subscribeToResize, getSnapshot, () => false);
 }
 
 function prefersReducedMotion(): boolean {
@@ -71,16 +76,27 @@ function prefersReducedMotion(): boolean {
 
 /**
  * Whether the rail floats over the chat rather than docking beside it: only when
- * the window, less the sidebar and workspace panel, cannot fit the rail and the chat.
+ * the window, less everything else in the row, cannot fit the rail and the chat.
  */
 export function aeRailFloats(viewportWidth: number, reservedWidth: number) {
   return viewportWidth - reservedWidth - RAIL_WIDTH_PX < CHAT_MIN_WIDTH_PX;
+}
+
+/** The row's width that is not the chat's: the sidebar, workspace panel (with its gap) and push panel. */
+export function aeRailReservedWidth(
+  sidebarWidth: number,
+  workspacePanelWidth: number,
+  pushPanelWidth: number,
+) {
+  const workspace = workspacePanelWidth > 0 ? workspacePanelWidth + WORKSPACE_GAP_PX : 0;
+  return sidebarWidth + workspace + pushPanelWidth;
 }
 
 export function AeSessionRail({
   sessionId,
   sidebarWidth = 0,
   workspacePanelWidth = 0,
+  pushPanelOpen = false,
   hidden = false,
   workspace,
 }: {
@@ -90,13 +106,19 @@ export function AeSessionRail({
   sidebarWidth?: number;
   /** The open workspace panel's width, 0 while it is closed; it shares the chat's row. */
   workspacePanelWidth?: number;
+  /** A files or logs push panel is open beside the chat. */
+  pushPanelOpen?: boolean;
   /** The right panel is maximized over the chat. */
   hidden?: boolean;
   /** Lets the Changes and Agents rows open their workspace tabs. */
   workspace?: AeRailWorkspace;
 }) {
   const isMobile = useIsMobileViewport();
-  const viewportWidth = useViewportWidth();
+  // Push panels share one width store; this reads the width they open at.
+  const { panelWidth: pushPanelWidth = 0 } = useResizablePanel(pushPanelOpen);
+  const floating = useRailFloats(
+    aeRailReservedWidth(sidebarWidth, workspacePanelWidth, pushPanelWidth),
+  );
   const open = useAeSessionRailStore((s) => s.open);
   const sheetOpen = useAeSessionRailStore((s) => s.sheetOpen);
   const setSheetOpen = useAeSessionRailStore((s) => s.setSheetOpen);
@@ -127,10 +149,7 @@ export function AeSessionRail({
       {isMobile ? (
         <AeSessionRailSheet sessionId={sessionId} />
       ) : (
-        <AeSessionRailColumn
-          sessionId={sessionId}
-          floating={aeRailFloats(viewportWidth, sidebarWidth + workspacePanelWidth)}
-        />
+        <AeSessionRailColumn sessionId={sessionId} floating={floating} />
       )}
     </AeRailActionsContext.Provider>
   );
@@ -182,8 +201,9 @@ function AeSessionRailColumn({ sessionId, floating }: { sessionId: string; float
       aria-label="Session rail"
       data-testid="ae-session-rail"
       data-floating={floating || undefined}
+      style={{ width: RAIL_WIDTH_PX }}
       className={cn(
-        "flex w-[304px] min-h-0 flex-col border-l border-border bg-background",
+        "flex min-h-0 flex-col border-l border-border bg-background",
         floating ? "absolute inset-y-0 right-0 z-40 shadow-xl" : "shrink-0",
       )}
     >
