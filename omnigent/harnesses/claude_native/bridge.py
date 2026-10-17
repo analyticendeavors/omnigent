@@ -77,7 +77,7 @@ from omnigent.harnesses.claude_native.ae_pane_progress import (
     progress_from_pane,
 )
 from omnigent.harnesses.claude_native.message_display_hook import MESSAGE_DELTAS_FILE
-from omnigent.harnesses.claude_native.status import CONTEXT_RAW_FILE
+from omnigent.harnesses.claude_native.status import CLAUDE_ACCOUNT_FILE, CONTEXT_RAW_FILE
 from omnigent.harnesses.diagnostics import detect_sign_in_prompt, sign_in_next_step
 from omnigent.harnesses.kiro_native import bridge as kiro_bridge
 from omnigent.models.claude_model_vocabulary import MODEL_VOCABULARY_ENV_VARS
@@ -2589,9 +2589,14 @@ def build_hook_settings(
     # ``context.json``) and chains to whatever the user had globally so
     # claude-hud / their bar still renders.
     raw_quoted = shlex.quote(str(bridge_dir / CONTEXT_RAW_FILE))
+    # The account sidecar records which Claude login renders this bar
+    # (empty for the default one) so usage readers can key limits by account.
+    account_quoted = shlex.quote(str(bridge_dir / CLAUDE_ACCOUNT_FILE))
     status_command = (
         f"p=$(cat); printf '%s' \"$p\" > {raw_quoted}.$$.tmp"
         f" && mv -f {raw_quoted}.$$.tmp {raw_quoted}"
+        f"; printf '%s' \"${{OMNIGENT_CLAUDE_ACCOUNT-}}\" > {account_quoted}.$$.tmp"
+        f" && mv -f {account_quoted}.$$.tmp {account_quoted}"
     )
     chain_command = read_user_status_line_command()
     if chain_command is not None:

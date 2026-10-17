@@ -76,6 +76,12 @@ export interface AeSessionContext {
   input_tokens: number;
   cache_write_tokens: number;
   cache_read_tokens: number;
+  // Absent from a server older than per-session accounts.
+  /** The backup account this session runs on; null or absent = the box's default login. */
+  account?: string | null;
+  account_label?: string | null;
+  /** That account's own plan windows, when the session is on a backup account. */
+  windows?: AeLimitWindow[];
 }
 
 export interface AeLimitSnapshot {
@@ -90,6 +96,10 @@ export interface AeLimitSnapshot {
   credits?: AeCredits | null;
   contexts?: AeSessionContext[];
   hint?: string | null;
+  // Absent from a server older than per-session accounts.
+  /** The backup account this answer is for; null or absent = the box's default login. */
+  account?: string | null;
+  account_label?: string | null;
 }
 
 export interface AeLimitsAnswer {
@@ -173,8 +183,12 @@ export function limitTone(pct: number): AeTone {
   return "normal";
 }
 
-export async function fetchAeLimits(): Promise<AeLimitsAnswer> {
-  const res = await authenticatedFetch(AE_LIMITS_PATH, { method: "GET" });
+/** With a session id the server answers for the account that session runs on. */
+export async function fetchAeLimits(sessionId?: string | null): Promise<AeLimitsAnswer> {
+  const path = sessionId
+    ? `${AE_LIMITS_PATH}?session_id=${encodeURIComponent(sessionId)}`
+    : AE_LIMITS_PATH;
+  const res = await authenticatedFetch(path, { method: "GET" });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`.trim());
   return (await res.json()) as AeLimitsAnswer;
 }
@@ -858,6 +872,14 @@ export function AeLimitsHarnessBlock({
                 <span data-testid="ae-limits-plan">{snapshot.plan}</span>
               </>
             )}
+            {(snapshot?.account_label || snapshot?.account) && (
+              <>
+                {" · "}
+                <span data-testid="ae-limits-account">
+                  {snapshot.account_label || snapshot.account}
+                </span>
+              </>
+            )}
           </>
         }
         tag={
@@ -1052,15 +1074,22 @@ export function AePlanLimitsPanel({
   );
 }
 
-/** `GET /v1/ae/limits` while `active`, then once a minute; one shared query for every caller. */
-export function useAeLimits(active: boolean): {
+/**
+ * `GET /v1/ae/limits` while `active`, then once a minute; one shared query per
+ * session. Sessions on different Claude accounts never share a reading, so the
+ * session id is part of the cache key.
+ */
+export function useAeLimits(
+  active: boolean,
+  sessionId?: string | null,
+): {
   data?: AeLimitsAnswer;
   error?: unknown;
   loading: boolean;
 } {
   const query = useQuery({
-    queryKey: ["ae-limits"],
-    queryFn: fetchAeLimits,
+    queryKey: ["ae-limits", sessionId ?? null],
+    queryFn: () => fetchAeLimits(sessionId),
     enabled: active,
     refetchInterval: active ? MINUTE : false,
     staleTime: MINUTE / 2,
@@ -1189,7 +1218,7 @@ function AePlanLimitsPopoverBody({
   onShowRail: () => void;
 }) {
   const identity = aeContextIdentity(harness, model);
-  const { data, error, loading } = useAeLimits(true);
+  const { data, error, loading } = useAeLimits(true, conversationId);
   const sessions = useAeSessionContexts(true, conversationId, 60_000, identity);
   // A cached category snapshot shows at once; a stale one refreshes.
   const snapshot = useAeContextSnapshot(conversationId, {

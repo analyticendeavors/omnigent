@@ -142,4 +142,36 @@ describe("AeRailUsage", () => {
     render(<AeRailUsage sessionId="conv_a" />);
     expect(authenticatedFetch).not.toHaveBeenCalled();
   });
+
+  it("asks for the session's own account and keeps one reading per session", async () => {
+    useChatStore.setState({ conversationId: "conv_a", sessionHarness: "claude-native" });
+    const backup: AeLimitsAnswer = {
+      ...LIMITS,
+      harnesses: {
+        claude: {
+          ...LIMITS.harnesses.claude!,
+          plan: null,
+          account: "backup",
+          account_label: "AE Backup",
+        },
+      },
+    };
+    vi.mocked(authenticatedFetch).mockImplementation((input) =>
+      json(String(input).includes("session_id=conv%20b") ? backup : LIMITS),
+    );
+    const view = render(<AeRailUsage sessionId="conv_a" />);
+    await waitFor(() => expect(screen.getAllByTestId("ae-limits-harness")).toHaveLength(2));
+    expect(screen.queryByTestId("ae-limits-account")).toBeNull();
+    expect(vi.mocked(authenticatedFetch).mock.calls.map(([url]) => String(url))).toEqual([
+      "/v1/ae/limits?session_id=conv_a",
+    ]);
+    view.rerender(<AeRailUsage sessionId="conv b" />);
+    await waitFor(() =>
+      expect(screen.getByTestId("ae-limits-account").textContent).toBe("AE Backup"),
+    );
+    expect(vi.mocked(authenticatedFetch).mock.calls.map(([url]) => String(url))).toEqual([
+      "/v1/ae/limits?session_id=conv_a",
+      "/v1/ae/limits?session_id=conv%20b",
+    ]);
+  });
 });

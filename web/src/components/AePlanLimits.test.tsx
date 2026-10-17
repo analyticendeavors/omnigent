@@ -21,8 +21,10 @@ import { type AeContextSnapshotState, resetAeContextSnapshots } from "./aeContex
 import { SNAPSHOT } from "./aeRailTestFixtures";
 import {
   type AeLimitsAnswer,
+  AeLimitsHarnessBlock,
   AePlanLimitsPanel,
   AePlanLimitsPopover,
+  fetchAeLimits,
   formatAgo,
   formatDuration,
   formatMoney,
@@ -201,6 +203,60 @@ describe("formatting", () => {
     expect(limitTone(69)).toBe("normal");
     expect(limitTone(70)).toBe("warning");
     expect(limitTone(90)).toBe("critical");
+  });
+});
+
+describe("fetchAeLimits", () => {
+  beforeEach(() => {
+    vi.mocked(authenticatedFetch).mockReset();
+    vi.mocked(authenticatedFetch).mockImplementation(() =>
+      Promise.resolve(new Response(JSON.stringify(ANSWER))),
+    );
+  });
+
+  it("adds session_id only when a session is given", async () => {
+    await fetchAeLimits();
+    await fetchAeLimits(null);
+    await fetchAeLimits("conv a/1");
+    expect(vi.mocked(authenticatedFetch).mock.calls.map(([url]) => url)).toEqual([
+      "/v1/ae/limits",
+      "/v1/ae/limits",
+      "/v1/ae/limits?session_id=conv%20a%2F1",
+    ]);
+  });
+});
+
+describe("AeLimitsHarnessBlock account", () => {
+  const claude = ANSWER.harnesses.claude!;
+
+  it("names a backup account after the plan, and shows nothing for the default login", () => {
+    const { rerender } = render(
+      <AeLimitsHarnessBlock
+        harness="claude"
+        snapshot={{ ...claude, plan: "Max", account: "backup", account_label: "AE Backup" }}
+        now={NOW}
+      />,
+    );
+    expect(screen.getByTestId("ae-limits-account").textContent).toBe("AE Backup");
+    expect(screen.getByTestId("ae-limits-plan").parentElement?.textContent).toContain(
+      "Claude Code · Max · AE Backup",
+    );
+    rerender(
+      <AeLimitsHarnessBlock
+        harness="claude"
+        snapshot={{ ...claude, account: "backup" }}
+        now={NOW}
+      />,
+    );
+    expect(screen.getByTestId("ae-limits-account").textContent).toBe("backup");
+    rerender(
+      <AeLimitsHarnessBlock
+        harness="claude"
+        snapshot={{ ...claude, plan: "Max", account: null, account_label: null }}
+        now={NOW}
+      />,
+    );
+    expect(screen.queryByTestId("ae-limits-account")).toBeNull();
   });
 });
 
@@ -860,7 +916,7 @@ function routeFetch(
     const url = String(input);
     const json = (body: unknown, status = 200) =>
       Promise.resolve(new Response(JSON.stringify(body), { status }));
-    if (url === "/v1/ae/limits") return json(limits);
+    if (url.split("?")[0] === "/v1/ae/limits") return json(limits);
     const childList = url.match(/^\/v1\/sessions\/([^/?]+)\/child_sessions$/);
     if (childList) return json({ object: "list", data: children[childList[1]] ?? [] });
     const snapshot = url.match(/^\/v1\/sessions\/([^/?]+)\?/);

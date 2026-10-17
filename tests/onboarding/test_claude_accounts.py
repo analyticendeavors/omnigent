@@ -37,10 +37,13 @@ def test_reject_duplicate_and_invalid_account():
 def test_native_subscription_env_uses_selected_account():
     from omnigent.harnesses.claude_native.main import build_native_claude_terminal_env
 
+    # The default login blanks an account name the runner may have inherited.
+    assert build_native_claude_terminal_env(None)["OMNIGENT_CLAUDE_ACCOUNT"] == ""
     assert change_account("claude-oauth-add", "Backup", "sk-ant-oat-backup").stored
     env = build_native_claude_terminal_env(None)
     assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat-backup"
     assert env["ANTHROPIC_API_KEY"] == ""
+    assert env["OMNIGENT_CLAUDE_ACCOUNT"] == "Backup"
 
 
 def test_session_account_choice_does_not_change_host_active_account(monkeypatch):
@@ -194,3 +197,28 @@ def test_rename_frame_roundtrip():
         account_label="Primary",
     )
     assert decode_host_frame(encode_host_frame(frame)) == frame
+
+
+def test_account_env_names_the_backup_account_and_label_never_loads_secrets(monkeypatch):
+    from omnigent.onboarding import secrets
+    from omnigent.onboarding.claude_accounts import account_label
+
+    assert change_account("claude-oauth-add", "Backup", "sk-ant-oat-backup").stored
+    assert account_env("Backup")["OMNIGENT_CLAUDE_ACCOUNT"] == "Backup"
+    assert account_env("") == {}
+    assert account_label("Backup") == "Backup"
+    assert change_account("claude-oauth-rename", "Backup", label="AE Backup").stored
+
+    def no_secrets(name):
+        raise AssertionError("account_label must not load secrets")
+
+    monkeypatch.setattr(secrets, "load_secret", no_secrets)
+    assert account_label("Backup") == "AE Backup"
+    assert account_label("Missing") == "Missing"
+
+
+def test_account_label_falls_back_to_the_name_on_bad_metadata(tmp_path):
+    from omnigent.onboarding.claude_accounts import account_label
+
+    (tmp_path / "claude-accounts.json").write_text("{")
+    assert account_label("Backup") == "Backup"

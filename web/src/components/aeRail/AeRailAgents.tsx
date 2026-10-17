@@ -34,7 +34,7 @@ export function AeRailAgents({ sessionId }: AeRailSectionProps) {
     aeContextIdentity(harness, model),
   );
   // Claude Code collaborators report their window through the limits relay's status lines.
-  const statusLines = useAeLimits(active).data?.harnesses.claude?.contexts;
+  const statusLines = useAeLimits(active, sessionId).data?.harnesses.claude?.contexts;
   const subagents = sessions.subagents ?? 0;
   const openTab = useAeRailOpenWorkspaceTab();
   const now = Date.now();

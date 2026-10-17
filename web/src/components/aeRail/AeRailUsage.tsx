@@ -46,7 +46,7 @@ export function AeRailUsage({ sessionId }: AeRailSectionProps) {
   // The store's harness belongs to its own conversation; another session's is unknown here.
   const harness = useChatStore((s) => (s.conversationId === sessionId ? s.sessionHarness : null));
   const active = useAeRailSectionActive("usage");
-  const { data, error, loading } = useAeLimits(active);
+  const { data, error, loading } = useAeLimits(active, sessionId);
   const now = useAeRailNow(active);
   const inUse = aeLimitsHarnessFor(harness);
   const order: AeHarness[] = inUse === "codex" ? ["codex", "claude"] : ["claude", "codex"];
