@@ -115,6 +115,24 @@ describe("navigation.openExternal and GitHub links (P25)", () => {
     expect(open).not.toHaveBeenCalled();
   });
 
+  it.each([
+    "https://portal.azure.com/#resource/subscriptions/0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d/resourceGroups/rg-fabric/providers/Microsoft.Fabric/capacities/aetraining/overview",
+    "https://app.fabric.microsoft.com/admin-portal/capacities",
+  ])("opens the Fabric Admin link %s", async (url) => {
+    await expect(openExternal()?.({ url }, signal())).resolves.toBeNull();
+    expect(open).toHaveBeenCalledWith(url, "_blank");
+  });
+
+  it("still refuses a Fabric lookalike", async () => {
+    await expect(
+      openExternal()?.(
+        { url: "https://app.fabric.microsoft.com/admin-portal/capacities?x=1" },
+        signal(),
+      ),
+    ).rejects.toMatchObject({ code: "PermissionDenied" });
+    expect(open).not.toHaveBeenCalled();
+  });
+
   it("is not offered to an extension without the navigation permission", () => {
     expect(openExternal(["sessions.read"])).toBeUndefined();
   });
