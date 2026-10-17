@@ -68,7 +68,7 @@ describe("AeSessionChip", () => {
     );
     renderChip(qc, "p");
     const chip = screen.getByTestId("ae-session-chip");
-    expect(chip).toHaveAccessibleName("Parked; slots 1 of 3; open the Dashboard");
+    expect(chip).toHaveAccessibleName("Parked; slots 1 of 3; open the Session Dashboard");
     expect(chip).toHaveAttribute("href", AE_PARKING_LOT_PATH);
     expect(chip).toHaveTextContent("1/3");
     expect(chip).toHaveAttribute("data-full", "false");
@@ -78,7 +78,7 @@ describe("AeSessionChip", () => {
     const qc = new QueryClient();
     renderChip(qc, "elsewhere");
     expect(screen.getByTestId("ae-session-chip")).toHaveAccessibleName(
-      "slots 0 of 3; open the Dashboard",
+      "slots 0 of 3; open the Session Dashboard",
     );
     act(() => {
       qc.setQueryData(["conversations", "", false], pages([row("a"), row("b"), row("c")]));
@@ -95,7 +95,7 @@ describe("AeSessionChip", () => {
     qc.setQueryData(["conversations", "", false], pages([row("a"), row("b"), row("c")]));
     renderChip(qc, "a");
     const chip = screen.getByTestId("ae-session-chip");
-    expect(chip).toHaveAccessibleName("Working; slots 3 of 4; open the Dashboard");
+    expect(chip).toHaveAccessibleName("Working; slots 3 of 4; open the Session Dashboard");
     expect(chip).toHaveTextContent("3/4");
     expect(chip).toHaveAttribute("data-full", "false");
   });

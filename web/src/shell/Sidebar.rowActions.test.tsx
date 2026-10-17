@@ -1300,7 +1300,7 @@ describe("right-click context menu", () => {
     view.rerenderSidebar();
 
     // The order holds: A is still the top row, exactly where the user aims.
-    const links = screen.getAllByRole("link", { name: /^Session/ });
+    const links = screen.getAllByRole("link", { name: /^Session [A-Z]\b/ });
     expect(links[0]).toHaveAccessibleName(/Session A/);
 
     // Right-click the top row and rename it — the PATCH targets session A.
@@ -1360,7 +1360,7 @@ describe("right-click context menu", () => {
     fireEvent.change(input, { target: { value: "Renamed A" } });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(mocks.rename.mutate).toHaveBeenCalledWith({ id: "conv_a", title: "Renamed A" });
-    const after = screen.getAllByRole("link", { name: /^Session/ });
+    const after = screen.getAllByRole("link", { name: /^Session [A-Z]\b/ });
     expect(after[0]).toHaveAccessibleName(/Session B/);
   });
 
@@ -1383,12 +1383,16 @@ describe("right-click context menu", () => {
     fireEvent.mouseOver(screen.getByTestId("sidebar-conversation-list"));
     mockConversations([{ ...convB, updated_at: 1_700_000_300 }, convA]);
     view.rerenderSidebar();
-    expect(screen.getAllByRole("link", { name: /^Session/ })[0]).toHaveAccessibleName(/Session A/);
+    expect(screen.getAllByRole("link", { name: /^Session [A-Z]\b/ })[0]).toHaveAccessibleName(
+      /Session A/,
+    );
 
     fireEvent.mouseOut(screen.getByTestId("sidebar-conversation-list"), {
       relatedTarget: document.body,
     });
-    expect(screen.getAllByRole("link", { name: /^Session/ })[0]).toHaveAccessibleName(/Session B/);
+    expect(screen.getAllByRole("link", { name: /^Session [A-Z]\b/ })[0]).toHaveAccessibleName(
+      /Session B/,
+    );
   });
 });
 

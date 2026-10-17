@@ -1,6 +1,7 @@
-// The "Dashboard n/3" row in the sidebar's primary navigation (the "Slots
-// n/3" pill until 2026-09-24, when omnigent-ae merged its Parking Lot and Your
-// move pages into one Dashboard and this row became the one nav entry for it,
+// The "Session Dashboard n/3" row ("Dashboard" until 2026-10-17) in the
+// sidebar's primary navigation (the "Slots n/3" pill until 2026-09-24, when
+// omnigent-ae merged its Parking Lot and Your move pages into one Dashboard
+// and this row became the one nav entry for it,
 // docs/design/dashboard-review.md in omnigent-ae): how many sessions
 // hold a slot (`ae.status=working`, top-level, not archived), read from the
 // `["conversations"]` query cache the sidebar already keeps warm, so it costs
@@ -57,14 +58,14 @@ export function AeSlotsPill({ onNavigate }: AeSlotsPillProps) {
   return (
     <PrimaryNavLink
       to={AE_PARKING_LOT_PATH}
-      label="Dashboard"
+      label="Session Dashboard"
       icon={LayoutDashboardIcon}
       active={isAeDashboardPath(pathname)}
       onClick={onNavigate}
       componentId="sidebar.ae-slots"
       testId="ae-slots-pill"
       trailing={
-        // The space keeps the link's accessible name reading "Dashboard n/3";
+        // The space keeps the link's accessible name reading "Session Dashboard n/3";
         // a bare text node in the flex row takes no room.
         <>
           {" "}
