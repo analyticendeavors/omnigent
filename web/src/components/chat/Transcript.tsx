@@ -11,6 +11,7 @@ import {
 import { Message, MessageContent } from "@/components/ai-elements/message";
 import { ElicitationCard } from "@/components/blocks/ApprovalCard";
 import { aePendingCodexQuestions } from "./aeCodexQuestions";
+import { AeSessionActivityLine } from "@/components/AeSessionActivity";
 import { CodexQuestionCard } from "./CodexQuestionCard";
 import { cn } from "@/lib/utils";
 import { getCurrentAuthorId } from "@/lib/identity";
@@ -48,7 +49,6 @@ import {
   KeepBottomOnViewportResize,
   LatestTurnSpacer,
   ScrollToBottomOnSend,
-  WorkingIndicator,
   bubbleKey,
   buildPendingBubbles,
   collectPendingElicitations,
@@ -426,8 +426,8 @@ function TranscriptImpl({
                       </MessageContent>
                     </Message>
                   ))}
-                {/* Working… shimmer, lit for the whole busy turn. */}
-                {showWorkingIndicator && <WorkingIndicator />}
+                {/* Status line: working, quiet, waiting, or paused for a schedule. */}
+                <AeSessionActivityLine showsWorking={showWorkingIndicator} />
                 {/* Managed-sandbox stage cue; only when Working is absent. */}
                 {!showWorkingIndicator && <RunnerStartingIndicator variant="row" />}
                 {/* MCP-server startup band (codex-native); clears once the

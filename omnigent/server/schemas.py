@@ -2840,6 +2840,10 @@ class SessionListItem(BaseModel):
     # unfiled. Lets the sidebar group sessions by project without a follow-up
     # GET. Distinct from the legacy ``omni_project`` label in ``labels``.
     project_id: str | None = None
+    # Background shells and busy direct children, so a row whose turn ended
+    # can still read as waiting on work. See ae_session_activity.
+    background_task_count: int | None = None
+    active_child_count: int | None = None
 
 
 class SessionList(BaseModel):

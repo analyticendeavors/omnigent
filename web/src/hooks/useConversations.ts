@@ -171,6 +171,10 @@ export interface Conversation {
   agent_name?: string | null;
   /** Outstanding approval prompts — powers the sidebar "needs attention" badge. */
   pending_elicitations_count?: number;
+  /** Running background shells; absent on older servers (read as none). */
+  background_task_count?: number | null;
+  /** Running child sessions (subagents, collaborators); absent on older servers. */
+  active_child_count?: number | null;
   status?: "idle" | "running" | "failed";
   /**
    * Whether the session's runner is reachable, matching `GET /health`.
@@ -495,6 +499,8 @@ export async function fetchConversationById(id: string): Promise<Conversation | 
     agent_id: wire.agent_id,
     agent_name: wire.agent_name ?? null,
     pending_elicitations_count: wire.pending_elicitations_count ?? 0,
+    background_task_count: wire.background_task_count ?? undefined,
+    active_child_count: wire.active_child_count ?? undefined,
     status: wire.status ?? "idle",
     runner_online: wire.runner_online ?? undefined,
     host_online: wire.host_online ?? undefined,

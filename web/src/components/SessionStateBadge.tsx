@@ -9,6 +9,8 @@ import type { SessionState } from "@/hooks/useSessionState";
 import { cn } from "@/lib/utils";
 import type { ReactElement } from "react";
 import { CircleAlertIcon } from "lucide-react";
+import { aeDescribeSessionState } from "@/components/AeSessionActivity";
+import { isAeSessionState } from "@/lib/aeSessionActivity";
 
 export interface SessionStateBadgeProps {
   state: SessionState;
@@ -22,6 +24,7 @@ interface Visual {
 }
 
 function describe(state: SessionState): Visual {
+  if (isAeSessionState(state)) return aeDescribeSessionState(state);
   switch (state.kind) {
     case "awaiting": {
       const tooltip =

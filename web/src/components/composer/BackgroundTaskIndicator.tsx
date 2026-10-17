@@ -6,6 +6,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import type { BackgroundTaskInfo } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chatStore";
+import { useAeWaitingLineShown } from "@/hooks/aeSessionActivityHooks";
 
 function taskLabel(task: BackgroundTaskInfo): string {
   const description = task.description?.trim();
@@ -77,6 +78,7 @@ export function BackgroundTaskIndicator() {
   const bgCount = useChatStore((s) => s.backgroundTaskCount);
   const bgTasks = useChatStore((s) => s.backgroundTasks);
   const conversationId = useChatStore((s) => s.conversationId);
+  const listedInStatusLine = useAeWaitingLineShown(conversationId);
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   // Escape returns to the trigger; session switches must never move focus.
@@ -102,7 +104,7 @@ export function BackgroundTaskIndicator() {
     setOpen(next);
   };
 
-  if (bgCount <= 0) return null;
+  if (bgCount <= 0 || listedInStatusLine) return null;
 
   const countLabel = `${bgCount} background task${bgCount === 1 ? "" : "s"}`;
   // The count is authoritative in both directions: an over-long detail list
