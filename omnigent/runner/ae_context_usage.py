@@ -286,7 +286,14 @@ def _scratch_parent() -> Path:
     )
 
     root = bridge_dir_for_bridge_id("ae-context-probe").parent
-    ensure_secure_dir(root)
+    try:
+        ensure_secure_dir(root)
+    except RuntimeError as exc:
+        # ValueError keeps the route's "unavailable" answer and its 30-second backoff.
+        raise ValueError(
+            f"Bridge root {root} failed its owner or permission check ({exc}). "
+            "Fix that directory's owner and mode, then retry."
+        ) from exc
     return root
 
 
