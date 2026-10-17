@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { AeCategoryBar, AeContextCategories } from "./AeContextCategories";
 import { contextCountdown, type ContextUsage } from "./aeContextUsage";
@@ -21,6 +21,25 @@ const data: ContextUsage = {
 };
 
 describe("context categories", () => {
+  it("keeps legend colors consistent with detailed rows and omits deferred tools", () => {
+    render(
+      <>
+        <AeCategoryBar data={data} />
+        <AeContextCategories data={data} />
+      </>,
+    );
+    const legend = screen.getByRole("list", { name: "Context window color legend" });
+    const details = screen.getByRole("region", { name: "Context categories" });
+    expect(within(legend).getAllByRole("listitem")).toHaveLength(3);
+    expect(within(legend).queryByText("MCP tools (deferred)")).toBeNull();
+    for (const [name, color] of [
+      ["Free space", "bg-muted"],
+      ["Autocompact buffer", "bg-muted-foreground/20"],
+    ]) {
+      expect(within(legend).getByText(name).previousElementSibling).toHaveClass(color);
+      expect(within(details).getByText(name).querySelector("span")).toHaveClass(color);
+    }
+  });
   it("shows deferred tools without adding them to the used bar", () => {
     render(
       <>

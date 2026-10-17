@@ -86,7 +86,7 @@ export function AeContextCategories({ data, error }: { data?: ContextUsage; erro
             <dt className="min-w-0 break-words">
               <span
                 aria-hidden="true"
-                className={`mr-2 inline-block size-2 rounded-full ${c.kind === "used" ? categoryColor(c.name) : "bg-muted-foreground/40"}`}
+                className={`mr-2 inline-block size-2 rounded-full ${c.kind === "deferred" ? "bg-muted-foreground/40" : swatch(c)}`}
               />
               {c.name}
             </dt>
