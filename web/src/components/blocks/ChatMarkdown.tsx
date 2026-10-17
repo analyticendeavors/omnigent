@@ -483,7 +483,7 @@ function longestUnbrokenRun(text: string): number {
  * Whether `text` should bypass the markdown pipeline because rendering it
  * there would risk locking the tab. See the constants above for the why.
  */
-function isPathologicalText(text: string): boolean {
+export function isPathologicalText(text: string): boolean {
   return (
     text.length > MAX_MARKDOWN_TEXT_LENGTH || longestUnbrokenRun(text) > MAX_UNBROKEN_TOKEN_LENGTH
   );
@@ -495,7 +495,7 @@ function isPathologicalText(text: string): boolean {
  * break opportunity inside an otherwise unbreakable token. Over-long payloads
  * are elided so the DOM node itself can't grow without bound.
  */
-function PlainTextFallback({ text }: { text: string }) {
+export function PlainTextFallback({ text }: { text: string }) {
   const truncated = text.length > MAX_PLAINTEXT_DISPLAY_LENGTH;
   const shown = truncated ? text.slice(0, MAX_PLAINTEXT_DISPLAY_LENGTH) : text;
   return (

@@ -671,7 +671,7 @@ describe("in-app review", () => {
     renderCards([{ url: url(5) }]);
     await screen.findByText("Review details");
     fireEvent.click(screen.getByText("Review details"));
-    expect(screen.getByText(/Validation: tests passed/)).toBeTruthy();
+    expect(await screen.findByText(/Validation: tests passed/)).toBeTruthy();
     expect(screen.getByText(/2 files/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Mark ready for review" }));
     await waitFor(() => expect(request?.method).toBe("POST"));
@@ -680,6 +680,40 @@ describe("in-app review", () => {
       expect(screen.queryByRole("button", { name: "Mark ready for review" })).toBeNull(),
     );
     expect(screen.getByRole("button", { name: "Merge" })).toBeEnabled();
+  });
+
+  it("renders the description as markdown", async () => {
+    serve(() =>
+      json(card(5, { body: "## Validation\n- **pytest** passed\nsecond line\n\n`dist/` matches" })),
+    );
+    renderCards([{ url: url(5) }]);
+    await screen.findByText("Review details");
+    fireEvent.click(screen.getByText("Review details"));
+    const body = await screen.findByTestId("ae-pr-body");
+    expect(await within(body).findByRole("heading", { name: "Validation" })).toBeTruthy();
+    expect(within(body).getByText("dist/").tagName).toBe("CODE");
+    expect(within(body).getByRole("listitem").querySelector("br")).not.toBeNull();
+    expect(body.textContent).not.toMatch(/##|\*\*/);
+  });
+
+  it("renders the description only once Review details opens", async () => {
+    serve(() => json(card(5, { body: "## Validation" })));
+    renderCards([{ url: url(5) }]);
+    await screen.findByText("Review details");
+    expect(screen.getByTestId("ae-pr-body").childElementCount).toBe(0);
+  });
+
+  it.each([
+    ["keeps an unmatched marker in a finished description", "Trailing **Note", "Trailing **Note"],
+    ["shows a huge description as plain text", `## Log\n${"x".repeat(6_000)}`, "## Log"],
+  ])("%s", async (_name, body, shown) => {
+    serve(() => json(card(5, { body })));
+    renderCards([{ url: url(5) }]);
+    await screen.findByText("Review details");
+    fireEvent.click(screen.getByText("Review details"));
+    const rendered = await screen.findByTestId("ae-pr-body");
+    await waitFor(() => expect(rendered.textContent).toContain(shown));
+    expect(within(rendered).queryByRole("heading")).toBeNull();
   });
 
   it("keeps a draft unchanged and shows a failed ready request", async () => {

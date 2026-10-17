@@ -48,6 +48,10 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useMemo, useState } from "react";
+import remarkBreaks from "remark-breaks";
+import { defaultRemarkPlugins } from "streamdown";
+import { MessageResponse } from "@/components/ai-elements/message";
+import { isPathologicalText, PlainTextFallback } from "@/components/blocks/ChatMarkdown";
 import { Button } from "@/components/ui/button";
 import {
   AE_ICON_ALERT_CIRCLE,
@@ -85,6 +89,12 @@ import { aeMoreOpenText, useAeReviewOffer } from "@/lib/aeReviewOffer";
 import { AeTablerSvg } from "@/lib/aeTablerIcon";
 import type { AeTablerIconNode } from "@/lib/aeTablerIconData";
 import { patchAeStatus } from "@/shell/AeStatusMenu";
+
+// GitHub renders a single newline in a PR body as a line break; keep GFM too.
+const AE_PR_BODY_REMARK_PLUGINS = [...Object.values(defaultRemarkPlugins), remarkBreaks];
+// Chat-sized headings crowd a card, so a PR body's headings stay near body size.
+const AE_PR_BODY_CLASS =
+  "[&_:is(h1,h2,h3,h4)]:mt-3 [&_:is(h1,h2,h3,h4)]:mb-1 [&_:is(h1,h2)]:text-base [&_:is(h3,h4)]:text-sm";
 
 /** How often an open card re-reads (the server caches GitHub for a minute). */
 export const AE_PR_POLL_MS = 30_000;
@@ -425,7 +435,24 @@ function ConfirmMerge({
   );
 }
 
+// A finished body renders static (no streaming repair); a huge one stays plain text.
+function AePrBody({ body }: { body: string | null | undefined }) {
+  if (!body) return <p>No description provided.</p>;
+  if (isPathologicalText(body)) return <PlainTextFallback text={body} />;
+  return (
+    <MessageResponse
+      className={AE_PR_BODY_CLASS}
+      mode="static"
+      remarkPlugins={AE_PR_BODY_REMARK_PLUGINS}
+    >
+      {body}
+    </MessageResponse>
+  );
+}
+
 function ReviewDetails({ card }: { card: AePrCard }) {
+  // The markdown pipeline runs only once Review details is opened.
+  const [open, setOpen] = useState(false);
   const queryClient = useQueryClient();
   const queryKey = ["ae-pr", card.repo, card.number] as const;
   const ready = useMutation({
@@ -442,7 +469,11 @@ function ReviewDetails({ card }: { card: AePrCard }) {
     },
   });
   return (
-    <details className="min-w-0 text-sm" data-testid="ae-pr-review-details">
+    <details
+      className="min-w-0 text-sm"
+      data-testid="ae-pr-review-details"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
       <summary className="cursor-pointer py-1">Review details</summary>
       <div className="flex min-w-0 flex-col gap-2 py-2">
         <p className="text-muted-foreground">
@@ -451,9 +482,9 @@ function ReviewDetails({ card }: { card: AePrCard }) {
           {card.additions !== undefined && ` · +${card.additions}`}
           {card.deletions !== undefined && ` · −${card.deletions}`}
         </p>
-        <p className="max-h-72 overflow-y-auto whitespace-pre-wrap wrap-anywhere">
-          {card.body || "No description provided."}
-        </p>
+        <div className="max-h-72 overflow-y-auto" data-testid="ae-pr-body">
+          {open && <AePrBody body={card.body} />}
+        </div>
         <p className="text-muted-foreground">
           {aeCiText(card.ci)} · {AE_REVIEW_TEXT[card.review.state]}
         </p>
