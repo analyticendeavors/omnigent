@@ -83,6 +83,7 @@ import type {
   StreamEvent,
 } from "@/lib/events";
 import { createPresenceIdleTracker } from "@/lib/presenceIdle";
+import { aeStampLastEvent } from "@/lib/aeSessionActivity";
 import { randomUUID } from "@/lib/randomUUID";
 import { conversationRegistry, type ConversationEntry } from "./conversationRegistry";
 import { createInitialConversationState, isConversationStateKey } from "./conversationState";
@@ -658,6 +659,10 @@ export interface ConversationState {
    * no explanation. `null` whenever the session is not parked.
    */
   blockedOn: string | null;
+  /** Epoch ms the newest session event arrived (throttled to 1 s), or `null` before any. */
+  lastEventAt: number | null;
+  /** Epoch ms `sessionStatus` last switched to running, or `null` when not seen. */
+  aeRunningSince: number | null;
   /**
    * Whether the active session is a native-terminal wrapper
    * (claude-native / codex-native), derived from the `omnigent.wrapper`
@@ -1775,6 +1780,8 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
   backgroundTaskCount: 0,
   backgroundTasks: [],
   blockedOn: null,
+  lastEventAt: null,
+  aeRunningSince: null,
   isNativeTerminalSession: false,
   nativeVendorOwnsModel: false,
   boundAgentId: null,
@@ -2202,6 +2209,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
         // authoritatively. Only the parked-dialog reason clears — a fresh send is
         // not parked on a dialog.
         blockedOn: null,
+        lastEventAt: Date.now(),
       }));
     }
 
@@ -4190,6 +4198,8 @@ async function bindStream(
         backgroundTaskCount: session.backgroundTaskCount ?? 0,
         backgroundTasks: session.backgroundTasks ?? [],
         blockedOn: null,
+        // Events seen on an earlier visit are stale; the snapshot's blocks date it.
+        lastEventAt: null,
         // This conversation's own effective effort, which is what a warm switch
         // back re-projects (it does not re-bind, so it cannot recompute it).
         sessionReasoningEffort: effectiveEffort,
@@ -6531,6 +6541,9 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
           // so an absent one means "no longer parked".
           blockedOn: event.blockedOn ?? null,
         };
+        if (event.status === "running" && s.sessionStatus !== "running") {
+          patch.aeRunningSince = Date.now();
+        }
         // The background-shell tally is STICKY. Only the Stop-hook-derived
         // status carries an authoritative count (the forwarder relabels its
         // `idle` to `waiting` and attaches `background_task_count`); the
@@ -7250,6 +7263,7 @@ async function* tapSessionEvents(
   for await (const event of events) {
     if (!isConversationDisposed(conversationId)) {
       streamEventRevisions.set(conversationId, (streamEventRevisions.get(conversationId) ?? 0) + 1);
+      aeStampLastEvent(conversationId, setterFor(conversationId));
     }
     handleSessionEvent(event, conversationId);
     if (event.type === "elicitation_resolved") {

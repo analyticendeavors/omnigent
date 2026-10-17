@@ -201,6 +201,8 @@ import {
 } from "@/lib/sessionFilterPreferences";
 import { ExtensionPrimaryNavigation } from "@/extensions/ExtensionPrimaryNavigation";
 import { AeConversationStatusIcon } from "@/components/AeStatusIcon";
+import { aeIsWideMarker, aeWideMarkerReserve } from "@/components/AeSessionActivity";
+import { useAeProjectMarker, useAeSessionRowState } from "@/hooks/aeSessionActivityHooks";
 import { AeSlotsPill } from "@/components/AeSlotsPill";
 import { AeStatusMenu } from "@/shell/AeStatusMenu";
 import { AeSplitMenuItem } from "@/shell/AeSplitMenuItem";
@@ -247,7 +249,7 @@ const SESSION_STATE_SLOT_CLASS =
 // "awaiting" pill keeps its natural width — a fixed box would clip its "Needs
 // response" label.
 function isDotMarker(state: SessionState | null): boolean {
-  return state === null || state.kind !== "awaiting";
+  return state === null || (state.kind !== "awaiting" && !aeIsWideMarker(state));
 }
 const SESSION_STATE_DOT_SLOT_CLASS = "w-6 justify-center";
 
@@ -1397,7 +1399,10 @@ function ProjectFolder({
   const startingConversationId = useChatStore((s) =>
     s.status === "streaming" || s.terminalPending ? s.conversationId : null,
   );
-  const marker = projectMarkerState(conversations, errors, startingConversationId);
+  const marker = useAeProjectMarker(
+    projectMarkerState(conversations, errors, startingConversationId),
+    conversations,
+  );
 
   // Publish the folder's rendered rows upward so projects-scope bulk selection
   // resolves them (the parent sources its action set from these, not the global
@@ -3876,7 +3881,8 @@ function ConversationRowImpl({
   // Approvals and failures outrank the unread dot without clearing read state.
   const errorConversations = useMemo(() => [conversation], [conversation]);
   const [latestError] = useSessionErrorStates(errorConversations);
-  const derivedState = getSessionState(conversation, latestError);
+  const aeState = useAeSessionRowState(conversation, getSessionState(conversation, latestError));
+  const derivedState = aeState.state;
   // The bound session's launch/relaunch window: a send is in flight (local
   // status "streaming") or the runner is auto-creating the PTY
   // (`terminalPending`), but the server hasn't confirmed `running` yet — a
@@ -3888,11 +3894,13 @@ function ConversationRowImpl({
     (s) => s.conversationId === conversation.id && (s.status === "streaming" || s.terminalPending),
   );
   const sessionState =
-    derivedState?.kind === "awaiting" || derivedState?.kind === "running"
+    derivedState?.kind === "awaiting" ||
+    derivedState?.kind === "running" ||
+    derivedState?.kind === "quiet"
       ? derivedState
       : isStartingUp
         ? { kind: "starting" as const }
-        : (derivedState ?? (hasUnseenMessages ? { kind: "unseen" as const } : null));
+        : (derivedState ?? (hasUnseenMessages ? { kind: "unseen" as const } : aeState.scheduled));
   // Drafts share the row's trailing indicator slot, but the active session's
   // composer already makes its draft visible. Live session state wins while
   // present; otherwise only an inactive row needs the draft marker.
@@ -4090,11 +4098,13 @@ function ConversationRowImpl({
             ? showSharedIndicator
               ? "pr-36"
               : "pr-29"
-            : hasSessionIndicator && showSharedIndicator
-              ? "pr-14"
-              : hasTrailingIndicator
-                ? "pr-8"
-                : "pr-2"),
+            : aeIsWideMarker(sessionState)
+              ? aeWideMarkerReserve(sessionState, showSharedIndicator)
+              : hasSessionIndicator && showSharedIndicator
+                ? "pr-14"
+                : hasTrailingIndicator
+                  ? "pr-8"
+                  : "pr-2"),
         // The narrowed reserve must track exactly when the trailing controls
         // appear and the state marker fades — both keyed on `:focus-visible`.
         // `focus-within` also fires for a plain click, which shrank the reserve

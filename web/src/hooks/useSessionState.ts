@@ -11,6 +11,7 @@
 
 import type { Conversation } from "@/hooks/useConversations";
 import type { LatestSessionError } from "@/lib/sessionError";
+import type { AeSessionState } from "@/lib/aeSessionActivity";
 
 export type SessionState =
   | { kind: "awaiting"; count: number }
@@ -22,7 +23,8 @@ export type SessionState =
   // being created before the server confirms `running`. Not derivable from a
   // conversation row (it reads the chat store), so `getSessionState` never
   // returns it; the sidebar row folds it in for the bound session only.
-  | { kind: "starting" };
+  | { kind: "starting" }
+  | AeSessionState;
 
 export function getSessionState(
   conversation: Pick<Conversation, "status" | "pending_elicitations_count"> | undefined | null,

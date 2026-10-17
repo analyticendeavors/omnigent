@@ -5924,6 +5924,18 @@
       "SessionListItem": {
         "description": "Lightweight session summary for `GET /v1/sessions` list responses.\n\nSame shape as `SessionResponse` minus `items`.",
         "properties": {
+          "active_child_count": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Child Count"
+          },
           "agent_id": {
             "description": "Durable identifier of the bound agent.",
             "title": "Agent Id",
@@ -5946,6 +5958,18 @@
             "description": "Whether the session is archived. Archived sessions are returned by `GET /v1/sessions` only when the request passes `include_archived=true`; the sidebar groups them into a dedicated \"Archived\" section. `False` for normal sessions.",
             "title": "Archived",
             "type": "boolean"
+          },
+          "background_task_count": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Background Task Count"
           },
           "comments_count": {
             "default": 0,

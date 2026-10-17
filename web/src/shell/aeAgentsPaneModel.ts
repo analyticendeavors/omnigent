@@ -75,14 +75,22 @@ export function childElapsedSeconds(child: ChildSessionInfo, nowMs: number): num
   return Math.max(0, Math.floor(end - child.created_at));
 }
 
-/** `42s`, `3m 05s`, `1h 07m`: the elapsed time the way Claude Desktop prints it. */
-export function formatElapsed(seconds: number | null): string {
+/**
+ * `42s`, `3m 05s`, `1h 07m`: the elapsed time the way Claude Desktop prints it.
+ * `compact` keeps the larger unit only (`3m`, `1h`) for tight spots.
+ */
+export function formatElapsed(
+  seconds: number | null,
+  { compact = false }: { compact?: boolean } = {},
+): string {
   if (seconds === null) return "";
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`;
+  if (minutes < 60) {
+    return compact ? `${minutes}m` : `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`;
+  }
   const hours = Math.floor(minutes / 60);
-  return `${hours}h ${String(minutes % 60).padStart(2, "0")}m`;
+  return compact ? `${hours}h` : `${hours}h ${String(minutes % 60).padStart(2, "0")}m`;
 }
 
 /** True for a mirror of a coding agent's own subagent (a Claude Code Task, say). */

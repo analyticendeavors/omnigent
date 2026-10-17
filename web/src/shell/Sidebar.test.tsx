@@ -680,7 +680,12 @@ describe("Sidebar session list", () => {
     // The row dot and the collapsed-project dot share this geometry so they
     // line up vertically; keep the row side pinned here.
     mockConversations([
-      conv("conv_running", "Claude Code", { title: "Running row", status: "running" }),
+      conv("conv_running", "Claude Code", {
+        title: "Running row",
+        status: "running",
+        // Fresh output, so the row is plainly running rather than quiet.
+        updated_at: Math.floor(Date.now() / 1000),
+      }),
     ]);
     renderSidebar();
 
@@ -2661,6 +2666,7 @@ describe("Sidebar collapsed project marker", () => {
       conv("conv_running", "Claude Code", {
         labels: { omni_project: "Customer X" },
         status: "running",
+        updated_at: Math.floor(Date.now() / 1000),
       }),
     ]);
     renderSidebar();

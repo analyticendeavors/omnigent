@@ -155,6 +155,10 @@ from omnigent.server.routes._session_create_validation import (
     validate_session_agent,
     validate_session_model_metadata,
 )
+from omnigent.server.routes._sessions.ae_session_activity import (
+    session_active_child_count,
+    session_background_task_count,
+)
 
 # Shared constants, state, and small dataclasses live in the _sessions.common
 # leaf module; import them here so this module and its re-exporters see the same
@@ -1063,6 +1067,8 @@ def _build_session_list_item(
         search_snippet=conv.search_snippet,
         parent_session_id=conv.parent_conversation_id,
         project_id=conv.project_id,
+        background_task_count=session_background_task_count(conv.id),
+        active_child_count=session_active_child_count(child_session_ids),
     )
 
 
