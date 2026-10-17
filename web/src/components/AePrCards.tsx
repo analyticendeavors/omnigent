@@ -46,8 +46,8 @@
 // leads the reason line instead of tagging the toggle, and the button names
 // the method and the base ("Squash into main"), the question line's job.
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useId, useMemo, useState } from "react";
+import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useId, useMemo, useState } from "react";
 import remarkBreaks from "remark-breaks";
 import { defaultRemarkPlugins } from "streamdown";
 import { MessageResponse } from "@/components/ai-elements/message";
@@ -80,9 +80,11 @@ import {
   type AePrCard,
   AePrError,
   fetchAePrCard,
+  fetchAePrCompliance,
   mergeAePr,
   markAePrReady,
   parseAePrUrl,
+  updateAePrBranch,
 } from "@/lib/aePrs";
 import { cn } from "@/lib/utils";
 import { aeMoreOpenText, useAeReviewOffer } from "@/lib/aeReviewOffer";
@@ -305,11 +307,13 @@ function MergedNote({
 
 function ConfirmMerge({
   card,
+  updateWaiting,
   sessionId,
   onCancel,
   onMerged,
 }: {
   card: AePrCard;
+  updateWaiting: boolean;
   sessionId?: string;
   onCancel: () => void;
   onMerged: (result: AeMergeResult) => void;
@@ -415,7 +419,7 @@ function ConfirmMerge({
           </Button>
           <Button
             className={cn(TOUCH, "min-w-0 flex-1 @[30rem]/aepr:flex-none")}
-            disabled={merge.isPending}
+            disabled={merge.isPending || updateWaiting || !card.merge.allowed}
             title={label}
             onClick={() => merge.mutate()}
           >
@@ -512,6 +516,98 @@ function ReviewDetails({ card }: { card: AePrCard }) {
   );
 }
 
+function ComplianceReview({ card }: { card: AePrCard }) {
+  const [open, setOpen] = useState(false);
+  const query = useQuery({
+    queryKey: ["ae-pr-compliance", card.repo, card.number, card.head_sha],
+    queryFn: () => fetchAePrCompliance(card.repo, card.number),
+    enabled: open,
+    refetchInterval: open ? AE_PR_POLL_MS : false,
+    retry: false,
+  });
+  const report = query.data?.report;
+  const current = report?.revision === "current" && report.reviewed_sha === card.head_sha;
+  const verdict = query.isError
+    ? "Last fetched report"
+    : report?.verdict === "approved"
+      ? "Approved report"
+      : report?.verdict === "blocked"
+        ? "Blocking findings"
+        : "Verdict unclear";
+  return (
+    <details
+      className="min-w-0 text-sm"
+      data-testid="ae-pr-compliance"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary className="cursor-pointer py-1">
+        AE compliance review
+        {report && <span className="ml-2 text-muted-foreground">{verdict}</span>}
+      </summary>
+      {open && (
+        <div className="flex min-w-0 flex-col gap-2 py-2">
+          {query.isPending && <p role="status">Reading compliance review...</p>}
+          {query.isError && (
+            <p role="alert" className="text-destructive">
+              Could not refresh compliance review: {query.error.message}
+            </p>
+          )}
+          {query.isSuccess && !report && <p>No AE compliance review posted yet.</p>}
+          {report && (
+            <>
+              <p
+                className={
+                  current && !query.isError
+                    ? "text-muted-foreground"
+                    : "text-amber-700 dark:text-amber-400"
+                }
+              >
+                {query.isError
+                  ? "Report refresh failed. Approval for the current revision is unverified."
+                  : current
+                    ? `Reviewed revision ${report.reviewed_sha?.slice(0, 7)} matches this branch.`
+                    : report.revision === "stale"
+                      ? "This report covers an older revision. Review the current changes again."
+                      : report.reviewed_sha
+                        ? "Report revision does not match this card. Refresh the branch before relying on approval."
+                        : "Reviewed revision not recorded. Approval for this revision is unverified."}
+              </p>
+              <p className="text-muted-foreground">
+                Updated{" "}
+                <time dateTime={report.updated_at}>
+                  {new Date(report.updated_at).toLocaleString()}
+                </time>
+                {" · "}
+                <a href={report.url} target="_blank" rel="noreferrer" className="underline">
+                  Source comment
+                </a>
+              </p>
+              <div
+                className="max-h-96 min-w-0 overflow-auto wrap-anywhere"
+                data-testid="ae-pr-compliance-body"
+              >
+                {isPathologicalText(report.body) ? (
+                  <pre className="whitespace-pre-wrap font-sans text-sm">{report.body}</pre>
+                ) : (
+                  <AePrBody body={report.body} />
+                )}
+              </div>
+            </>
+          )}
+          <Button
+            variant="outline"
+            className={cn(TOUCH, "self-start")}
+            disabled={query.isFetching}
+            onClick={() => void query.refetch()}
+          >
+            {query.isFetching ? "Refreshing..." : "Refresh review"}
+          </Button>
+        </div>
+      )}
+    </details>
+  );
+}
+
 /**
  * One pull request's card. `panel` is the GitHub panel's full card; `inline`
  * is the compact one under a chat message, which stays silent on an error or
@@ -538,13 +634,63 @@ export function AePrCardView({
   const inline = variant === "inline";
   const [confirming, setConfirming] = useState(false);
   const [result, setResult] = useState<AeMergeResult | null>(null);
+  const [updateDelayed, setUpdateDelayed] = useState(false);
+  const [updateMessage, setUpdateMessage] = useState("");
+  const queryClient = useQueryClient();
+  const queryKey = ["ae-pr", repo, number] as const;
+  const updateKey = useMemo(() => ["ae-pr-branch-update", repo, number] as const, [repo, number]);
+  // Inline and panel cards share the operation, including when one mounts mid-update.
+  const { data: branchUpdate } = useQuery<{ sha: string; started: number } | null>({
+    queryKey: updateKey,
+    queryFn: () => null,
+    initialData: null,
+    enabled: false,
+    staleTime: Infinity,
+  });
+  const updating = useIsMutating({ mutationKey: updateKey });
   const query = useQuery({
-    queryKey: ["ae-pr", repo, number],
-    queryFn: () => fetchAePrCard(repo, number),
-    refetchInterval: AE_PR_POLL_MS,
+    queryKey,
+    queryFn: () => fetchAePrCard(repo, number, branchUpdate !== null),
+    refetchInterval: () =>
+      branchUpdate ? (Date.now() - branchUpdate.started < 60_000 ? 2_000 : false) : AE_PR_POLL_MS,
     retry: false,
   });
-  if (inline && (query.isError || query.isPending)) return null;
+  const update = useMutation({
+    mutationKey: updateKey,
+    mutationFn: (card: AePrCard) => updateAePrBranch(card),
+    onSuccess: async (accepted) => {
+      queryClient.setQueryData(updateKey, { sha: accepted.head_sha, started: Date.now() });
+      await queryClient.cancelQueries({ queryKey, exact: true });
+      await queryClient.invalidateQueries({ queryKey, exact: true });
+      await queryClient.invalidateQueries({ queryKey: ["ae-pr-compliance", repo, number] });
+    },
+    onError: async (error) => {
+      if (error instanceof AePrError && error.card) {
+        await queryClient.cancelQueries({ queryKey, exact: true });
+        queryClient.setQueryData(queryKey, error.card);
+      }
+    },
+  });
+  useEffect(() => {
+    if (branchUpdate && query.data?.head_sha && query.data.head_sha !== branchUpdate.sha) {
+      queryClient.setQueryData(updateKey, null);
+      setUpdateMessage("Branch revision changed. Check the new results before merging.");
+    } else if (branchUpdate && query.data && query.data.state !== "open") {
+      queryClient.setQueryData(updateKey, null);
+      setUpdateMessage("The pull request closed while the update was pending.");
+    }
+  }, [branchUpdate, query.data, queryClient, updateKey]);
+  const updateWaiting = updating > 0 || branchUpdate !== null;
+  useEffect(() => {
+    setUpdateDelayed(false);
+    if (!branchUpdate) return;
+    const timeout = window.setTimeout(
+      () => setUpdateDelayed(true),
+      Math.max(0, 60_000 - (Date.now() - branchUpdate.started)),
+    );
+    return () => window.clearTimeout(timeout);
+  }, [branchUpdate]);
+  if (inline && !query.data && (query.isError || query.isPending)) return null;
   if (query.error instanceof AePrError && query.error.code === AE_PR_NOT_CONFIGURED) {
     // Said once for the list, not once per pull request.
     return first ? (
@@ -661,26 +807,75 @@ export function AePrCardView({
                           {card.merge.reason}
                         </p>
                       )}
-                      <Button
-                        className={cn(TOUCH, "ml-auto")}
-                        disabled={!card.merge.allowed}
-                        title={
-                          card.merge.allowed ? `Merge #${number}` : (card.merge.reason ?? undefined)
-                        }
-                        onClick={() => setConfirming(true)}
-                      >
-                        <AeTablerSvg node={AE_ICON_MERGE} className="size-3.5" />
-                        Merge
-                      </Button>
+                      <div className="ml-auto flex flex-wrap items-center gap-2">
+                        {card.update_branch && (
+                          <Button
+                            variant="outline"
+                            className={TOUCH}
+                            disabled={
+                              updateDelayed
+                                ? query.isFetching
+                                : updateWaiting || !card.update_branch.allowed || !card.head_sha
+                            }
+                            title={
+                              card.update_branch.reason ??
+                              `Merge ${card.base_ref} into ${card.head_ref}`
+                            }
+                            onClick={() =>
+                              updateDelayed ? void query.refetch() : update.mutate(card)
+                            }
+                          >
+                            {updateDelayed
+                              ? "Check update"
+                              : updateWaiting
+                                ? "Updating branch..."
+                                : "Update branch"}
+                          </Button>
+                        )}
+                        <Button
+                          className={cn(TOUCH, "ml-auto")}
+                          disabled={!card.merge.allowed || updateWaiting}
+                          title={
+                            card.merge.allowed
+                              ? `Merge #${number}`
+                              : (card.merge.reason ?? undefined)
+                          }
+                          onClick={() => setConfirming(true)}
+                        >
+                          <AeTablerSvg node={AE_ICON_MERGE} className="size-3.5" />
+                          Merge
+                        </Button>
+                      </div>
                     </div>
                   )}
                 </>
               )}
             </div>
+            {(branchUpdate || updateMessage) && (
+              <p role="status" className="text-sm text-muted-foreground">
+                {updateDelayed
+                  ? "GitHub has not confirmed a new revision yet. Check update to refresh."
+                  : branchUpdate
+                    ? "Branch update requested. Waiting for GitHub..."
+                    : updateMessage}
+              </p>
+            )}
+            {update.isError && (
+              <p role="alert" className="text-sm text-destructive">
+                Branch update failed: {update.error.message}
+              </p>
+            )}
+            {branchUpdate && query.isError && (
+              <p role="alert" className="text-sm text-destructive">
+                Could not check the branch update: {query.error.message}
+              </p>
+            )}
             <ReviewDetails card={card} />
+            <ComplianceReview card={card} />
             {!result && confirming && (
               <ConfirmMerge
                 card={card}
+                updateWaiting={updateWaiting}
                 sessionId={sessionId}
                 onCancel={() => setConfirming(false)}
                 onMerged={(merged) => {
