@@ -825,6 +825,7 @@ export async function forkSession(
       reasoningEffort?: string;
       terminalLaunchArgs?: string[];
       codexBypassSandbox?: boolean;
+      claudeAccount?: string;
     };
     sandbox?: { provider?: string | null; workspace?: string | null };
     /** Mark the fork as a side chat (hidden from the left sidebar). */
@@ -840,6 +841,7 @@ export async function forkSession(
     reasoning_effort?: string;
     terminal_launch_args?: string[];
     codex_bypass_sandbox?: boolean;
+    claude_account?: string;
     host_type?: "managed";
     sandbox_provider?: string;
     workspace?: string | null;
@@ -870,6 +872,9 @@ export async function forkSession(
   // otherwise keeps the request minimal and the server default (no bypass).
   if (config?.codexBypassSandbox) {
     body.codex_bypass_sandbox = true;
+  }
+  if (config?.claudeAccount !== undefined) {
+    body.claude_account = config.claudeAccount;
   }
   if (sandbox !== undefined) {
     body.host_type = "managed";

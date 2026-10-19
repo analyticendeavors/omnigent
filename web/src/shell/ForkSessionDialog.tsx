@@ -83,6 +83,7 @@ import { sandboxHostChoice, sandboxHostChoiceProvider } from "@/lib/hostPreferen
 import { resolveWorkspacePath, useResolvedHostHome } from "./WorkspacePicker";
 import { WorkspacePickerDialog } from "./WorkspacePickerDialog";
 import { WorkspacePathField } from "./WorkspacePathField";
+import { AE_CLAUDE_ACCOUNT_LABEL, AeForkClaudeAccount } from "./AeForkClaudeAccount";
 import {
   ConnectHostInstructions,
   SANDBOX_REPO_LABEL_KEY,
@@ -196,6 +197,8 @@ export interface ForkRunConfigValue {
    * always dropped, so a fork is never silently armed.
    */
   codexBypassSandbox?: boolean;
+  /** Claude login a Claude native fork signs in with ("" = default); absent keeps the source's. */
+  claudeAccount?: string;
 }
 
 /**
@@ -232,6 +235,7 @@ export interface ForkRunConfigValue {
  * @param selectedHostId - Host whose model catalog feeds the model picker; null
  *   leaves it on Default until a host is chosen.
  * @param onChange - Reports the ready-to-send value on every change.
+ * @param claudeAccountAllowed - False for a managed-sandbox fork, which keeps no host account.
  */
 function ForkRunConfig({
   targetHarness,
@@ -241,6 +245,7 @@ function ForkRunConfig({
   sameAgentAsSource,
   selectedHostId,
   onChange,
+  claudeAccountAllowed = true,
 }: {
   targetHarness: string | null;
   targetAgent: Pick<AvailableAgent, "name" | "harness">;
@@ -249,6 +254,7 @@ function ForkRunConfig({
   sameAgentAsSource: boolean;
   selectedHostId: string | null;
   onChange: (value: ForkRunConfigValue) => void;
+  claudeAccountAllowed?: boolean;
 }) {
   const hasPermission = nativeAgentHasCapability(targetAgent, "permissionMode");
   const hasApproval = nativeAgentHasCapability(targetAgent, "approvalMode");
@@ -259,6 +265,19 @@ function ForkRunConfig({
   // the modelPicker capability (mirrors the new-session dialog).
   const isCodex = targetHarness === "codex-native";
   const showModel = hasModelPicker || isCodex;
+  // The server checks an account pick against the source's host, so offer it only there.
+  const accountHostId =
+    claudeAccountAllowed &&
+    targetHarness === "claude-native" &&
+    selectedHostId !== null &&
+    selectedHostId === sourceSession?.hostId
+      ? selectedHostId
+      : null;
+  const [claudeAccount, setClaudeAccount] = useState<string | undefined>(undefined);
+  // A hidden row drops its pick, so coming back to it starts from the source's account.
+  useEffect(() => {
+    if (accountHostId === null) setClaudeAccount(undefined);
+  }, [accountHostId]);
 
   // Live model catalog for the target harness on the picked host. Only the
   // native harnesses that expose a picker resolve a catalog; others pass a
@@ -438,8 +457,13 @@ function ForkRunConfig({
     } else if (hasAgySkip && touched.mode) {
       value.terminalLaunchArgs = AGY_NATIVE_SKIP_MODES.find((m) => m.value === mode)?.args ?? [];
     }
+    if (accountHostId !== null && claudeAccount !== undefined) {
+      value.claudeAccount = claudeAccount;
+    }
     onChange(value);
   }, [
+    accountHostId,
+    claudeAccount,
     showModel,
     hasPermission,
     hasApproval,
@@ -611,6 +635,14 @@ function ForkRunConfig({
             </div>
           )}
         </>
+      )}
+      {accountHostId !== null && (
+        <AeForkClaudeAccount
+          hostId={accountHostId}
+          currentAccount={sourceSession?.labels?.[AE_CLAUDE_ACCOUNT_LABEL]}
+          value={claudeAccount}
+          onChange={setClaudeAccount}
+        />
       )}
     </div>
   );
@@ -1567,6 +1599,7 @@ function SupportedForkSessionForm({
             sameAgentAsSource={sameAgentAsSource}
             selectedHostId={isCodingSource ? selectedHostId : (sourceHostId ?? null)}
             onChange={setRunConfig}
+            claudeAccountAllowed={!sandboxSelected}
           />
         )}
 

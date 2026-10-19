@@ -476,6 +476,25 @@ describe("forkSession", () => {
     expect(JSON.parse(init.body as string)).toEqual({});
   });
 
+  it("sends a picked Claude account, the default login as an empty name", async () => {
+    const fork = () =>
+      mockJsonResponse({
+        id: "conv_fork",
+        agent_id: "agent_clone",
+        status: "idle",
+        created_at: 1704067200,
+      });
+    fetchMock.mockResolvedValueOnce(fork()).mockResolvedValueOnce(fork());
+
+    await forkSession("conv_src", { config: { claudeAccount: "Work" } });
+    await forkSession("conv_src", { config: { claudeAccount: "" } });
+
+    const bodies = fetchMock.mock.calls.map(([, init]) =>
+      JSON.parse((init as RequestInit).body as string),
+    );
+    expect(bodies).toEqual([{ claude_account: "Work" }, { claude_account: "" }]);
+  });
+
   it("asks for a managed sandbox when a sandbox target is given", async () => {
     fetchMock.mockResolvedValueOnce(
       mockJsonResponse({

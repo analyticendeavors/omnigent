@@ -3515,6 +3515,21 @@ def register_core_routes(
         if body.side_chat:
             extra_labels[SIDE_CHAT_LABEL_KEY] = "1"
             extra_labels[SIDE_CHAT_SOURCE_LABEL_KEY] = source_id
+        if body.claude_account is not None:
+            from omnigent.onboarding.claude_accounts import CLAUDE_ACCOUNT_LABEL_KEY
+            from omnigent.server.routes.sessions.ae_fork_claude_account import (
+                validate_fork_claude_account,
+            )
+
+            await validate_fork_claude_account(
+                request,
+                account=body.claude_account,
+                agent=base_agent,
+                source=source,
+                user_id=user_id,
+                host_type=body.host_type,
+            )
+            extra_labels[CLAUDE_ACCOUNT_LABEL_KEY] = body.claude_account
 
         # When the fork binds a NATIVE target, the native CLI won't replay
         # the copied Omnigent transcript on its own — mark the fork so the

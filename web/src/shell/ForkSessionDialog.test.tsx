@@ -21,7 +21,7 @@ import {
 } from "@/hooks/useAvailableAgents";
 import { useSessionAgent } from "@/hooks/useAgents";
 import { useSession } from "@/hooks/useSession";
-import { useHosts, useHostModelOptions, type Host } from "@/hooks/useHosts";
+import { useDetectedCredentials, useHosts, useHostModelOptions, type Host } from "@/hooks/useHosts";
 import { useDirectorySessions } from "@/hooks/useDirectorySessions";
 import { useRunnerHealthRegistration } from "@/hooks/RunnerHealthProvider";
 import {
@@ -42,7 +42,11 @@ vi.mock("@/hooks/useAvailableAgents", () => ({
 }));
 vi.mock("@/hooks/useAgents", () => ({ useSessionAgent: vi.fn() }));
 vi.mock("@/hooks/useSession", () => ({ useSession: vi.fn() }));
-vi.mock("@/hooks/useHosts", () => ({ useHosts: vi.fn(), useHostModelOptions: vi.fn() }));
+vi.mock("@/hooks/useHosts", () => ({
+  useHosts: vi.fn(),
+  useHostModelOptions: vi.fn(),
+  useDetectedCredentials: vi.fn(() => ({ data: [] })),
+}));
 vi.mock("@/hooks/useDirectorySessions", () => ({ useDirectorySessions: vi.fn() }));
 vi.mock("@/hooks/RunnerHealthProvider", () => ({ useRunnerHealthRegistration: vi.fn() }));
 vi.mock("@/hooks/useHostFilesystem", () => ({
@@ -1337,6 +1341,26 @@ describe("ForkSessionDialog", () => {
       openHostSelect();
       fireEvent.click(screen.getByTestId("fork-session-sandbox-option"));
     }
+
+    it("drops the Claude account row once the sandbox is picked", () => {
+      // A sandbox fork keeps no host login, and the server refuses an account for one.
+      vi.mocked(useDetectedCredentials).mockReturnValue({
+        data: [{ family: "claude-oauth", source: "Work", env_var: "Work" }],
+      } as unknown as ReturnType<typeof useDetectedCredentials>);
+      useSessionMock.mockReturnValue({
+        session: { hostId: "host_1", labels: {} },
+        isLoading: false,
+        error: null,
+      } as unknown as ReturnType<typeof useSession>);
+      renderDialog({ ...CODING, info: { managed_sandboxes_enabled: true } });
+      openAgentSelect();
+      fireEvent.click(screen.getByTestId("fork-session-agent-option-ag_claude_native"));
+      expect(screen.getByTestId("fork-session-config-claude-account")).toBeInTheDocument();
+
+      selectSandbox();
+
+      expect(screen.queryByTestId("fork-session-config-claude-account")).not.toBeInTheDocument();
+    });
 
     it("hides the sandbox option on a server that can't provision one", () => {
       // Fails closed, mirroring the new-session picker: a server with no

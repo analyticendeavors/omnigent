@@ -2620,6 +2620,10 @@ class SessionForkRequest(BaseModel):
         explicit value overrides it and an explicit ``null`` gives the
         fork an empty sandbox. Only valid with ``host_type: "managed"`` —
         an external fork's directory is chosen when it binds a host.
+    :param claude_account: Claude subscription account a Claude native fork
+        signs in with on the source session's host, e.g. ``"Work"``; an
+        empty string selects the default CLI login. Omit to keep the
+        source's account.
     """
 
     title: str | None = Field(default=None, max_length=USER_SESSION_TITLE_MAX_CHARS)
@@ -2636,6 +2640,7 @@ class SessionForkRequest(BaseModel):
     # it is hidden from the left sidebar (it surfaces only as a Workspace-rail
     # side-chat tab). It may share its parent's runner.
     side_chat: bool = False
+    claude_account: str | None = Field(default=None, max_length=64)
 
     model_config = ConfigDict(extra="forbid")
 
