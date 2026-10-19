@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { flushSync } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useStickToBottomContext } from "use-stick-to-bottom";
+import { aeAtTranscriptEnd } from "@/lib/aeActiveTurn";
 import {
   Conversation,
   ConversationContent,
@@ -933,13 +934,15 @@ export function VirtualBubbleList({
     const scrollOffset = virtualizer.scrollOffset;
     if (scrollOffset === null || bubbles.length === 0) return null;
     const viewport = scrollEl?.clientHeight ?? 0;
+    if (aeAtTranscriptEnd(scrollOffset, viewport, scrollEl?.scrollHeight ?? 0))
+      return activeTurnIdAtBubbleIndex(bubbles, bubbles.length - 1);
     const midItem = virtualizer.getVirtualItemForOffset(scrollOffset + viewport / 2);
     return activeTurnIdAtBubbleIndex(bubbles, midItem?.index ?? bubbles.length - 1);
-    // `range` and `totalSize` are deps so the active turn recomputes as the
-    // window scrolls and as measurements settle; `scrollOffset` alone isn't a
-    // render trigger.
+    // `range` and `totalSize` recompute the active turn as the window scrolls and
+    // measurements settle; `scrollOffset` is a dep so the at-end check reruns when
+    // the scroll reaches the end.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bubbles, scrollEl, range, totalSize, virtualizer]);
+  }, [bubbles, scrollEl, range, totalSize, virtualizer, virtualizer.scrollOffset]);
 
   // Older-history prepend compensation. Absolute rows are out of normal flow,
   // so the browser's native scroll anchoring can't hold the read position
