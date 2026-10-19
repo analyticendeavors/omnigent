@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { vi } from "vitest";
+import { beforeEach, vi } from "vitest";
 
 // The @lobehub icon packages have broken nested-module resolution
 // under vitest; stub presentational glyphs so component modules that
@@ -143,3 +143,9 @@ Object.defineProperty(window, "matchMedia", {
 
 // omnigent-ae: the Tabler icon set is read from disk, never the global fetch.
 vi.mock("@/lib/aeTablerAssetFetch", () => import("@/lib/aeTablerAssetFetch.disk"));
+// omnigent-ae: the session rail opens in every session only in the tests that
+// turn it on; the shell's own tests do not mock the rail's sections.
+beforeEach(async () => {
+  const { useAeSessionRailStore } = await import("@/lib/aeSessionRail");
+  useAeSessionRailStore.setState({ openInEverySession: false });
+});

@@ -67,6 +67,8 @@ beforeEach(() => {
     order: [...AE_RAIL_SECTIONS],
     folded: {},
     focus: null,
+    // The tests before "in every session" cover the rail with the preference off.
+    openInEverySession: false,
   });
 });
 
@@ -264,6 +266,132 @@ describe("AeSessionRail", () => {
     expect(within(sheet).getByText("triage body for s-1")).toBeInTheDocument();
     fireEvent.click(within(sheet).getByRole("button", { name: "Close" }));
     expect(useAeSessionRailStore.getState().sheetOpen).toBe(false);
+  });
+});
+
+describe("AeSessionRail in every session", () => {
+  beforeEach(() => {
+    useAeSessionRailStore.setState({ openInEverySession: true });
+  });
+
+  afterEach(() => {
+    window.history.replaceState(null, "", "/");
+  });
+
+  /** Session s-1 with the rail as given, then s-2 whose workspace panel the shell restores open. */
+  function switchToSessionWithPanel() {
+    const shell = workspace(false);
+    const view = render(<AeSessionRail sessionId="s-1" sidebarWidth={220} workspace={shell} />);
+    // The next session renders first with the old panel state, then the shell
+    // restores that session's open workspace panel, which cannot fit beside the rail.
+    view.rerender(<AeSessionRail sessionId="s-2" sidebarWidth={220} workspace={shell} />);
+    const restored = workspace(true);
+    view.rerender(
+      <AeSessionRail
+        sessionId="s-2"
+        sidebarWidth={220}
+        workspacePanelWidth={240}
+        workspace={restored}
+      />,
+    );
+    return { ...view, restored };
+  }
+
+  it("a session whose workspace panel is restored open keeps the rail and closes the panel", () => {
+    const { restored } = switchToSessionWithPanel();
+    expect(useAeSessionRailStore.getState().open).toBe(true);
+    expect(restored.toggle).toHaveBeenCalledTimes(1);
+  });
+
+  it("a session switch opens a closed rail", () => {
+    useAeSessionRailStore.setState({ open: false });
+    const { rerender } = render(<AeSessionRail sessionId="s-1" />);
+    expect(useAeSessionRailStore.getState().open).toBe(true);
+    act(() => useAeSessionRailStore.getState().toggle());
+    expect(screen.queryByTestId("ae-session-rail")).toBeNull();
+    rerender(<AeSessionRail sessionId="s-2" />);
+    expect(screen.getByTestId("ae-session-rail")).toBeInTheDocument();
+  });
+
+  it("closes the push panels too when they clash after a switch", () => {
+    const closePushPanels = vi.fn();
+    const { rerender } = render(
+      <AeSessionRail sessionId="s-1" sidebarWidth={220} closePushPanels={closePushPanels} />,
+    );
+    rerender(
+      <AeSessionRail
+        sessionId="s-2"
+        sidebarWidth={220}
+        pushPanelOpen
+        closePushPanels={closePushPanels}
+      />,
+    );
+    expect(closePushPanels).toHaveBeenCalled();
+    expect(useAeSessionRailStore.getState().open).toBe(true);
+  });
+
+  it("a panel opened by hand mid-session still swaps with the rail", () => {
+    const shell = workspace(false);
+    const { rerender } = render(
+      <AeSessionRail sessionId="s-1" sidebarWidth={220} workspace={shell} />,
+    );
+    // The user clicks the panel toggle.
+    fireEvent.pointerDown(document.body);
+    rerender(
+      <AeSessionRail
+        sessionId="s-1"
+        sidebarWidth={220}
+        workspacePanelWidth={240}
+        workspace={workspace(true)}
+      />,
+    );
+    expect(useAeSessionRailStore.getState()).toMatchObject({ open: false, closedForPanel: true });
+    // The rail is back at the next session switch.
+    rerender(<AeSessionRail sessionId="s-2" sidebarWidth={220} workspace={workspace(false)} />);
+    expect(screen.getByTestId("ae-session-rail")).toBeInTheDocument();
+  });
+
+  it("typing in the composer does not count as opening a panel by hand", () => {
+    const { rerender } = render(<AeSessionRail sessionId="s-1" sidebarWidth={220} />);
+    fireEvent.keyDown(document.body, { key: "a" });
+    const late = workspace(true);
+    rerender(
+      <AeSessionRail
+        sessionId="s-1"
+        sidebarWidth={220}
+        workspacePanelWidth={240}
+        workspace={late}
+      />,
+    );
+    expect(useAeSessionRailStore.getState().open).toBe(true);
+    expect(late.toggle).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves the panel to a deep link that names a file", () => {
+    window.history.replaceState(null, "", "/c/s-2?file=README.md");
+    switchToSessionWithPanel();
+    expect(useAeSessionRailStore.getState()).toMatchObject({ open: false, closedForPanel: true });
+  });
+
+  it("does nothing on a phone", () => {
+    isMobileMock.mockReturnValue(true);
+    useAeSessionRailStore.setState({ open: false });
+    const { rerender } = render(<AeSessionRail sessionId="s-1" />);
+    rerender(<AeSessionRail sessionId="s-2" />);
+    expect(useAeSessionRailStore.getState()).toMatchObject({ open: false, sheetOpen: false });
+  });
+
+  it("off: a switch leaves the rail closed, and a restored panel closes the rail as before", () => {
+    useAeSessionRailStore.setState({ openInEverySession: false });
+    const { restored } = switchToSessionWithPanel();
+    expect(useAeSessionRailStore.getState()).toMatchObject({ open: false, closedForPanel: true });
+    expect(restored.toggle).not.toHaveBeenCalled();
+    act(() => useAeSessionRailStore.getState().toggle());
+    act(() => useAeSessionRailStore.getState().toggle());
+    cleanup();
+    const { rerender } = render(<AeSessionRail sessionId="s-3" />);
+    rerender(<AeSessionRail sessionId="s-4" />);
+    expect(useAeSessionRailStore.getState().open).toBe(false);
   });
 });
 

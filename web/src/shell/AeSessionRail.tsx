@@ -2,6 +2,13 @@
 // their grips. Desktop docks it as a 304 px column (or floats it over the
 // chat's right edge when docking would squeeze the chat, but never over an open
 // panel); a phone shows it as a sheet.
+//
+// Open in every session (2026-10-18): with the preference on, a desktop rail
+// opens whenever a session opens, and until the user clicks (or presses a
+// modified key) in that session, a panel that cannot fit beside the rail
+// closes instead of the rail. That is how a session restoring its open
+// workspace panel no longer hides the rail on windows up to about 1440 px.
+// Opening a panel by hand afterwards still swaps them as before.
 
 import {
   type Announcements,
@@ -28,6 +35,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   useSyncExternalStore,
@@ -72,12 +80,43 @@ function useRailFloats(reservedWidth: number): boolean {
   return useSyncExternalStore(subscribeToResize, getSnapshot, () => false);
 }
 
+/** A deep link to a file or a comment asks for the workspace panel; the rail does not take its room. */
+function urlAsksForPanel(): boolean {
+  const params = new URLSearchParams(window.location.search);
+  return params.has("file") || Boolean(params.get("comment"));
+}
+
+/**
+ * Ends the rail's claim on the room at the user's first act in a session: a
+ * pointer press, or a key with Ctrl, Alt or Meta (the panel hotkeys). Typing
+ * in the composer does not end it.
+ */
+function useEndClaimOnUserAct(claim: { current: boolean }) {
+  useEffect(() => {
+    const end = (event: Event) => {
+      if (event instanceof KeyboardEvent && !(event.ctrlKey || event.altKey || event.metaKey)) {
+        return;
+      }
+      claim.current = false;
+    };
+    document.addEventListener("pointerdown", end, true);
+    document.addEventListener("keydown", end, true);
+    return () => {
+      document.removeEventListener("pointerdown", end, true);
+      document.removeEventListener("keydown", end, true);
+    };
+  }, [claim]);
+}
+
 /**
  * One pane at a time: when the open rail would float over an open panel, the one
  * opened last stays and the other closes. A rail closed this way reopens once no
  * panel needs the room (as it was, floating or not); one the user closed stays closed.
+ * With "open in every session" on, a session switch opens the rail, and the rail
+ * keeps its room until the user acts in that session.
  */
 function useOnePaneAtATime(
+  sessionId: string,
   active: boolean,
   panelOpen: boolean,
   floating: boolean,
@@ -86,15 +125,34 @@ function useOnePaneAtATime(
   const open = useAeSessionRailStore((s) => s.open);
   const closedForPanel = useAeSessionRailStore((s) => s.closedForPanel);
   const setClosedForPanel = useAeSessionRailStore((s) => s.setClosedForPanel);
+  const setOpen = useAeSessionRailStore((s) => s.setOpen);
+  const everySession = useAeSessionRailStore((s) => s.openInEverySession);
+  // True from a session switch until the user acts in that session: the
+  // rail keeps its room, and a panel that cannot fit beside it closes.
+  const claim = useRef(false);
+  useEndClaimOnUserAct(claim);
+  const seenSession = useRef<string | null>(null);
+  const [, settle] = useReducer((n: number) => n + 1, 0);
   const previous = useRef({ open, panelOpen });
   // A layout effect settles the overlap before the browser paints it.
   useLayoutEffect(() => {
     const was = previous.current;
     previous.current = { open, panelOpen };
+    const switched = seenSession.current !== sessionId;
+    seenSession.current = sessionId;
+    if (switched) claim.current = everySession && active && !urlAsksForPanel();
     if (!active) return;
+    if (switched && claim.current) {
+      // The panels on screen still belong to the last session; the render
+      // the effect below asks for settles the overlap once the shell has
+      // restored this session's.
+      if (!open) setOpen(true);
+      previous.current = { open: true, panelOpen };
+      return;
+    }
     const clash = panelOpen && floating;
     if (open && clash) {
-      if (!was.open && was.panelOpen) closePanels();
+      if (claim.current || (!was.open && was.panelOpen)) closePanels();
       else setClosedForPanel(true);
     } else if (!open && closedForPanel && !clash) {
       setClosedForPanel(false);
@@ -102,6 +160,11 @@ function useOnePaneAtATime(
       previous.current = { open: true, panelOpen };
     }
   });
+  // A child's passive effect runs before the shell's, so the render this asks
+  // for comes after the shell has restored the new session's panels.
+  useEffect(() => {
+    if (claim.current) settle();
+  }, [sessionId]);
 }
 
 function prefersReducedMotion(): boolean {
@@ -162,6 +225,7 @@ export function AeSessionRail({
   // The workspace closes through its own toggle even while a push panel hides it;
   // left open, it would reappear over the rail once the push panel closed.
   useOnePaneAtATime(
+    sessionId,
     !isMobile && !hidden,
     workspacePanelWidth > 0 || pushPanelOpen,
     floating,

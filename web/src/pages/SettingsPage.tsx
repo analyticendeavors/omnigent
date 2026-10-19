@@ -260,6 +260,7 @@ import {
   readBackgroundSessionTitlesEnabled,
   writeBackgroundSessionTitlesEnabled,
 } from "@/lib/backgroundSessionTitlesPreferences";
+import { AeChatSettingsSection } from "./settings/AeChatSettingsSection";
 import { SettingsAiAccountsSection } from "./settings/SettingsAiAccountsSection";
 import { SettingsHarnessesSection } from "./settings/SettingsHarnessesSection";
 import { SettingsCustomAgentsSection } from "./settings/SettingsCustomAgentsSection";
@@ -336,6 +337,7 @@ export function SettingsPage() {
       {...pageWrapperSettings}
     >
       {section === "appearance" && <AppearanceSection />}
+      {section === "chat" && <AeChatSettingsSection />}
       {section === "general" && <GeneralSection />}
       {section === "ai-accounts" && <SettingsAiAccountsSection />}
       {section === "harnesses" && <SettingsHarnessesSection />}

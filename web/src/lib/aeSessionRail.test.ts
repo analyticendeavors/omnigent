@@ -21,6 +21,7 @@ beforeEach(() => {
     order: [...AE_RAIL_SECTIONS],
     folded: { connectors: true },
     focus: null,
+    openInEverySession: true,
   });
 });
 
@@ -167,6 +168,31 @@ describe("persistence", () => {
     });
   });
 
+  it("opens in every session by default, saves the choice and reads it back", async () => {
+    vi.resetModules();
+    let fresh = await import("./aeSessionRail");
+    expect(fresh.useAeSessionRailStore.getState().openInEverySession).toBe(true);
+    fresh.useAeSessionRailStore.getState().setOpenInEverySession(false);
+    const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "{}");
+    expect(saved.openInEverySession).toBe(false);
+    vi.resetModules();
+    fresh = await import("./aeSessionRail");
+    expect(fresh.useAeSessionRailStore.getState().openInEverySession).toBe(false);
+  });
+
+  it("loads a layout saved before the preference existed, with the preference on", async () => {
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ open: false, closedForPanel: false, order: ["usage"], folded: {} }),
+    );
+    vi.resetModules();
+    const fresh = await import("./aeSessionRail");
+    const state = fresh.useAeSessionRailStore.getState();
+    expect(state.openInEverySession).toBe(true);
+    expect(state.order[0]).toBe("usage");
+    expect(state.open).toBe(false);
+  });
+
   it("works with defaults when storage is blocked", async () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
       throw new Error("blocked");
@@ -179,6 +205,7 @@ describe("persistence", () => {
     const state = fresh.useAeSessionRailStore.getState();
     expect(state.open).toBe(false);
     expect(state.order).toEqual([...AE_RAIL_SECTIONS]);
+    expect(state.openInEverySession).toBe(true);
     expect(() => state.setOpen(true)).not.toThrow();
     expect(setItem).toHaveBeenCalled();
     expect(fresh.useAeSessionRailStore.getState().open).toBe(true);

@@ -1,13 +1,20 @@
 // The chat header's ways into the session rail: a desktop toggle beside the
 // right-panel toggle, and a "Session rail" item in the phone's session menu.
+// Both draw the rail's own icon (2026-10-18), one shape for open and closed,
+// so it no longer looks like the workspace panel's toggle beside it; the
+// button's pressed state and fill show whether the rail is open.
 
 import type { ReactNode } from "react";
+import type { AeRailIconName } from "@/components/aeRail/aeRailIcons";
 import { AeRailIcon } from "@/components/aeRail/aeRailUi";
 import { Button } from "@/components/ui/button";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAeSessionRailStore } from "@/lib/aeSessionRail";
 import { cn } from "@/lib/utils";
+
+/** The session rail toggle's icon (Tabler list-details). */
+export const AE_SESSION_RAIL_TOGGLE_ICON: AeRailIconName = "listDetails";
 
 /** Desktop only (hidden below md); the phone opens the rail from the session menu. */
 export function AeSessionRailToggle() {
@@ -30,7 +37,7 @@ export function AeSessionRailToggle() {
             open && "bg-muted text-foreground",
           )}
         >
-          <AeRailIcon name={open ? "railCollapse" : "railExpand"} />
+          <AeRailIcon name={AE_SESSION_RAIL_TOGGLE_ICON} />
         </Button>
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
@@ -46,7 +53,7 @@ function AeSessionRailMenuItem() {
       data-testid="mobile-session-rail"
       className="gap-2.5 px-2.5 py-2 text-ui"
     >
-      <AeRailIcon name="rail" />
+      <AeRailIcon name={AE_SESSION_RAIL_TOGGLE_ICON} />
       Session rail
     </DropdownMenuItem>
   );

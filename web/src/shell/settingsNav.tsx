@@ -6,7 +6,7 @@
 // selection is URL-driven (/settings/<section>) so the nav (in the sidebar)
 // and the content (in the outlet) stay in sync without shared state.
 
-import { useEffect } from "react";
+import { type ComponentType, useEffect } from "react";
 import {
   ArchiveIcon,
   ArrowLeftIcon,
@@ -31,10 +31,12 @@ import { customAgentsSettingsEnabled, isSingleUserMode } from "@/lib/capabilitie
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { isElectronShell } from "@/lib/nativeBridge";
 import { cn } from "@/lib/utils";
+import { AeChatSettingsIcon } from "@/pages/settings/AeChatSettingsSection";
 import { SIDEBAR_ROW } from "./sidebarStyles";
 
 export type SettingsSectionId =
   | "appearance"
+  | "chat"
   | "harnesses"
   | "custom-agents"
   | "general"
@@ -53,6 +55,7 @@ export type SettingsSectionId =
 
 const SECTION_IDS: readonly SettingsSectionId[] = [
   "appearance",
+  "chat",
   "harnesses",
   "custom-agents",
   "general",
@@ -73,7 +76,7 @@ const SECTION_IDS: readonly SettingsSectionId[] = [
 interface SettingsNavItem {
   id: SettingsSectionId;
   label: string;
-  icon: typeof PaletteIcon;
+  icon: ComponentType<{ className?: string }>;
   /** Hide this item on mobile (e.g. keyboard shortcuts on a touch device). */
   hideOnMobile?: boolean;
 }
@@ -108,6 +111,7 @@ export function settingsNavGroups(
   const general: SettingsNavItem[] = [
     { id: "general", label: "General", icon: SettingsIcon },
     { id: "appearance", label: "Appearance", icon: PaletteIcon },
+    { id: "chat", label: "Chat", icon: AeChatSettingsIcon },
     { id: "git", label: "Git", icon: GitBranchIcon },
     { id: "ai-accounts", label: "AI accounts", icon: UserCogIcon },
     { id: "shortcuts", label: "Keyboard shortcuts", icon: KeyboardIcon, hideOnMobile: true },
