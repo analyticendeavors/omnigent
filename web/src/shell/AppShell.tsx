@@ -2739,6 +2739,7 @@ export function AppShell() {
                   hidden={rightPanelMaximized}
                   workspace={{
                     open: rightPanelOpen,
+                    animating: rightPanelVisibilityAnimating,
                     available: hasRailContent,
                     toggle: toggleRightPanel,
                     showTab: handleRightRailTabChange,
