@@ -2716,6 +2716,10 @@ export function AppShell() {
                   sidebarWidth={sidebarOpen ? sidebarWidth : 0}
                   workspacePanelWidth={workspacePanelVisible ? inlinePanelWidth : 0}
                   pushPanelOpen={executionLogsOpen || (showFilesPanel && filesPanelOpen)}
+                  closePushPanels={() => {
+                    setExecutionLogsKey(null);
+                    setFilesPanelOpen(false);
+                  }}
                   hidden={rightPanelMaximized}
                   workspace={{
                     open: rightPanelOpen,

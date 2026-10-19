@@ -40,9 +40,29 @@ function sectionOrder(): string[] {
   );
 }
 
+function workspace(open: boolean, available = true) {
+  return {
+    open,
+    available,
+    toggle: vi.fn(),
+    showTab: vi.fn(),
+    mobile: { changes: vi.fn(), subagents: vi.fn() },
+  };
+}
+
+const jsdomInnerWidth = Object.getOwnPropertyDescriptor(window, "innerWidth");
+
+function resizeTo(value: number) {
+  act(() => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value });
+    window.dispatchEvent(new Event("resize"));
+  });
+}
+
 beforeEach(() => {
   useAeSessionRailStore.setState({
     open: true,
+    closedForPanel: false,
     sheetOpen: false,
     order: [...AE_RAIL_SECTIONS],
     folded: {},
@@ -53,6 +73,9 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   isMobileMock.mockReturnValue(false);
+  // Put jsdom's own property back, accessor or not, for the tests after this one.
+  if (jsdomInnerWidth) Object.defineProperty(window, "innerWidth", jsdomInnerWidth);
+  else delete (window as { innerWidth?: number }).innerWidth;
 });
 
 describe("AeSessionRail", () => {
@@ -128,9 +151,11 @@ describe("AeSessionRail", () => {
     // Closed: jsdom's 1024 px window leaves the chat 720 px, so the rail docks.
     const { rerender } = render(<AeSessionRail sessionId="s-1" />);
     expect(screen.getByTestId("ae-session-rail")).not.toHaveAttribute("data-floating");
-    // Open at its default half of the window (512 px), 208 px are left: float.
+    // Open at its default half of the window (512 px), 208 px are left: the rail makes way.
     rerender(<AeSessionRail sessionId="s-1" pushPanelOpen />);
-    expect(screen.getByTestId("ae-session-rail")).toHaveAttribute("data-floating", "true");
+    expect(screen.queryByTestId("ae-session-rail")).toBeNull();
+    rerender(<AeSessionRail sessionId="s-1" />);
+    expect(screen.getByTestId("ae-session-rail")).not.toHaveAttribute("data-floating");
   });
 
   it("docks in jsdom's 1024 px window with the sidebar closed", () => {
@@ -138,34 +163,82 @@ describe("AeSessionRail", () => {
     expect(screen.getByTestId("ae-session-rail")).not.toHaveAttribute("data-floating");
   });
 
-  it("floats once the sidebar and workspace panel leave the chat too little room", () => {
+  it("closes for a panel opened beside it without room, and reopens once the panel closes", () => {
     // 1024 - 220 - 304 leaves the chat 500 px: dock.
     const { rerender } = render(<AeSessionRail sessionId="s-1" sidebarWidth={220} />);
     expect(screen.getByTestId("ae-session-rail")).not.toHaveAttribute("data-floating");
-    // A 240 px workspace panel and its 8 px gap cut that to 252 px: float.
+    // A 240 px workspace panel and its 8 px gap cut that to 252 px: the rail makes way.
     rerender(<AeSessionRail sessionId="s-1" sidebarWidth={220} workspacePanelWidth={240} />);
-    expect(screen.getByTestId("ae-session-rail")).toHaveAttribute("data-floating", "true");
+    expect(screen.queryByTestId("ae-session-rail")).toBeNull();
+    expect(useAeSessionRailStore.getState().closedForPanel).toBe(true);
+    rerender(<AeSessionRail sessionId="s-1" sidebarWidth={220} />);
+    expect(screen.getByTestId("ae-session-rail")).not.toHaveAttribute("data-floating");
+    // Closed by the user, it stays closed after the next panel comes and goes.
+    act(() => useAeSessionRailStore.getState().toggle());
+    rerender(<AeSessionRail sessionId="s-1" sidebarWidth={220} workspacePanelWidth={240} />);
+    rerender(<AeSessionRail sessionId="s-1" sidebarWidth={220} />);
+    expect(screen.queryByTestId("ae-session-rail")).toBeNull();
+  });
+
+  it("opened over a panel, closes the push panels and the workspace", () => {
+    useAeSessionRailStore.setState({ open: false });
+    const shell = workspace(true);
+    const closePushPanels = vi.fn();
+    const { rerender } = render(
+      <AeSessionRail
+        sessionId="s-1"
+        sidebarWidth={220}
+        workspacePanelWidth={240}
+        workspace={shell}
+        closePushPanels={closePushPanels}
+      />,
+    );
+    act(() => useAeSessionRailStore.getState().toggle());
+    expect(shell.toggle).toHaveBeenCalledTimes(1);
+    expect(closePushPanels).toHaveBeenCalledTimes(1);
+    // Once the shell has closed them, the rail docks and nothing closes again.
+    rerender(
+      <AeSessionRail
+        sessionId="s-1"
+        sidebarWidth={220}
+        workspace={{ ...shell, open: false }}
+        closePushPanels={closePushPanels}
+      />,
+    );
+    expect(screen.getByTestId("ae-session-rail")).not.toHaveAttribute("data-floating");
+    expect(shell.toggle).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits on a phone and behind a maximized panel, then makes way beside the panel", () => {
+    const { rerender } = render(<AeSessionRail sessionId="s-1" workspacePanelWidth={900} hidden />);
+    expect(useAeSessionRailStore.getState().open).toBe(true);
+    isMobileMock.mockReturnValue(true);
+    rerender(<AeSessionRail sessionId="s-1" workspacePanelWidth={900} />);
+    expect(useAeSessionRailStore.getState().open).toBe(true);
+    // Back on a desktop beside the restored panel, the panel counts as opened last.
+    isMobileMock.mockReturnValue(false);
+    rerender(<AeSessionRail sessionId="s-1" workspacePanelWidth={900} />);
+    expect(useAeSessionRailStore.getState()).toMatchObject({ open: false, closedForPanel: true });
   });
 
   it("re-decides when the window is resized", () => {
-    const own = Object.getOwnPropertyDescriptor(window, "innerWidth");
-    const resizeTo = (value: number) =>
-      act(() => {
-        Object.defineProperty(window, "innerWidth", { configurable: true, value });
-        window.dispatchEvent(new Event("resize"));
-      });
     render(<AeSessionRail sessionId="s-1" sidebarWidth={320} />);
     const rail = () => screen.getByTestId("ae-session-rail");
-    try {
-      resizeTo(900);
-      expect(rail()).toHaveAttribute("data-floating", "true");
-      resizeTo(1400);
-      expect(rail()).not.toHaveAttribute("data-floating");
-    } finally {
-      // Put jsdom's own property back, accessor or not, for the tests after this one.
-      if (own) Object.defineProperty(window, "innerWidth", own);
-      else delete (window as { innerWidth?: number }).innerWidth;
-    }
+    resizeTo(900);
+    expect(rail()).toHaveAttribute("data-floating", "true");
+    resizeTo(1400);
+    expect(rail()).not.toHaveAttribute("data-floating");
+  });
+
+  it("closes when the window narrows beside a panel, and reopens once it fits", () => {
+    resizeTo(1400);
+    // 1400 - 248 (a 240 px workspace panel and its gap) - 304 leaves the chat 848 px: dock.
+    render(<AeSessionRail sessionId="s-1" workspacePanelWidth={240} />);
+    expect(screen.getByTestId("ae-session-rail")).not.toHaveAttribute("data-floating");
+    resizeTo(900);
+    expect(screen.queryByTestId("ae-session-rail")).toBeNull();
+    resizeTo(1400);
+    expect(screen.getByTestId("ae-session-rail")).not.toHaveAttribute("data-floating");
   });
 
   it("floating, closes from its header button and from Escape", () => {
@@ -195,16 +268,6 @@ describe("AeSessionRail", () => {
 });
 
 describe("workspaceTabOpener", () => {
-  function workspace(open: boolean, available = true) {
-    return {
-      open,
-      available,
-      toggle: vi.fn(),
-      showTab: vi.fn(),
-      mobile: { changes: vi.fn(), subagents: vi.fn() },
-    };
-  }
-
   it("opens a closed panel on the tab, and only switches tabs when it is open", () => {
     const closed = workspace(false);
     workspaceTabOpener(closed, false, vi.fn())?.("changes");
