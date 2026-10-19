@@ -158,6 +158,8 @@ from omnigent.server.routes._session_create_validation import (
 from omnigent.server.routes._sessions.ae_session_activity import (
     session_active_child_count,
     session_background_task_count,
+    session_blocked_on,
+    session_turn_active,
 )
 
 # Shared constants, state, and small dataclasses live in the _sessions.common
@@ -1069,6 +1071,10 @@ def _build_session_list_item(
         project_id=conv.project_id,
         background_task_count=session_background_task_count(conv.id),
         active_child_count=session_active_child_count(child_session_ids),
+        turn_active=session_turn_active(
+            conv.id, conv.live_status, starting=_session_is_starting(conv.id)
+        ),
+        blocked_on=session_blocked_on(conv.id),
     )
 
 

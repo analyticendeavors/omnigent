@@ -140,13 +140,16 @@ function useBoundBlockedOn(conversationId: string): string | null {
   return useChatStore((s) => (s.conversationId === conversationId ? s.blockedOn : null));
 }
 
-type RowInput = Pick<Conversation, "id" | "status" | "updated_at" | "active_child_count">;
+type RowInput = Pick<
+  Conversation,
+  "id" | "status" | "updated_at" | "active_child_count" | "turn_active" | "blocked_on"
+>;
 
 /**
  * Refine one row's upstream state: running turns quiet after five silent
- * minutes (never while parked on a dialog), an idle row with agents left
- * reads as waiting, and an idle row a schedule will wake gets `scheduled`
- * (shown below the unseen dot).
+ * minutes (never while parked on a dialog), a row whose own turn is over
+ * with agents left reads as waiting, and an idle row a schedule will wake
+ * gets `scheduled` (shown below the unseen dot).
  */
 export function aeRowState(
   row: RowInput,
@@ -162,16 +165,17 @@ export function aeRowState(
   const agents = rowAgents(row);
   const lastEventAt = Math.max(options.lastEventAt ?? 0, row.updated_at * 1000);
   if (upstream?.kind === "running") {
-    // A busy child keeps the parent row running; the open chat knows when
-    // the parent's own turn is over and the row is only waiting.
-    if (options.turnIdle && agents > 0) {
+    // A busy child keeps the parent row running; the open chat or the row's
+    // own-turn flag says when the parent's turn is over and it only waits.
+    const turnIdle = options.turnIdle || row.turn_active === false;
+    if (turnIdle && agents > 0) {
       return { state: { kind: "waiting", agents, sinceEventMs: null }, scheduled: null };
     }
     // Running children keep a parent busy without its own output.
     if (agents > 0) return { state: upstream, scheduled: null };
     const activity = deriveAeActivity({
       working: true,
-      blockedOn: options.blockedOn,
+      blockedOn: options.blockedOn ?? row.blocked_on,
       pendingQuestions: 0,
       lastEventAt,
       nextRun: null,
@@ -232,9 +236,9 @@ export function useAeSessionRowState(
 
 /**
  * Roll the activity states into a collapsed project's marker, keeping the
- * upstream order: a running marker turns quiet only when every running row
- * is quiet, waiting outranks unseen, and a schedule shows only on an
- * otherwise blank marker.
+ * upstream order: a running marker turns quiet when no running row is busy
+ * and one is quiet, or waiting when every running row only waits on agents;
+ * waiting outranks unseen, and a schedule shows only on a blank marker.
  */
 export function aeProjectMarker(
   marker: SessionState | null,
@@ -243,6 +247,7 @@ export function aeProjectMarker(
 ): SessionState | null {
   if (marker?.kind === "running") {
     let quietest: number | null = null;
+    let waiting = 0;
     for (const row of rows) {
       if (row.status !== "running") continue;
       const { state } = aeRowState(
@@ -255,10 +260,18 @@ export function aeProjectMarker(
           turnIdle: false,
         },
       );
+      if (state?.kind === "waiting") {
+        waiting += state.agents;
+        continue;
+      }
       if (state?.kind !== "quiet") return marker;
       quietest = quietest === null ? state.quietForMs : Math.min(quietest, state.quietForMs);
     }
-    return quietest === null ? marker : { kind: "quiet", quietForMs: quietest };
+    if (quietest !== null) return { kind: "quiet", quietForMs: quietest };
+    // Every running row only waits on its agents; idle rows' agents add in.
+    if (waiting === 0) return marker;
+    for (const row of rows) if (row.status !== "running") waiting += rowAgents(row);
+    return { kind: "waiting", agents: waiting, sinceEventMs: null };
   }
   if (marker !== null && marker.kind !== "unseen") return marker;
   let agents = 0;

@@ -4,6 +4,8 @@ A row whose turn ended can still be waiting on background shells or on busy
 child sessions. Every list row carries ``background_task_count`` and
 ``active_child_count`` so the sidebar can show that state, and the updates
 stream pushes a ``changed`` frame for the parent when either count moves.
+``turn_active`` and ``blocked_on`` carry the session's own turn and dialog,
+which the rolled-up ``status`` hides.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from omnigent.server.routes._sessions.ae_session_activity import (
     session_active_child_count,
     session_background_task_count,
 )
+from omnigent.server.routes._sessions.common import _session_blocked_on_cache
 from omnigent.server.routes.sessions import create_sessions_router
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
@@ -70,6 +73,7 @@ def touched() -> Iterator[list[str]]:
         sessions_routes._session_status_cache.pop(sid, None)
         sessions_routes._session_background_task_count_cache.pop(sid, None)
         sessions_routes._session_background_tasks_cache.pop(sid, None)
+        _session_blocked_on_cache.pop(sid, None)
         for elicitation_id in [
             e.get("elicitation_id") for e in pending_elicitations.snapshot_for(sid)
         ]:
@@ -190,6 +194,65 @@ def test_list_row_reads_background_count_from_cache(app: FastAPI, stores: Stores
     assert row["background_task_count"] == 2
     # Background shells never make the row itself read as running.
     assert row["status"] == "idle"
+
+
+def test_list_row_own_turn_idle_with_busy_child_reads_turn_inactive(
+    app: FastAPI, stores: Stores, touched
+) -> None:
+    """A busy child rolls the row up to running while its own turn reads over."""
+    parent_id = _seed_parent(stores, touched, "waiting")
+    sessions_routes._session_status_cache[parent_id] = "idle"
+    _seed_child(stores, touched, parent_id, "running")
+
+    row = _list_rows(app)[parent_id]
+
+    assert row["status"] == "running"
+    assert row["turn_active"] is False
+    assert row["active_child_count"] == 1
+
+
+def test_list_row_own_turn_running_reads_turn_active(
+    app: FastAPI, stores: Stores, touched
+) -> None:
+    """A session whose own turn runs reads active, with or without children."""
+    parent_id = _seed_parent(stores, touched, "running")
+    sessions_routes._session_status_cache[parent_id] = "running"
+    _seed_child(stores, touched, parent_id, "running")
+
+    row = _list_rows(app)[parent_id]
+
+    assert row["status"] == "running"
+    assert row["turn_active"] is True
+    assert row["active_child_count"] == 1
+
+
+def test_list_row_quiet_session_reads_turn_inactive(app: FastAPI, stores: Stores, touched) -> None:
+    """A session with no turn and no children reads inactive and not parked."""
+    parent_id = _seed_parent(stores, touched, "quiet")
+
+    row = _list_rows(app)[parent_id]
+
+    assert row["turn_active"] is False
+    assert row.get("blocked_on") is None
+
+
+def test_list_row_carries_dialog_a_running_session_is_parked_on(
+    app: FastAPI, stores: Stores, touched
+) -> None:
+    """The latest status edge's dialog rides on the row until an edge clears it."""
+    parent_id = _seed_parent(stores, touched, "parked")
+
+    sessions_routes._publish_status(parent_id, "running", blocked_on="input needed")
+    row = _list_rows(app)[parent_id]
+    assert row["blocked_on"] == "input needed"
+    assert row["turn_active"] is True
+
+    sessions_routes._publish_status(parent_id, "running")
+    assert _list_rows(app)[parent_id].get("blocked_on") is None
+
+    sessions_routes._publish_status(parent_id, "running", blocked_on="input needed")
+    sessions_routes._publish_status(parent_id, "idle")
+    assert _list_rows(app)[parent_id].get("blocked_on") is None
 
 
 def test_failed_child_with_stale_approval_does_not_count(stores: Stores, touched) -> None:
