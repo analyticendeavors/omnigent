@@ -238,6 +238,7 @@ import { AeSlotsPill } from "@/components/AeSlotsPill";
 import { AeStatusMenu } from "@/shell/AeStatusMenu";
 import { AeSplitMenuItem } from "@/shell/AeSplitMenuItem";
 import { AeArchivedGroup } from "@/shell/AeArchivedGroup";
+import { AE_BULK_LABEL_CLASS, AeBulkBarCount } from "@/shell/AeBulkBarCount";
 import { AeMoveMenu, aeTriageTitle, useAeOrderRow } from "@/shell/AeSidebarRowOrder";
 import {
   aeHandleOrderDrop,
@@ -6557,7 +6558,7 @@ function BulkActionBar({
     <>
       {archiveWorktreePrompt.dialog}
       <div className="mt-1 mb-1 flex flex-col gap-1.5">
-        <div className="flex items-center gap-2 rounded-lg border border-border bg-transparent p-1.5">
+        <div className="@container/bulk flex items-center gap-2 rounded-lg border border-border bg-transparent p-1.5">
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -6574,9 +6575,15 @@ function BulkActionBar({
             </TooltipTrigger>
             <TooltipContent side="bottom">Exit selection</TooltipContent>
           </Tooltip>
-          <span className="sidebar-compact-text shrink-0 whitespace-nowrap font-medium">
+          <span
+            className={cn(
+              "sidebar-compact-text shrink-0 whitespace-nowrap font-medium",
+              AE_BULK_LABEL_CLASS,
+            )}
+          >
             {count} selected
           </span>
+          <AeBulkBarCount count={count} />
 
           <div className="ml-auto flex items-center gap-0.5">
             {unreadSelected.length > 0 ? (
