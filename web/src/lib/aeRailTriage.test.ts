@@ -8,9 +8,12 @@ const mocks = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock("@/lib/identity", () => ({ authenticatedFetch: mocks.fetch }));
 
 import {
+  aeNoteText,
   aeOrdinal,
   aeOverflowTag,
+  aeSavedNotes,
   aeStartedLine,
+  aeTriageLinesWithNotes,
   countAeUserTurns,
   fetchAeLotTasks,
   formatAeAge,
@@ -63,6 +66,48 @@ describe("scanAeTriageLines", () => {
   it("keeps the token for a bare line and is empty with nothing loaded", () => {
     expect(scanAeTriageLines([said("UNFILED")]).unfiled).toEqual(["UNFILED"]);
     expect(scanAeTriageLines([])).toEqual({ absorbed: [], unfiled: [] });
+  });
+});
+
+describe("the notes saved on the session", () => {
+  it("orders them by number and leaves out blanks and other keys", () => {
+    const labels = {
+      "ae.absorbed": "10",
+      "ae.absorbed.10": "ten",
+      "ae.absorbed.2": "two",
+      "ae.absorbed.3": " ",
+      "ae.absorbed.x": "not a note",
+      "ae.unfiled.1": "unfiled",
+    };
+    expect(aeSavedNotes(labels, "ae.absorbed")).toEqual(["two", "ten"]);
+    expect(aeSavedNotes(labels, "ae.unfiled")).toEqual(["unfiled"]);
+  });
+
+  it("cuts a line the way the observer saves it", () => {
+    expect(aeNoteText("  a\n  b\tc ")).toBe("a b c");
+    // Python splits on \x1c but not on \ufeff; JavaScript's \s does the opposite.
+    expect(aeNoteText("a\x1cb\ufeffc")).toBe("a b\ufeffc");
+    const long = aeNoteText("x".repeat(300));
+    expect(long).toHaveLength(200);
+    expect(long.endsWith("...")).toBe(true);
+    // One code point, two UTF-16 units: cut where Python's labels.clip cuts.
+    const emoji = "\u{1F600}";
+    const cut = aeNoteText(`${"x".repeat(196)}${emoji}${"y".repeat(10)}`);
+    expect(cut).toBe(`${"x".repeat(196)}${emoji}...`);
+    expect(Array.from(cut)).toHaveLength(200);
+  });
+
+  it("lists the saved notes, then each loaded line not saved, matching a line once", () => {
+    const cut = `${"x".repeat(197)}...`;
+    const labels = { "ae.absorbed.1": "old note", "ae.absorbed.2": "same", "ae.absorbed.3": cut };
+    const loaded = {
+      absorbed: ["same", "same", "x".repeat(250)],
+      unfiled: ["(target unreachable), file this yourself"],
+    };
+    expect(aeTriageLinesWithNotes(labels, loaded)).toEqual({
+      absorbed: ["old note", "same", cut, "same"],
+      unfiled: ["(target unreachable), file this yourself"],
+    });
   });
 });
 

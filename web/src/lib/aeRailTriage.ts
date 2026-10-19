@@ -1,7 +1,8 @@
 // The session rail's Triage section, the pure parts: the absorbed and unfiled
-// lines in the loaded assistant messages, the user turns, the "started" age,
-// and the gate reply the Dashboard's buttons send.
+// lines, saved on the session or in the loaded assistant messages, the user
+// turns, the "started" age, and the gate reply the Dashboard's buttons send.
 
+import { AE_ABSORBED_KEY, AE_UNFILED_KEY } from "@/lib/aeLabels";
 import type { AnyBlock } from "@/lib/blocks";
 import { authenticatedFetch } from "@/lib/identity";
 import { isSystemUserContent } from "@/lib/systemMessage";
@@ -36,6 +37,64 @@ export function scanAeTriageLines(blocks: readonly AnyBlock[]): AeTriageLines {
     }
   }
   return { absorbed, unfiled };
+}
+
+// The observer saves each counted line as a label of its own (`ae.absorbed.1` and
+// on), cut the way `labels.clip` in ae_omni_policies cuts it.
+const NOTE_CHARS = 200;
+// Python's str.split() whitespace, which differs from JavaScript's \s; it
+// includes the \x1c-\x1f separators on purpose.
+// oxlint-disable-next-line no-control-regex
+const PY_SPACE = /[\t\n\v\f\r\x1c-\x1f \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/;
+
+/** A line the way the observer saves it: one line, at most 200 characters. */
+export function aeNoteText(line: string): string {
+  const flat = line.split(PY_SPACE).filter(Boolean).join(" ");
+  // Counted in code points, as Python counts a str, so an emoji near the cut matches.
+  const chars = Array.from(flat);
+  if (chars.length <= NOTE_CHARS) return flat;
+  // Only spaces are left to trim once split; trimEnd() would also eat \ufeff.
+  return `${chars
+    .slice(0, NOTE_CHARS - 3)
+    .join("")
+    .replace(/ +$/, "")}...`;
+}
+
+/** The notes saved under `<counter>.<n>`, in order of n, blank ones left out. */
+export function aeSavedNotes(labels: Readonly<Record<string, string>>, counter: string): string[] {
+  const prefix = `${counter}.`;
+  return Object.entries(labels)
+    .flatMap(([key, value]) => {
+      const n = key.startsWith(prefix) ? key.slice(prefix.length) : "";
+      return /^\d+$/.test(n) && value.trim() ? [[Number(n), value.trim()] as const] : [];
+    })
+    .sort((a, b) => a[0] - b[0])
+    .map(([, value]) => value);
+}
+
+/**
+ * The lines the Triage card lists: the saved notes, then each loaded line not
+ * saved yet (counted before notes were saved, or past the observer's cap).
+ */
+export function aeTriageLinesWithNotes(
+  labels: Readonly<Record<string, string>>,
+  loaded: AeTriageLines,
+): AeTriageLines {
+  const merge = (counter: string, lines: string[]): string[] => {
+    const saved = aeSavedNotes(labels, counter);
+    const unmatched = [...saved];
+    const extra = lines.filter((line) => {
+      const at = unmatched.indexOf(aeNoteText(line));
+      if (at < 0) return true;
+      unmatched.splice(at, 1);
+      return false;
+    });
+    return [...saved, ...extra];
+  };
+  return {
+    absorbed: merge(AE_ABSORBED_KEY, loaded.absorbed),
+    unfiled: merge(AE_UNFILED_KEY, loaded.unfiled),
+  };
 }
 
 /** The user messages loaded for the session, leaving out runtime `[System: ...]` markers. */

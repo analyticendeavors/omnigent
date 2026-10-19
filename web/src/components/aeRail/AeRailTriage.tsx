@@ -1,7 +1,8 @@
 // The rail's Triage section: the session's `ae.*` labels as controls. The
 // status switch writes what the sidebar's Status menu writes, an open gate
 // offers the Dashboard's four answers, and the absorbed and unfiled counts
-// share a row and fold open to the lines the loaded messages carry.
+// share a row and fold open to their lines: the notes saved on the session,
+// then any the loaded messages carry that are not saved yet.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useState } from "react";
@@ -30,6 +31,7 @@ import {
   countAeUserTurns,
   fetchAeLotTasks,
   parseAeStarted,
+  aeTriageLinesWithNotes,
   replyAeGate,
   scanAeTriageLines,
 } from "@/lib/aeRailTriage";
@@ -74,7 +76,11 @@ function AeTriageBody({ sessionId, labels }: { sessionId: string; labels: AeLabe
   const startedLine = aeStartedLine(started, now, turns, loaded?.moreHistory ?? false);
   const overflow = aeLabel(known, AE_OVERFLOW_KEY) === "1" ? aeOverflowTag(limit) : null;
   const triageMode = aeLabel(known, AE_TRIAGE_KEY);
-  const lines = loaded ? scanAeTriageLines(loaded.blocks) : { absorbed: [], unfiled: [] };
+  // Saved notes list even when their message is too old to be loaded.
+  const lines = aeTriageLinesWithNotes(
+    known,
+    loaded ? scanAeTriageLines(loaded.blocks) : { absorbed: [], unfiled: [] },
+  );
   const next = aeLabel(known, AE_NEXT_KEY);
   const task = aeLabel(known, AE_TASK_KEY);
 

@@ -220,6 +220,24 @@ describe("AeRailTriage", () => {
     expect(screen.getByText("Unfiled")).toBeInTheDocument();
   });
 
+  it("lists the notes saved on the session when their messages are not loaded", () => {
+    // The observer saves each counted line, so an old note stays readable.
+    show(
+      {
+        "ae.absorbed": "2",
+        "ae.absorbed.1": "Rename the field, it blocked the build",
+        "ae.absorbed.2": "Phone frame for the popover, same mockup",
+      },
+      [said("Absorbed: Phone frame for the popover, same mockup")],
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Absorbed/ }));
+    expect(screen.getByRole("list", { name: "Absorbed" })).toHaveTextContent(
+      "Rename the field, it blocked the build",
+    );
+    expect(screen.getAllByText("Phone frame for the popover, same mockup")).toHaveLength(1);
+    expect(screen.queryByText(/older messages not loaded here/)).toBeNull();
+  });
+
   it("lists one count's lines at a time below the shared row", () => {
     show({ "ae.absorbed": "1", "ae.unfiled": "1" }, [
       said("Absorbed: Tabler icon for the rail button, same file"),
