@@ -29,11 +29,11 @@ _locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictio
 
 
 class ContextNotReady(ValueError):
-    """Claude has not started yet: no statusLine reading, no session id or no live process.
+    """Claude has not started yet; the route answers ``pending`` with no backoff."""
 
-    The route answers ``pending`` for these, records no failure and starts no backoff, so
-    the web keeps the rail loading and asks again instead of showing an error.
-    """
+
+class ContextUnsupported(ValueError):
+    """Retrying can never succeed in this session; the route answers ``final``."""
 
 
 class _RecentFailure(ValueError):
@@ -55,6 +55,8 @@ def launch_config(
     session_id = raw.get("session_id")
     if not isinstance(session_id, str) or not session_id:
         raise ContextNotReady("No Claude session reading yet. Send a message first.")
+    if not process_root.is_dir():
+        raise ContextUnsupported("Context categories need the Linux /proc interface.")
     settings_path = str(bridge / "claude-settings.json")
     for proc in sorted(process_root.glob("[0-9]*"), key=lambda p: int(p.name), reverse=True):
         try:
@@ -395,6 +397,9 @@ async def _probe(command: list[str], env: dict[str, str], cwd: str) -> dict[str,
         await proc.wait()
 
 
+_PENDING = {"available": False, "pending": True, "reason": "Claude is starting."}
+
+
 def _log_detail(exc: BaseException) -> str:
     """The message's first line with every path cut to its last part; never config or env."""
     text = exc.strerror if isinstance(exc, OSError) and exc.strerror else str(exc)
@@ -408,10 +413,14 @@ async def handle_context_usage(
     from omnigent.harnesses.claude_native.bridge import bridge_dir_for_bridge_id
     from omnigent.runner.native import _claude_native_bridge_id_for_session
 
+    if harness is None:
+        # The runner has not loaded this session's spec yet: starting, not final.
+        return JSONResponse(_PENDING)
     if harness != "claude-native":
         return JSONResponse(
             {
                 "available": False,
+                "final": True,
                 "reason": "Context categories require a running Claude Code session.",
             }
         )
@@ -444,9 +453,9 @@ async def handle_context_usage(
             return JSONResponse(answer)
         except ContextNotReady:
             # Claude is still starting (or not running): not a failure, so no backoff.
-            return JSONResponse(
-                {"available": False, "pending": True, "reason": "Claude is starting."}
-            )
+            return JSONResponse(_PENDING)
+        except ContextUnsupported as exc:
+            return JSONResponse({"available": False, "final": True, "reason": str(exc)})
         except (
             OSError,
             ValueError,

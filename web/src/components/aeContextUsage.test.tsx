@@ -240,6 +240,25 @@ describe("while Claude starts", () => {
     expect(authenticatedFetch).toHaveBeenCalledTimes(1);
   });
 
+  it("shows a final answer at once, retries nothing and reuses it", async () => {
+    vi.mocked(authenticatedFetch).mockImplementation(() =>
+      ok({ available: false, final: true, reason: "Another harness." }),
+    );
+    const { result, unmount } = renderHook(() =>
+      useAeContextSnapshot("conv_a", { enabled: true, identity }),
+    );
+    await advance(0);
+    expect(result.current.pending).toBe(false);
+    expect(result.current.loading).toBe(false);
+    expect(result.current.data?.reason).toBe("Another harness.");
+    await advance(60_000);
+    expect(authenticatedFetch).toHaveBeenCalledTimes(1);
+    unmount();
+    renderHook(() => useAeContextSnapshot("conv_a", { enabled: true, identity }));
+    await advance(0);
+    expect(authenticatedFetch).toHaveBeenCalledTimes(1);
+  });
+
   it("cancels the quiet retry when the last subscriber goes", async () => {
     vi.mocked(authenticatedFetch).mockImplementation(() => ok(PENDING));
     const { unmount } = renderHook(() =>

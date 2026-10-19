@@ -105,6 +105,10 @@ function SnapshotStatus({ snapshot }: { snapshot: AeContextSnapshotState }) {
   // Claude is still starting and the store is retrying: loading, never "Try again".
   if (snapshot.pending) return <AeRailMuted>Reading context categories…</AeRailMuted>;
   const unavailable = snapshot.data && !snapshot.data.available ? snapshot.data : null;
+  // Retrying cannot change a final answer, so it gets no button.
+  if (!snapshot.error && unavailable?.final && unavailable.reason) {
+    return <AeRailMuted>{unavailable.reason}</AeRailMuted>;
+  }
   if (snapshot.error || unavailable) {
     return (
       <TryAgain

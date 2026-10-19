@@ -122,6 +122,17 @@ describe("AeRailContext", () => {
     expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
   });
 
+  it("shows a final answer's reason at once with no Try again", async () => {
+    vi.mocked(authenticatedFetch).mockImplementation(() =>
+      json({ available: false, final: true, reason: "Not a Claude Code session." }),
+    );
+    setSession("claude-native");
+    render(<AeRailContext sessionId={sessionId} />);
+    expect(await screen.findByText("Not a Claude Code session.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(contextCalls()).toBe(1);
+  });
+
   it("reads quietly while Claude starts, then shows the snapshot", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     vi.mocked(authenticatedFetch)
