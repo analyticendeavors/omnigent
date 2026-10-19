@@ -70,6 +70,7 @@ import { type Agent, useSessionAgent, useAgents } from "@/hooks/useAgents";
 import { AeFastModeSection } from "@/components/AeFastMode";
 import { useAeFastModePending } from "@/lib/aeFastMode";
 import { AePlanLimitsPopover } from "@/components/AePlanLimits";
+import { AeTokenDefrag } from "@/components/AeTokenDefrag";
 import { SessionTeamControl } from "@/components/AeTeamControl";
 import { ClaudeAccounts } from "@/shell/ClaudeAccounts";
 import { agentDisplayLabel } from "@/components/AgentInfo";
@@ -3590,6 +3591,7 @@ function ComposerImpl(
             prNumberPrefix={composerGit.prNumberPrefix}
             onOpen={openComposerGithubTab}
           />
+          <AeTokenDefrag key={conversationId} />
           <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1">
             <div
               data-testid="composer-task-indicators"

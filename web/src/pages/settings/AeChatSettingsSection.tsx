@@ -2,6 +2,7 @@
 // rail's own store (lib/aeSessionRail.ts), saved with its layout on this device.
 
 import { useId } from "react";
+import { AeTokenDefragSetting } from "@/components/AeTokenDefrag";
 import { Switch } from "@/components/ui/switch";
 import { useAeSessionRailStore } from "@/lib/aeSessionRail";
 
@@ -42,6 +43,7 @@ export function AeChatSettingsSection() {
   return (
     <div data-testid="ae-chat-settings" className="flex flex-col gap-6">
       <OpenRailInEverySessionControl />
+      <AeTokenDefragSetting />
     </div>
   );
 }

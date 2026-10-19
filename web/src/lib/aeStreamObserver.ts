@@ -4,10 +4,12 @@
 import { aeStampLastEvent } from "@/lib/aeSessionActivity";
 import { aeIsContentEvent, aeNextProgress, type AeSessionProgress } from "@/lib/aeSessionProgress";
 import type { StreamEvent } from "@/lib/events";
+import { aeNoteCompactionFailed, aeNoteCompactionTotals } from "@/lib/aeTokenDefrag";
 
 export interface AeObservedState {
   aeProgress: AeSessionProgress | null;
   sessionStatus: string;
+  tokensUsed?: number | null;
 }
 
 /**
@@ -22,6 +24,11 @@ export function aeObserveStreamEvent(
   read: () => AeObservedState | null,
 ): void {
   const state = read();
+  // Runs before the store applies the new total, so the ring's count is the "before".
+  if (event.type === "compaction_completed") {
+    aeNoteCompactionTotals(conversationId, state?.tokensUsed, event.totalTokens);
+  }
+  if (event.type === "compaction_failed") aeNoteCompactionFailed(conversationId);
   const startsRunning =
     event.type === "session_status" &&
     event.conversationId === conversationId &&

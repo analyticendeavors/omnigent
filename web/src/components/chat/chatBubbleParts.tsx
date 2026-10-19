@@ -569,7 +569,7 @@ export const BubbleView = memo(
     if (bubble.kind === "compaction_loading") {
       return <CompactionLoadingIndicator createdAtS={bubble.createdAtS} />;
     }
-    if (bubble.kind === "compaction") return <CompactionMarker />;
+    if (bubble.kind === "compaction") return <CompactionMarker itemId={bubble.itemId} />;
     if (bubble.kind === "subagent_activity") {
       return <SubagentActivityMessage data={bubble.data} />;
     }

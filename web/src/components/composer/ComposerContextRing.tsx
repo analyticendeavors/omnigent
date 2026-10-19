@@ -2,6 +2,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { formatTokenCount } from "@/lib/formatCost";
 import { cn } from "@/lib/utils";
 import { aeContextRingClass } from "@/lib/aeContextTone";
+import { useAeContextRingDisplay } from "@/lib/aeTokenDefrag";
 
 /** Circumference of the progress ring (r=5.5). */
 const RING_CIRCUMFERENCE = 2 * Math.PI * 5.5;
@@ -27,9 +28,12 @@ export function ComposerContextRing({
   tokensUsed: number | null;
   className?: string;
 }) {
-  if (contextWindow == null || contextWindow <= 0 || tokensUsed == null) return null;
+  // omnigent-ae token defrag: held while the compaction pills land, then a pulse.
+  const display = useAeContextRingDisplay(tokensUsed);
+  const shownTokens = display.tokens;
+  if (contextWindow == null || contextWindow <= 0 || shownTokens == null) return null;
 
-  const pct = Math.min(tokensUsed / contextWindow, 1);
+  const pct = Math.min(shownTokens / contextWindow, 1);
   // Arc, %, label, and tooltip all encode context USED: a fresh session
   // shows an empty ring at 0% and the ring fills as context is consumed.
   const usedArc = pct * RING_CIRCUMFERENCE;
@@ -43,12 +47,21 @@ export function ComposerContextRing({
           data-testid="composer-context-ring"
           className={cn(
             "flex shrink-0 items-center rounded-full bg-transparent p-0 text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+            "transition-transform duration-200 motion-reduce:transition-none",
+            display.pulse && "scale-125",
             className,
           )}
           aria-label={`${usedPct}% of context used`}
         >
           {/* Tight stroke bounds keep the visible icon-to-label gap consistent. */}
-          <svg viewBox="1.5 1.5 13 13" width="13" height="13" fill="none" aria-hidden="true">
+          <svg
+            viewBox="1.5 1.5 13 13"
+            width="13"
+            height="13"
+            fill="none"
+            aria-hidden="true"
+            className="[&_circle]:transition-[stroke-dasharray] [&_circle]:duration-700 [&_circle]:ease-in-out motion-reduce:[&_circle]:transition-none"
+          >
             {/* Track */}
             <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="2" opacity="0.2" />
             {/* Used arc — skipped at 0, where round linecaps would still paint a dot. */}
@@ -71,7 +84,7 @@ export function ComposerContextRing({
       <TooltipContent side="top" className="flex-col items-start gap-0 px-3 py-2 text-left text-sm">
         <p className="tabular-nums text-ui leading-tight">{usedPct}% context used</p>
         <p className="tabular-nums text-muted-foreground leading-tight">
-          {formatTokenCount(tokensUsed)} / {formatTokenCount(contextWindow)} tokens
+          {formatTokenCount(shownTokens)} / {formatTokenCount(contextWindow)} tokens
         </p>
       </TooltipContent>
     </Tooltip>
