@@ -92,8 +92,30 @@ async def test_unsupported_harness_never_probes(monkeypatch):
     probe = AsyncMock()
     monkeypatch.setattr(usage, "probe", probe)
     response = await usage.handle_context_usage("session", harness="codex", server_client=None)
-    assert json.loads(response.body)["available"] is False
+    body = json.loads(response.body)
+    assert body["available"] is False
+    assert body["final"] is True
     probe.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_unknown_harness_is_pending_not_final(monkeypatch):
+    """The runner has not loaded the session's spec yet; that is starting, not final."""
+    probe = AsyncMock()
+    monkeypatch.setattr(usage, "probe", probe)
+    response = await usage.handle_context_usage("session", harness=None, server_client=None)
+    body = json.loads(response.body)
+    assert body["pending"] is True
+    assert "final" not in body
+    probe.assert_not_called()
+
+
+def test_no_proc_interface_is_final(tmp_path):
+    bridge = tmp_path / "bridge"
+    bridge.mkdir()
+    (bridge / "context_raw.json").write_text(json.dumps({"session_id": "live"}))
+    with pytest.raises(usage.ContextUnsupported):
+        usage.launch_config(bridge, process_root=tmp_path / "missing")
 
 
 @pytest.mark.asyncio

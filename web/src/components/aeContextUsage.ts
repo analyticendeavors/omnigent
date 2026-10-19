@@ -3,14 +3,8 @@
 // Claude process on the runner, so one request per session and identity is in
 // flight at a time and a result is reused for three minutes.
 //
-// While Claude is still starting the runner answers `pending` (no statusLine
-// reading, session id or process yet). Those answers, and any other
-// unavailable answer that is not `offline`, are never cached as a result: the
-// store keeps the sections loading and asks again quietly for about two
-// minutes before it lets the error and "Try again" show. Only `offline` (the
-// runner or host is gone) shows the error at once. Each turn end asks again.
-// (2026-10-18: a new session showed "Could not read Claude context" until a
-// manual refresh, because the first read raced Claude's start.)
+// A `pending` or other unavailable answer is retried quietly for about two
+// minutes; `offline` and `final` answers show at once. Each turn end asks again.
 
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { authenticatedFetch } from "@/lib/identity";
@@ -29,6 +23,8 @@ export interface ContextUsage {
   pending?: boolean;
   /** The runner or its host did not answer: a lost connection. */
   offline?: boolean;
+  /** Retrying can never succeed in this session (another harness, no /proc). */
+  final?: boolean;
   categories: ContextCategory[];
   totalTokens: number;
   maxTokens: number;
@@ -143,10 +139,11 @@ function update(entry: Entry, value: Partial<SnapshotValue>): void {
   for (const listener of entry.listeners) listener();
 }
 
-/** Only a real snapshot counts as fresh; an unavailable answer is asked again. */
+/** A real snapshot or a final answer is settled; any other unavailable one is asked again. */
 function isFresh(entry: Entry, now: number): boolean {
+  const data = entry.value.data;
   return (
-    entry.value.data?.available === true &&
+    (data?.available === true || data?.final === true) &&
     now - (entry.value.receivedAt ?? 0) < AE_CONTEXT_SNAPSHOT_TTL_MS
   );
 }
@@ -172,7 +169,7 @@ function schedule(entry: Entry): void {
 /** Store an answer; a not-ready one schedules a quiet retry until the window ends. */
 function settle(entry: Entry, data: ContextUsage): void {
   const now = Date.now();
-  if (data.available || data.offline) {
+  if (data.available || data.offline || data.final) {
     resetRetry(entry);
     update(entry, { data, error: undefined, receivedAt: now, inFlight: false, pending: false });
     return;
