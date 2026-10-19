@@ -9,6 +9,10 @@ from typing import Any
 
 from omnigent.entities import Policy
 
+# Sentinel meaning "caller did not supply this argument; leave the column unchanged."
+# Distinct from None, which means "set the column to NULL."
+_UNSET: Any = object()
+
 
 class PolicyStore(ABC):
     """
@@ -199,6 +203,7 @@ class PolicyStore(ABC):
         name: str | None = None,
         handler: str | None = None,
         enabled: bool | None = None,
+        factory_params: dict[str, Any] | None = _UNSET,
     ) -> Policy | None:
         """
         Update mutable fields of a default policy. ``type`` is
@@ -208,6 +213,8 @@ class PolicyStore(ABC):
         :param name: New name.
         :param handler: New handler path or URL.
         :param enabled: New enabled flag.
+        :param factory_params: New factory params, replacing the old
+            ones; ``None`` or ``{}`` clears them, omitted leaves them.
         :returns: The updated :class:`Policy`, or ``None``.
         """
         ...

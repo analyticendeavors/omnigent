@@ -30,6 +30,10 @@ from omnigent.runtime import get_caps
 from omnigent.runtime.policies.builder import invalidate_default_policy_specs_cache
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._auth_helpers import get_user_id
+from omnigent.server.routes.ae_default_policy_params import (
+    ae_check_factory_params,
+    ae_patch_factory_params,
+)
 from omnigent.server.schemas import (
     _DOTTED_PATH_RE,
     CreateDefaultPolicyRequest,
@@ -213,6 +217,7 @@ def create_default_policies_router(
         validation_error = validate_factory_params(body.handler, body.factory_params)
         if validation_error:
             raise OmnigentError(validation_error, code=ErrorCode.INVALID_INPUT)
+        ae_check_factory_params(body.name, body.handler, body.factory_params or None)
         policy_id = _generate_default_policy_id()
         try:
             policy = store.create_default(
@@ -352,12 +357,14 @@ def create_default_policies_router(
                         f"config so it appears in the policy registry.",
                         code=ErrorCode.INVALID_INPUT,
                     )
+        params_update = ae_patch_factory_params(store, policy_id, body)
         try:
             policy = store.update_default(
                 policy_id,
                 name=body.name,
                 handler=body.handler,
                 enabled=body.enabled,
+                **params_update,
             )
         except IntegrityError as exc:
             raise OmnigentError(
