@@ -28,7 +28,8 @@ function row(extra: Partial<Row> = {}): Row {
   return { id: "conv_a", status: "idle", updated_at: NOW_S, ...extra };
 }
 
-const base = { now: NOW, nextRun: null, lastEventAt: null, turnIdle: false };
+// A row that is not the open chat: the store has no answer for it.
+const base = { now: NOW, nextRun: null, lastEventAt: null, turnIdle: null };
 
 function checkin(sessionId: string, at = NINE): ScheduledTask {
   return {
@@ -114,6 +115,27 @@ describe("aeRowState", () => {
     expect(aeRowState(active, { kind: "running" }, base).state).toEqual({ kind: "running" });
     const unknown = row({ status: "running", active_child_count: 2 });
     expect(aeRowState(unknown, { kind: "running" }, base).state).toEqual({ kind: "running" });
+  });
+
+  it("trusts the open chat over the row's lagging own-turn flag", () => {
+    // A new turn just started; the row still carries the last tick's flag.
+    const parent = row({ status: "running", active_child_count: 2, turn_active: false });
+    expect(aeRowState(parent, { kind: "running" }, { ...base, turnIdle: false }).state).toEqual({
+      kind: "running",
+    });
+  });
+
+  it("trusts the open chat's dialog over the row's, even when it has none", () => {
+    const stale = row({
+      status: "running",
+      updated_at: NOW_S - 20 * 60,
+      blocked_on: "input needed",
+    });
+    const options = { ...base, turnIdle: false, blockedOn: null };
+    expect(aeRowState(stale, { kind: "running" }, options).state).toEqual({
+      kind: "quiet",
+      quietForMs: 20 * 60_000,
+    });
   });
 
   it("never turns a row quiet while the server says it is parked on a dialog", () => {

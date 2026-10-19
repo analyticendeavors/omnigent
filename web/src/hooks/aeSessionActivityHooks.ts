@@ -121,14 +121,15 @@ function rowAgents(row: Pick<Conversation, "active_child_count">): number {
   return row.active_child_count ?? 0;
 }
 
-/** Whether the open chat says its own turn is over (children may still run). */
-function useBoundTurnIdle(conversationId: string): boolean {
-  return useChatStore(
-    (s) =>
-      s.conversationId === conversationId &&
-      !s.loadingConversation &&
-      s.status === "idle" &&
-      !computeIsWorking(s.sessionStatus),
+/**
+ * Whether the open chat says its own turn is over (children may still run),
+ * or `null` when this row is not the loaded chat.
+ */
+function useBoundTurnIdle(conversationId: string): boolean | null {
+  return useChatStore((s) =>
+    s.conversationId === conversationId && !s.loadingConversation
+      ? s.status === "idle" && !computeIsWorking(s.sessionStatus)
+      : null,
   );
 }
 
@@ -136,8 +137,11 @@ function useBoundLastEventAt(conversationId: string): number | null {
   return useChatStore((s) => (s.conversationId === conversationId ? s.lastEventAt : null));
 }
 
-function useBoundBlockedOn(conversationId: string): string | null {
-  return useChatStore((s) => (s.conversationId === conversationId ? s.blockedOn : null));
+/** The open chat's dialog (`null` when none), or `undefined` when this row is not the chat. */
+function useBoundBlockedOn(conversationId: string): string | null | undefined {
+  return useChatStore((s) =>
+    s.conversationId === conversationId && !s.loadingConversation ? s.blockedOn : undefined,
+  );
 }
 
 type RowInput = Pick<
@@ -158,16 +162,18 @@ export function aeRowState(
     now: number;
     nextRun: AeNextRun | null;
     lastEventAt: number | null;
-    turnIdle: boolean;
+    /** The open chat's answer; `null` defers to the row's own-turn flag. */
+    turnIdle: boolean | null;
+    /** The open chat's dialog; `undefined` defers to the row's. */
     blockedOn?: string | null;
   },
 ): { state: SessionState | null; scheduled: SessionState | null } {
   const agents = rowAgents(row);
   const lastEventAt = Math.max(options.lastEventAt ?? 0, row.updated_at * 1000);
   if (upstream?.kind === "running") {
-    // A busy child keeps the parent row running; the open chat or the row's
-    // own-turn flag says when the parent's turn is over and it only waits.
-    const turnIdle = options.turnIdle || row.turn_active === false;
+    // A busy child keeps the parent row running; the open chat, else the
+    // row's own-turn flag, says when the parent's turn is over and it waits.
+    const turnIdle = options.turnIdle ?? row.turn_active === false;
     if (turnIdle && agents > 0) {
       return { state: { kind: "waiting", agents, sinceEventMs: null }, scheduled: null };
     }
@@ -175,7 +181,7 @@ export function aeRowState(
     if (agents > 0) return { state: upstream, scheduled: null };
     const activity = deriveAeActivity({
       working: true,
-      blockedOn: options.blockedOn ?? row.blocked_on,
+      blockedOn: options.blockedOn === undefined ? row.blocked_on : options.blockedOn,
       pendingQuestions: 0,
       lastEventAt,
       nextRun: null,
@@ -257,7 +263,7 @@ export function aeProjectMarker(
           now: options.now,
           nextRun: null,
           lastEventAt: null,
-          turnIdle: false,
+          turnIdle: null,
         },
       );
       if (state?.kind === "waiting") {

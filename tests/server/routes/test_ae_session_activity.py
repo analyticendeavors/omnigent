@@ -10,9 +10,11 @@ which the rolled-up ``status`` hides.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Iterator
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -20,9 +22,11 @@ from fastapi.testclient import TestClient
 import omnigent.server.routes.sessions as sessions_routes
 from omnigent.runtime import pending_elicitations
 from omnigent.server.auth import LEVEL_OWNER, UnifiedAuthProvider
+from omnigent.server.routes._sessions import orchestration
 from omnigent.server.routes._sessions.ae_session_activity import (
     session_active_child_count,
     session_background_task_count,
+    session_blocked_on,
 )
 from omnigent.server.routes._sessions.common import _session_blocked_on_cache
 from omnigent.server.routes.sessions import create_sessions_router
@@ -253,6 +257,46 @@ def test_list_row_carries_dialog_a_running_session_is_parked_on(
     sessions_routes._publish_status(parent_id, "running", blocked_on="input needed")
     sessions_routes._publish_status(parent_id, "idle")
     assert _list_rows(app)[parent_id].get("blocked_on") is None
+
+
+def test_runner_status_probe_drops_a_remembered_dialog(
+    app: FastAPI, stores: Stores, touched
+) -> None:
+    """A probe resets the status without naming a dialog, so the old one goes."""
+    parent_id = _seed_parent(stores, touched, "probed")
+    sessions_routes._publish_status(parent_id, "running", blocked_on="input needed")
+    transport = httpx.MockTransport(lambda _req: httpx.Response(200, json={"status": "running"}))
+
+    async def probe() -> str | None:
+        async with httpx.AsyncClient(transport=transport, base_url="http://runner") as client:
+            return await orchestration._run_runner_status_probe(client, parent_id, None)
+
+    assert asyncio.run(probe()) == "running"
+    row = _list_rows(app)[parent_id]
+    assert row.get("blocked_on") is None
+    assert row["turn_active"] is True
+
+
+def test_relinquished_session_reads_not_parked(app: FastAPI, stores: Stores, touched) -> None:
+    """A session handed to another replica drops its dialog with its status."""
+    parent_id = _seed_parent(stores, touched, "moved")
+    sessions_routes._publish_status(parent_id, "running", blocked_on="input needed")
+
+    orchestration._relinquish_session_live_state(parent_id)
+
+    assert _session_blocked_on_cache.get(parent_id) is None
+    assert _list_rows(app)[parent_id].get("blocked_on") is None
+
+
+def test_dialog_is_served_only_while_the_session_still_runs(stores: Stores, touched) -> None:
+    """A status written outside the publish path hides a remembered dialog."""
+    parent_id = _seed_parent(stores, touched, "reset")
+    sessions_routes._publish_status(parent_id, "running", blocked_on="input needed")
+    assert session_blocked_on(parent_id) == "input needed"
+
+    sessions_routes._session_status_cache[parent_id] = "idle"
+
+    assert session_blocked_on(parent_id) is None
 
 
 def test_failed_child_with_stale_approval_does_not_count(stores: Stores, touched) -> None:
