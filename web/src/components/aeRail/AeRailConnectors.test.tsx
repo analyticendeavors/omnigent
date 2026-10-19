@@ -106,6 +106,18 @@ describe("AeRailConnectors", () => {
     expect(screen.getByText("No live Claude process for this session.")).toBeTruthy();
   });
 
+  it("keeps checking, with no error, while Claude starts", () => {
+    state.session = { harness: "claude-native" };
+    state.snapshot = {
+      loading: true,
+      pending: true,
+      data: { available: false, pending: true, reason: "Claude is starting." },
+    };
+    render(<AeRailConnectors sessionId="s1" />);
+    expect(screen.getByText("Checking connectors…")).toBeTruthy();
+    expect(screen.queryByText("Claude is starting.")).toBeNull();
+  });
+
   it("says when the runner reports no servers field yet", () => {
     state.session = { harness: "claude-native" };
     state.snapshot = { loading: false, data: { available: true, observedAt: "x" } };

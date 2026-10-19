@@ -416,3 +416,59 @@ def test_unsafe_bridge_root_is_reported_as_unavailable(monkeypatch):
     monkeypatch.setattr(claude_bridge, "ensure_secure_dir", refuse)
     with pytest.raises(ValueError, match="group-writable ancestor"):
         usage._scratch_parent()
+
+
+def _route_to_bridge(monkeypatch, bridge):
+    import omnigent.runner.native as native
+
+    monkeypatch.setattr(
+        native, "_claude_native_bridge_id_for_session", AsyncMock(return_value="bridge")
+    )
+    monkeypatch.setattr(claude_bridge, "bridge_dir_for_bridge_id", lambda _bridge_id: bridge)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw", [None, {"model": {"id": "m"}}, {"session_id": "live"}])
+async def test_claude_still_starting_answers_pending_without_backoff(tmp_path, monkeypatch, raw):
+    """No reading yet, no session id yet, or no live process: pending, never a failure."""
+    bridge = tmp_path / "bridge"
+    bridge.mkdir()
+    if raw is not None:
+        (bridge / "context_raw.json").write_text(json.dumps(raw))
+    _route_to_bridge(monkeypatch, bridge)
+    probe = AsyncMock()
+    monkeypatch.setattr(usage, "probe", probe)
+    usage._failures.clear()
+    response = await usage.handle_context_usage(
+        "starting", harness="claude-native", server_client=None
+    )
+    body = json.loads(response.body)
+    assert body["available"] is False
+    assert body["pending"] is True
+    assert "starting" not in usage._failures
+    probe.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_real_probe_failure_answers_error_and_starts_backoff(monkeypatch, caplog):
+    import omnigent.runner.native as native
+
+    monkeypatch.setattr(
+        native, "_claude_native_bridge_id_for_session", AsyncMock(return_value="bridge")
+    )
+    monkeypatch.setattr(usage, "launch_config", lambda _: (["claude"], {}, "/tmp", "real-id"))
+    monkeypatch.setattr(
+        usage, "probe", AsyncMock(side_effect=ValueError("broken at /srv/a/b/secret-dir now"))
+    )
+    usage._failures.clear()
+    with caplog.at_level("INFO", logger=usage.__name__):
+        response = await usage.handle_context_usage(
+            "broken", harness="claude-native", server_client=None
+        )
+    body = json.loads(response.body)
+    assert body["available"] is False
+    assert "pending" not in body
+    assert "Could not read Claude context" in body["reason"]
+    assert "broken" in usage._failures
+    assert "ValueError" in caplog.text
+    assert "/srv/a/b" not in caplog.text

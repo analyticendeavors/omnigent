@@ -102,6 +102,8 @@ export function AeRailContext({ sessionId }: AeRailSectionProps) {
 
 /** No snapshot to draw yet: loading, failed, or unavailable on this runner. */
 function SnapshotStatus({ snapshot }: { snapshot: AeContextSnapshotState }) {
+  // Claude is still starting and the store is retrying: loading, never "Try again".
+  if (snapshot.pending) return <AeRailMuted>Reading context categories…</AeRailMuted>;
   const unavailable = snapshot.data && !snapshot.data.available ? snapshot.data : null;
   if (snapshot.error || unavailable) {
     return (

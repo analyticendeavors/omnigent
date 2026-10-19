@@ -16,6 +16,7 @@ const snapshotNow = () => ({
   ...SNAPSHOT,
   observedAt: new Date(Date.now() - 60_000).toISOString(),
 });
+const PENDING = { available: false, pending: true, reason: "Claude is starting." };
 const contextCalls = () =>
   vi.mocked(authenticatedFetch).mock.calls.filter(([url]) => String(url).endsWith("/context-usage"))
     .length;
@@ -111,13 +112,50 @@ describe("AeRailContext", () => {
     expect(screen.queryByText(/Could not load/)).toBeNull();
   });
 
-  it("shows why a runner cannot take a snapshot", async () => {
+  it("shows Try again at once when the runner is offline", async () => {
     vi.mocked(authenticatedFetch).mockImplementation(() =>
-      json({ available: false, reason: "The runner is offline." }),
+      json({ available: false, offline: true, reason: "The runner is offline." }),
     );
     setSession("claude-native");
     render(<AeRailContext sessionId={sessionId} />);
     expect(await screen.findByText("The runner is offline.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+  });
+
+  it("reads quietly while Claude starts, then shows the snapshot", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    vi.mocked(authenticatedFetch)
+      .mockImplementationOnce(() => json(PENDING))
+      .mockImplementation(() => json(snapshotNow()));
+    setSession("claude-native");
+    render(<AeRailContext sessionId={sessionId} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByText("Reading context categories…")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(screen.queryByText("Claude is starting.")).toBeNull();
+    // The live figure still shows meanwhile.
+    expect(screen.getByText("30% used")).toBeTruthy();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(screen.getByTestId("ae-category-bar")).toBeTruthy();
+  });
+
+  it("shows the reason and Try again once Claude has not started for two minutes", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    vi.mocked(authenticatedFetch).mockImplementation(() => json(PENDING));
+    setSession("claude-native");
+    render(<AeRailContext sessionId={sessionId} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(119_000);
+    });
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(screen.getByText("Claude is starting.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
   });
 

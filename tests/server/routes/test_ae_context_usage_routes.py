@@ -28,3 +28,16 @@ def test_access(db_uri, monkeypatch, user, expected):
         )
     assert response.status_code == expected
     assert forward.await_count == (1 if expected == 200 else 0)
+
+
+def test_offline_runner_answers_offline(db_uri, monkeypatch):
+    session = _seed_session(db_uri)
+    monkeypatch.setattr(routes, "_forward_session_change_to_runner", AsyncMock(return_value=None))
+    with TestClient(_app(db_uri)) as client:
+        response = client.get(
+            f"/v1/sessions/{session}/context-usage", headers={"X-Forwarded-Email": OWNER}
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is False
+    assert body["offline"] is True
