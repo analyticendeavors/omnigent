@@ -16,6 +16,7 @@ beforeEach(() => {
   window.localStorage.clear();
   useAeSessionRailStore.setState({
     open: false,
+    closedForPanel: false,
     sheetOpen: false,
     order: [...AE_RAIL_SECTIONS],
     folded: { connectors: true },
@@ -94,6 +95,26 @@ describe("focusSection", () => {
   });
 });
 
+describe("closing for a panel", () => {
+  it("reopens on its own call, and the user opening or closing the rail forgets it", () => {
+    const store = useAeSessionRailStore.getState();
+    store.setOpen(true);
+    store.setClosedForPanel(true);
+    expect(useAeSessionRailStore.getState()).toMatchObject({ open: false, closedForPanel: true });
+    store.setClosedForPanel(false);
+    expect(useAeSessionRailStore.getState()).toMatchObject({ open: true, closedForPanel: false });
+    store.setClosedForPanel(true);
+    store.toggle();
+    expect(useAeSessionRailStore.getState()).toMatchObject({ open: true, closedForPanel: false });
+    store.setClosedForPanel(true);
+    store.setOpen(false);
+    expect(useAeSessionRailStore.getState().closedForPanel).toBe(false);
+    store.setClosedForPanel(true);
+    store.focusSection("usage");
+    expect(useAeSessionRailStore.getState()).toMatchObject({ open: true, closedForPanel: false });
+  });
+});
+
 describe("persistence", () => {
   it("saves open state, order and folds, but not the phone sheet", () => {
     const store = useAeSessionRailStore.getState();
@@ -101,11 +122,14 @@ describe("persistence", () => {
     store.moveToTop("usage");
     store.setFolded("agents", true);
     store.setSheetOpen(true);
-    const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "{}");
+    let saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "{}");
     expect(saved.open).toBe(true);
     expect(saved.order[0]).toBe("usage");
     expect(saved.folded.agents).toBe(true);
     expect(saved).not.toHaveProperty("sheetOpen");
+    store.setClosedForPanel(true);
+    saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "{}");
+    expect(saved).toMatchObject({ open: false, closedForPanel: true });
   });
 
   it("reads a saved layout back, ignoring unknown ids", async () => {
@@ -113,6 +137,7 @@ describe("persistence", () => {
       STORAGE_KEY,
       JSON.stringify({
         open: true,
+        closedForPanel: true,
         order: ["changes", "nope"],
         folded: { triage: true, nope: true, usage: "yes" },
       }),
@@ -121,6 +146,7 @@ describe("persistence", () => {
     const fresh = await import("./aeSessionRail");
     const state = fresh.useAeSessionRailStore.getState();
     expect(state.open).toBe(true);
+    expect(state.closedForPanel).toBe(true);
     expect(state.order[0]).toBe("changes");
     expect(state.order).toHaveLength(AE_RAIL_SECTIONS.length);
     expect(state.folded).toEqual({ connectors: true, triage: true });
