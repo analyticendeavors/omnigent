@@ -2,10 +2,20 @@
 // by the usage popover and the session rail. Each read launches a throwaway
 // Claude process on the runner, so one request per session and identity is in
 // flight at a time and a result is reused for three minutes.
+//
+// While Claude is still starting the runner answers `pending` (no statusLine
+// reading, session id or process yet). Those answers, and any other
+// unavailable answer that is not `offline`, are never cached as a result: the
+// store keeps the sections loading and asks again quietly for about two
+// minutes before it lets the error and "Try again" show. Only `offline` (the
+// runner or host is gone) shows the error at once. Each turn end asks again.
+// (2026-10-18: a new session showed "Could not read Claude context" until a
+// manual refresh, because the first read raced Claude's start.)
 
-import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { authenticatedFetch } from "@/lib/identity";
 import { isTempConvId } from "@/lib/tempConversationId";
+import { useChatStore } from "@/store/chatStore";
 
 export interface ContextCategory {
   name: string;
@@ -15,6 +25,10 @@ export interface ContextCategory {
 export interface ContextUsage {
   available: boolean;
   reason?: string;
+  /** Claude has not started yet; ask again shortly. */
+  pending?: boolean;
+  /** The runner or its host did not answer: a lost connection. */
+  offline?: boolean;
   categories: ContextCategory[];
   totalTokens: number;
   maxTokens: number;
@@ -47,14 +61,20 @@ export const AE_CONTEXT_SNAPSHOT_TTL_MS = 3 * 60_000;
 export const AE_CONTEXT_SNAPSHOT_FRESH_MS = 4 * 60_000;
 /** Unwatched snapshots kept beyond this many are dropped, oldest first. */
 const MAX_KEPT = 20;
+/** Waits between quiet retries of a not-ready answer; the last one repeats. */
+export const AE_CONTEXT_RETRY_DELAYS_MS = [2000, 4000, 8000, 16000, 30000];
+/** Not-ready answers for this long stop retrying and show their reason. */
+export const AE_CONTEXT_RETRY_WINDOW_MS = 2 * 60_000;
 
 export interface AeContextSnapshotState {
   data?: ContextUsage;
   error?: string;
   loading: boolean;
+  /** Claude is starting: the store is retrying quietly, so show loading, not an error. */
+  pending?: boolean;
   /** Client time the shown snapshot arrived. */
   receivedAt?: number;
-  /** The snapshot arrived within `AE_CONTEXT_SNAPSHOT_FRESH_MS`. */
+  /** An available snapshot arrived within `AE_CONTEXT_SNAPSHOT_FRESH_MS`. */
   fresh: boolean;
   /** Ask for a new snapshot now (the rail's refresh button). */
   refresh: () => void;
@@ -65,6 +85,8 @@ interface SnapshotValue {
   error?: string;
   receivedAt?: number;
   inFlight: boolean;
+  /** A not-ready answer came back and a quiet retry is scheduled. */
+  pending?: boolean;
 }
 
 interface Entry {
@@ -75,6 +97,11 @@ interface Entry {
   watchers: number;
   timer?: ReturnType<typeof setTimeout>;
   listeners: Set<() => void>;
+  /** When the current run of not-ready answers began. */
+  retryStartedAt?: number;
+  retryAttempt: number;
+  /** The wait before the scheduled quiet retry. */
+  retryDelay?: number;
 }
 
 const entries = new Map<string, Entry>();
@@ -88,7 +115,7 @@ function entryFor(sessionId: string, identity: string): Entry {
   const key = entryKey(sessionId, identity);
   let entry = entries.get(key);
   if (!entry) {
-    entry = { sessionId, value: EMPTY, watchers: 0, listeners: new Set() };
+    entry = { sessionId, value: EMPTY, watchers: 0, listeners: new Set(), retryAttempt: 0 };
     entries.set(key, entry);
     prune(key);
   }
@@ -116,19 +143,53 @@ function update(entry: Entry, value: Partial<SnapshotValue>): void {
   for (const listener of entry.listeners) listener();
 }
 
+/** Only a real snapshot counts as fresh; an unavailable answer is asked again. */
 function isFresh(entry: Entry, now: number): boolean {
   return (
-    entry.value.data !== undefined &&
+    entry.value.data?.available === true &&
     now - (entry.value.receivedAt ?? 0) < AE_CONTEXT_SNAPSHOT_TTL_MS
   );
+}
+
+function resetRetry(entry: Entry): void {
+  entry.retryStartedAt = undefined;
+  entry.retryAttempt = 0;
+  entry.retryDelay = undefined;
 }
 
 function schedule(entry: Entry): void {
   if (entry.timer) clearTimeout(entry.timer);
   entry.timer = undefined;
   if (entry.watchers === 0 || entry.settledAt === undefined) return;
-  const wait = Math.max(0, entry.settledAt + AE_CONTEXT_SNAPSHOT_TTL_MS - Date.now());
+  const after =
+    entry.value.pending && entry.retryDelay !== undefined
+      ? entry.retryDelay
+      : AE_CONTEXT_SNAPSHOT_TTL_MS;
+  const wait = Math.max(0, entry.settledAt + after - Date.now());
   entry.timer = setTimeout(() => load(entry), wait);
+}
+
+/** Store an answer; a not-ready one schedules a quiet retry until the window ends. */
+function settle(entry: Entry, data: ContextUsage): void {
+  const now = Date.now();
+  if (data.available || data.offline) {
+    resetRetry(entry);
+    update(entry, { data, error: undefined, receivedAt: now, inFlight: false, pending: false });
+    return;
+  }
+  entry.retryStartedAt ??= now;
+  const delays = AE_CONTEXT_RETRY_DELAYS_MS;
+  const delay = delays[Math.min(entry.retryAttempt, delays.length - 1)];
+  const retry = now + delay - entry.retryStartedAt <= AE_CONTEXT_RETRY_WINDOW_MS;
+  if (retry) {
+    entry.retryAttempt += 1;
+    entry.retryDelay = delay;
+  } else {
+    resetRetry(entry);
+  }
+  // A real snapshot already shown stays until a newer real one replaces it.
+  const shown = entry.value.data?.available ? {} : { data, receivedAt: now };
+  update(entry, { ...shown, error: undefined, inFlight: false, pending: retry });
 }
 
 async function readSnapshot(sessionId: string): Promise<ContextUsage> {
@@ -148,15 +209,18 @@ function load(entry: Entry): void {
   update(entry, { inFlight: true });
   readSnapshot(entry.sessionId)
     .then(
-      (data) => update(entry, { data, error: undefined, receivedAt: Date.now(), inFlight: false }),
-      (error: unknown) =>
+      (data) => settle(entry, data),
+      (error: unknown) => {
+        resetRetry(entry);
         update(entry, {
           error:
             error instanceof Error && error.message
               ? error.message
               : "Could not load the context snapshot. Try again.",
           inFlight: false,
-        }),
+          pending: false,
+        });
+      },
     )
     .finally(() => {
       entry.settledAt = Date.now();
@@ -173,8 +237,17 @@ function watch(entry: Entry): () => void {
   }
   return () => {
     entry.watchers -= 1;
-    if (entry.watchers === 0) schedule(entry);
+    if (entry.watchers === 0) {
+      schedule(entry);
+      resetRetry(entry);
+    }
   };
+}
+
+/** Ask again now with a new retry window: the refresh button and each turn end. */
+function reload(entry: Entry): void {
+  resetRetry(entry);
+  load(entry);
 }
 
 /** Drops every cached snapshot and timer; tests call it between cases. */
@@ -212,16 +285,31 @@ export function useAeContextSnapshot(
     if (!enabled || !id) return undefined;
     return watch(entryFor(id, identity));
   }, [enabled, id, identity]);
+  // A turn ending changes the context, and a session's first turn is when Claude is up.
+  const status = useChatStore((s) =>
+    id !== null && s.conversationId === id ? s.sessionStatus : null,
+  );
+  const turnActive = status === "running" || status === "waiting";
+  const previous = useRef({ id, turnActive });
+  useEffect(() => {
+    const before = previous.current;
+    previous.current = { id, turnActive };
+    const ended =
+      before.id === id && before.turnActive && (status === "idle" || status === "failed");
+    if (ended && enabled && id) reload(entryFor(id, identity));
+  }, [enabled, id, identity, status, turnActive]);
   const refresh = useCallback(() => {
-    if (id) load(entryFor(id, identity));
+    if (id) reload(entryFor(id, identity));
   }, [id, identity]);
+  const pending = value.pending === true;
   return {
     data: value.data,
     error: value.error,
     receivedAt: value.receivedAt,
-    loading: value.inFlight || (enabled && id !== null && !value.data && !value.error),
+    pending,
+    loading: value.inFlight || pending || (enabled && id !== null && !value.data && !value.error),
     fresh:
-      value.data !== undefined &&
+      value.data?.available === true &&
       Date.now() - (value.receivedAt ?? 0) < AE_CONTEXT_SNAPSHOT_FRESH_MS,
     refresh,
   };

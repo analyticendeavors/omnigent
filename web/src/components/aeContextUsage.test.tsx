@@ -1,7 +1,9 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { authenticatedFetch } from "@/lib/identity";
+import { useChatStore } from "@/store/chatStore";
 import {
+  AE_CONTEXT_RETRY_DELAYS_MS,
   AE_CONTEXT_SNAPSHOT_TTL_MS,
   aeContextIdentity,
   resetAeContextSnapshots,
@@ -101,7 +103,7 @@ describe("shared context snapshot", () => {
   it("reports an error per key and clears it on the next success", async () => {
     vi.mocked(authenticatedFetch)
       .mockResolvedValueOnce(new Response(null, { status: 503 }))
-      .mockImplementation(() => ok({ available: false, reason: "Offline" }));
+      .mockImplementation(() => ok({ available: false, offline: true, reason: "Offline" }));
     const { result } = renderHook(() => useTwo(true));
     await waitFor(() => expect(result.current.rail.error).toMatch(/HTTP 503/));
     expect(result.current.popover.error).toBe(result.current.rail.error);
@@ -143,5 +145,125 @@ describe("shared context snapshot", () => {
       useAeContextSnapshot("conv_last", { enabled: true, identity }),
     );
     await waitFor(() => expect(result.current.data?.available).toBe(true));
+  });
+});
+
+const PENDING = { available: false, pending: true, reason: "Claude is starting." };
+
+async function advance(ms: number) {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+}
+
+describe("while Claude starts", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  });
+  afterEach(() => {
+    useChatStore.setState({ conversationId: null, sessionStatus: "idle" });
+  });
+
+  it("retries a pending answer quietly and never caches it as fresh", async () => {
+    vi.mocked(authenticatedFetch)
+      .mockImplementationOnce(() => ok(PENDING))
+      .mockImplementationOnce(() => ok(PENDING))
+      .mockImplementation(() => ok());
+    const { result, unmount } = renderHook(() =>
+      useAeContextSnapshot("conv_a", { enabled: true, identity }),
+    );
+    await advance(0);
+    expect(authenticatedFetch).toHaveBeenCalledTimes(1);
+    expect(result.current.pending).toBe(true);
+    expect(result.current.loading).toBe(true);
+    expect(result.current.error).toBeUndefined();
+    expect(result.current.fresh).toBe(false);
+    await advance(AE_CONTEXT_RETRY_DELAYS_MS[0]);
+    expect(authenticatedFetch).toHaveBeenCalledTimes(2);
+    expect(result.current.pending).toBe(true);
+    await advance(AE_CONTEXT_RETRY_DELAYS_MS[1]);
+    expect(authenticatedFetch).toHaveBeenCalledTimes(3);
+    expect(result.current.data?.available).toBe(true);
+    expect(result.current.pending).toBe(false);
+    expect(result.current.loading).toBe(false);
+    unmount();
+    // Once real, it is fresh: reopening reuses it with no request.
+    renderHook(() => useAeContextSnapshot("conv_a", { enabled: true, identity }));
+    await advance(0);
+    expect(authenticatedFetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("treats any unavailable answer that is not offline as not ready yet", async () => {
+    vi.mocked(authenticatedFetch).mockImplementation(() =>
+      ok({ available: false, reason: "Could not read Claude context." }),
+    );
+    const { result } = renderHook(() =>
+      useAeContextSnapshot("conv_a", { enabled: true, identity }),
+    );
+    await advance(0);
+    expect(result.current.pending).toBe(true);
+    await advance(AE_CONTEXT_RETRY_DELAYS_MS[0]);
+    expect(authenticatedFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops retrying after about two minutes and lets the reason show", async () => {
+    vi.mocked(authenticatedFetch).mockImplementation(() => ok(PENDING));
+    const { result } = renderHook(() =>
+      useAeContextSnapshot("conv_a", { enabled: true, identity }),
+    );
+    await advance(0);
+    // 2, 4, 8, 16, then 30 s: answers at 0, 2, 6, 14, 30, 60, 90 and 120 s.
+    await advance(119_000);
+    expect(result.current.pending).toBe(true);
+    await advance(1000);
+    expect(authenticatedFetch).toHaveBeenCalledTimes(8);
+    expect(result.current.pending).toBe(false);
+    expect(result.current.loading).toBe(false);
+    expect(result.current.data?.reason).toBe("Claude is starting.");
+    // No more quiet retries; the next is the ordinary three-minute reload.
+    await advance(60_000);
+    expect(authenticatedFetch).toHaveBeenCalledTimes(8);
+  });
+
+  it("shows an offline answer at once, with no quiet retry", async () => {
+    vi.mocked(authenticatedFetch).mockImplementation(() =>
+      ok({ available: false, offline: true, reason: "The runner is offline." }),
+    );
+    const { result } = renderHook(() =>
+      useAeContextSnapshot("conv_a", { enabled: true, identity }),
+    );
+    await advance(0);
+    expect(result.current.pending).toBe(false);
+    expect(result.current.loading).toBe(false);
+    expect(result.current.data?.reason).toBe("The runner is offline.");
+    await advance(60_000);
+    expect(authenticatedFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels the quiet retry when the last subscriber goes", async () => {
+    vi.mocked(authenticatedFetch).mockImplementation(() => ok(PENDING));
+    const { unmount } = renderHook(() =>
+      useAeContextSnapshot("conv_a", { enabled: true, identity }),
+    );
+    await advance(0);
+    unmount();
+    await advance(3 * 60_000);
+    expect(authenticatedFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks again when the session's turn ends", async () => {
+    vi.mocked(authenticatedFetch).mockImplementation(() => ok());
+    useChatStore.setState({ conversationId: "conv_a", sessionStatus: "running" });
+    renderHook(() => useAeContextSnapshot("conv_a", { enabled: true, identity }));
+    await advance(0);
+    expect(authenticatedFetch).toHaveBeenCalledTimes(1);
+    act(() => useChatStore.setState({ sessionStatus: "idle" }));
+    await advance(0);
+    expect(authenticatedFetch).toHaveBeenCalledTimes(2);
+    // Another session's turn, or no turn at all, asks nothing.
+    act(() => useChatStore.setState({ conversationId: "conv_b", sessionStatus: "running" }));
+    act(() => useChatStore.setState({ sessionStatus: "idle" }));
+    await advance(0);
+    expect(authenticatedFetch).toHaveBeenCalledTimes(2);
   });
 });

@@ -37,8 +37,11 @@ def register_context_usage_routes(
             timeout_s=35,
         )
         if result is None:
+            # `offline` tells the web this is a lost connection, shown at once, not a
+            # runner still starting (`pending`), which the web retries quietly.
             return {
                 "available": False,
+                "offline": True,
                 "reason": "Context request timed out or the runner is offline. Try again shortly.",
             }
         return _runner_answer(result, action="read context breakdown")

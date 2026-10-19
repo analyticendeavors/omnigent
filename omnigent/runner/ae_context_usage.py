@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import math
 import os
+import re
 import signal
 import tempfile
 import time
@@ -18,22 +20,41 @@ from typing import Any
 import httpx
 from fastapi.responses import JSONResponse
 
+logger = logging.getLogger(__name__)
+
 TTL = 180
 _failures: dict[str, float] = {}
 _cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
 
 
+class ContextNotReady(ValueError):
+    """Claude has not started yet: no statusLine reading, no session id or no live process.
+
+    The route answers ``pending`` for these, records no failure and starts no backoff, so
+    the web keeps the rail loading and asks again instead of showing an error.
+    """
+
+
+class _RecentFailure(ValueError):
+    """Inside the 30-second backoff after a real failure; logged once, not per request."""
+
+
 def launch_config(
     bridge: Path, process_root: Path = Path("/proc")
 ) -> tuple[list[str], dict[str, str], str, str]:
     """Use the owning Linux process, never another session's launch configuration."""
-    raw = json.loads((bridge / "context_raw.json").read_text())
+    try:
+        text = (bridge / "context_raw.json").read_text()
+    except FileNotFoundError as exc:
+        # Claude's statusLine shim writes this file once Claude is up.
+        raise ContextNotReady("Claude has not written its first status reading yet.") from exc
+    raw = json.loads(text)
     if not isinstance(raw, dict):
         raise ValueError("Invalid context snapshot")
     session_id = raw.get("session_id")
     if not isinstance(session_id, str) or not session_id:
-        raise ValueError("No Claude session reading yet. Send a message first.")
+        raise ContextNotReady("No Claude session reading yet. Send a message first.")
     settings_path = str(bridge / "claude-settings.json")
     for proc in sorted(process_root.glob("[0-9]*"), key=lambda p: int(p.name), reverse=True):
         try:
@@ -121,7 +142,7 @@ def launch_config(
             return command, env, cwd, session_id
         except (OSError, ValueError, IndexError):
             continue
-    raise ValueError("No live Claude process for this session. Resume it and try again.")
+    raise ContextNotReady("No live Claude process for this session. Resume it and try again.")
 
 
 MCP_STATUSES = ("connected", "failed", "needs-auth", "pending", "disabled")
@@ -374,6 +395,13 @@ async def _probe(command: list[str], env: dict[str, str], cwd: str) -> dict[str,
         await proc.wait()
 
 
+def _log_detail(exc: BaseException) -> str:
+    """The message's first line with every path cut to its last part; never config or env."""
+    text = exc.strerror if isinstance(exc, OSError) and exc.strerror else str(exc)
+    first = text.splitlines()[0] if text else ""
+    return re.sub(r"(?:/[^\s/]+)+/([^\s/]+)", r"\1", first)[:200]
+
+
 async def handle_context_usage(
     conversation_id: str, *, harness: str | None, server_client: httpx.AsyncClient
 ) -> JSONResponse:
@@ -394,7 +422,7 @@ async def handle_context_usage(
                 if time.monotonic() - _failures[expired] >= 30:
                     _failures.pop(expired, None)
             if time.monotonic() - _failures.get(conversation_id, float("-inf")) < 30:
-                raise ValueError("Recent probe failure")
+                raise _RecentFailure("Recent probe failure")
             bridge_id = await _claude_native_bridge_id_for_session(
                 server_client=server_client, session_id=conversation_id
             )
@@ -414,7 +442,26 @@ async def handle_context_usage(
             _failures.pop(conversation_id, None)
             _cache[key] = (now, answer)
             return JSONResponse(answer)
-        except (OSError, ValueError, TimeoutError, AttributeError, TypeError, httpx.HTTPError):
+        except ContextNotReady:
+            # Claude is still starting (or not running): not a failure, so no backoff.
+            return JSONResponse(
+                {"available": False, "pending": True, "reason": "Claude is starting."}
+            )
+        except (
+            OSError,
+            ValueError,
+            TimeoutError,
+            AttributeError,
+            TypeError,
+            httpx.HTTPError,
+        ) as exc:
+            if not isinstance(exc, _RecentFailure):
+                logger.info(
+                    "Context probe for session %s failed: %s: %s",
+                    conversation_id,
+                    type(exc).__name__,
+                    _log_detail(exc),
+                )
             _failures.setdefault(conversation_id, time.monotonic())
             if time.monotonic() - _failures[conversation_id] >= 30:
                 _failures[conversation_id] = time.monotonic()

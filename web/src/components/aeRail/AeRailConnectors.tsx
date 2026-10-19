@@ -59,8 +59,11 @@ function useConnectorSource(sessionId: string, active: boolean): Source & { kind
       kind,
       servers: data?.available ? data.mcpServers : undefined,
       observedAt: data?.available ? data.observedAt : null,
+      // `loading` covers the quiet retries while Claude starts, so no error shows then.
       loading: snapshot.loading,
-      error: snapshot.error ?? (data && !data.available ? (data.reason ?? null) : null),
+      error: snapshot.pending
+        ? null
+        : (snapshot.error ?? (data && !data.available ? (data.reason ?? null) : null)),
       refresh: snapshot.refresh,
     };
   }
