@@ -28,7 +28,7 @@ from omnigent.db.utils import (
     run_write_transaction,
 )
 from omnigent.entities import Policy
-from omnigent.stores.policy_store import PolicyStore
+from omnigent.stores.policy_store import _UNSET, PolicyStore
 
 
 def _to_entity(row: SqlPolicy) -> Policy:
@@ -330,6 +330,7 @@ class SqlAlchemyPolicyStore(PolicyStore):
         name: str | None = None,
         handler: str | None = None,
         enabled: bool | None = None,
+        factory_params: dict[str, Any] | None = _UNSET,
     ) -> Policy | None:
         """
         Update mutable fields of a default policy. Returns ``None``
@@ -373,6 +374,11 @@ class SqlAlchemyPolicyStore(PolicyStore):
             if enabled is not None and bool(row.enabled) != enabled:
                 row.enabled = enabled
                 changed = True
+            if factory_params is not _UNSET:
+                encoded_params = json.dumps(factory_params) if factory_params else None
+                if row.factory_params != encoded_params:
+                    row.factory_params = encoded_params
+                    changed = True
             if changed:
                 row.updated_at = updated_at
             session.flush()

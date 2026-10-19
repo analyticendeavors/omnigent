@@ -533,6 +533,8 @@ class UpdateDefaultPolicyRequest(BaseModel):
         unchanged.
     :param enabled: New enabled flag. ``None`` leaves it
         unchanged.
+    :param factory_params: New factory params, replacing the old ones
+        whole. Omitted leaves them unchanged; ``null`` or ``{}`` clears them.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -540,6 +542,7 @@ class UpdateDefaultPolicyRequest(BaseModel):
     name: str | None = None
     handler: str | None = None
     enabled: bool | None = None
+    factory_params: dict[str, Any] | None = None
 
 
 # ── Files ───────────────────────────────────────────────────────

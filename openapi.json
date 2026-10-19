@@ -9286,6 +9286,19 @@
             "description": "New enabled flag. `None` leaves it unchanged.",
             "title": "Enabled"
           },
+          "factory_params": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "New factory params, replacing the old ones whole. Omitted leaves them unchanged; `null` or `{}` clears them.",
+            "title": "Factory Params"
+          },
           "handler": {
             "anyOf": [
               {
