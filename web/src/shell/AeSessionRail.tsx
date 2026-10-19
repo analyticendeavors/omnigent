@@ -1,7 +1,7 @@
 // The session rail's container: the sections in the saved order, sortable by
 // their grips. Desktop docks it as a 304 px column (or floats it over the
 // chat's right edge when docking would squeeze the chat, but never over an open
-// panel); a phone shows it as a sheet.
+// panel) that slides in and out like the workspace panel; a phone shows it as a sheet.
 
 import {
   type Announcements,
@@ -76,6 +76,7 @@ function useRailFloats(reservedWidth: number): boolean {
  * opened last stays and the other closes. A rail closed this way reopens once no
  * panel needs the room (as it was, floating or not); one the user closed stays closed.
  * With "open in every session" on, a session switch (not a new chat's id swap) opens the rail.
+ * Returns whether the rail last made way for a panel opening, not one already open.
  */
 function useOnePaneAtATime(
   sessionId: string,
@@ -83,12 +84,13 @@ function useOnePaneAtATime(
   panelOpen: boolean,
   floating: boolean,
   closePanels: () => void,
-) {
+): boolean {
   const open = useAeSessionRailStore((s) => s.open);
   const closedForPanel = useAeSessionRailStore((s) => s.closedForPanel);
   const setClosedForPanel = useAeSessionRailStore((s) => s.setClosedForPanel);
   const setOpen = useAeSessionRailStore((s) => s.setOpen);
   const everySession = useAeSessionRailStore((s) => s.openInEverySession);
+  const [madeWayForOpening, setMadeWayForOpening] = useState(false);
   const seenSession = useRef<string | null>(null);
   const previous = useRef({ open, panelOpen });
   // A layout effect settles the overlap before the browser paints it.
@@ -108,17 +110,56 @@ function useOnePaneAtATime(
     const clash = panelOpen && floating;
     if (open && clash) {
       if (!was.open && was.panelOpen) closePanels();
-      else setClosedForPanel(true);
+      else {
+        // On mount `was` is this render, so a panel restored open counts as already open.
+        setMadeWayForOpening(!was.panelOpen);
+        setClosedForPanel(true);
+      }
     } else if (!open && closedForPanel && !clash) {
       setClosedForPanel(false);
       // Reopening on its own is not the user opening the rail over a panel.
       previous.current = { open: true, panelOpen };
     }
-  });
+  }, [
+    active,
+    open,
+    panelOpen,
+    floating,
+    closedForPanel,
+    everySession,
+    sessionId,
+    closePanels,
+    setClosedForPanel,
+    setOpen,
+  ]);
+  return madeWayForOpening;
 }
 
 function prefersReducedMotion(): boolean {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+}
+
+/** The workspace panel's slide (index.css `.workspace-panel-motion`); times the rail's transition and unmount. */
+const RAIL_MOTION_MS = 300;
+
+/**
+ * Whether the column is on screen: while open, and for the slide out after it
+ * closes. A rail that cannot slide out without crossing an open panel leaves at once.
+ */
+function useRailPresence(open: boolean, canSlideOut: boolean): boolean {
+  const [present, setPresent] = useState(open);
+  if (open && !present) setPresent(true);
+  const slidingOut = !open && present && canSlideOut && !prefersReducedMotion();
+  useEffect(() => {
+    if (open || !present) return;
+    if (!slidingOut) {
+      setPresent(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setPresent(false), RAIL_MOTION_MS);
+    return () => window.clearTimeout(timer);
+  }, [open, present, slidingOut]);
+  return open || slidingOut;
 }
 
 export function AeSessionRail({
@@ -151,20 +192,30 @@ export function AeSessionRail({
   const floating = useRailFloats(
     aeRailReservedWidth(sidebarWidth, workspacePanelWidth, pushPanelWidth),
   );
+  const floatingAlone = useRailFloats(aeRailReservedWidth(sidebarWidth, 0, 0));
+  const panelOpen = workspacePanelWidth > 0 || pushPanelOpen;
   const open = useAeSessionRailStore((s) => s.open);
+  const closedForPanel = useAeSessionRailStore((s) => s.closedForPanel);
   const sheetOpen = useAeSessionRailStore((s) => s.sheetOpen);
   const setSheetOpen = useAeSessionRailStore((s) => s.setSheetOpen);
   // The workspace closes through its own toggle even while a push panel hides it;
   // left open, it would reappear over the rail once the push panel closed.
-  useOnePaneAtATime(
+  const madeWayForOpening = useOnePaneAtATime(
     sessionId,
     !isMobile && !hidden,
-    workspacePanelWidth > 0 || pushPanelOpen,
+    panelOpen,
     floating,
     () => {
       closePushPanels?.();
       if (workspace?.open) workspace.toggle();
     },
+  );
+  // Making way, the rail slides out in its row only while the workspace panel grows
+  // into the room: a push panel takes it at once, and a rail that floats even alone
+  // would cross the panel. Closed by hand, it slides out where it is.
+  const present = useRailPresence(
+    open,
+    !closedForPanel || (madeWayForOpening && !pushPanelOpen && !floatingAlone),
   );
 
   // A sheet left open while the window widens past the phone layout closes.
@@ -187,13 +238,17 @@ export function AeSessionRail({
         workspaceTabOpener(workspaceRef.current, isMobile, setSheetOpen)?.(tab),
     };
   }, [hasWorkspace, workspaceAvailable, isMobile, setSheetOpen]);
-  if (!isMobile && (!open || hidden)) return null;
+  if (!isMobile && (!present || hidden)) return null;
   return (
     <AeRailActionsContext.Provider value={actions}>
       {isMobile ? (
         <AeSessionRailSheet sessionId={sessionId} />
       ) : (
-        <AeSessionRailColumn sessionId={sessionId} floating={floating} />
+        <AeSessionRailColumn
+          sessionId={sessionId}
+          floating={floating && (open || !panelOpen)}
+          shown={open}
+        />
       )}
     </AeRailActionsContext.Provider>
   );
@@ -234,39 +289,58 @@ function useEscapeToClose(active: boolean, root: RefObject<HTMLElement | null>, 
   }, [active, root, close]);
 }
 
-function AeSessionRailColumn({ sessionId, floating }: { sessionId: string; floating: boolean }) {
+function AeSessionRailColumn({
+  sessionId,
+  floating,
+  shown,
+}: {
+  sessionId: string;
+  floating: boolean;
+  /** False while it slides out. */
+  shown: boolean;
+}) {
   const setOpen = useAeSessionRailStore((s) => s.setOpen);
   const rootRef = useRef<HTMLElement>(null);
   const close = useMemo(() => () => setOpen(false), [setOpen]);
-  useEscapeToClose(floating, rootRef, close);
+  useEscapeToClose(floating && shown, rootRef, close);
+  // Sliding out, the column takes no focus, clicks or screen reader. React 18 drops
+  // the boolean inert prop, so set the attribute directly.
+  useLayoutEffect(() => {
+    rootRef.current?.toggleAttribute("inert", !shown);
+  }, [shown]);
   return (
     <aside
       ref={rootRef}
       aria-label="Session rail"
       data-testid="ae-session-rail"
       data-floating={floating || undefined}
-      style={{ width: RAIL_WIDTH_PX }}
+      data-state={shown ? "open" : "closed"}
+      style={{ width: shown ? RAIL_WIDTH_PX : 0, transitionDuration: `${RAIL_MOTION_MS}ms` }}
       className={cn(
-        "flex min-h-0 flex-col border-l border-border bg-background",
+        // The workspace panel's motion: width, fade and a 12 px slide.
+        "flex min-h-0 translate-x-0 overflow-hidden border-l border-border bg-background opacity-100 transition-[width,opacity,translate] ease-[ease-in-out] motion-reduce:transition-none data-[state=closed]:translate-x-3 data-[state=closed]:opacity-0 starting:w-0! starting:translate-x-3 starting:opacity-0",
         floating ? "absolute inset-y-0 right-0 z-40 shadow-xl" : "shrink-0",
       )}
     >
-      {floating && (
-        <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border pr-1.5 pl-3">
-          <AeRailIcon name="rail" className="text-muted-foreground" />
-          <h2 className="flex-1 font-medium text-ui">Session</h2>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            aria-label="Hide session rail"
-            onClick={close}
-          >
-            <AeRailIcon name="close" />
-          </Button>
-        </header>
-      )}
-      <AeSessionRailList sessionId={sessionId} className="min-h-0 flex-1 p-2" />
+      {/* Full width while the column narrows, so nothing reflows mid-slide. */}
+      <div className="flex h-full min-h-0 shrink-0 flex-col" style={{ width: RAIL_WIDTH_PX }}>
+        {floating && (
+          <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border pr-1.5 pl-3">
+            <AeRailIcon name="rail" className="text-muted-foreground" />
+            <h2 className="flex-1 font-medium text-ui">Session</h2>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Hide session rail"
+              onClick={close}
+            >
+              <AeRailIcon name="close" />
+            </Button>
+          </header>
+        )}
+        <AeSessionRailList sessionId={sessionId} className="min-h-0 flex-1 p-2" />
+      </div>
     </aside>
   );
 }
