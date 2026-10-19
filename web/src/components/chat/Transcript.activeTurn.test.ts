@@ -143,6 +143,18 @@ describe("activeTurnIdAtBubbleIndex", () => {
     expect(activeTurnIdAtBubbleIndex(withSystem, 2)).toBe("u0");
   });
 
+  it("lights the last user turn at the end of the chat, even after an assistant reply", () => {
+    // At the end the memo asks for the last bubble's index; midpoint stays on u0.
+    const endsWithReply: Bubble[] = [user("u0"), assistant("a0"), user("u1"), assistant("a1")];
+    expect(activeTurnIdAtBubbleIndex(endsWithReply, endsWithReply.length - 1)).toBe("u1");
+    expect(activeTurnIdAtBubbleIndex(endsWithReply, 1)).toBe("u0");
+  });
+
+  it("lights the last user turn when the chat ends on that user bubble", () => {
+    const endsWithUser: Bubble[] = [user("u0"), assistant("a0"), user("u1")];
+    expect(activeTurnIdAtBubbleIndex(endsWithUser, endsWithUser.length - 1)).toBe("u1");
+  });
+
   it("returns null for an empty transcript", () => {
     expect(activeTurnIdAtBubbleIndex([], 0)).toBeNull();
   });
