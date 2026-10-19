@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { authenticatedFetch } from "@/lib/identity";
+import { apiErrorFromResponse } from "@/lib/sessionsApi";
 
 /** A server-wide default policy returned by the admin CRUD API. */
 export interface DefaultPolicy {
@@ -54,7 +55,7 @@ export function useAddDefaultPolicy() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      if (!res.ok) throw await apiErrorFromResponse(res);
       return (await res.json()) as DefaultPolicy;
     },
     onSuccess: () => {
@@ -63,17 +64,24 @@ export function useAddDefaultPolicy() {
   });
 }
 
-/** PATCH /v1/policies/{id} — toggle enabled state. */
+/** PATCH /v1/policies/{id}: toggle enabled state, or replace the factory params. */
 export function useUpdateDefaultPolicy() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ policyId, enabled }: { policyId: string; enabled: boolean }) => {
+    mutationFn: async ({
+      policyId,
+      ...fields
+    }: {
+      policyId: string;
+      enabled?: boolean;
+      factory_params?: Record<string, unknown> | null;
+    }) => {
       const res = await authenticatedFetch(`/v1/policies/${encodeURIComponent(policyId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled }),
+        body: JSON.stringify(fields),
       });
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      if (!res.ok) throw await apiErrorFromResponse(res);
       return (await res.json()) as DefaultPolicy;
     },
     onSuccess: () => {
@@ -90,7 +98,7 @@ export function useDeleteDefaultPolicy() {
       const res = await authenticatedFetch(`/v1/policies/${encodeURIComponent(policyId)}`, {
         method: "DELETE",
       });
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      if (!res.ok) throw await apiErrorFromResponse(res);
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: QUERY_KEY });

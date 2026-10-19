@@ -2,7 +2,7 @@
  * Admin default-policies management page (``/settings/policies``; the legacy
  * ``/policies`` path redirects here). Rendered as a Settings sub-category.
  *
- * Lists every global default policy and lets admins add, toggle,
+ * Lists every global default policy and lets admins add, toggle, edit
  * and remove them. The add-policy dialog reuses the same registry-
  * driven picker as the per-session policy UI in AgentInfo.
  *
@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PlusIcon, RefreshCwIcon, ShieldCheckIcon, TrashIcon, XIcon } from "lucide-react";
 import { PageScroll } from "@/components/PageScroll";
+import { AePolicyEditButton } from "@/components/AePolicyEditButton";
 import { ModelValueCombobox } from "@/components/ModelValueCombobox";
 import { SettingsLabel } from "@/components/SettingsLabel";
 import { Button } from "@/components/ui/button";
@@ -34,6 +35,7 @@ import {
   type DefaultPolicy,
 } from "@/hooks/useDefaultPolicies";
 import { usePolicyRegistry, type PolicyRegistryEntry } from "@/hooks/usePolicies";
+import { aeEditedParams, aePolicyFormValues } from "@/lib/aePolicyEdit";
 import { CLAUDE_NATIVE_MODELS } from "@/lib/claudeNativeModels";
 import { getCurrentIsAdmin, resolveIdentity } from "@/lib/identity";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
@@ -48,17 +50,24 @@ function AddDefaultPolicyDialog({
   registry,
   open,
   onOpenChange,
+  editing,
 }: {
   registry: PolicyRegistryEntry[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** A stored policy whose params this dialog edits instead of adding one. */
+  editing?: DefaultPolicy;
 }) {
-  const [selected, setSelected] = useState<string>("");
+  const [selected, setSelected] = useState<string>(editing?.handler ?? "");
   const [filter, setFilter] = useState("");
-  const [policyName, setPolicyName] = useState<string>("");
-  const [factoryParams, setFactoryParams] = useState<Record<string, string>>({});
+  const [policyName, setPolicyName] = useState<string>(editing?.name ?? "");
+  const [factoryParams, setFactoryParams] = useState<Record<string, string>>(() =>
+    aePolicyFormValues(editing?.factory_params),
+  );
   const [paramError, setParamError] = useState<string | null>(null);
   const addPolicy = useAddDefaultPolicy();
+  const updatePolicy = useUpdateDefaultPolicy();
+  const submit = editing ? updatePolicy : addPolicy;
 
   const entry = registry.find((r) => r.handler === selected);
   const rawSchema = entry?.params_schema as
@@ -115,6 +124,15 @@ function AddDefaultPolicyDialog({
       parsedParams = result.params;
     }
     setParamError(null);
+    if (editing) {
+      if (!editing.id) return;
+      const params = aeEditedParams(editing.factory_params, factoryParams, parsedParams ?? {});
+      updatePolicy.mutate(
+        { policyId: editing.id, factory_params: params },
+        { onSuccess: () => onOpenChange(false) },
+      );
+      return;
+    }
     const includeFactoryParams =
       entry.kind === "factory" ? { factory_params: parsedParams ?? {} } : {};
     addPolicy.mutate(
@@ -151,8 +169,12 @@ function AddDefaultPolicyDialog({
     >
       <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Add Global Policy</DialogTitle>
-          <DialogDescription>Choose a policy to apply globally to all sessions.</DialogDescription>
+          <DialogTitle>{editing ? "Edit Global Policy" : "Add Global Policy"}</DialogTitle>
+          <DialogDescription>
+            {editing
+              ? "Change this policy's parameters for all sessions."
+              : "Choose a policy to apply globally to all sessions."}
+          </DialogDescription>
         </DialogHeader>
         <div className="min-w-0 space-y-3 pt-1">
           {!selected &&
@@ -206,6 +228,7 @@ function AddDefaultPolicyDialog({
                 <span className="text-ui font-medium">{entry.name}</span>
                 <button
                   type="button"
+                  hidden={editing !== undefined}
                   onClick={() => {
                     setSelected("");
                     setPolicyName("");
@@ -231,7 +254,8 @@ function AddDefaultPolicyDialog({
                 type="text"
                 value={policyName}
                 onChange={(e) => setPolicyName(e.target.value)}
-                className="mt-0.5 w-full rounded border border-border bg-background px-2 py-1.5 text-ui"
+                disabled={editing !== undefined}
+                className="mt-0.5 w-full rounded border border-border bg-background px-2 py-1.5 text-ui disabled:cursor-not-allowed disabled:text-muted-foreground"
               />
             </div>
           )}
@@ -378,12 +402,12 @@ function AddDefaultPolicyDialog({
               })}
             </div>
           )}
-          {(paramError || addPolicy.isError) && (
+          {(paramError || submit.isError) && (
             <div
               role="alert"
               className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-ui text-destructive"
             >
-              {paramError ?? addPolicy.error?.message}
+              {paramError ?? submit.error?.message}
             </div>
           )}
           <div className="flex justify-end gap-2 pt-1">
@@ -393,7 +417,7 @@ function AddDefaultPolicyDialog({
               onClick={() => {
                 // With a policy selected, Cancel steps back to the list so the
                 // user can pick another; only close the dialog from the list.
-                if (selected) {
+                if (selected && !editing) {
                   setSelected("");
                   setFactoryParams({});
                   setParamError(null);
@@ -407,10 +431,10 @@ function AddDefaultPolicyDialog({
             <Button
               type="button"
               onClick={handleAdd}
-              loading={addPolicy.isPending}
+              loading={submit.isPending}
               disabled={!selected}
             >
-              Add
+              {editing ? "Save" : "Add"}
             </Button>
           </div>
         </div>
@@ -435,6 +459,7 @@ export function PoliciesPage() {
   const updatePolicy = useUpdateDefaultPolicy();
   const deletePolicy = useDeleteDefaultPolicy();
   const [addOpen, setAddOpen] = useState(false);
+  const [editing, setEditing] = useState<DefaultPolicy | null>(null);
   const [deleteCandidate, setDeleteCandidate] = useState<DefaultPolicy | null>(null);
   const [pendingAction, setPendingAction] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -547,6 +572,7 @@ export function PoliciesPage() {
                   <div className="flex shrink-0 items-center gap-2">
                     {p.source !== "config" ? (
                       <>
+                        <AePolicyEditButton policy={p} entry={registryEntry} onEdit={setEditing} />
                         <Switch
                           checked={p.enabled}
                           onCheckedChange={(checked) =>
@@ -608,6 +634,15 @@ export function PoliciesPage() {
       </div>
 
       <AddDefaultPolicyDialog registry={registry} open={addOpen} onOpenChange={setAddOpen} />
+      {editing && (
+        <AddDefaultPolicyDialog
+          key={editing.id ?? editing.name}
+          registry={registry}
+          editing={editing}
+          open
+          onOpenChange={(open) => !open && setEditing(null)}
+        />
+      )}
 
       {/* Delete confirmation */}
       <Dialog
