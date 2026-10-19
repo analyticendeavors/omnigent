@@ -220,6 +220,26 @@ describe("AeRailTriage", () => {
     expect(screen.getByText("Unfiled")).toBeInTheDocument();
   });
 
+  it("lists one count's lines at a time below the shared row", () => {
+    show({ "ae.absorbed": "1", "ae.unfiled": "1" }, [
+      said("Absorbed: Tabler icon for the rail button, same file"),
+      said("UNFILED (target unreachable), file this yourself"),
+    ]);
+    const absorbed = screen.getByRole("button", { name: /Absorbed/ });
+    const unfiled = screen.getByRole("button", { name: /Unfiled/ });
+    fireEvent.click(absorbed);
+    expect(screen.getByRole("list", { name: "Absorbed" })).toHaveTextContent(
+      "Tabler icon for the rail button, same file",
+    );
+    fireEvent.click(unfiled);
+    expect(absorbed).toHaveAttribute("aria-expanded", "false");
+    expect(unfiled).toHaveAttribute("aria-expanded", "true");
+    expect(screen.queryByRole("list", { name: "Absorbed" })).toBeNull();
+    expect(screen.getByRole("list", { name: "Unfiled" })).toHaveTextContent(
+      "(target unreachable), file this yourself",
+    );
+  });
+
   it("shows Next and links the parked task from the lot", async () => {
     show({ "ae.next": "Say go to build the rail", "ae.task": "t9" });
     expect(screen.getByText("Say go to build the rail")).toBeInTheDocument();
