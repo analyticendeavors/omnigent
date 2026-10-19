@@ -1,6 +1,5 @@
-// Tests for Settings > Chat (omnigent-ae, 2026-10-18): the "open the session
-// rail in every session" switch reads and writes the rail store, and
-// /settings/chat routes to the section, with a nav item after Appearance.
+// Tests for Settings > Chat: the rail switch reads and writes the rail store,
+// and /settings/chat routes to the section, with a nav item after Appearance.
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";

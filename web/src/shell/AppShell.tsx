@@ -135,6 +135,7 @@ import { WorkspacePanel } from "./WorkspacePanel";
 import { SessionRail } from "./SessionRail";
 import { AeSessionRail } from "./AeSessionRail";
 import type { RightRailTab } from "./railTabs";
+import { aeRailForgetRestoredSession, aeRailRestoredPanelOpen } from "@/lib/aeSessionRail";
 import { isAeSplitPane } from "@/lib/aeSplitLayout";
 
 // Dev-only preview; lazy so the sample data never ships in production bundles.
@@ -446,7 +447,11 @@ export function AppShell() {
   // on non-session routes like the home page.
   const [rightPanelOpen, setRightPanelOpen] = useState(() =>
     conversationId
-      ? (readSessionWorkspaceState(conversationId).open ?? readDefaultWorkspacePanelOpen())
+      ? aeRailRestoredPanelOpen(
+          conversationId,
+          readSessionWorkspaceState(conversationId).open ?? readDefaultWorkspacePanelOpen(),
+          { sidebarWidth: sidebarOpen ? sidebarWidth : 0 },
+        )
       : false,
   );
   const [shareOpen, setShareOpen] = useState(false);
@@ -1042,6 +1047,7 @@ export function AppShell() {
     if (!conversationId) {
       // No session → no rail; false (not the open default) so rail-gated
       // effects stay quiet on non-session routes.
+      aeRailForgetRestoredSession();
       setRightPanelOpen(false);
       setRightRailTab("files");
       setSelectedFilePath(null);
@@ -1123,7 +1129,17 @@ export function AppShell() {
     const commentParam = searchParams.get("comment");
     const hasWorkspaceUrlSignal =
       urlFile !== null || (commentParam !== null && commentParam !== "");
-    setRightPanelOpen((persisted.open ?? readDefaultWorkspacePanelOpen()) || hasWorkspaceUrlSignal);
+    setRightPanelOpen(
+      aeRailRestoredPanelOpen(
+        conversationId,
+        (persisted.open ?? readDefaultWorkspacePanelOpen()) || hasWorkspaceUrlSignal,
+        {
+          sidebarWidth: sidebarOpen ? sidebarWidth : 0,
+          panelWidth: inlinePanelWidth,
+          urlSignal: hasWorkspaceUrlSignal,
+        },
+      ),
+    );
 
     stateConvRef.current = conversationId;
   }, [conversationId]); // eslint-disable-line react-hooks/exhaustive-deps

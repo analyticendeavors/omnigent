@@ -544,10 +544,7 @@ function cleanTitle(title: string | null | undefined): string | null {
   return clean || null;
 }
 
-/**
- * A pane frame's document title as a session name, or null when it names no
- * session: ChatPage's working dot is dropped, its untitled label and the app name ignored.
- */
+/** A pane frame's title as a session name without the working dot; null for the untitled label or app name. */
 export function aeFrameTitleName(
   frameTitle: string | null | undefined,
   appName = DEFAULT_APP_NAME,
@@ -558,9 +555,8 @@ export function aeFrameTitleName(
 }
 
 /**
- * A pane picker's name for a session, never its id: the list title, the fetched
- * title, the frame title, "Loading..." while loading, else "Untitled session";
- * archived sessions read "Name (archived)".
+ * A pane picker's name, never the id: list title, fetched title, frame title, "Loading...",
+ * else "Untitled session"; archived sessions read "Name (archived)".
  */
 export function aeSplitPaneName({
   listRow,

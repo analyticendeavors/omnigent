@@ -257,7 +257,7 @@ import {
   readBackgroundSessionTitlesEnabled,
   writeBackgroundSessionTitlesEnabled,
 } from "@/lib/backgroundSessionTitlesPreferences";
-import { AeChatSettingsSection } from "./settings/AeChatSettingsSection";
+import { AE_CHAT_SETTINGS, AeChatSettingsSection } from "./settings/AeChatSettingsSection";
 import { SettingsAiAccountsSection } from "./settings/SettingsAiAccountsSection";
 import { SettingsCustomizeSection } from "./settings/SettingsCustomizeSection";
 
@@ -323,7 +323,11 @@ export function SettingsPage() {
   return (
     <PageScroll contentClassName="px-8" extraBottom="2.5rem">
       {section === "appearance" && <AppearanceSection />}
-      {section === "chat" && <AeChatSettingsSection />}
+      {section === "chat" && (
+        <Section {...AE_CHAT_SETTINGS}>
+          <AeChatSettingsSection />
+        </Section>
+      )}
       {section === "general" && <GeneralSection />}
       {section === "ai-accounts" && <SettingsAiAccountsSection />}
       {section === "git" && <GitSection />}

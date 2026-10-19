@@ -1,8 +1,7 @@
 // The chat header's ways into the session rail: a desktop toggle beside the
 // right-panel toggle, and a "Session rail" item in the phone's session menu.
-// Both draw the rail's own icon (2026-10-18), one shape for open and closed,
-// so it no longer looks like the workspace panel's toggle beside it; the
-// button's pressed state and fill show whether the rail is open.
+// Both draw one icon for open and closed; the pressed state and fill show
+// whether the rail is open.
 
 import type { ReactNode } from "react";
 import type { AeRailIconName } from "@/components/aeRail/aeRailIcons";

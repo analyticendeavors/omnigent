@@ -1,15 +1,11 @@
 // The session rail (omnigent-ae, 2026-10-17): a right-hand column of folding
 // sections about the open session, reordered by drag (or the section menu on
-// a phone). Open state, order and folds are per device; the phone sheet's
-// open state is not saved.
-//
-// Open in every session (2026-10-18, on by default): on a desktop the rail
-// opens whenever a session opens, and a workspace, files or logs panel that
-// cannot fit beside it closes instead of the rail. The preference is saved
-// with the layout; Settings > Chat switches it.
+// a phone). Open state, order, folds and the open-in-every-session preference
+// are per device; the phone sheet's open state is not saved.
 
 import { useSyncExternalStore } from "react";
 import { create } from "zustand";
+import { aeTempPromotedTo } from "@/lib/aeTempPromotions";
 
 export const AE_RAIL_SECTIONS = [
   "triage",
@@ -99,7 +95,7 @@ function readPersisted(): Persisted {
       closedForPanel: parsed.closedForPanel === true && parsed.open !== true,
       order: normalizeOrder(parsed.order),
       folded,
-      // Layouts saved before the preference existed have no key: on.
+      // Absent or not false reads as on.
       openInEverySession: parsed.openInEverySession !== false,
     };
   } catch {
@@ -173,6 +169,76 @@ export const useAeSessionRailStore = create<AeSessionRailState>((set, get) => ({
       focus: { id, seq: (state.focus?.seq ?? 0) + 1 },
     })),
 }));
+
+/** The docked rail's width. */
+export const AE_RAIL_WIDTH_PX = 304;
+/** The narrowest chat the rail docks beside: the floor upstream's workspace panel keeps too. */
+const CHAT_MIN_WIDTH_PX = 480;
+/** The gap upstream keeps between the chat and the open workspace panel. */
+const WORKSPACE_GAP_PX = 8;
+/** The workspace panel's minimum width, for a restore that runs before its width is known. */
+const PANEL_MIN_WIDTH_PX = 240;
+
+/** True when the window, less the rest of the row, cannot fit the rail beside a 480 px chat. */
+export function aeRailFloats(viewportWidth: number, reservedWidth: number) {
+  return viewportWidth - reservedWidth - AE_RAIL_WIDTH_PX < CHAT_MIN_WIDTH_PX;
+}
+
+/** The row's width that is not the chat's: the sidebar, workspace panel (with its gap) and push panel. */
+export function aeRailReservedWidth(
+  sidebarWidth: number,
+  workspacePanelWidth: number,
+  pushPanelWidth: number,
+) {
+  const workspace = workspacePanelWidth > 0 ? workspacePanelWidth + WORKSPACE_GAP_PX : 0;
+  return sidebarWidth + workspace + pushPanelWidth;
+}
+
+/** True when a restored panel starts closed: setting on, desktop, no URL signal, no fit. */
+export function aeRailSkipsRestoredPanel(opts: {
+  everySession: boolean;
+  isMobile: boolean;
+  urlSignal: boolean;
+  viewport: number;
+  reserved: number;
+}): boolean {
+  if (!opts.everySession || opts.isMobile || opts.urlSignal) return false;
+  return aeRailFloats(opts.viewport, opts.reserved);
+}
+
+// The session id the shell last restored panels for, temp ids included.
+let restoredSession: string | null = null;
+
+/** True when *sessionId* is the server id the last restored temp id became. */
+export function aeRailIsPromotedSession(sessionId: string): boolean {
+  return restoredSession !== null && aeTempPromotedTo(restoredSession) === sessionId;
+}
+
+/** A restored workspace-panel open state, closed when `aeRailSkipsRestoredPanel` says so; never saved. */
+export function aeRailRestoredPanelOpen(
+  conversationId: string,
+  open: boolean,
+  opts: { sidebarWidth: number; panelWidth?: number; urlSignal?: boolean },
+): boolean {
+  const promoted = aeRailIsPromotedSession(conversationId);
+  restoredSession = conversationId;
+  const everySession = useAeSessionRailStore.getState().openInEverySession;
+  if (!open || promoted || !everySession || typeof window === "undefined") return open;
+  const panel = opts.panelWidth || PANEL_MIN_WIDTH_PX;
+  return !aeRailSkipsRestoredPanel({
+    everySession,
+    // The shell's phone breakpoint (Tailwind `md`).
+    isMobile: !window.matchMedia?.("(min-width: 768px)").matches,
+    urlSignal: opts.urlSignal ?? false,
+    viewport: window.innerWidth,
+    reserved: aeRailReservedWidth(opts.sidebarWidth, panel, 0),
+  });
+}
+
+/** Forget the restored session, when the shell shows none (home, the new chat page). */
+export function aeRailForgetRestoredSession(): void {
+  restoredSession = null;
+}
 
 useAeSessionRailStore.subscribe((state, previous) => {
   if (
