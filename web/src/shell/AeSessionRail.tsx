@@ -1,6 +1,7 @@
 // The session rail's container: the sections in the saved order, sortable by
 // their grips. Desktop docks it as a 304 px column (or floats it over the
-// chat's right edge when docking would squeeze the chat); a phone shows it as a sheet.
+// chat's right edge when docking would squeeze the chat, but never over an open
+// panel); a phone shows it as a sheet.
 
 import {
   type Announcements,
@@ -25,6 +26,7 @@ import {
   type RefObject,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -70,6 +72,38 @@ function useRailFloats(reservedWidth: number): boolean {
   return useSyncExternalStore(subscribeToResize, getSnapshot, () => false);
 }
 
+/**
+ * One pane at a time: when the open rail would float over an open panel, the one
+ * opened last stays and the other closes. A rail closed this way reopens once no
+ * panel needs the room (as it was, floating or not); one the user closed stays closed.
+ */
+function useOnePaneAtATime(
+  active: boolean,
+  panelOpen: boolean,
+  floating: boolean,
+  closePanels: () => void,
+) {
+  const open = useAeSessionRailStore((s) => s.open);
+  const closedForPanel = useAeSessionRailStore((s) => s.closedForPanel);
+  const setClosedForPanel = useAeSessionRailStore((s) => s.setClosedForPanel);
+  const previous = useRef({ open, panelOpen });
+  // A layout effect settles the overlap before the browser paints it.
+  useLayoutEffect(() => {
+    const was = previous.current;
+    previous.current = { open, panelOpen };
+    if (!active) return;
+    const clash = panelOpen && floating;
+    if (open && clash) {
+      if (!was.open && was.panelOpen) closePanels();
+      else setClosedForPanel(true);
+    } else if (!open && closedForPanel && !clash) {
+      setClosedForPanel(false);
+      // Reopening on its own is not the user opening the rail over a panel.
+      previous.current = { open: true, panelOpen };
+    }
+  });
+}
+
 function prefersReducedMotion(): boolean {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 }
@@ -99,6 +133,7 @@ export function AeSessionRail({
   pushPanelOpen = false,
   hidden = false,
   workspace,
+  closePushPanels,
 }: {
   /** A real (server) session id; the shell skips the rail for `temp:` ids. */
   sessionId: string;
@@ -112,6 +147,8 @@ export function AeSessionRail({
   hidden?: boolean;
   /** Lets the Changes and Agents rows open their workspace tabs. */
   workspace?: AeRailWorkspace;
+  /** Closes the files and logs push panels. */
+  closePushPanels?: () => void;
 }) {
   const isMobile = useIsMobileViewport();
   // Push panels share one width store; this reads the width they open at.
@@ -122,6 +159,17 @@ export function AeSessionRail({
   const open = useAeSessionRailStore((s) => s.open);
   const sheetOpen = useAeSessionRailStore((s) => s.sheetOpen);
   const setSheetOpen = useAeSessionRailStore((s) => s.setSheetOpen);
+  // The workspace closes through its own toggle even while a push panel hides it;
+  // left open, it would reappear over the rail once the push panel closed.
+  useOnePaneAtATime(
+    !isMobile && !hidden,
+    workspacePanelWidth > 0 || pushPanelOpen,
+    floating,
+    () => {
+      closePushPanels?.();
+      if (workspace?.open) workspace.toggle();
+    },
+  );
 
   // A sheet left open while the window widens past the phone layout closes.
   useEffect(() => {

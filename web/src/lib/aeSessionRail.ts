@@ -47,6 +47,8 @@ const STORAGE_KEY = "ae.sessionRail.v1";
 
 interface Persisted {
   open: boolean;
+  /** The rail closed to make room for a panel, not by the user; it reopens once the room is back. */
+  closedForPanel: boolean;
   order: AeRailSectionId[];
   folded: Partial<Record<AeRailSectionId, boolean>>;
 }
@@ -69,6 +71,7 @@ function defaultFolded(): Partial<Record<AeRailSectionId, boolean>> {
 function readPersisted(): Persisted {
   const fallback: Persisted = {
     open: false,
+    closedForPanel: false,
     order: [...AE_RAIL_SECTIONS],
     folded: defaultFolded(),
   };
@@ -82,7 +85,13 @@ function readPersisted(): Persisted {
         if (isSectionId(id) && typeof value === "boolean") folded[id] = value;
       }
     }
-    return { open: parsed.open === true, order: normalizeOrder(parsed.order), folded };
+    return {
+      open: parsed.open === true,
+      // Only a closed rail can be waiting for room.
+      closedForPanel: parsed.closedForPanel === true && parsed.open !== true,
+      order: normalizeOrder(parsed.order),
+      folded,
+    };
   } catch {
     return fallback;
   }
@@ -108,6 +117,8 @@ interface AeSessionRailState extends Persisted {
   focus: AeRailFocus | null;
   setOpen: (open: boolean) => void;
   toggle: () => void;
+  /** Close the rail for a panel that needs the room (true), or reopen it once the room is back (false). */
+  setClosedForPanel: (closed: boolean) => void;
   setSheetOpen: (open: boolean) => void;
   setFolded: (id: AeRailSectionId, folded: boolean) => void;
   /** Move a section to an index in the current order (drag and drop). */
@@ -124,8 +135,10 @@ export const useAeSessionRailStore = create<AeSessionRailState>((set, get) => ({
   ...readPersisted(),
   sheetOpen: false,
   focus: null,
-  setOpen: (open) => set({ open }),
-  toggle: () => set({ open: !get().open }),
+  // The user opening or closing the rail ends any wait for room.
+  setOpen: (open) => set({ open, closedForPanel: false }),
+  toggle: () => set({ open: !get().open, closedForPanel: false }),
+  setClosedForPanel: (closed) => set({ open: !closed, closedForPanel: closed }),
   setSheetOpen: (sheetOpen) => set({ sheetOpen }),
   setFolded: (id, folded) => set({ folded: { ...get().folded, [id]: folded } }),
   moveTo: (id, index) => {
@@ -143,7 +156,7 @@ export const useAeSessionRailStore = create<AeSessionRailState>((set, get) => ({
   resetOrder: () => set({ order: [...AE_RAIL_SECTIONS] }),
   focusSection: (id, opts) =>
     set((state) => ({
-      ...(opts?.sheet ? { sheetOpen: true } : { open: true }),
+      ...(opts?.sheet ? { sheetOpen: true } : { open: true, closedForPanel: false }),
       folded: { ...state.folded, [id]: false },
       focus: { id, seq: (state.focus?.seq ?? 0) + 1 },
     })),
@@ -152,10 +165,16 @@ export const useAeSessionRailStore = create<AeSessionRailState>((set, get) => ({
 useAeSessionRailStore.subscribe((state, previous) => {
   if (
     state.open !== previous.open ||
+    state.closedForPanel !== previous.closedForPanel ||
     state.order !== previous.order ||
     state.folded !== previous.folded
   ) {
-    writePersisted({ open: state.open, order: state.order, folded: state.folded });
+    writePersisted({
+      open: state.open,
+      closedForPanel: state.closedForPanel,
+      order: state.order,
+      folded: state.folded,
+    });
   }
 });
 
