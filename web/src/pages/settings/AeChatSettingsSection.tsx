@@ -1,9 +1,11 @@
 // Settings > Chat: options for the chat view. The rail preference lives in the
-// rail's own store (lib/aeSessionRail.ts), saved with its layout on this device.
+// rail's own store (lib/aeSessionRail.ts), saved with its layout on this device;
+// the session list's manual order lives on the server (AeSessionListSetting).
 
 import { useId } from "react";
 import { AeTokenDefragSetting } from "@/components/AeTokenDefrag";
 import { Switch } from "@/components/ui/switch";
+import { AeSessionListSetting } from "./AeSessionListSetting";
 import { useAeSessionRailStore } from "@/lib/aeSessionRail";
 
 /** The title and description SettingsPage's `Section` shell gives this section. */
@@ -44,6 +46,7 @@ export function AeChatSettingsSection() {
     <div data-testid="ae-chat-settings" className="flex flex-col gap-6">
       <OpenRailInEverySessionControl />
       <AeTokenDefragSetting />
+      <AeSessionListSetting />
     </div>
   );
 }

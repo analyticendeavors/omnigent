@@ -86,7 +86,6 @@ import {
   type DragStartEvent,
   MeasuringStrategy,
   MouseSensor,
-  pointerWithin,
   TouchSensor,
   useDraggable,
   useDroppable,
@@ -238,6 +237,16 @@ import { useAeProjectMarker, useAeSessionRowState } from "@/hooks/aeSessionActiv
 import { AeSlotsPill } from "@/components/AeSlotsPill";
 import { AeStatusMenu } from "@/shell/AeStatusMenu";
 import { AeSplitMenuItem } from "@/shell/AeSplitMenuItem";
+import { AeArchivedGroup } from "@/shell/AeArchivedGroup";
+import { AeMoveMenu, aeTriageTitle, useAeOrderRow } from "@/shell/AeSidebarRowOrder";
+import {
+  aeHandleOrderDrop,
+  aePointerWithin,
+  useAeFolderOrder,
+  useAePublishSidebarScopes,
+  useAeSidebarView,
+} from "@/shell/aeSidebarStore";
+import { AE_TRIAGE_GROUPS } from "@/lib/aeTriage";
 import { PrimaryNavLink } from "@/shell/PrimaryNavLink";
 import { useViewerId } from "@/hooks/useViewerId";
 import { useExtensions } from "@/extensions/ExtensionProvider";
@@ -1494,6 +1503,7 @@ function ProjectFolder({
   }, [expanded, name, watchedRows, registerFolder]);
   useEffect(() => () => registerFolder(name, null), [expanded, name, registerFolder]);
   const pinnedSet = useMemo(() => new Set(pinnedConversationIds), [pinnedConversationIds]);
+  const aeFolderOrder = useAeFolderOrder();
   const conversations = useMemo(() => {
     // Union the folder's own pages with its members from the globally-loaded
     // window, window rows winning: those carry the move overlay
@@ -1503,12 +1513,13 @@ function ProjectFolder({
     for (const c of query.data?.pages.flatMap((page) => page.data) ?? []) byId.set(c.id, c);
     for (const c of windowConversations) byId.set(c.id, c);
     // Pinned sessions live in the global Pinned section, not their folder.
-    return sortByUpdatedAtDesc(
+    const byUpdated = sortByUpdatedAtDesc(
       [...byId.values()].filter((c) => !pinnedSet.has(c.id)),
       activeOverride,
       frozenSortKeys,
     );
-  }, [query.data, windowConversations, pinnedSet, activeOverride, frozenSortKeys]);
+    return aeFolderOrder(byUpdated);
+  }, [query.data, windowConversations, pinnedSet, activeOverride, frozenSortKeys, aeFolderOrder]);
   const errors = useSessionErrorStates(conversations);
   const startingConversationId = useChatStore((s) =>
     s.status === "streaming" || s.terminalPending ? s.conversationId : null,
@@ -1761,7 +1772,11 @@ function ConversationList({
   );
   const grouped = view.grouping !== "default";
   const groupOrder: readonly string[] =
-    view.grouping === "status" ? STATUS_BUCKETS : UPDATED_BUCKETS;
+    view.grouping === "triage"
+      ? AE_TRIAGE_GROUPS
+      : view.grouping === "status"
+        ? STATUS_BUCKETS
+        : UPDATED_BUCKETS;
   // Status buckets read the unread mirror and the drafts store; only a status
   // view subscribes, so other views don't re-render the list on those writes.
   const statusView = view.grouping === "status" || view.ordering === "status";
@@ -1879,6 +1894,7 @@ function ConversationList({
     frozenKeysRef.current.clear();
     frozenStatusRef.current.clear();
   }, [orderFrozen]);
+  const ae = useAeSidebarView({ view, orderFrozen, conversationsQuery, searchQuery, activeTab });
 
   // Build sections: Pinned and Archived are peeled off; the rest splits into
   // the viewer's own sessions (Chats) and ones shared with them. Archived
@@ -1943,7 +1959,7 @@ function ConversationList({
         id,
         name,
         icon,
-        conversations: sortByUpdatedAtDesc(inProject, activeOverride, frozenKeys),
+        conversations: ae.applyOrder(sortByUpdatedAtDesc(inProject, activeOverride, frozenKeys)),
       };
     });
     // NOTE: empty projects are intentionally NOT filtered out. A project comes
@@ -1973,7 +1989,7 @@ function ConversationList({
     const allOrdered =
       view.ordering === "status"
         ? groupConversations(byUpdated, statusOf, STATUS_BUCKETS).flatMap((g) => g.conversations)
-        : byUpdated;
+        : ae.applyOrder(byUpdated);
     // Grouped views fold Shared into the groups too, so the first group takes
     // the Projects header's place.
     const splitShared = groupingUi && !grouped;
@@ -1987,8 +2003,8 @@ function ConversationList({
     const groupTitles = new Map<string, string>(
       ordered.map((c) => [
         c.id,
-        view.grouping === "status"
-          ? statusOf(c)
+        view.grouping === "status" || ae.triage
+          ? (ae.triageTitle(c) ?? statusOf(c))
           : updatedBucket(
               frozenKeys?.get(c.id) ??
                 (activeOverride?.id === c.id ? activeOverride.updatedAt : c.updated_at),
@@ -2020,6 +2036,7 @@ function ConversationList({
     unseenTick,
     draftIds,
     startingId,
+    ae,
   ]);
 
   const config = useContext(SidebarConfigContext);
@@ -2215,6 +2232,7 @@ function ConversationList({
       setActiveDrag(null);
       setOverPin(null);
       if (!dragged) return;
+      if (aeHandleOrderDrop(dragged.id, event.over)) return;
       const target = (event.over?.data.current as SidebarDropTarget | undefined) ?? null;
       const action = resolveSidebarDrop(
         { id: dragged.id, project: dragged.project, isPinned: dragged.isPinned },
@@ -2338,6 +2356,7 @@ function ConversationList({
     }
     return [...byId.values()];
   }, [sections.projectGroups, folderConversations]);
+  useAePublishSidebarScopes(ae, loadedSections, folderConversations, activeOverride, frozenKeys);
 
   // The bulk-action bar lives under the header of the section it targets, so it
   // unmounts when that section empties (e.g. every selected session
@@ -2607,7 +2626,7 @@ function ConversationList({
           const droppableContainers = args.droppableContainers.filter(
             (container) => (container.data.current?.type === "project-order") === ordering,
           );
-          if (!ordering) return pointerWithin({ ...args, droppableContainers });
+          if (!ordering) return aePointerWithin({ ...args, droppableContainers });
           // Restrict project drops to the project list inside the sidebar.
           if (args.pointerCoordinates) {
             const rects = droppableContainers
@@ -2858,6 +2877,11 @@ function ConversationList({
                             <ConversationSection
                               key={group.title}
                               title={group.title}
+                              titleContent={aeTriageTitle(
+                                ae,
+                                group.title,
+                                loadedSections.groupTitles,
+                              )}
                               conversations={group.conversations}
                               footer={
                                 index === sessionGroups.length - 1 ? sessionStatus : undefined
@@ -2908,6 +2932,11 @@ function ConversationList({
                       scrollRoot={scrollContainerRef}
                     />
                   )}
+                  <AeArchivedGroup
+                    show={ae.archivedGroup && !selectionMode}
+                    Section={ConversationSection}
+                    rowProps={sessionRowProps}
+                  />
                 </>
               )}
             </div>
@@ -3059,6 +3088,7 @@ function projectMarkerState(
 function SectionHeader({
   headerDrag,
   title,
+  titleContent,
   icon,
   marker,
   active = false,
@@ -3072,6 +3102,8 @@ function SectionHeader({
 }: {
   headerDrag?: ProjectHeaderDrag;
   title: string;
+  /** Shown in place of `title`, which stays the section's key. */
+  titleContent?: ReactNode;
   icon?: ReactNode;
   marker?: SessionState | null;
   /** Whether this header represents the current page context. */
@@ -3176,7 +3208,7 @@ function SectionHeader({
           />
         </span>
       ) : null}
-      <span className="min-w-0 truncate">{title}</span>
+      <span className="min-w-0 truncate">{titleContent ?? title}</span>
       {/* Trailing chevron, rotating on expand. Headers without a leading icon
             reveal it on desktop hover/focus; icon headers show it only on mobile
             (no hover) since desktop swaps the folder for the chevron above. */}
@@ -3239,8 +3271,13 @@ const GROUPING_LABELS: Record<SidebarGrouping, string> = {
   default: "Default",
   status: "Status",
   updated: "Updated",
+  triage: "Triage",
 };
-const ORDERING_LABELS: Record<SidebarOrdering, string> = { updated: "Updated", status: "Status" };
+const ORDERING_LABELS: Record<SidebarOrdering, string> = {
+  updated: "Updated",
+  status: "Status",
+  manual: "Manual",
+};
 const SHOW_LABELS: Record<SidebarShowField, string> = {
   updated: "Updated",
   environment: "Environment",
@@ -3588,6 +3625,7 @@ function SectionGroup({
 function ConversationSection({
   headerDrag,
   title,
+  titleContent,
   icon,
   marker,
   active,
@@ -3612,6 +3650,8 @@ function ConversationSection({
 }: {
   headerDrag?: ProjectHeaderDrag;
   title?: string;
+  /** Shown in place of `title` in the header. */
+  titleContent?: ReactNode;
   /** Optional icon rendered before the title (e.g. project folder icon). */
   icon?: ReactNode;
   /** When collapsed, the aggregate marker of hidden rows (same badge as a row). */
@@ -3664,6 +3704,7 @@ function ConversationSection({
         <div className="group/header relative">
           <SectionHeader
             title={title}
+            titleContent={titleContent}
             icon={icon}
             marker={marker}
             active={active}
@@ -4089,6 +4130,11 @@ function ConversationMenuItems({
       <AeSplitMenuItem
         components={C}
         sessionId={conversation.id}
+        onDone={() => setMenuOpen(false)}
+      />
+      <AeMoveMenu
+        components={C}
+        conversationId={conversation.id}
         onDone={() => setMenuOpen(false)}
       />
       {/* Stop / Archive / Delete are grouped at the bottom, below a
@@ -4755,6 +4801,10 @@ function ConversationRowImpl({
     data: { type: "pin-order", id: conversation.id },
     disabled: !pinOrder || !isPinned,
   });
+  const { setNodeRef: setAeOrderNodeRef, insertion: aeOrderInsertion } = useAeOrderRow(
+    conversation.id,
+    { isPinned, isArchived, selectionMode },
+  );
   // A pin dragged down lands below this row; one dragged up, or a new pin, above it.
   let pinInsertion: "before" | "after" | undefined;
   if (pinOrder?.draggingId && pinOrder.overId === conversation.id) {
@@ -4767,8 +4817,9 @@ function ConversationRowImpl({
       rowRef.current = node;
       setDragNodeRef(node);
       setPinOrderNodeRef(node);
+      setAeOrderNodeRef(node);
     },
-    [setDragNodeRef, setPinOrderNodeRef],
+    [setDragNodeRef, setPinOrderNodeRef, setAeOrderNodeRef],
   );
   // Timestamps of the last two clicks this row received, for the dblclick
   // rename guard: the list can reorder between the two clicks of a
@@ -5044,6 +5095,7 @@ function ConversationRowImpl({
           style={pinInsertion === "before" ? { top: 0 } : { bottom: 0 }}
         />
       )}
+      {aeOrderInsertion}
       {/* Right-click anywhere on the row opens the same actions as the kebab.
           Suppressed in selection mode (bulk-select owns the row), where the
           bare link is rendered instead. ContextMenuTrigger preventDefaults the
