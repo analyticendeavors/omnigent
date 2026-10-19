@@ -22,7 +22,9 @@ def register_context_usage_routes(
     permission_store: PermissionStore | None,
 ) -> None:
     @router.get("/sessions/{session_id}/context-usage")
-    async def context_usage(request: Request, session_id: str) -> dict[str, object]:
+    async def context_usage(
+        request: Request, session_id: str, fresh: bool = False
+    ) -> dict[str, object]:
         await require_access(
             get_user_id(request, auth_provider),
             session_id,
@@ -33,7 +35,8 @@ def register_context_usage_routes(
         result = await _forward_session_change_to_runner(
             session_id,
             runner_router,
-            {"type": "context_usage"},
+            # `fresh` asks the runner to skip its snapshot cache (turn end, refresh).
+            {"type": "context_usage", "fresh": True} if fresh else {"type": "context_usage"},
             timeout_s=35,
         )
         if result is None:

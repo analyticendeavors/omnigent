@@ -41,3 +41,23 @@ def test_offline_runner_answers_offline(db_uri, monkeypatch):
     body = response.json()
     assert body["available"] is False
     assert body["offline"] is True
+
+
+@pytest.mark.parametrize(
+    "query,payload",
+    [("", {"type": "context_usage"}), ("?fresh=true", {"type": "context_usage", "fresh": True})],
+)
+def test_fresh_query_reaches_the_runner(db_uri, monkeypatch, query, payload):
+    session = _seed_session(db_uri)
+    forward = AsyncMock(
+        return_value=_RunnerForwardResult(
+            status_code=200, body=json.dumps({"available": True}).encode()
+        )
+    )
+    monkeypatch.setattr(routes, "_forward_session_change_to_runner", forward)
+    with TestClient(_app(db_uri)) as client:
+        response = client.get(
+            f"/v1/sessions/{session}/context-usage{query}", headers={"X-Forwarded-Email": OWNER}
+        )
+    assert response.status_code == 200
+    assert forward.await_args.args[2] == payload

@@ -106,6 +106,7 @@ async def test_unknown_harness_is_pending_not_final(monkeypatch):
     response = await usage.handle_context_usage("session", harness=None, server_client=None)
     body = json.loads(response.body)
     assert body["pending"] is True
+    assert body["reason"] == "The runner has not loaded this session yet."
     assert "final" not in body
     probe.assert_not_called()
 
@@ -450,8 +451,17 @@ def _route_to_bridge(monkeypatch, bridge):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("raw", [None, {"model": {"id": "m"}}, {"session_id": "live"}])
-async def test_claude_still_starting_answers_pending_without_backoff(tmp_path, monkeypatch, raw):
+@pytest.mark.parametrize(
+    "raw,reason",
+    [
+        (None, "first status reading"),
+        ({"model": {"id": "m"}}, "No Claude session reading yet"),
+        ({"session_id": "live"}, "No live Claude process"),
+    ],
+)
+async def test_claude_still_starting_answers_pending_without_backoff(
+    tmp_path, monkeypatch, raw, reason
+):
     """No reading yet, no session id yet, or no live process: pending, never a failure."""
     bridge = tmp_path / "bridge"
     bridge.mkdir()
@@ -467,6 +477,8 @@ async def test_claude_still_starting_answers_pending_without_backoff(tmp_path, m
     body = json.loads(response.body)
     assert body["available"] is False
     assert body["pending"] is True
+    # The real not-ready reason, shown if the web's quiet retries run out.
+    assert reason in body["reason"]
     assert "starting" not in usage._failures
     probe.assert_not_called()
 
@@ -494,3 +506,31 @@ async def test_real_probe_failure_answers_error_and_starts_backoff(monkeypatch, 
     assert "broken" in usage._failures
     assert "ValueError" in caplog.text
     assert "/srv/a/b" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_fresh_read_skips_the_snapshot_cache(monkeypatch):
+    """A turn end or a refresh must not get the pre-turn snapshot back from the cache."""
+    import omnigent.runner.native as native
+
+    monkeypatch.setattr(
+        native, "_claude_native_bridge_id_for_session", AsyncMock(return_value="bridge")
+    )
+    monkeypatch.setattr(usage, "launch_config", lambda _: (["claude"], {}, "/tmp", "fresh-id"))
+    probe = AsyncMock(side_effect=[{"available": True, "n": 1}, {"available": True, "n": 2}])
+    monkeypatch.setattr(usage, "probe", probe)
+    usage._cache.clear()
+    usage._failures.clear()
+
+    async def read(**kwargs):
+        response = await usage.handle_context_usage(
+            "fresh", harness="claude-native", server_client=None, **kwargs
+        )
+        return json.loads(response.body)["n"]
+
+    assert await read() == 1
+    assert await read() == 1
+    assert await read(fresh=True) == 2
+    # The fresh answer replaces the cached one.
+    assert await read() == 2
+    assert probe.await_count == 2
