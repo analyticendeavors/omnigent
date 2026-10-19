@@ -2,7 +2,7 @@
 // the URL round trip, the remembered layout and its migration from version 1,
 // "Open in split view"'s merge rule, the presets (slot rectangles, growing,
 // shrinking, switching, swapping), the divider math in both axes and the
-// pane-frame check, and the pane pickers' session names (2026-10-18).
+// pane-frame check, and the pane pickers' session names.
 
 import { beforeEach, describe, expect, it } from "vitest";
 import {

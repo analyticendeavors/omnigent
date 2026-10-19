@@ -3,9 +3,8 @@
 // dividers in both axes, following a frame that moves to another session, the
 // single-session fallback below 1024px, and every layout preset: the picker,
 // where each preset puts its panes, growing on add, shrinking on close,
-// swapping panes, and a version 1 layout restored after the upgrade. Pane
-// names (2026-10-18): a pane outside the list page fetches its own row and the
-// picker shows its name, never its id.
+// swapping panes, a version 1 layout restored after the upgrade, and pane
+// names for sessions outside the list page.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -15,13 +14,18 @@ import { AE_SPLIT_STORAGE_KEY, readStoredLayout } from "@/lib/aeSplitLayout";
 
 const mocks = vi.hoisted(() => ({
   conversations: [] as { id: string; title: string | null }[],
+  listFailed: false,
   fetchConversationById: vi.fn(),
 }));
 
 vi.mock("@/hooks/useConversations", () => ({
-  useConversations: () => ({
-    data: { pages: [{ data: mocks.conversations }], pageParams: [undefined] },
-  }),
+  useConversations: () =>
+    mocks.listFailed
+      ? { data: undefined, isError: true }
+      : {
+          data: { pages: [{ data: mocks.conversations }], pageParams: [undefined] },
+          isError: false,
+        },
   fetchConversationById: mocks.fetchConversationById,
 }));
 
@@ -74,6 +78,7 @@ beforeEach(() => {
     { id: "b", title: "Beta" },
     { id: "c", title: "Gamma" },
   ];
+  mocks.listFailed = false;
   mocks.fetchConversationById.mockReset();
   mocks.fetchConversationById.mockResolvedValue(null);
   setViewport(true);
@@ -247,24 +252,48 @@ describe("AeSplitPage pane names", () => {
     expect(Array.from(picker.options).find((o) => o.value === "u")!.text).toBe("Untitled session");
   });
 
-  it("refetches a fetched pane when its frame's title changes", async () => {
+  function frameTitled(i: number, id: string, title: string) {
+    const win = { location: { pathname: `/c/${id}` }, document: { title } };
+    Object.defineProperty(frames()[i]!, "contentWindow", { configurable: true, value: win });
+    return win;
+  }
+
+  function poll() {
+    act(() => {
+      vi.advanceTimersByTime(AE_SPLIT_FRAME_POLL_MS);
+    });
+  }
+
+  it("refetches a fetched pane only when its frame's name changes to another name", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     mocks.fetchConversationById.mockResolvedValue({ id: OLD_ID, title: null, archived: false });
     renderAt(`/split?s=${OLD_ID}`);
     await waitFor(() => expect(mocks.fetchConversationById).toHaveBeenCalledTimes(1));
-    const frame = frames()[0]!;
-    const win = { location: { pathname: `/c/${OLD_ID}` }, document: { title: "Omnigent" } };
-    Object.defineProperty(frame, "contentWindow", { configurable: true, value: win });
-    act(() => {
-      vi.advanceTimersByTime(AE_SPLIT_FRAME_POLL_MS);
-    });
+    const win = frameTitled(0, OLD_ID, "Omnigent");
+    poll();
+    // The first name after load is not a change.
+    win.document.title = "\u25CF First name";
+    poll();
+    await waitFor(() => expect(pickerText(0)).toBe("First name"));
+    expect(mocks.fetchConversationById).toHaveBeenCalledTimes(1);
     mocks.fetchConversationById.mockResolvedValue({ id: OLD_ID, title: "Fresh name" });
-    win.document.title = "\u25CF Fresh name";
-    act(() => {
-      vi.advanceTimersByTime(AE_SPLIT_FRAME_POLL_MS);
-    });
+    win.document.title = "Fresh name";
+    poll();
     await waitFor(() => expect(mocks.fetchConversationById).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(pickerText(0)).toBe("Fresh name"));
+  });
+
+  it("fetches panes when the list fails, and a failed fetch falls back to the frame title", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mocks.listFailed = true;
+    mocks.fetchConversationById.mockRejectedValue(new Error("502 Bad Gateway"));
+    renderAt(`/split?s=${OLD_ID},b`);
+    await waitFor(() => expect(mocks.fetchConversationById).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(pickerText(0)).toBe("Untitled session"));
+    frameTitled(1, "b", "Framed beta");
+    poll();
+    await waitFor(() => expect(pickerText(1)).toBe("Framed beta"));
+    expect(screen.getByTestId("ae-split-row").textContent).not.toContain("Loading...");
   });
 });
 

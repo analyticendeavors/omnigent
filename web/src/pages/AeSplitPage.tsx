@@ -15,10 +15,8 @@
 // preset change or a swap moves a frame on screen without moving it in the
 // DOM: a moved iframe reloads, which would drop a pane's stream and draft.
 //
-// Names, never ids (2026-10-18): a pane holding a session outside the first
-// page of the session list (archived, older, shared, just created) fetches its
-// own row, and every picker label goes through `aeSplitPaneName`, so a picker
-// never shows a raw session id.
+// A pane on a session the list page does not hold fetches its own row, and
+// every picker label goes through `aeSplitPaneName`.
 
 import {
   GripVerticalIcon,
@@ -241,17 +239,17 @@ export function AeSplitPage() {
     });
   }, []);
 
-  const { data } = useConversations("", false, { enabled: desktop });
+  const { data, isError: listFailed } = useConversations("", false, { enabled: desktop });
   const conversations = useMemo(() => data?.pages.flatMap((p) => p.data) ?? [], [data]);
   const byId = useMemo(() => new Map(conversations.map((c) => [c.id, c])), [conversations]);
   const appName = useAppName();
 
-  // Panes on a session the list page does not hold fetch their own row (at
-  // most four), once the list has answered.
+  // Panes the list does not hold fetch their own row (at most four) once the
+  // list has loaded or failed.
+  const listSettled = data !== undefined || listFailed;
   const missing = useMemo(
-    () =>
-      data === undefined ? [] : layout.panes.filter((p): p is string => p !== null && !byId.has(p)),
-    [data, layout.panes, byId],
+    () => (listSettled ? layout.panes.filter((p): p is string => p !== null && !byId.has(p)) : []),
+    [listSettled, layout.panes, byId],
   );
   const paneQueries = useQueries({
     queries: missing.map((id) => ({
@@ -264,7 +262,7 @@ export function AeSplitPage() {
   const fetched = new Map<string, { row: AeSplitPaneRow | null; loading: boolean }>();
   missing.forEach((id, i) => {
     const q = paneQueries[i];
-    fetched.set(id, { row: q?.data ?? null, loading: q?.data === undefined && !q?.isError });
+    fetched.set(id, { row: q?.data ?? null, loading: q?.isPending === true });
   });
 
   const paneName = (pane: AeSplitPane, frameTitle: string | undefined): string => {
@@ -274,7 +272,7 @@ export function AeSplitPage() {
       listRow: byId.get(pane),
       fetchedRow: own?.row,
       frameTitle,
-      loading: data === undefined || own?.loading === true,
+      loading: !listSettled || own?.loading === true,
       appName,
     });
   };
@@ -288,20 +286,21 @@ export function AeSplitPage() {
     if (next !== current) navigate(`/split?${next}`, { replace: true });
   }, [layout, navigate, param, layoutParam]);
 
-  // A fetched pane refetches its row when its frame's title changes (a rename,
-  // or a new session getting its first title), so the picker catches up.
+  // A fetched pane refetches its row when its frame's name changes to another name (a rename).
   const queryClient = useQueryClient();
-  const seenFrameNames = useRef(new Map<string, string | null>());
+  const seenFrameNames = useRef(new Map<string, string>());
   useEffect(() => {
+    const seen = seenFrameNames.current;
+    for (const id of seen.keys()) if (!layout.panes.includes(id)) seen.delete(id);
     layout.panes.forEach((pane, i) => {
       if (pane === null || byId.has(pane)) return;
-      const title = frameTitles[keys[i] ?? -1];
-      if (title === undefined) return;
-      const name = aeFrameTitleName(title, appName);
-      const seen = seenFrameNames.current;
-      const changed = seen.has(pane) && seen.get(pane) !== name;
+      const name = aeFrameTitleName(frameTitles[keys[i] ?? -1], appName);
+      if (name === null) return;
+      const before = seen.get(pane);
       seen.set(pane, name);
-      if (changed) void queryClient.invalidateQueries({ queryKey: aeSplitPaneQueryKey(pane) });
+      if (before !== undefined && before !== name) {
+        void queryClient.invalidateQueries({ queryKey: aeSplitPaneQueryKey(pane) });
+      }
     });
   }, [frameTitles, layout.panes, keys, byId, appName, queryClient]);
 
