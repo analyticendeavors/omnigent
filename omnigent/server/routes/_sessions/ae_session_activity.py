@@ -17,13 +17,14 @@ this replica's relay caches.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from omnigent.runtime import pending_elicitations
 from omnigent.server.routes._sessions.common import (
     _session_background_task_count_cache,
     _session_blocked_on_cache,
     _session_status_cache,
 )
-from omnigent.server.routes._sessions.helpers import _session_status_from_cache
 
 # Relay statuses that mean a child is still doing work; ``waiting`` covers a
 # child parked on an approval. A child still booting has no relay status yet,
@@ -67,7 +68,9 @@ def session_active_child_count(child_session_ids: list[str]) -> int:
     return busy
 
 
-def session_turn_active(session_id: str, db_status: str | None, *, starting: bool) -> bool:
+def session_turn_active(
+    own_status: Literal["idle", "running", "failed"], *, starting: bool
+) -> bool:
     """
     Return whether a session's own turn is running, ignoring its children.
 
@@ -75,20 +78,26 @@ def session_turn_active(session_id: str, db_status: str | None, *, starting: boo
     row whose own turn ended but whose agents still work needs this to read
     as waiting on them.
 
-    :param session_id: Session/conversation identifier, e.g. ``"conv_abc123"``.
-    :param db_status: The row's persisted ``live_status``, used on a cache miss.
+    :param own_status: The session's own list status, without the child
+        roll-up, e.g. ``"idle"``.
     :param starting: Whether a message is still waiting on the session's runner.
     :returns: ``True`` while the session's own turn runs or is starting.
     """
-    return starting or _session_status_from_cache(session_id, db_status) == "running"
+    return starting or own_status == "running"
 
 
 def session_blocked_on(session_id: str) -> str | None:
     """
     Return the dialog a running session is parked on, if any.
 
+    Served only while the session's cached status is still running or
+    waiting, so a status change that bypassed the publish path cannot leave
+    a row parked on a dialog that is gone.
+
     :param session_id: Session/conversation identifier, e.g. ``"conv_abc123"``.
     :returns: The reason from the session's latest status edge, e.g.
         ``"input needed"``, or ``None`` when it is not parked.
     """
+    if _session_status_cache.get(session_id) not in ("running", "waiting"):
+        return None
     return _session_blocked_on_cache.get(session_id)

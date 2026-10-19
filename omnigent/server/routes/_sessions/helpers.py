@@ -1333,6 +1333,8 @@ def _session_status_with_child_rollup(
     conversation_id: str,
     child_session_ids: list[str],
     db_status: str | None = None,
+    *,
+    own_status: Literal["idle", "running", "failed"] | None = None,
 ) -> Literal["idle", "running", "failed"]:
     """
     Map a session's cached status plus direct child activity to list status.
@@ -1350,10 +1352,13 @@ def _session_status_with_child_rollup(
         local cache has no entry (this replica doesn't hold the runner
         tunnel). The child rollup below stays cache-only — a wrong-pod
         miss there just skips the parent's roll-up spinner, best-effort.
+    :param own_status: The session's own status when the caller already
+        read it, so both reads agree; ``None`` reads it here.
     :returns: One of ``"idle"``, ``"running"``, ``"failed"`` for the
         session-list row.
     """
-    own_status = _session_status_from_cache(conversation_id, db_status)
+    if own_status is None:
+        own_status = _session_status_from_cache(conversation_id, db_status)
     if own_status == "running":
         return "running"
     # Background shells outliving a turn do NOT make the row running: the

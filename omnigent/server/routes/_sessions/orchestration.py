@@ -217,6 +217,7 @@ from omnigent.server.routes._sessions.common import (  # noqa: F401
     _session_active_response_cache,
     _session_background_task_count_cache,
     _session_background_tasks_cache,
+    _session_blocked_on_cache,
     _session_mcp_startup_cache,
     _session_sandbox_status_cache,
     _session_status_cache,
@@ -1020,13 +1021,17 @@ def _build_session_list_item(
     # dots straight from the list (no separate fetch). Built per-user here —
     # `user_id` is the requesting caller, never broadcast to other viewers.
     viewer_last_seen, viewer_unread = _read_state_entry(user_id, conv.id)
+    # Read once so ``status`` and ``turn_active`` come from the same values.
+    own_status = _session_status_from_cache(conv.id, conv.live_status)
+    starting = _session_is_starting(conv.id)
     return SessionListItem(
         id=conv.id,
         agent_id=conv.agent_id,
         agent_name=agent_names_by_id.get(conv.agent_id),
         status=_list_status_with_starting(
-            _session_status_with_child_rollup(conv.id, child_session_ids, conv.live_status),
+            _session_status_with_child_rollup(conv.id, child_session_ids, own_status=own_status),
             conv.id,
+            starting=starting,
         ),
         created_at=conv.created_at,
         updated_at=conv.updated_at,
@@ -1071,9 +1076,7 @@ def _build_session_list_item(
         project_id=conv.project_id,
         background_task_count=session_background_task_count(conv.id),
         active_child_count=session_active_child_count(child_session_ids),
-        turn_active=session_turn_active(
-            conv.id, conv.live_status, starting=_session_is_starting(conv.id)
-        ),
+        turn_active=session_turn_active(own_status, starting=starting),
         blocked_on=session_blocked_on(conv.id),
     )
 
@@ -3437,6 +3440,7 @@ async def _publish_runner_recovered_status_impl(
         if last_error is None or last_error.get("code") != "runner_disconnected":
             return
     _session_status_cache[session_id] = "idle"
+    _session_blocked_on_cache.pop(session_id, None)
     session_live_state.persist_live_status(session_id, "idle")
     event = SessionStatusEvent(
         type="session.status",
@@ -6623,15 +6627,21 @@ def _session_is_starting(conversation_id: str) -> bool:
 def _list_status_with_starting(
     status: Literal["idle", "running", "failed"],
     conversation_id: str,
+    *,
+    starting: bool | None = None,
 ) -> Literal["idle", "running", "failed"]:
     """
     Promote an idle session with a message still waiting on its runner to running.
 
     :param status: Rolled-up list status for the session.
     :param conversation_id: Session/conversation identifier.
+    :param starting: :func:`_session_is_starting` when the caller already
+        read it; ``None`` reads it here.
     :returns: ``"running"`` for a booting session, else *status* unchanged.
     """
-    if status == "idle" and _session_is_starting(conversation_id):
+    if starting is None:
+        starting = _session_is_starting(conversation_id)
+    if status == "idle" and starting:
         return "running"
     return status
 
@@ -7103,6 +7113,7 @@ def _relinquish_session_live_state(session_id: str) -> None:
     """Drop local live state for a session now owned by another replica."""
     _session_status_cache.pop(session_id, None)
     _session_active_response_cache.pop(session_id, None)
+    _session_blocked_on_cache.pop(session_id, None)
     session_live_state.forget_live_status(session_id)
 
 
@@ -11355,6 +11366,8 @@ async def _run_runner_status_probe(
                 if isinstance(payload, dict):
                     raw = str(payload.get("status", "idle"))
                     _session_status_cache[session_id] = raw
+                    # The probe names no dialog, so a remembered one may be gone.
+                    _session_blocked_on_cache.pop(session_id, None)
                     if raw in ("idle", "running", "waiting", "failed"):
                         session_live_state.persist_live_status(session_id, raw)
                     _runner_status_probe_backoff.pop(session_id, None)
