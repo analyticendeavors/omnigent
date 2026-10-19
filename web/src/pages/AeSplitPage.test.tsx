@@ -3,21 +3,26 @@
 // dividers in both axes, following a frame that moves to another session, the
 // single-session fallback below 1024px, and every layout preset: the picker,
 // where each preset puts its panes, growing on add, shrinking on close,
-// swapping panes, and a version 1 layout restored after the upgrade.
+// swapping panes, and a version 1 layout restored after the upgrade. Pane
+// names (2026-10-18): a pane outside the list page fetches its own row and the
+// picker shows its name, never its id.
 
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AE_SPLIT_STORAGE_KEY, readStoredLayout } from "@/lib/aeSplitLayout";
 
 const mocks = vi.hoisted(() => ({
   conversations: [] as { id: string; title: string | null }[],
+  fetchConversationById: vi.fn(),
 }));
 
 vi.mock("@/hooks/useConversations", () => ({
   useConversations: () => ({
     data: { pages: [{ data: mocks.conversations }], pageParams: [undefined] },
   }),
+  fetchConversationById: mocks.fetchConversationById,
 }));
 
 import { AE_SPLIT_FRAME_POLL_MS, AeSplitPage, initialLayout } from "./AeSplitPage";
@@ -44,14 +49,17 @@ function Where() {
 }
 
 function renderAt(url: string) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <MemoryRouter initialEntries={[url]}>
-      <Routes>
-        <Route path="/split" element={<AeSplitPage />} />
-        <Route path="*" element={<p>single</p>} />
-      </Routes>
-      <Where />
-    </MemoryRouter>,
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[url]}>
+        <Routes>
+          <Route path="/split" element={<AeSplitPage />} />
+          <Route path="*" element={<p>single</p>} />
+        </Routes>
+        <Where />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
@@ -66,6 +74,8 @@ beforeEach(() => {
     { id: "b", title: "Beta" },
     { id: "c", title: "Gamma" },
   ];
+  mocks.fetchConversationById.mockReset();
+  mocks.fetchConversationById.mockResolvedValue(null);
   setViewport(true);
 });
 
@@ -201,6 +211,62 @@ function sessionsBySlot() {
     .sort((a, b) => Number(a.dataset.slot) - Number(b.dataset.slot))
     .map((p) => p.dataset.session);
 }
+
+describe("AeSplitPage pane names", () => {
+  const OLD_ID = "e264fbf40762483e8162b9da917dea7d";
+
+  function pickerText(i: number): string {
+    const picker = screen.getAllByTestId("ae-split-picker")[i] as HTMLSelectElement;
+    return picker.options[picker.selectedIndex]!.text;
+  }
+
+  it("names a pane outside the list page from its own fetch, never its id", async () => {
+    mocks.fetchConversationById.mockImplementation(async (id: string) =>
+      id === OLD_ID ? { id, title: "\u{1F7E1} Old work", archived: true } : null,
+    );
+    renderAt(`/split?s=a,${OLD_ID}`);
+    expect(pickerText(1)).toBe("Loading...");
+    await waitFor(() => expect(pickerText(1)).toBe("Old work (archived)"));
+    expect(mocks.fetchConversationById).toHaveBeenCalledWith(OLD_ID);
+    expect(mocks.fetchConversationById).toHaveBeenCalledTimes(1);
+    const pane = screen.getAllByTestId("ae-split-pane")[1]!;
+    expect(pane.getAttribute("aria-label")).toBe("Old work (archived)");
+    expect(screen.getByTestId("ae-split-row").textContent).not.toContain(OLD_ID);
+  });
+
+  it("falls back to Untitled session when the fetch finds nothing", async () => {
+    renderAt(`/split?s=${OLD_ID}`);
+    await waitFor(() => expect(pickerText(0)).toBe("Untitled session"));
+    expect(screen.getByTestId("ae-split-row").textContent).not.toContain(OLD_ID);
+  });
+
+  it("names an untitled list row Untitled session, not its id", () => {
+    mocks.conversations = [...mocks.conversations, { id: "u", title: null }];
+    renderAt("/split?s=a");
+    const picker = screen.getAllByTestId("ae-split-picker")[0] as HTMLSelectElement;
+    expect(Array.from(picker.options).find((o) => o.value === "u")!.text).toBe("Untitled session");
+  });
+
+  it("refetches a fetched pane when its frame's title changes", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mocks.fetchConversationById.mockResolvedValue({ id: OLD_ID, title: null, archived: false });
+    renderAt(`/split?s=${OLD_ID}`);
+    await waitFor(() => expect(mocks.fetchConversationById).toHaveBeenCalledTimes(1));
+    const frame = frames()[0]!;
+    const win = { location: { pathname: `/c/${OLD_ID}` }, document: { title: "Omnigent" } };
+    Object.defineProperty(frame, "contentWindow", { configurable: true, value: win });
+    act(() => {
+      vi.advanceTimersByTime(AE_SPLIT_FRAME_POLL_MS);
+    });
+    mocks.fetchConversationById.mockResolvedValue({ id: OLD_ID, title: "Fresh name" });
+    win.document.title = "\u25CF Fresh name";
+    act(() => {
+      vi.advanceTimersByTime(AE_SPLIT_FRAME_POLL_MS);
+    });
+    await waitFor(() => expect(mocks.fetchConversationById).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(pickerText(0)).toBe("Fresh name"));
+  });
+});
 
 describe("AeSplitPage layout presets", () => {
   it("shows the seven presets in the top bar with the current one pressed", () => {

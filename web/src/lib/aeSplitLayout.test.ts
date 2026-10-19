@@ -2,7 +2,7 @@
 // the URL round trip, the remembered layout and its migration from version 1,
 // "Open in split view"'s merge rule, the presets (slot rectangles, growing,
 // shrinking, switching, swapping), the divider math in both axes and the
-// pane-frame check.
+// pane-frame check, and the pane pickers' session names (2026-10-18).
 
 import { beforeEach, describe, expect, it } from "vitest";
 import {
@@ -15,6 +15,8 @@ import {
   addEmptyPane,
   addPane,
   addedSlot,
+  aeFrameTitleName,
+  aeSplitPaneName,
   applyPreset,
   cleanPanes,
   defaultPreset,
@@ -490,5 +492,63 @@ describe("isAeSplitPane", () => {
     const other = { name: "preview", parent: {} } as unknown as Window;
     expect(isAeSplitPane(other)).toBe(false);
     expect(isAeSplitPane(window)).toBe(false);
+  });
+});
+
+describe("aeSplitPaneName", () => {
+  it("prefers the list title, then the fetched title, then the frame title", () => {
+    expect(aeSplitPaneName({ listRow: { title: "List" }, fetchedRow: { title: "Fetched" } })).toBe(
+      "List",
+    );
+    expect(aeSplitPaneName({ listRow: { title: " " }, fetchedRow: { title: "Fetched" } })).toBe(
+      "Fetched",
+    );
+    expect(aeSplitPaneName({ fetchedRow: { title: null }, frameTitle: "Framed" })).toBe("Framed");
+  });
+
+  it("reads the frame title without the working dot, the app name or the untitled label", () => {
+    expect(aeSplitPaneName({ frameTitle: "\u25CF Busy one" })).toBe("Busy one");
+    expect(aeSplitPaneName({ frameTitle: "Omnigent" })).toBe("Untitled session");
+    expect(aeSplitPaneName({ frameTitle: "Acme AI", appName: "Acme AI" })).toBe("Untitled session");
+    expect(aeSplitPaneName({ frameTitle: "New session" })).toBe("Untitled session");
+    expect(aeFrameTitleName("\u25CF New session")).toBeNull();
+  });
+
+  it("says Loading... while a fetch is in flight and nothing else names the session", () => {
+    expect(aeSplitPaneName({ loading: true })).toBe("Loading...");
+    expect(aeSplitPaneName({ loading: true, frameTitle: "Framed" })).toBe("Framed");
+  });
+
+  it("falls back to Untitled session", () => {
+    expect(aeSplitPaneName({})).toBe("Untitled session");
+    expect(aeSplitPaneName({ listRow: { title: null }, fetchedRow: null })).toBe(
+      "Untitled session",
+    );
+  });
+
+  it("drops a leading legacy status glyph so names match the sidebar", () => {
+    expect(aeSplitPaneName({ listRow: { title: "\u{1F7E1} Fix the build" } })).toBe(
+      "Fix the build",
+    );
+    expect(aeSplitPaneName({ fetchedRow: { title: "\u{1F5C2}\uFE0F Notes" } })).toBe("Notes");
+    expect(aeSplitPaneName({ listRow: { title: "\u{1F534}" }, frameTitle: "Framed" })).toBe(
+      "Framed",
+    );
+  });
+
+  it("marks an archived session", () => {
+    expect(aeSplitPaneName({ fetchedRow: { title: "Old", archived: true } })).toBe(
+      "Old (archived)",
+    );
+    expect(aeSplitPaneName({ fetchedRow: { title: null, archived: true } })).toBe(
+      "Untitled session (archived)",
+    );
+  });
+
+  it("never returns the session id, whatever it is given", () => {
+    const id = "e264fbf40762483e8162b9da917dea7d";
+    for (const input of [{}, { loading: true }, { frameTitle: "" }, { fetchedRow: null }]) {
+      expect(aeSplitPaneName(input)).not.toContain(id);
+    }
   });
 });
