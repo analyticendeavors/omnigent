@@ -65,6 +65,15 @@ function resizeTo(value: number) {
   });
 }
 
+const setupMatchMedia = window.matchMedia;
+
+function reduceMotion(reduce: boolean) {
+  window.matchMedia = ((query: string) => ({
+    ...setupMatchMedia(query),
+    matches: reduce && query.includes("prefers-reduced-motion"),
+  })) as typeof window.matchMedia;
+}
+
 beforeEach(() => {
   useAeSessionRailStore.setState({
     open: true,
@@ -75,10 +84,14 @@ beforeEach(() => {
     focus: null,
     openInEverySession: false,
   });
+  // The layout tests take the rail's instant path; the slide has its own tests.
+  reduceMotion(true);
 });
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
+  window.matchMedia = setupMatchMedia;
   isMobileMock.mockReturnValue(false);
   // Put jsdom's own property back, accessor or not, for the tests after this one.
   if (jsdomInnerWidth) Object.defineProperty(window, "innerWidth", jsdomInnerWidth);
@@ -271,6 +284,75 @@ describe("AeSessionRail", () => {
     expect(within(sheet).getByText("triage body for s-1")).toBeInTheDocument();
     fireEvent.click(within(sheet).getByRole("button", { name: "Close" }));
     expect(useAeSessionRailStore.getState().sheetOpen).toBe(false);
+  });
+});
+
+describe("AeSessionRail slide", () => {
+  beforeEach(() => {
+    reduceMotion(false);
+    vi.useFakeTimers();
+  });
+
+  it("slides out after it closes, then unmounts after the workspace panel's 300 ms", () => {
+    render(<AeSessionRail sessionId="s-1" />);
+    const rail = screen.getByTestId("ae-session-rail");
+    expect(rail).toHaveAttribute("data-state", "open");
+    expect(rail.style.width).toBe("304px");
+    act(() => useAeSessionRailStore.getState().setOpen(false));
+    expect(rail).toHaveAttribute("data-state", "closed");
+    expect(rail).toHaveAttribute("aria-hidden", "true");
+    expect(rail.style.width).toBe("0px");
+    act(() => vi.advanceTimersByTime(299));
+    expect(screen.getByTestId("ae-session-rail")).toBe(rail);
+    act(() => vi.advanceTimersByTime(1));
+    expect(screen.queryByTestId("ae-session-rail")).toBeNull();
+  });
+
+  it("reopened mid-slide, slides back in without remounting", () => {
+    render(<AeSessionRail sessionId="s-1" />);
+    const rail = screen.getByTestId("ae-session-rail");
+    act(() => useAeSessionRailStore.getState().setOpen(false));
+    act(() => vi.advanceTimersByTime(150));
+    act(() => useAeSessionRailStore.getState().setOpen(true));
+    act(() => vi.advanceTimersByTime(300));
+    expect(screen.getByTestId("ae-session-rail")).toBe(rail);
+    expect(rail).toHaveAttribute("data-state", "open");
+    expect(rail.style.width).toBe("304px");
+  });
+
+  it("making way for a panel, slides out in its own row instead of floating over it", () => {
+    // 1024 - 220 - 304 leaves the chat 500 px: dock.
+    const { rerender } = render(<AeSessionRail sessionId="s-1" sidebarWidth={220} />);
+    rerender(<AeSessionRail sessionId="s-1" sidebarWidth={220} workspacePanelWidth={240} />);
+    const rail = screen.getByTestId("ae-session-rail");
+    expect(rail).toHaveAttribute("data-state", "closed");
+    expect(rail).not.toHaveAttribute("data-floating");
+    act(() => vi.advanceTimersByTime(300));
+    expect(screen.queryByTestId("ae-session-rail")).toBeNull();
+  });
+
+  it("leaves at once when it would float over the panel even on its own", () => {
+    // A 600 px sidebar leaves the chat 120 px beside the rail: it floats with no panel.
+    const { rerender } = render(<AeSessionRail sessionId="s-1" sidebarWidth={600} />);
+    expect(screen.getByTestId("ae-session-rail")).toHaveAttribute("data-floating", "true");
+    rerender(<AeSessionRail sessionId="s-1" sidebarWidth={600} workspacePanelWidth={240} />);
+    expect(screen.queryByTestId("ae-session-rail")).toBeNull();
+  });
+
+  it("closed by hand while floating, slides out floating", () => {
+    render(<AeSessionRail sessionId="s-1" sidebarWidth={600} />);
+    fireEvent.click(screen.getByRole("button", { name: "Hide session rail" }));
+    const rail = screen.getByTestId("ae-session-rail");
+    expect(rail).toHaveAttribute("data-state", "closed");
+    expect(rail).toHaveAttribute("data-floating", "true");
+    act(() => vi.advanceTimersByTime(300));
+    expect(screen.queryByTestId("ae-session-rail")).toBeNull();
+  });
+
+  it("hides at once while the right panel is maximized", () => {
+    const { rerender } = render(<AeSessionRail sessionId="s-1" />);
+    rerender(<AeSessionRail sessionId="s-1" hidden />);
+    expect(screen.queryByTestId("ae-session-rail")).toBeNull();
   });
 });
 
