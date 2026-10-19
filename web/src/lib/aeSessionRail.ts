@@ -2,6 +2,11 @@
 // sections about the open session, reordered by drag (or the section menu on
 // a phone). Open state, order and folds are per device; the phone sheet's
 // open state is not saved.
+//
+// Open in every session (2026-10-18, on by default): on a desktop the rail
+// opens whenever a session opens, and a workspace, files or logs panel that
+// cannot fit beside it closes instead of the rail. The preference is saved
+// with the layout; Settings > Chat switches it.
 
 import { useSyncExternalStore } from "react";
 import { create } from "zustand";
@@ -51,6 +56,8 @@ interface Persisted {
   closedForPanel: boolean;
   order: AeRailSectionId[];
   folded: Partial<Record<AeRailSectionId, boolean>>;
+  /** Open the rail whenever a session opens (desktop only). */
+  openInEverySession: boolean;
 }
 
 function isSectionId(value: unknown): value is AeRailSectionId {
@@ -74,6 +81,7 @@ function readPersisted(): Persisted {
     closedForPanel: false,
     order: [...AE_RAIL_SECTIONS],
     folded: defaultFolded(),
+    openInEverySession: true,
   };
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -91,6 +99,8 @@ function readPersisted(): Persisted {
       closedForPanel: parsed.closedForPanel === true && parsed.open !== true,
       order: normalizeOrder(parsed.order),
       folded,
+      // Layouts saved before the preference existed have no key: on.
+      openInEverySession: parsed.openInEverySession !== false,
     };
   } catch {
     return fallback;
@@ -120,6 +130,7 @@ interface AeSessionRailState extends Persisted {
   /** Close the rail for a panel that needs the room (true), or reopen it once the room is back (false). */
   setClosedForPanel: (closed: boolean) => void;
   setSheetOpen: (open: boolean) => void;
+  setOpenInEverySession: (on: boolean) => void;
   setFolded: (id: AeRailSectionId, folded: boolean) => void;
   /** Move a section to an index in the current order (drag and drop). */
   moveTo: (id: AeRailSectionId, index: number) => void;
@@ -140,6 +151,7 @@ export const useAeSessionRailStore = create<AeSessionRailState>((set, get) => ({
   toggle: () => set({ open: !get().open, closedForPanel: false }),
   setClosedForPanel: (closed) => set({ open: !closed, closedForPanel: closed }),
   setSheetOpen: (sheetOpen) => set({ sheetOpen }),
+  setOpenInEverySession: (openInEverySession) => set({ openInEverySession }),
   setFolded: (id, folded) => set({ folded: { ...get().folded, [id]: folded } }),
   moveTo: (id, index) => {
     const order = get().order.filter((other) => other !== id);
@@ -167,13 +179,15 @@ useAeSessionRailStore.subscribe((state, previous) => {
     state.open !== previous.open ||
     state.closedForPanel !== previous.closedForPanel ||
     state.order !== previous.order ||
-    state.folded !== previous.folded
+    state.folded !== previous.folded ||
+    state.openInEverySession !== previous.openInEverySession
   ) {
     writePersisted({
       open: state.open,
       closedForPanel: state.closedForPanel,
       order: state.order,
       folded: state.folded,
+      openInEverySession: state.openInEverySession,
     });
   }
 });

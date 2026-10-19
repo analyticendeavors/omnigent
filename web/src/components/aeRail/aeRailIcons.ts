@@ -237,24 +237,6 @@ export const AE_RAIL_ICONS = {
     ],
     ["path", { d: "M15 4l0 16" }],
   ],
-  // layout-sidebar-right-collapse
-  railCollapse: [
-    [
-      "path",
-      { d: "M4 6a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2l0 -12" },
-    ],
-    ["path", { d: "M15 4v16" }],
-    ["path", { d: "M9 10l2 2l-2 2" }],
-  ],
-  // layout-sidebar-right-expand
-  railExpand: [
-    [
-      "path",
-      { d: "M4 6a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2l0 -12" },
-    ],
-    ["path", { d: "M15 4v16" }],
-    ["path", { d: "M10 10l-2 2l2 2" }],
-  ],
   // list-details
   listDetails: [
     ["path", { d: "M13 5h8" }],
