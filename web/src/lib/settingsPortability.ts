@@ -7,6 +7,7 @@
 // holds a non-default value.
 
 import { COMPOSER_SEND_SHORTCUT_STORAGE_KEY } from "./composerSendShortcutPreferences";
+import { AE_TOKEN_DEFRAG_KEY } from "./aeTokenDefrag";
 
 /** localStorage keys that constitute exportable user preferences. */
 const EXPORTABLE_KEYS = [
@@ -23,6 +24,7 @@ const EXPORTABLE_KEYS = [
   "omnigent:hide-unconfigured-harnesses",
   "omnigent:default-base-branch",
   "omnigent:always-use-worktree",
+  AE_TOKEN_DEFRAG_KEY,
   COMPOSER_SEND_SHORTCUT_STORAGE_KEY,
   "web-theme",
 ] as const;

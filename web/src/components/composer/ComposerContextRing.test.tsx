@@ -1,8 +1,9 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { aeHoldContextRing, resetAeTokenDefrag } from "@/lib/aeTokenDefrag";
 import { ComposerContextRing } from "./ComposerContextRing";
 
 function renderRing(contextWindow: number | null, tokensUsed: number | null) {
@@ -13,9 +14,20 @@ function renderRing(contextWindow: number | null, tokensUsed: number | null) {
   );
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  resetAeTokenDefrag();
+});
 
 describe("ComposerContextRing", () => {
+  it("shows the held count while the token defrag lands, then the live one", () => {
+    aeHoldContextRing(800);
+    renderRing(1000, 250);
+    expect(screen.getByLabelText("80% of context used")).toBeInTheDocument();
+    act(() => aeHoldContextRing(null));
+    expect(screen.getByLabelText("25% of context used")).toBeInTheDocument();
+  });
+
   it("renders nothing when the context window is unknown or zero", () => {
     expect(renderRing(null, 100).container).toBeEmptyDOMElement();
     expect(renderRing(0, 100).container).toBeEmptyDOMElement();

@@ -1,0 +1,387 @@
+/* Token defrag (omnigent-ae): the composer tray's compaction strip and its hidden
+   Win98-style window. Pills are positioned by the frame loop, so they carry no
+   transitions except the final pour into the context ring. */
+
+.ae-defrag {
+  --ae-defrag-message: oklch(70.4% 0.14 182.5);
+  --ae-defrag-summary: var(--brand-accent);
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  height: 100%;
+  margin: 0 0.25rem 0 0.5rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: default;
+}
+
+.ae-defrag:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.ae-defrag-strip {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  mask-image: linear-gradient(90deg, #000 82%, transparent);
+}
+
+.ae-defrag[data-state="failed"] .ae-defrag-strip {
+  opacity: 0.35;
+  transition: opacity 600ms ease;
+  animation: ae-defrag-shake 240ms ease-in-out 2;
+}
+
+.ae-defrag-pill,
+.ae-defrag-ghost {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  height: 8px;
+  margin-top: -4px;
+  border-radius: 4px;
+}
+
+.ae-defrag-pill {
+  will-change: transform;
+}
+
+.ae-defrag-pill[data-kind="message"] {
+  background: var(--ae-defrag-message);
+}
+
+.ae-defrag-pill[data-kind="summary"] {
+  z-index: 1;
+  background: var(--ae-defrag-summary);
+  transition: box-shadow 160ms ease;
+}
+
+.ae-defrag-pill[data-kind="summary"][data-gulp] {
+  box-shadow: 0 0 8px color-mix(in oklch, var(--ae-defrag-summary) 85%, transparent);
+}
+
+.ae-defrag-pill[data-docked] {
+  z-index: 2;
+}
+
+.ae-defrag-pill[data-flying] {
+  z-index: 3;
+  box-shadow: 0 3px 8px color-mix(in oklch, var(--ae-defrag-message) 60%, transparent);
+}
+
+.ae-defrag-ghost {
+  outline: 1px dashed color-mix(in oklch, var(--muted-foreground) 45%, transparent);
+  outline-offset: -1px;
+  transition: opacity 700ms ease;
+}
+
+.ae-defrag-pill.ae-defrag-pour {
+  transition:
+    transform 520ms cubic-bezier(0.55, 0, 0.75, 0.4),
+    width 520ms ease,
+    opacity 420ms ease 120ms;
+}
+
+.ae-defrag-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  transition: opacity 300ms ease;
+}
+
+.ae-defrag-label[data-landed] {
+  opacity: 0;
+}
+
+.ae-defrag[data-state="failed"] .ae-defrag-label {
+  color: var(--destructive);
+}
+
+@keyframes ae-defrag-shake {
+  0%,
+  100% {
+    transform: none;
+  }
+  25% {
+    transform: translateX(-2px);
+  }
+  75% {
+    transform: translateX(2px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ae-defrag-pill,
+  .ae-defrag-pill.ae-defrag-pour,
+  .ae-defrag-ghost {
+    transition: none;
+  }
+
+  .ae-defrag[data-state="failed"] .ae-defrag-strip {
+    animation: none;
+  }
+}
+
+/* The hidden window: a Win98 Disk Defragmenter drawn in CSS. */
+
+.ae-w98 {
+  position: relative;
+  width: min(480px, calc(100vw - 2rem));
+  padding: 3px;
+  color: #000;
+  font:
+    11px Tahoma,
+    "MS Sans Serif",
+    "Segoe UI",
+    system-ui,
+    sans-serif;
+  background: #c0c0c0;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow:
+    inset 1px 1px #fff,
+    inset -1px -1px #808080,
+    0 8px 24px rgb(0 0 0 / 0.35);
+}
+
+.ae-w98-title {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 18px;
+  padding: 0 2px 0 4px;
+  color: #fff;
+  font-weight: 700;
+  background: linear-gradient(90deg, #000080, #1084d0);
+}
+
+.ae-w98-title > span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ae-w98 .ae-w98-tb {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 16px;
+  min-width: 0;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  background: #c0c0c0;
+  box-shadow:
+    inset -1px -1px #000,
+    inset 1px 1px #fff,
+    inset -2px -2px #808080,
+    inset 2px 2px #dfdfdf;
+}
+
+.ae-w98 button.ae-w98-tb {
+  margin-left: 2px;
+  cursor: pointer;
+}
+
+.ae-w98-tb svg {
+  width: 8px;
+  height: 8px;
+  stroke: #000;
+  stroke-width: 4;
+}
+
+.ae-w98-body {
+  display: grid;
+  gap: 6px;
+  padding: 6px 4px 4px;
+}
+
+.ae-w98-field {
+  padding: 3px;
+  background: #fff;
+  box-shadow:
+    inset 1px 1px #808080,
+    inset -1px -1px #fff,
+    inset 2px 2px #000,
+    inset -2px -2px #dfdfdf;
+}
+
+.ae-w98-map {
+  display: grid;
+  grid-template-columns: repeat(40, 1fr);
+  gap: 1px;
+}
+
+.ae-w98-map > i {
+  display: block;
+  aspect-ratio: 9 / 10;
+}
+
+.ae-w98-message {
+  background: #18f0ec;
+  box-shadow: inset -1px -1px #04a8a6;
+}
+
+.ae-w98-summary {
+  background: #0752ae;
+  box-shadow: inset 1px 1px #3881df;
+}
+
+.ae-w98-writing {
+  background: #d32f2f;
+  box-shadow: inset -1px -1px #8e1b1b;
+}
+
+.ae-w98-reading {
+  background: #22b14c;
+  box-shadow: inset -1px -1px #11702d;
+}
+
+.ae-w98-free {
+  background: #fdfbfc;
+}
+
+.ae-w98-unmovable {
+  background: repeating-linear-gradient(135deg, #0752ae 0 1px, #cfe9ff 1px 3px);
+}
+
+.ae-w98-buffer {
+  background: #d4d0c8;
+  box-shadow: inset -1px -1px #a8a49c;
+}
+
+.ae-w98-legend {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px 10px;
+  padding: 2px;
+}
+
+.ae-w98-legend span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ae-w98-legend i {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  outline: 1px solid #808080;
+}
+
+.ae-w98-foot {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.ae-w98-stat {
+  display: grid;
+  gap: 4px;
+}
+
+.ae-w98-prog {
+  min-width: 60px;
+  height: 16px;
+  padding: 2px;
+  background: #c0c0c0;
+  box-shadow:
+    inset 1px 1px #808080,
+    inset -1px -1px #fff;
+}
+
+.ae-w98-fill {
+  height: 100%;
+  background: repeating-linear-gradient(90deg, #000080 0 8px, transparent 8px 10px);
+}
+
+.ae-w98-btns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.ae-w98 button:not(.ae-w98-tb) {
+  min-width: 74px;
+  padding: 4px 10px;
+  color: #000;
+  font: inherit;
+  background: #c0c0c0;
+  border: 0;
+  cursor: pointer;
+  box-shadow:
+    inset -1px -1px #000,
+    inset 1px 1px #fff,
+    inset -2px -2px #808080,
+    inset 2px 2px #dfdfdf;
+}
+
+.ae-w98 button:disabled {
+  color: #808080;
+  text-shadow: 1px 1px #fff;
+  cursor: default;
+}
+
+.ae-w98-boxwrap {
+  position: absolute;
+  inset: 22px 3px 3px;
+  display: grid;
+  place-items: center;
+}
+
+.ae-w98-box {
+  width: min(300px, 92%);
+}
+
+.ae-w98-msg {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 10px 8px;
+}
+
+.ae-w98-msg p {
+  margin: 0;
+  white-space: pre-line;
+}
+
+.ae-w98-ico {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  color: #fff;
+  font:
+    700 15px/26px Georgia,
+    serif;
+  text-align: center;
+  background: #000080;
+  border-radius: 50%;
+}
+
+.ae-w98-ok {
+  display: flex;
+  justify-content: center;
+  padding-bottom: 8px;
+}
+
+@media (max-width: 560px) {
+  .ae-w98-foot {
+    grid-template-columns: 1fr;
+  }
+}

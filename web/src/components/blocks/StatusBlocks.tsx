@@ -31,6 +31,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { shortModelName } from "@/components/CostRoutingControl";
+import { AeCompactionTotals } from "@/components/AeTokenDefrag";
 import { copyText } from "@/lib/clipboard";
 import { getSessionSignInLink } from "@/lib/sessionsApi";
 import { useChatStore } from "@/store/chatStore";
@@ -772,11 +773,12 @@ export function RetryIndicator({
  * rendered as a `Shimmer` in `ChatPage` to match the "Working…"
  * indicator.
  */
-export function CompactionMarker() {
+export function CompactionMarker({ itemId }: { itemId?: string }) {
   return (
     <div className="flex items-center gap-2 text-muted-foreground text-sm italic">
       <ShrinkIcon className="size-3" />
       <span>Conversation compacted</span>
+      {itemId && <AeCompactionTotals itemId={itemId} />}
     </div>
   );
 }
