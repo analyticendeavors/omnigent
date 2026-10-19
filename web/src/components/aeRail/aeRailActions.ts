@@ -9,6 +9,8 @@ export type AeRailWorkspaceTab = "changes" | "subagents";
 export interface AeRailWorkspace {
   /** The workspace panel is open. */
   open: boolean;
+  /** The panel is sliding open or shut, as its header toggle makes it; a session restore snaps it. */
+  animating: boolean;
   /** The session has a workspace panel to open at all. */
   available: boolean;
   /** Open or close the panel the way the header's toggle does. */

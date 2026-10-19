@@ -46,9 +46,10 @@ function sectionOrder(): string[] {
   );
 }
 
-function workspace(open: boolean, available = true) {
+function workspace(open: boolean, available = true, animating = false) {
   return {
     open,
+    animating,
     available,
     toggle: vi.fn(),
     showTab: vi.fn(),
@@ -323,15 +324,66 @@ describe("AeSessionRail slide", () => {
     expect(rail.style.width).toBe("304px");
   });
 
-  it("making way for a panel, slides out in its own row instead of floating over it", () => {
+  it("making way for the workspace panel as it slides open, slides out in its own row", () => {
     // 1024 - 220 - 304 leaves the chat 500 px: dock.
-    const { rerender } = render(<AeSessionRail sessionId="s-1" sidebarWidth={220} />);
-    rerender(<AeSessionRail sessionId="s-1" sidebarWidth={220} workspacePanelWidth={240} />);
+    const { rerender } = render(
+      <AeSessionRail sessionId="s-1" sidebarWidth={220} workspace={workspace(false)} />,
+    );
+    // The header toggle opens the panel with its slide.
+    rerender(
+      <AeSessionRail
+        sessionId="s-1"
+        sidebarWidth={220}
+        workspacePanelWidth={240}
+        workspace={workspace(true, true, true)}
+      />,
+    );
     const rail = screen.getByTestId("ae-session-rail");
     expect(rail).toHaveAttribute("data-state", "closed");
     expect(rail).not.toHaveAttribute("data-floating");
     act(() => vi.advanceTimersByTime(300));
     expect(screen.queryByTestId("ae-session-rail")).toBeNull();
+  });
+
+  it("leaves at once for a workspace panel a session switch snaps open", () => {
+    const { rerender } = render(
+      <AeSessionRail sessionId="s-1" sidebarWidth={220} workspace={workspace(false)} />,
+    );
+    // The switch render still carries s-1's state: a panel just toggled shut is animating.
+    rerender(
+      <AeSessionRail sessionId="s-2" sidebarWidth={220} workspace={workspace(false, true, true)} />,
+    );
+    // The shell's restore then opens s-2's panel and cancels the motion in one batch.
+    rerender(
+      <AeSessionRail
+        sessionId="s-2"
+        sidebarWidth={220}
+        workspacePanelWidth={240}
+        workspace={workspace(true)}
+      />,
+    );
+    expect(screen.queryByTestId("ae-session-rail")).toBeNull();
+    expect(useAeSessionRailStore.getState().closedForPanel).toBe(true);
+  });
+
+  it("finishes its slide when the panel's motion flag drops before the rail is gone", () => {
+    const props = { sessionId: "s-1", sidebarWidth: 220 };
+    const { rerender } = render(<AeSessionRail {...props} workspace={workspace(false)} />);
+    rerender(
+      <AeSessionRail
+        {...props}
+        workspacePanelWidth={240}
+        workspace={workspace(true, true, true)}
+      />,
+    );
+    const rail = screen.getByTestId("ae-session-rail");
+    act(() => vi.advanceTimersByTime(100));
+    rerender(<AeSessionRail {...props} workspacePanelWidth={240} workspace={workspace(true)} />);
+    expect(screen.getByTestId("ae-session-rail")).toBe(rail);
+    expect(rail).toHaveAttribute("data-state", "closed");
+    act(() => vi.advanceTimersByTime(200));
+    expect(screen.queryByTestId("ae-session-rail")).toBeNull();
+    expect(useAeSessionRailStore.getState()).toMatchObject({ open: false, closedForPanel: true });
   });
 
   it("leaves at once when it would float over the panel even on its own", () => {

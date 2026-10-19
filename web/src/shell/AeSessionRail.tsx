@@ -76,12 +76,14 @@ function useRailFloats(reservedWidth: number): boolean {
  * opened last stays and the other closes. A rail closed this way reopens once no
  * panel needs the room (as it was, floating or not); one the user closed stays closed.
  * With "open in every session" on, a session switch (not a new chat's id swap) opens the rail.
- * Returns whether the rail last made way for a panel opening, not one already open.
+ * Returns whether the rail last made way for a panel sliding open, not one already open
+ * or snapped open by a session restore.
  */
 function useOnePaneAtATime(
   sessionId: string,
   active: boolean,
   panelOpen: boolean,
+  panelAnimating: boolean,
   floating: boolean,
   closePanels: () => void,
 ): boolean {
@@ -112,7 +114,7 @@ function useOnePaneAtATime(
       if (!was.open && was.panelOpen) closePanels();
       else {
         // On mount `was` is this render, so a panel restored open counts as already open.
-        setMadeWayForOpening(!was.panelOpen);
+        setMadeWayForOpening(!was.panelOpen && panelAnimating);
         setClosedForPanel(true);
       }
     } else if (!open && closedForPanel && !clash) {
@@ -124,6 +126,7 @@ function useOnePaneAtATime(
     active,
     open,
     panelOpen,
+    panelAnimating,
     floating,
     closedForPanel,
     everySession,
@@ -204,6 +207,7 @@ export function AeSessionRail({
     sessionId,
     !isMobile && !hidden,
     panelOpen,
+    workspace?.animating ?? false,
     floating,
     () => {
       closePushPanels?.();
@@ -211,8 +215,8 @@ export function AeSessionRail({
     },
   );
   // Making way, the rail slides out in its row only while the workspace panel grows
-  // into the room: a push panel takes it at once, and a rail that floats even alone
-  // would cross the panel. Closed by hand, it slides out where it is.
+  // into the room: a push panel or a restored workspace takes it at once, and a rail
+  // that floats even alone would cross the panel. Closed by hand, it slides out where it is.
   const present = useRailPresence(
     open,
     !closedForPanel || (madeWayForOpening && !pushPanelOpen && !floatingAlone),
