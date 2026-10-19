@@ -100,6 +100,31 @@ describe("aeRowState", () => {
     });
   });
 
+  it("reads a row that is not open as waiting when its own turn is over", () => {
+    const parent = row({ status: "running", active_child_count: 2, turn_active: false });
+    expect(aeRowState(parent, { kind: "running" }, base).state).toEqual({
+      kind: "waiting",
+      agents: 2,
+      sinceEventMs: null,
+    });
+  });
+
+  it("keeps a row running while its own turn runs, or when the server sends no flag", () => {
+    const active = row({ status: "running", active_child_count: 2, turn_active: true });
+    expect(aeRowState(active, { kind: "running" }, base).state).toEqual({ kind: "running" });
+    const unknown = row({ status: "running", active_child_count: 2 });
+    expect(aeRowState(unknown, { kind: "running" }, base).state).toEqual({ kind: "running" });
+  });
+
+  it("never turns a row quiet while the server says it is parked on a dialog", () => {
+    const stale = row({
+      status: "running",
+      updated_at: NOW_S - 20 * 60,
+      blocked_on: "input needed",
+    });
+    expect(aeRowState(stale, { kind: "running" }, base).state).toEqual({ kind: "running" });
+  });
+
   it("reads an idle row with children as waiting", () => {
     const state = aeRowState(
       row({ background_task_count: 1, active_child_count: 2, updated_at: NOW_S - 120 }),
@@ -164,6 +189,22 @@ describe("aeProjectMarker", () => {
       quietForMs: 600_000,
     });
     expect(aeProjectMarker({ kind: "running" }, [quiet, fresh], opts)).toEqual({
+      kind: "running",
+    });
+  });
+
+  it("turns a running marker waiting when its running rows only wait on agents", () => {
+    const rows = [
+      row({ id: "a", status: "running", active_child_count: 2, turn_active: false }),
+      row({ id: "b", active_child_count: 1 }),
+    ];
+    expect(aeProjectMarker({ kind: "running" }, rows, opts)).toEqual({
+      kind: "waiting",
+      agents: 3,
+      sinceEventMs: null,
+    });
+    const busy = row({ id: "c", status: "running", turn_active: true });
+    expect(aeProjectMarker({ kind: "running" }, [...rows, busy], opts)).toEqual({
       kind: "running",
     });
   });

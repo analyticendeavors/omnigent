@@ -2844,6 +2844,10 @@ class SessionListItem(BaseModel):
     # can still read as waiting on work. See ae_session_activity.
     background_task_count: int | None = None
     active_child_count: int | None = None
+    # ``status`` rolls up busy children; these carry the session's own turn
+    # and the dialog it is parked on, so every row reads like the open chat.
+    turn_active: bool | None = None
+    blocked_on: str | None = None
 
 
 class SessionList(BaseModel):

@@ -636,6 +636,10 @@ _session_active_response_cache: WorkspaceScopedCache[str, str] = WorkspaceScoped
 _session_background_task_count_cache: WorkspaceScopedCache[str, int] = WorkspaceScopedCache()
 
 
+# The dialog a running session is parked on, from its latest status edge.
+_session_blocked_on_cache: WorkspaceScopedCache[str, str] = WorkspaceScopedCache()
+
+
 # Per-shell detail behind the tally above, kept sticky in lockstep with it (see
 # ``_publish_status``) so a reload/reconnect can restore it. Absent when the
 # count cache is absent, or when a runner reported only the count with no detail.
@@ -1250,6 +1254,7 @@ __all__ = [
     "_session_active_response_cache",
     "_session_background_task_count_cache",
     "_session_background_tasks_cache",
+    "_session_blocked_on_cache",
     "_session_mcp_startup_cache",
     "_session_sandbox_status_cache",
     "_session_status_cache",

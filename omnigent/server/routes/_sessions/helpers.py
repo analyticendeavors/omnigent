@@ -234,6 +234,7 @@ from omnigent.server.routes._sessions.common import (  # noqa: F401
     _session_active_response_cache,
     _session_background_task_count_cache,
     _session_background_tasks_cache,
+    _session_blocked_on_cache,
     _session_mcp_startup_cache,
     _session_sandbox_status_cache,
     _session_status_cache,
@@ -4999,6 +5000,10 @@ def _publish_status(
             _session_active_response_cache[session_id] = response_id
     else:
         _session_active_response_cache.pop(session_id, None)
+    if blocked_on is not None and status in ("running", "waiting"):
+        _session_blocked_on_cache[session_id] = blocked_on
+    else:
+        _session_blocked_on_cache.pop(session_id, None)
     # Keep the background-shell tally sticky alongside the status (see the
     # cache's declaration). A ``Stop`` hook reports an authoritative count
     # (``None`` is never sent by it): a positive count sets the tally, and
