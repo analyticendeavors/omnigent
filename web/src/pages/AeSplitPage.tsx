@@ -14,6 +14,11 @@
 // absolutely from the layout's rectangles and rendered in a fixed order, so a
 // preset change or a swap moves a frame on screen without moving it in the
 // DOM: a moved iframe reloads, which would drop a pane's stream and draft.
+//
+// Names, never ids (2026-10-18): a pane holding a session outside the first
+// page of the session list (archived, older, shared, just created) fetches its
+// own row, and every picker label goes through `aeSplitPaneName`, so a picker
+// never shows a raw session id.
 
 import {
   GripVerticalIcon,
@@ -35,9 +40,10 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { Navigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { type Conversation, useConversations } from "@/hooks/useConversations";
+import { fetchConversationById, useConversations } from "@/hooks/useConversations";
 import {
   AE_SPLIT_MAX_PANES,
   AE_SPLIT_MIN_VIEWPORT_PX,
@@ -48,8 +54,11 @@ import {
   type AeSplitPreset,
   type AeSplitPresetId,
   type AeSplitRect,
+  type AeSplitPaneRow,
   addPane,
   addedSlot,
+  aeFrameTitleName,
+  aeSplitPaneName,
   applyPreset,
   equalGrid,
   fitLayout,
@@ -73,6 +82,7 @@ import {
   swapPanes,
   writeStoredLayout,
 } from "@/lib/aeSplitLayout";
+import { useAppName } from "@/lib/branding";
 import { useNavigate, useSearchParams } from "@/lib/routing";
 
 /** How often the page reads each frame's location and title (a frame's SPA navigation fires no event). */
@@ -134,16 +144,9 @@ function layoutQuery(layout: AeSplitLayout): string {
   return `s=${formatSplitParam(layout.panes)}${l ? `&l=${l}` : ""}`;
 }
 
-function sessionLabel(
-  pane: AeSplitPane,
-  frameTitle: string | undefined,
-  byId: Map<string, Conversation>,
-): string {
-  if (pane === null) return "New session";
-  const title = byId.get(pane)?.title?.trim();
-  if (title) return title;
-  if (frameTitle) return frameTitle;
-  return pane;
+/** Query key of one pane's own row fetch, for a session the list page does not hold. */
+export function aeSplitPaneQueryKey(id: string): readonly [string, string] {
+  return ["ae-split-pane", id] as const;
 }
 
 /** A CSS length at *fraction* of the pane area, shifted by *px*. */
@@ -241,6 +244,40 @@ export function AeSplitPage() {
   const { data } = useConversations("", false, { enabled: desktop });
   const conversations = useMemo(() => data?.pages.flatMap((p) => p.data) ?? [], [data]);
   const byId = useMemo(() => new Map(conversations.map((c) => [c.id, c])), [conversations]);
+  const appName = useAppName();
+
+  // Panes on a session the list page does not hold fetch their own row (at
+  // most four), once the list has answered.
+  const missing = useMemo(
+    () =>
+      data === undefined ? [] : layout.panes.filter((p): p is string => p !== null && !byId.has(p)),
+    [data, layout.panes, byId],
+  );
+  const paneQueries = useQueries({
+    queries: missing.map((id) => ({
+      queryKey: aeSplitPaneQueryKey(id),
+      queryFn: () => fetchConversationById(id),
+      enabled: desktop,
+      staleTime: 30_000,
+    })),
+  });
+  const fetched = new Map<string, { row: AeSplitPaneRow | null; loading: boolean }>();
+  missing.forEach((id, i) => {
+    const q = paneQueries[i];
+    fetched.set(id, { row: q?.data ?? null, loading: q?.data === undefined && !q?.isError });
+  });
+
+  const paneName = (pane: AeSplitPane, frameTitle: string | undefined): string => {
+    if (pane === null) return "New session";
+    const own = fetched.get(pane);
+    return aeSplitPaneName({
+      listRow: byId.get(pane),
+      fetchedRow: own?.row,
+      frameTitle,
+      loading: data === undefined || own?.loading === true,
+      appName,
+    });
+  };
 
   // Remember the layout and keep the URL on it, so a reload or a copied link
   // lands on the same panes in the same arrangement.
@@ -250,6 +287,23 @@ export function AeSplitPage() {
     const current = `s=${param ?? ""}${layoutParam ? `&l=${layoutParam}` : ""}`;
     if (next !== current) navigate(`/split?${next}`, { replace: true });
   }, [layout, navigate, param, layoutParam]);
+
+  // A fetched pane refetches its row when its frame's title changes (a rename,
+  // or a new session getting its first title), so the picker catches up.
+  const queryClient = useQueryClient();
+  const seenFrameNames = useRef(new Map<string, string | null>());
+  useEffect(() => {
+    layout.panes.forEach((pane, i) => {
+      if (pane === null || byId.has(pane)) return;
+      const title = frameTitles[keys[i] ?? -1];
+      if (title === undefined) return;
+      const name = aeFrameTitleName(title, appName);
+      const seen = seenFrameNames.current;
+      const changed = seen.has(pane) && seen.get(pane) !== name;
+      seen.set(pane, name);
+      if (changed) void queryClient.invalidateQueries({ queryKey: aeSplitPaneQueryKey(pane) });
+    });
+  }, [frameTitles, layout.panes, keys, byId, appName, queryClient]);
 
   useEffect(() => {
     document.title = `Split view (${layout.panes.length})`;
@@ -514,7 +568,7 @@ export function AeSplitPage() {
           const pane = layout.panes[i] ?? null;
           const rect = rects[i];
           if (!rect) return null;
-          const label = sessionLabel(pane, frameTitles[key], byId);
+          const label = paneName(pane, frameTitles[key]);
           const target = moving !== null && dropTarget === i && moving !== i;
           return (
             <section
@@ -569,14 +623,14 @@ export function AeSplitPage() {
                   data-testid="ae-split-picker"
                 >
                   <option value="">New session</option>
-                  {pane !== null && !byId.has(pane) && <option value={pane}>{pane}</option>}
+                  {pane !== null && !byId.has(pane) && <option value={pane}>{label}</option>}
                   {conversations.map((c) => (
                     <option
                       key={c.id}
                       value={c.id}
                       disabled={c.id !== pane && layout.panes.includes(c.id)}
                     >
-                      {c.title?.trim() || c.id}
+                      {c.id === pane ? label : aeSplitPaneName({ listRow: c, appName })}
                     </option>
                   ))}
                 </select>

@@ -10,6 +10,8 @@
 // render twice in one React tree; a frame gives every pane its own store,
 // streams and keyboard focus without touching upstream's store.
 
+import { stripLeadingGlyph } from "@/lib/aeLabels";
+
 /** At most this many panes; the Claude desktop app's multi-panel layout tops out at four. */
 export const AE_SPLIT_MAX_PANES = 4;
 
@@ -520,4 +522,68 @@ export function isAeSplitPane(win: Window | undefined = globalThis.window): bool
   } catch {
     return false;
   }
+}
+
+/** What a pane picker knows about one session row: from the list page or a single fetch. */
+export interface AeSplitPaneRow {
+  title?: string | null;
+  archived?: boolean;
+}
+
+/** The pane picker's name for a session it knows nothing about yet. */
+export const AE_SPLIT_LOADING_NAME = "Loading...";
+
+/** The pane picker's name for a session with no title anywhere. */
+export const AE_SPLIT_UNTITLED_NAME = "Untitled session";
+
+/** A title for display: the legacy status glyph dropped, blank as null. */
+function cleanTitle(title: string | null | undefined): string | null {
+  const clean = stripLeadingGlyph(title?.trim() ?? "").trim();
+  return clean || null;
+}
+
+/**
+ * A pane frame's document title as a session name, or null when it says
+ * nothing about the session. ChatPage writes the title as the session's name,
+ * prefixed with "● " while it works, "New session" while untitled, and the
+ * app name before a session loads (`index.html` and `main.tsx`).
+ */
+export function aeFrameTitleName(
+  frameTitle: string | null | undefined,
+  appName = "Omnigent",
+): string | null {
+  const name = cleanTitle(frameTitle?.replace(/^\u25CF\s*/u, ""));
+  if (!name || name === "New session" || name === appName) return null;
+  return name;
+}
+
+/**
+ * The name a split-view pane picker shows for a session (2026-10-18): the
+ * first of the list row's title, the fetched row's title, the pane frame's
+ * document title, "Loading..." while a fetch is in flight, and
+ * "Untitled session". Never the session id, which is what the picker showed
+ * for any session outside the first page of the session list. An archived
+ * session reads "Name (archived)".
+ */
+export function aeSplitPaneName({
+  listRow,
+  fetchedRow,
+  frameTitle,
+  loading = false,
+  appName,
+}: {
+  listRow?: AeSplitPaneRow | null;
+  fetchedRow?: AeSplitPaneRow | null;
+  frameTitle?: string | null;
+  loading?: boolean;
+  appName?: string;
+}): string {
+  const archived = listRow?.archived === true || fetchedRow?.archived === true;
+  const name =
+    cleanTitle(listRow?.title) ??
+    cleanTitle(fetchedRow?.title) ??
+    aeFrameTitleName(frameTitle, appName);
+  if (name) return archived ? `${name} (archived)` : name;
+  if (loading) return AE_SPLIT_LOADING_NAME;
+  return archived ? `${AE_SPLIT_UNTITLED_NAME} (archived)` : AE_SPLIT_UNTITLED_NAME;
 }
