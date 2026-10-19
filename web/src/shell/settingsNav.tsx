@@ -31,7 +31,7 @@ import { customAgentsSettingsEnabled, isSingleUserMode } from "@/lib/capabilitie
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { isElectronShell } from "@/lib/nativeBridge";
 import { cn } from "@/lib/utils";
-import { AeChatSettingsIcon } from "@/pages/settings/AeChatSettingsSection";
+import { AeChatSettingsIcon } from "@/pages/settings/AeChatSettingsIcon";
 import { SIDEBAR_ROW } from "./sidebarStyles";
 
 export type SettingsSectionId =

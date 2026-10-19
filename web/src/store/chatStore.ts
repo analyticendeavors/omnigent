@@ -116,6 +116,7 @@ import { isSideChatCommand, usesNativeSideChatFork } from "@/lib/sideChat";
 // pure helpers live in a leaf module so low-level session hooks can gate on temp
 // ids without an import cycle back to the store.
 import { isTempConvId, newTempConversation } from "@/lib/tempConversationId";
+import { aeRecordTempPromotion } from "@/lib/aeTempPromotions";
 import { useTerminalActivityStore } from "./terminalActivity";
 import { terminalInfoFromResource, terminalsQueryKey, type TerminalInfo } from "@/lib/terminals";
 import type {
@@ -436,6 +437,7 @@ export function hydrateLocalConversation(
   // id, so no send is ever keyed under it — the hydrating `send` below enters
   // the chain under the real id directly.
   conversationRegistry.rekey(tempConvId, realId);
+  aeRecordTempPromotion(tempConvId, realId);
   rekeyConvRow(tempConvId, realId, text, project);
   if (restoredDraft) {
     setterFor(realId)({ failedSendDraft: { ...restoredDraft, conversationId: realId } });

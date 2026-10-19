@@ -149,6 +149,7 @@ import { WorkspacePanel } from "./WorkspacePanel";
 import { SessionRail } from "./SessionRail";
 import { AeSessionRail } from "./AeSessionRail";
 import type { RightRailTab } from "./railTabs";
+import { aeRailForgetRestoredSession, aeRailRestoredPanelOpen } from "@/lib/aeSessionRail";
 import { isAeSplitPane } from "@/lib/aeSplitLayout";
 
 // Dev-only preview; lazy so the sample data never ships in production bundles.
@@ -467,10 +468,16 @@ export function AppShell() {
   // the sidebar collapse. With no conversation the rail can't render, so the
   // state stays false — leaving it true would let rail-gated side effects fire
   // on non-session routes like the home page.
+  // The session rail shares its row with the sidebar and, in canvas mode, the canvas card.
+  const aeRailSideWidth = (sidebarOpen ? sidebarWidth : 0) + (canvasMode ? canvasReservedWidth : 0);
   const [rightPanelOpen, setRightPanelOpen] = useState(() =>
     conversationId
-      ? (readSessionWorkspaceState(conversationId).open ??
-        (canvasMode ? false : readDefaultWorkspacePanelOpen()))
+      ? aeRailRestoredPanelOpen(
+          conversationId,
+          readSessionWorkspaceState(conversationId).open ??
+            (canvasMode ? false : readDefaultWorkspacePanelOpen()),
+          { sidebarWidth: aeRailSideWidth },
+        )
       : false,
   );
   const workspaceTabListRef = useRef<HTMLDivElement>(null);
@@ -1154,6 +1161,7 @@ export function AppShell() {
     if (!conversationId) {
       // No session → no rail; false (not the open default) so rail-gated
       // effects stay quiet on non-session routes.
+      aeRailForgetRestoredSession();
       setRightPanelOpenImmediately(false);
       setRightRailTab("files");
       setSelectedFilePath(null);
@@ -1254,8 +1262,16 @@ export function AppShell() {
     const hasWorkspaceUrlSignal =
       showAgents || urlFile !== null || (commentParam !== null && commentParam !== "");
     setRightPanelOpenImmediately(
-      (persisted.open ?? (canvasMode ? false : readDefaultWorkspacePanelOpen())) ||
-        hasWorkspaceUrlSignal,
+      aeRailRestoredPanelOpen(
+        conversationId,
+        (persisted.open ?? (canvasMode ? false : readDefaultWorkspacePanelOpen())) ||
+          hasWorkspaceUrlSignal,
+        {
+          sidebarWidth: aeRailSideWidth,
+          panelWidth: inlinePanelWidth,
+          urlSignal: hasWorkspaceUrlSignal,
+        },
+      ),
     );
 
     stateConvRef.current = conversationId;
@@ -2713,7 +2729,7 @@ export function AppShell() {
               {serverConversationId && (
                 <AeSessionRail
                   sessionId={serverConversationId}
-                  sidebarWidth={sidebarOpen ? sidebarWidth : 0}
+                  sidebarWidth={aeRailSideWidth}
                   workspacePanelWidth={workspacePanelVisible ? inlinePanelWidth : 0}
                   pushPanelOpen={executionLogsOpen || (showFilesPanel && filesPanelOpen)}
                   closePushPanels={() => {

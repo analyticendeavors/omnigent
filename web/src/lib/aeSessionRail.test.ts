@@ -1,10 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AE_RAIL_SECTIONS,
+  aeRailIsPromotedSession,
+  aeRailForgetRestoredSession,
+  aeRailRestoredPanelOpen,
+  aeRailSkipsRestoredPanel,
   normalizeOrder,
   useAeSessionRailStore,
   type AeRailSectionId,
 } from "./aeSessionRail";
+import { aeRecordTempPromotion } from "./aeTempPromotions";
 
 const STORAGE_KEY = "ae.sessionRail.v1";
 
@@ -209,5 +214,82 @@ describe("persistence", () => {
     expect(() => state.setOpen(true)).not.toThrow();
     expect(setItem).toHaveBeenCalled();
     expect(fresh.useAeSessionRailStore.getState().open).toBe(true);
+  });
+});
+
+describe("aeRailSkipsRestoredPanel", () => {
+  const base = { everySession: true, isMobile: false, urlSignal: false, viewport: 1280 };
+
+  it("skips the panel only when the rail opens in every session on a desktop and they do not fit", () => {
+    // 1280 - (320 + 488) - 304 leaves the chat 168 px.
+    expect(aeRailSkipsRestoredPanel({ ...base, reserved: 808 })).toBe(true);
+    // 1920 - 808 - 304 leaves it 808 px: both fit.
+    expect(aeRailSkipsRestoredPanel({ ...base, viewport: 1920, reserved: 808 })).toBe(false);
+    expect(aeRailSkipsRestoredPanel({ ...base, everySession: false, reserved: 808 })).toBe(false);
+    expect(aeRailSkipsRestoredPanel({ ...base, isMobile: true, reserved: 808 })).toBe(false);
+    expect(aeRailSkipsRestoredPanel({ ...base, urlSignal: true, reserved: 808 })).toBe(false);
+  });
+});
+
+describe("aeRailRestoredPanelOpen", () => {
+  const desktop = { sidebarWidth: 320, panelWidth: 480 };
+
+  let phone = false;
+  const matchMedia = window.matchMedia;
+
+  beforeEach(() => {
+    phone = false;
+    aeRailForgetRestoredSession();
+    useAeSessionRailStore.setState({ openInEverySession: true });
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1280 });
+    window.matchMedia = ((query: string) => ({ ...matchMedia(query), matches: !phone })) as never;
+  });
+
+  afterEach(() => {
+    window.matchMedia = matchMedia;
+  });
+
+  it("starts a panel that would not fit closed, and saves nothing", () => {
+    const before = { ...window.localStorage };
+    expect(aeRailRestoredPanelOpen("s-1", true, desktop)).toBe(false);
+    expect({ ...window.localStorage }).toEqual(before);
+  });
+
+  it("keeps the panel when it fits, when a URL asks for it, on a phone, or when the setting is off", () => {
+    expect(
+      aeRailRestoredPanelOpen("s-1", true, { ...desktop, sidebarWidth: 0, panelWidth: 240 }),
+    ).toBe(true);
+    expect(aeRailRestoredPanelOpen("s-1", true, { ...desktop, urlSignal: true })).toBe(true);
+    phone = true;
+    expect(aeRailRestoredPanelOpen("s-1", true, desktop)).toBe(true);
+    useAeSessionRailStore.setState({ openInEverySession: false });
+    expect(aeRailRestoredPanelOpen("s-1", true, desktop)).toBe(true);
+    expect(aeRailRestoredPanelOpen("s-1", false, desktop)).toBe(false);
+  });
+
+  it("measures a panel of unknown width at its minimum", () => {
+    // 1280 - (320 + 248) - 304 leaves the chat 408 px: still too narrow.
+    expect(aeRailRestoredPanelOpen("s-1", true, { sidebarWidth: 320 })).toBe(false);
+  });
+
+  it("keeps a new chat's panel as it was when its temp id becomes its own server id", () => {
+    aeRailRestoredPanelOpen("temp:abc", true, desktop);
+    aeRecordTempPromotion("temp:abc", "s-new");
+    expect(aeRailIsPromotedSession("s-other")).toBe(false);
+    expect(aeRailIsPromotedSession("s-new")).toBe(true);
+    expect(aeRailRestoredPanelOpen("s-new", true, desktop)).toBe(true);
+  });
+
+  it("treats a move from an unsent new chat to an unrelated session as a switch", () => {
+    aeRailRestoredPanelOpen("temp:unsent", false, desktop);
+    expect(aeRailIsPromotedSession("s-b")).toBe(false);
+    expect(aeRailRestoredPanelOpen("s-b", true, desktop)).toBe(false);
+  });
+
+  it("forgets the temp id when the shell shows no session", () => {
+    aeRailRestoredPanelOpen("temp:abc", false, desktop);
+    aeRecordTempPromotion("temp:abc", "s-new");
+    aeRailForgetRestoredSession();
+    expect(aeRailIsPromotedSession("s-new")).toBe(false);
   });
 });

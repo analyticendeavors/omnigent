@@ -1,6 +1,12 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AE_RAIL_SECTIONS, useAeSessionRailStore } from "@/lib/aeSessionRail";
+import {
+  AE_RAIL_SECTIONS,
+  aeRailForgetRestoredSession,
+  aeRailRestoredPanelOpen,
+  useAeSessionRailStore,
+} from "@/lib/aeSessionRail";
+import { aeRecordTempPromotion } from "@/lib/aeTempPromotions";
 import { resetSharedWidthStoreForTesting } from "@/hooks/useResizablePanel";
 import {
   AeSessionRail,
@@ -67,7 +73,6 @@ beforeEach(() => {
     order: [...AE_RAIL_SECTIONS],
     folded: {},
     focus: null,
-    // The tests before "in every session" cover the rail with the preference off.
     openInEverySession: false,
   });
 });
@@ -271,36 +276,8 @@ describe("AeSessionRail", () => {
 
 describe("AeSessionRail in every session", () => {
   beforeEach(() => {
+    aeRailForgetRestoredSession();
     useAeSessionRailStore.setState({ openInEverySession: true });
-  });
-
-  afterEach(() => {
-    window.history.replaceState(null, "", "/");
-  });
-
-  /** Session s-1 with the rail as given, then s-2 whose workspace panel the shell restores open. */
-  function switchToSessionWithPanel() {
-    const shell = workspace(false);
-    const view = render(<AeSessionRail sessionId="s-1" sidebarWidth={220} workspace={shell} />);
-    // The next session renders first with the old panel state, then the shell
-    // restores that session's open workspace panel, which cannot fit beside the rail.
-    view.rerender(<AeSessionRail sessionId="s-2" sidebarWidth={220} workspace={shell} />);
-    const restored = workspace(true);
-    view.rerender(
-      <AeSessionRail
-        sessionId="s-2"
-        sidebarWidth={220}
-        workspacePanelWidth={240}
-        workspace={restored}
-      />,
-    );
-    return { ...view, restored };
-  }
-
-  it("a session whose workspace panel is restored open keeps the rail and closes the panel", () => {
-    const { restored } = switchToSessionWithPanel();
-    expect(useAeSessionRailStore.getState().open).toBe(true);
-    expect(restored.toggle).toHaveBeenCalledTimes(1);
   });
 
   it("a session switch opens a closed rail", () => {
@@ -313,30 +290,67 @@ describe("AeSessionRail in every session", () => {
     expect(screen.getByTestId("ae-session-rail")).toBeInTheDocument();
   });
 
-  it("closes the push panels too when they clash after a switch", () => {
+  it("closes no panel at the switch; the outgoing session's panel just goes", () => {
+    useAeSessionRailStore.setState({ open: false });
+    const shell = workspace(true);
     const closePushPanels = vi.fn();
+    const props = { sidebarWidth: 220, workspace: shell, closePushPanels };
     const { rerender } = render(
-      <AeSessionRail sessionId="s-1" sidebarWidth={220} closePushPanels={closePushPanels} />,
+      <AeSessionRail sessionId="s-1" workspacePanelWidth={240} {...props} />,
     );
+    rerender(<AeSessionRail sessionId="s-2" workspacePanelWidth={240} {...props} />);
+    // The shell restores s-2 with its panel closed.
+    rerender(<AeSessionRail sessionId="s-2" {...props} workspace={workspace(false)} />);
+    expect(useAeSessionRailStore.getState()).toMatchObject({ open: true, closedForPanel: false });
+    expect(shell.toggle).not.toHaveBeenCalled();
+    expect(closePushPanels).not.toHaveBeenCalled();
+  });
+
+  it("leaves the rail alone when a new chat's temp id becomes its own server id", () => {
+    useAeSessionRailStore.setState({ open: false });
+    aeRailRestoredPanelOpen("temp:abc", false, { sidebarWidth: 0 });
+    aeRecordTempPromotion("temp:abc", "s-new");
+    render(<AeSessionRail sessionId="s-new" />);
+    expect(useAeSessionRailStore.getState().open).toBe(false);
+  });
+
+  it("opens the rail when an unsent new chat gives way to an unrelated session", () => {
+    useAeSessionRailStore.setState({ open: false });
+    aeRailRestoredPanelOpen("temp:unsent", false, { sidebarWidth: 0 });
+    render(<AeSessionRail sessionId="s-b" />);
+    expect(useAeSessionRailStore.getState().open).toBe(true);
+  });
+
+  it("opens the rail for a session opened from home", () => {
+    useAeSessionRailStore.setState({ open: false });
+    aeRailRestoredPanelOpen("temp:abc", false, { sidebarWidth: 0 });
+    aeRecordTempPromotion("temp:abc", "s-new");
+    aeRailForgetRestoredSession();
+    render(<AeSessionRail sessionId="s-new" />);
+    expect(useAeSessionRailStore.getState().open).toBe(true);
+  });
+
+  it("gives way to a panel a URL asks for when the two do not fit", () => {
+    useAeSessionRailStore.setState({ open: false });
+    const { rerender } = render(<AeSessionRail sessionId="s-1" sidebarWidth={220} />);
+    rerender(<AeSessionRail sessionId="s-2" sidebarWidth={220} />);
+    const linked = workspace(true);
     rerender(
       <AeSessionRail
         sessionId="s-2"
         sidebarWidth={220}
-        pushPanelOpen
-        closePushPanels={closePushPanels}
+        workspacePanelWidth={240}
+        workspace={linked}
       />,
     );
-    expect(closePushPanels).toHaveBeenCalled();
-    expect(useAeSessionRailStore.getState().open).toBe(true);
+    expect(useAeSessionRailStore.getState()).toMatchObject({ open: false, closedForPanel: true });
+    expect(linked.toggle).not.toHaveBeenCalled();
   });
 
-  it("a panel opened by hand mid-session still swaps with the rail", () => {
-    const shell = workspace(false);
+  it("a panel opened later still swaps with the rail, which is back at the next switch", () => {
     const { rerender } = render(
-      <AeSessionRail sessionId="s-1" sidebarWidth={220} workspace={shell} />,
+      <AeSessionRail sessionId="s-1" sidebarWidth={220} workspace={workspace(false)} />,
     );
-    // The user clicks the panel toggle.
-    fireEvent.pointerDown(document.body);
     rerender(
       <AeSessionRail
         sessionId="s-1"
@@ -346,31 +360,8 @@ describe("AeSessionRail in every session", () => {
       />,
     );
     expect(useAeSessionRailStore.getState()).toMatchObject({ open: false, closedForPanel: true });
-    // The rail is back at the next session switch.
     rerender(<AeSessionRail sessionId="s-2" sidebarWidth={220} workspace={workspace(false)} />);
     expect(screen.getByTestId("ae-session-rail")).toBeInTheDocument();
-  });
-
-  it("typing in the composer does not count as opening a panel by hand", () => {
-    const { rerender } = render(<AeSessionRail sessionId="s-1" sidebarWidth={220} />);
-    fireEvent.keyDown(document.body, { key: "a" });
-    const late = workspace(true);
-    rerender(
-      <AeSessionRail
-        sessionId="s-1"
-        sidebarWidth={220}
-        workspacePanelWidth={240}
-        workspace={late}
-      />,
-    );
-    expect(useAeSessionRailStore.getState().open).toBe(true);
-    expect(late.toggle).toHaveBeenCalledTimes(1);
-  });
-
-  it("leaves the panel to a deep link that names a file", () => {
-    window.history.replaceState(null, "", "/c/s-2?file=README.md");
-    switchToSessionWithPanel();
-    expect(useAeSessionRailStore.getState()).toMatchObject({ open: false, closedForPanel: true });
   });
 
   it("does nothing on a phone", () => {
@@ -381,14 +372,8 @@ describe("AeSessionRail in every session", () => {
     expect(useAeSessionRailStore.getState()).toMatchObject({ open: false, sheetOpen: false });
   });
 
-  it("off: a switch leaves the rail closed, and a restored panel closes the rail as before", () => {
-    useAeSessionRailStore.setState({ openInEverySession: false });
-    const { restored } = switchToSessionWithPanel();
-    expect(useAeSessionRailStore.getState()).toMatchObject({ open: false, closedForPanel: true });
-    expect(restored.toggle).not.toHaveBeenCalled();
-    act(() => useAeSessionRailStore.getState().toggle());
-    act(() => useAeSessionRailStore.getState().toggle());
-    cleanup();
+  it("off: a switch leaves a closed rail closed", () => {
+    useAeSessionRailStore.setState({ openInEverySession: false, open: false });
     const { rerender } = render(<AeSessionRail sessionId="s-3" />);
     rerender(<AeSessionRail sessionId="s-4" />);
     expect(useAeSessionRailStore.getState().open).toBe(false);

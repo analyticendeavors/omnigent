@@ -1,29 +1,15 @@
-// Settings > Chat (omnigent-ae, 2026-10-18): options for the chat view. Its
-// first option is the session rail's "open in every session" preference,
-// which lives in the rail's own store (lib/aeSessionRail.ts) and is saved with
-// the rail's layout on this device.
+// Settings > Chat: options for the chat view. The rail preference lives in the
+// rail's own store (lib/aeSessionRail.ts), saved with its layout on this device.
 
 import { useId } from "react";
 import { Switch } from "@/components/ui/switch";
-import { AeTablerSvg } from "@/lib/aeTablerIcon";
-import type { AeTablerIconNode } from "@/lib/aeTablerIconData";
 import { useAeSessionRailStore } from "@/lib/aeSessionRail";
-import { cn } from "@/lib/utils";
 
-// message-circle, copied from @tabler/icons (tabler-nodes-outline.json).
-const MESSAGE_CIRCLE: AeTablerIconNode = [
-  [
-    "path",
-    {
-      d: "M3 20l1.3 -3.9c-2.324 -3.437 -1.426 -7.872 2.1 -10.374c3.526 -2.501 8.59 -2.296 11.845 .48c3.255 2.777 3.695 7.266 1.029 10.501c-2.666 3.235 -7.615 4.215 -11.574 2.293l-4.7 1",
-    },
-  ],
-];
-
-/** The Chat section's nav icon (Tabler message-circle). */
-export function AeChatSettingsIcon({ className }: { className?: string }) {
-  return <AeTablerSvg node={MESSAGE_CIRCLE} className={cn("size-4 shrink-0", className)} />;
-}
+/** The title and description SettingsPage's `Section` shell gives this section. */
+export const AE_CHAT_SETTINGS = {
+  title: "Chat",
+  description: "How the chat view looks and behaves.",
+};
 
 function OpenRailInEverySessionControl() {
   const value = useAeSessionRailStore((s) => s.openInEverySession);
@@ -36,9 +22,8 @@ function OpenRailInEverySessionControl() {
           Open the session rail in every session
         </span>
         <span className="text-ui text-muted-foreground">
-          The rail opens whenever you open a session; on narrower windows a workspace, files or logs
-          panel that will not fit beside it closes instead. Phones keep the rail in the session
-          menu.
+          The rail opens whenever you open a session; on narrower windows a workspace panel left
+          open starts closed instead. Phones keep the rail in the session menu.
         </span>
       </div>
       <Switch
@@ -55,12 +40,8 @@ function OpenRailInEverySessionControl() {
 
 export function AeChatSettingsSection() {
   return (
-    <section data-testid="ae-chat-settings">
-      <h1 className="text-2xl font-semibold">Chat</h1>
-      <p className="mt-1 text-ui text-muted-foreground">How the chat view looks and behaves.</p>
-      <div className="mt-6 flex flex-col gap-6">
-        <OpenRailInEverySessionControl />
-      </div>
-    </section>
+    <div data-testid="ae-chat-settings" className="flex flex-col gap-6">
+      <OpenRailInEverySessionControl />
+    </div>
   );
 }
