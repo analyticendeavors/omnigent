@@ -3,10 +3,10 @@
 // Claude process on the runner, so one request per session and identity is in
 // flight at a time and a result is reused for three minutes.
 //
-// A `pending` or other unavailable answer is retried quietly for about two
-// minutes; `offline` and `final` answers show at once. Each turn end asks again.
+// A `pending` answer is retried quietly for about two minutes, then its reason
+// shows; every other answer shows at once. A turn end or a refresh reads anew.
 
-import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { authenticatedFetch } from "@/lib/identity";
 import { isTempConvId } from "@/lib/tempConversationId";
 import { useChatStore } from "@/store/chatStore";
@@ -98,6 +98,12 @@ interface Entry {
   retryAttempt: number;
   /** The wait before the scheduled quiet retry. */
   retryDelay?: number;
+  /** The quiet window ran out; only a turn end, a status change or a refresh opens another. */
+  retryExhausted?: boolean;
+  /** A runner-cache-skipping read was asked for while another request was in flight. */
+  wantFresh?: boolean;
+  /** The session status last handled for this entry, so every subscriber acts on an edge once. */
+  lastStatus?: string | null;
 }
 
 const entries = new Map<string, Entry>();
@@ -166,10 +172,10 @@ function schedule(entry: Entry): void {
   entry.timer = setTimeout(() => load(entry), wait);
 }
 
-/** Store an answer; a not-ready one schedules a quiet retry until the window ends. */
+/** Store an answer; a pending one schedules a quiet retry until the window ends. */
 function settle(entry: Entry, data: ContextUsage): void {
   const now = Date.now();
-  if (data.available || data.offline || data.final) {
+  if (!data.pending) {
     resetRetry(entry);
     update(entry, { data, error: undefined, receivedAt: now, inFlight: false, pending: false });
     return;
@@ -177,11 +183,15 @@ function settle(entry: Entry, data: ContextUsage): void {
   entry.retryStartedAt ??= now;
   const delays = AE_CONTEXT_RETRY_DELAYS_MS;
   const delay = delays[Math.min(entry.retryAttempt, delays.length - 1)];
-  const retry = now + delay - entry.retryStartedAt <= AE_CONTEXT_RETRY_WINDOW_MS;
+  const retry =
+    entry.watchers > 0 &&
+    !entry.retryExhausted &&
+    now + delay - entry.retryStartedAt <= AE_CONTEXT_RETRY_WINDOW_MS;
   if (retry) {
     entry.retryAttempt += 1;
     entry.retryDelay = delay;
   } else {
+    if (entry.watchers > 0) entry.retryExhausted = true;
     resetRetry(entry);
   }
   // A real snapshot already shown stays until a newer real one replaces it.
@@ -189,9 +199,9 @@ function settle(entry: Entry, data: ContextUsage): void {
   update(entry, { ...shown, error: undefined, inFlight: false, pending: retry });
 }
 
-async function readSnapshot(sessionId: string): Promise<ContextUsage> {
+async function readSnapshot(sessionId: string, fresh: boolean): Promise<ContextUsage> {
   const response = await authenticatedFetch(
-    `/v1/sessions/${encodeURIComponent(sessionId)}/context-usage`,
+    `/v1/sessions/${encodeURIComponent(sessionId)}/context-usage${fresh ? "?fresh=true" : ""}`,
   );
   if (!response.ok) {
     throw new Error(
@@ -201,10 +211,15 @@ async function readSnapshot(sessionId: string): Promise<ContextUsage> {
   return (await response.json()) as ContextUsage;
 }
 
-function load(entry: Entry): void {
-  if (entry.value.inFlight) return;
+/** `fresh` skips the runner's own three-minute cache. */
+function load(entry: Entry, fresh = false): void {
+  if (entry.value.inFlight) {
+    if (fresh) entry.wantFresh = true;
+    return;
+  }
+  entry.wantFresh = false;
   update(entry, { inFlight: true });
-  readSnapshot(entry.sessionId)
+  readSnapshot(entry.sessionId, fresh)
     .then(
       (data) => settle(entry, data),
       (error: unknown) => {
@@ -222,6 +237,7 @@ function load(entry: Entry): void {
     .finally(() => {
       entry.settledAt = Date.now();
       schedule(entry);
+      if (entry.wantFresh) load(entry, true);
     });
 }
 
@@ -237,14 +253,17 @@ function watch(entry: Entry): () => void {
     if (entry.watchers === 0) {
       schedule(entry);
       resetRetry(entry);
+      if (entry.value.pending) update(entry, { pending: false });
+      entry.lastStatus = undefined;
     }
   };
 }
 
-/** Ask again now with a new retry window: the refresh button and each turn end. */
+/** Read anew past the runner's cache, with a new retry window: refresh and turn end. */
 function reload(entry: Entry): void {
   resetRetry(entry);
-  load(entry);
+  entry.retryExhausted = false;
+  load(entry, true);
 }
 
 /** Drops every cached snapshot and timer; tests call it between cases. */
@@ -282,19 +301,21 @@ export function useAeContextSnapshot(
     if (!enabled || !id) return undefined;
     return watch(entryFor(id, identity));
   }, [enabled, id, identity]);
-  // A turn ending changes the context, and a session's first turn is when Claude is up.
+  // A status change may end a spent quiet window; a turn ending also reads anew.
   const status = useChatStore((s) =>
     id !== null && s.conversationId === id ? s.sessionStatus : null,
   );
-  const turnActive = status === "running" || status === "waiting";
-  const previous = useRef({ id, turnActive });
   useEffect(() => {
-    const before = previous.current;
-    previous.current = { id, turnActive };
-    const ended =
-      before.id === id && before.turnActive && (status === "idle" || status === "failed");
-    if (ended && enabled && id) reload(entryFor(id, identity));
-  }, [enabled, id, identity, status, turnActive]);
+    if (!enabled || !id) return;
+    const entry = entryFor(id, identity);
+    const before = entry.lastStatus;
+    if (before === status) return;
+    entry.lastStatus = status;
+    if (before === undefined) return;
+    entry.retryExhausted = false;
+    const wasActive = before === "running" || before === "waiting";
+    if (wasActive && (status === "idle" || status === "failed")) reload(entry);
+  }, [enabled, id, identity, status]);
   const refresh = useCallback(() => {
     if (id) reload(entryFor(id, identity));
   }, [id, identity]);

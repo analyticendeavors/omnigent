@@ -397,7 +397,9 @@ async def _probe(command: list[str], env: dict[str, str], cwd: str) -> dict[str,
         await proc.wait()
 
 
-_PENDING = {"available": False, "pending": True, "reason": "Claude is starting."}
+def _pending(reason: str) -> dict[str, Any]:
+    """The web shows a loading line while it retries, then this reason if it never clears."""
+    return {"available": False, "pending": True, "reason": reason}
 
 
 def _log_detail(exc: BaseException) -> str:
@@ -408,14 +410,19 @@ def _log_detail(exc: BaseException) -> str:
 
 
 async def handle_context_usage(
-    conversation_id: str, *, harness: str | None, server_client: httpx.AsyncClient
+    conversation_id: str,
+    *,
+    harness: str | None,
+    server_client: httpx.AsyncClient,
+    fresh: bool = False,
 ) -> JSONResponse:
+    """``fresh`` skips the snapshot cache: a turn end or a user's refresh wants a new read."""
     from omnigent.harnesses.claude_native.bridge import bridge_dir_for_bridge_id
     from omnigent.runner.native import _claude_native_bridge_id_for_session
 
     if harness is None:
         # The runner has not loaded this session's spec yet: starting, not final.
-        return JSONResponse(_PENDING)
+        return JSONResponse(_pending("The runner has not loaded this session yet."))
     if harness != "claude-native":
         return JSONResponse(
             {
@@ -441,7 +448,7 @@ async def handle_context_usage(
             model = command[command.index("--model") + 1] if "--model" in command else ""
             key = f"{conversation_id}:{session_id}:{model}"
             cached = _cache.get(key)
-            if cached and time.monotonic() - cached[0] < TTL:
+            if cached and not fresh and time.monotonic() - cached[0] < TTL:
                 return JSONResponse(cached[1])
             answer = await probe(command, env, cwd)
             now = time.monotonic()
@@ -451,9 +458,9 @@ async def handle_context_usage(
             _failures.pop(conversation_id, None)
             _cache[key] = (now, answer)
             return JSONResponse(answer)
-        except ContextNotReady:
+        except ContextNotReady as exc:
             # Claude is still starting (or not running): not a failure, so no backoff.
-            return JSONResponse(_PENDING)
+            return JSONResponse(_pending(str(exc)))
         except ContextUnsupported as exc:
             return JSONResponse({"available": False, "final": True, "reason": str(exc)})
         except (

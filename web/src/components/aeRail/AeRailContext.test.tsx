@@ -16,9 +16,10 @@ const snapshotNow = () => ({
   ...SNAPSHOT,
   observedAt: new Date(Date.now() - 60_000).toISOString(),
 });
-const PENDING = { available: false, pending: true, reason: "Claude is starting." };
+const STOPPED = "No live Claude process for this session. Resume it and try again.";
+const PENDING = { available: false, pending: true, reason: STOPPED };
 const contextCalls = () =>
-  vi.mocked(authenticatedFetch).mock.calls.filter(([url]) => String(url).endsWith("/context-usage"))
+  vi.mocked(authenticatedFetch).mock.calls.filter(([url]) => String(url).includes("/context-usage"))
     .length;
 
 const realCompact = useChatStore.getState().compact;
@@ -122,6 +123,17 @@ describe("AeRailContext", () => {
     expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
   });
 
+  it("shows a real probe failure at once, with Try again", async () => {
+    vi.mocked(authenticatedFetch).mockImplementation(() =>
+      json({ available: false, reason: "Could not read Claude context." }),
+    );
+    setSession("claude-native");
+    render(<AeRailContext sessionId={sessionId} />);
+    expect(await screen.findByText("Could not read Claude context.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+    expect(contextCalls()).toBe(1);
+  });
+
   it("shows a final answer's reason at once with no Try again", async () => {
     vi.mocked(authenticatedFetch).mockImplementation(() =>
       json({ available: false, final: true, reason: "Not a Claude Code session." }),
@@ -145,7 +157,7 @@ describe("AeRailContext", () => {
     });
     expect(screen.getByText("Reading context categories…")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
-    expect(screen.queryByText("Claude is starting.")).toBeNull();
+    expect(screen.queryByText(STOPPED)).toBeNull();
     // The live figure still shows meanwhile.
     expect(screen.getByText("30% used")).toBeTruthy();
     await act(async () => {
@@ -166,7 +178,8 @@ describe("AeRailContext", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
-    expect(screen.getByText("Claude is starting.")).toBeTruthy();
+    // The runner's own reason, not a generic "starting" line.
+    expect(screen.getByText(STOPPED)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
   });
 

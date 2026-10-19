@@ -6779,6 +6779,7 @@ def create_runner_app(
                 conversation_id,
                 harness=_session_harness_name(conversation_id),
                 server_client=server_client,
+                fresh=body.get("fresh") is True,
             )
 
         if body_type in ("fast_mode_status", "fast_mode_change"):
