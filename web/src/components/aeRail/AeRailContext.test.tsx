@@ -67,6 +67,9 @@ describe("AeRailContext", () => {
     const body = screen.getByTestId("ae-rail-context");
     expect(within(body).getByText("50% used")).toBeTruthy();
     expect(within(body).getByText("495.2k / 1M")).toBeTruthy();
+    // The category rows start folded.
+    expect(within(body).queryByRole("list", { name: "Context categories" })).toBeNull();
+    fireEvent.click(within(body).getByRole("button", { name: /^Categories/ }));
     expect(within(body).getAllByTestId("ae-category-row")[0].textContent).toBe(
       "Messages399.7k40.0%",
     );

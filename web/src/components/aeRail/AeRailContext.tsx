@@ -79,6 +79,8 @@ export function AeRailContext({ sessionId }: AeRailSectionProps) {
         )}
         {data ? (
           <SnapshotBody
+            // A new session starts with its folds shut.
+            key={sessionId}
             data={data}
             snapshot={snapshot}
             model={model}

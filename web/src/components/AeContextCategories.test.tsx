@@ -48,6 +48,11 @@ describe("context categories", () => {
 
   it("lists rows by size, buffer and free space last, deferred tools muted with a dash", () => {
     render(<AeContextCategoryRows data={SNAPSHOT} />);
+    const fold = screen.getByRole("button", { name: /^Categories\s*9$/ });
+    expect(fold).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("list", { name: "Context categories" })).toBeNull();
+    fireEvent.click(fold);
+    expect(fold).toHaveAttribute("aria-expanded", "true");
     const rows = within(screen.getByRole("list", { name: "Context categories" })).getAllByTestId(
       "ae-category-row",
     );
@@ -62,6 +67,9 @@ describe("context categories", () => {
       "Autocompact buffer33k3.3%",
       "Free space471.4k47.1%",
     ]);
+    fireEvent.click(fold);
+    expect(screen.queryByRole("list", { name: "Context categories" })).toBeNull();
+    // Deferred tools sit outside the fold.
     const deferred = screen.getByRole("list", { name: "Deferred tools" });
     expect(within(deferred).getByTestId("ae-category-row").textContent).toBe(
       "MCP tools (deferred)168.3k-",
@@ -70,6 +78,7 @@ describe("context categories", () => {
 
   it("opens a list from its category name or its own toggle, and hides empty lists", () => {
     render(<AeContextCategoryRows data={SNAPSHOT} />);
+    fireEvent.click(screen.getByRole("button", { name: /^Categories\s*9$/ }));
     expect(screen.queryByRole("button", { name: /Custom agents/ })).toBeNull();
     const toggle = screen.getByRole("button", { name: /^MCP tools\s*2$/ });
     expect(toggle).toHaveAttribute("aria-expanded", "false");

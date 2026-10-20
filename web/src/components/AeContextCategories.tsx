@@ -155,10 +155,49 @@ function CategoryRow({
   );
 }
 
+/** Name of the fold over the window's rows; starts folded. */
+export const CATEGORIES_FOLD = "Categories";
+
+/** A folding header: chevron, name, and a count at the right end. */
+function FoldToggle({
+  name,
+  count,
+  expanded,
+  controls,
+  onToggle,
+}: {
+  name: string;
+  count: number;
+  expanded: boolean;
+  controls: string;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-expanded={expanded}
+      aria-controls={controls}
+      onClick={onToggle}
+      className="flex min-h-7 w-full cursor-pointer items-center gap-1.5 rounded-sm text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50 pointer-coarse:min-h-10"
+    >
+      <AeTablerSvg
+        node={CHEVRON_RIGHT}
+        className={cn(
+          "size-3.5 shrink-0 text-muted-foreground transition-transform",
+          expanded && "rotate-90",
+        )}
+      />
+      {name}
+      <span className="ml-auto text-muted-foreground tabular-nums">{count}</span>
+    </button>
+  );
+}
+
 /**
- * Every category as a row: used ones largest first, then the autocompact
- * buffer and free space, then deferred tools (muted, not in the window), then
- * the folding lists of tools, memory files, skills and agents.
+ * Every category as a row: a folded Categories section (used ones largest
+ * first, then the autocompact buffer and free space), then deferred tools
+ * (muted, not in the window), then the folding lists of tools, memory files,
+ * skills and agents.
  */
 export function AeContextCategoryRows({ data }: { data: ContextUsage }) {
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
@@ -172,6 +211,8 @@ export function AeContextCategoryRows({ data }: { data: ContextUsage }) {
     });
   const byKind = (kind: ContextCategory["kind"]) => data.categories.filter((c) => c.kind === kind);
   const deferred = byKind("deferred");
+  const windowRows = [...usedCategories(data), ...byKind("buffer"), ...byKind("free")];
+  const categoriesOpen = open.has(CATEGORIES_FOLD);
   const rowFor = (c: ContextCategory) => (
     <CategoryRow
       key={`${c.kind}:${c.name}`}
@@ -184,9 +225,20 @@ export function AeContextCategoryRows({ data }: { data: ContextUsage }) {
   );
   return (
     <div className="flex flex-col gap-2" data-testid="ae-context-categories">
-      <ul aria-label="Context categories">
-        {[...usedCategories(data), ...byKind("buffer"), ...byKind("free")].map(rowFor)}
-      </ul>
+      <div>
+        <FoldToggle
+          name={CATEGORIES_FOLD}
+          count={windowRows.length}
+          expanded={categoriesOpen}
+          controls="ae-context-categories-rows"
+          onToggle={() => toggle(CATEGORIES_FOLD)}
+        />
+        {categoriesOpen && (
+          <ul id="ae-context-categories-rows" aria-label="Context categories" className="ml-5">
+            {windowRows.map(rowFor)}
+          </ul>
+        )}
+      </div>
       {deferred.length > 0 && (
         <ul aria-label="Deferred tools" title="Loaded on demand; not in the context window">
           {deferred.map(rowFor)}
@@ -200,23 +252,13 @@ export function AeContextCategoryRows({ data }: { data: ContextUsage }) {
             const listId = `ae-context-list-${name.replace(/\W+/g, "-").toLowerCase()}`;
             return (
               <div key={name}>
-                <button
-                  type="button"
-                  aria-expanded={expanded}
-                  aria-controls={listId}
-                  onClick={() => toggle(name)}
-                  className="flex min-h-7 w-full cursor-pointer items-center gap-1.5 rounded-sm text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50 pointer-coarse:min-h-10"
-                >
-                  <AeTablerSvg
-                    node={CHEVRON_RIGHT}
-                    className={cn(
-                      "size-3.5 shrink-0 text-muted-foreground transition-transform",
-                      expanded && "rotate-90",
-                    )}
-                  />
-                  {name}
-                  <span className="ml-auto text-muted-foreground tabular-nums">{rows.length}</span>
-                </button>
+                <FoldToggle
+                  name={name}
+                  count={rows.length}
+                  expanded={expanded}
+                  controls={listId}
+                  onToggle={() => toggle(name)}
+                />
                 {expanded && (
                   <ul
                     id={listId}
