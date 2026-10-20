@@ -22,6 +22,7 @@ import {
   WORKSPACE_FILE_LINK_ATTR,
 } from "@/components/ai-elements/streamdown-security";
 import { ZoomableImage } from "@/components/ImageLightbox";
+import { AePrLinkHoverCard } from "@/components/AePrLinkHoverCard";
 import { useThrottledValue } from "@/hooks/useThrottledValue";
 import { withBasePath } from "@/lib/basePath";
 import { isNativeShell } from "@/lib/nativeBridge";
@@ -314,7 +315,7 @@ function WorkspaceFileLink({
     // popup fallback so a click still works where new tabs can't open.
     const blankHref = props.target === "_blank" && typeof rebased === "string" ? rebased : null;
     const pullRequest = githubPullRequest(rebased);
-    return (
+    const link = (
       <a
         href={rebased}
         className={cn(STREAMDOWN_LINK_CLASS, className)}
@@ -337,6 +338,7 @@ function WorkspaceFileLink({
         )}
       </a>
     );
+    return pullRequest ? <AePrLinkHoverCard href={rebased}>{link}</AePrLinkHoverCard> : link;
   }
 
   // Marked but not an openable file. Never leave a link on the parked
