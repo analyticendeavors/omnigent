@@ -1,7 +1,8 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ClaudeAccounts } from "./ClaudeAccounts";
 import type { Host } from "@/hooks/useHosts";
+import type * as identity from "@/lib/identity";
 
 const mutate = vi.fn();
 let rows = [
@@ -9,13 +10,29 @@ let rows = [
   { family: "claude-oauth", source: "Backup", env_var: "Backup" },
 ];
 let isPending = false;
+const refetch = vi.fn();
+const invalidateAll = vi.fn();
 vi.mock("@/hooks/useHosts", () => ({
-  useDetectedCredentials: () => ({ data: rows }),
+  useDetectedCredentials: () => ({ data: rows, refetch }),
   useStoreCredential: () => ({ mutate, isPending }),
+  useInvalidateDetectedCredentials: () => invalidateAll,
 }));
+let isAdmin = false;
+vi.mock("@/lib/identity", async (importOriginal) => ({
+  ...(await importOriginal<typeof identity>()),
+  getCurrentIsAdmin: () => isAdmin,
+}));
+const fetchMock = vi.fn();
 const host = { host_id: "host", name: "Laptop" } as Host;
 beforeEach(() => {
   mutate.mockReset();
+  refetch.mockReset();
+  invalidateAll.mockReset();
+  isAdmin = false;
+  fetchMock.mockReset();
+  // The Shared group's read stays pending unless a test answers it.
+  fetchMock.mockReturnValue(new Promise(() => {}));
+  vi.stubGlobal("fetch", fetchMock);
   rows = [
     { family: "claude-oauth-active", source: "Default CLI account", env_var: "" },
     { family: "claude-oauth", source: "Backup", env_var: "Backup" },
@@ -153,16 +170,13 @@ describe("ClaudeAccounts", () => {
       { family: "claude-oauth", source: "Company Max", env_var: "shared:Team" },
       { family: "claude-oauth", source: "Team", env_var: "Team" },
     ];
-    render(<ClaudeAccounts host={host} />);
+    render(<ClaudeAccounts host={host} compact />);
     const markers = screen.getAllByTestId("ae-shared-account-marker");
     expect(markers).toHaveLength(1);
     expect(markers[0]).toHaveTextContent("Shared");
     expect(markers[0].querySelector("svg")).toBeTruthy();
     const shared = screen.getByRole("button", { name: /Company Max/ });
     expect(shared).toContainElement(markers[0]);
-    // The host's own "Team" keeps its rename; the shared account has none.
-    expect(screen.getByRole("button", { name: "Rename Team" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Rename Company Max/ })).toBeNull();
     fireEvent.click(shared);
     expect(mutate.mock.calls[0][0]).toEqual({
       harness: "claude-native",
@@ -179,5 +193,202 @@ describe("ClaudeAccounts", () => {
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
     expect(screen.getByRole("textbox", { name: "Account label for Backup" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Rename Default CLI account" })).toBeDisabled();
+  });
+
+  describe("the Shared group", () => {
+    const TEAM = {
+      name: "Team",
+      account: "shared:Team",
+      label: "Company Max",
+      created_by: "admin@example.com",
+      created_at: "not a date",
+    };
+    const json = (status: number, body: unknown) =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { "Content-Type": "application/json" },
+      });
+    /** Answers the list read; a POST answers `post` and is recorded. */
+    const serve = (post: () => Response = () => json(200, { account: TEAM })) => {
+      fetchMock.mockImplementation((_input: RequestInfo | URL, init?: RequestInit) =>
+        Promise.resolve(
+          init?.method === "POST"
+            ? post()
+            : json(200, { accounts: [TEAM], can_manage: isAdmin, key_configured: true }),
+        ),
+      );
+    };
+    const posts = () =>
+      fetchMock.mock.calls
+        .filter(([, init]) => (init as RequestInit | undefined)?.method === "POST")
+        .map(([input, init]) => [
+          String(input).replace(/^.*(\/v1\/)/, "$1"),
+          JSON.parse(String((init as RequestInit).body)),
+        ]);
+    const sharedRows = () => {
+      rows = [
+        ...rows,
+        { family: "claude-oauth-active", source: "shared:Team", env_var: "shared:Team" },
+      ];
+    };
+
+    it("lists the shared accounts for everyone and selects one by id", async () => {
+      sharedRows();
+      serve();
+      render(<ClaudeAccounts host={host} />);
+      const group = screen.getByTestId("ae-shared-claude-accounts");
+      await within(group).findByText("shared:Team · Added by admin@example.com");
+      expect(within(group).getByRole("button", { name: "Company Max (selected)" })).toBeDisabled();
+      // The host's own list no longer repeats the shared account.
+      expect(screen.getAllByRole("button", { name: /Company Max/ })).toHaveLength(1);
+      expect(within(group).getByText(/Only an admin can add or change them/)).toBeTruthy();
+      expect(within(group).queryByRole("button", { name: "Add shared account" })).toBeNull();
+      expect(within(group).queryByRole("button", { name: /Rename|Remove/ })).toBeNull();
+      expect(screen.getByRole("button", { name: "Rename Backup" })).toBeTruthy();
+    });
+
+    it("selects a shared account the host has not picked", async () => {
+      serve();
+      render(<ClaudeAccounts host={host} />);
+      fireEvent.click(await screen.findByRole("button", { name: "Company Max" }));
+      expect(mutate.mock.calls[0][0]).toEqual({
+        harness: "claude-native",
+        kind: "claude-oauth-select",
+        account_name: "shared:Team",
+      });
+    });
+
+    it("gives an admin + Add with the form closed until pressed, and Cancel closes it", async () => {
+      isAdmin = true;
+      serve();
+      render(<ClaudeAccounts host={host} />);
+      const group = screen.getByTestId("ae-shared-claude-accounts");
+      await within(group).findByText("Company Max");
+      expect(within(group).queryByLabelText("OAuth token")).toBeNull();
+      fireEvent.click(within(group).getByRole("button", { name: "Add shared account" }));
+      expect(within(group).getByLabelText("OAuth token")).toHaveAttribute("type", "password");
+      expect(within(group).getByLabelText("Name")).toBeTruthy();
+      expect(within(group).getByLabelText("Label (optional)")).toBeTruthy();
+      fireEvent.click(within(group).getByRole("button", { name: "Cancel" }));
+      expect(within(group).queryByLabelText("OAuth token")).toBeNull();
+      expect(posts()).toEqual([]);
+    });
+
+    it("adds an account, clears the token at once and closes the form", async () => {
+      isAdmin = true;
+      serve();
+      render(<ClaudeAccounts host={host} />);
+      const group = screen.getByTestId("ae-shared-claude-accounts");
+      fireEvent.click(await within(group).findByRole("button", { name: "Add shared account" }));
+      fireEvent.change(within(group).getByLabelText("Name"), { target: { value: " Team " } });
+      fireEvent.change(within(group).getByLabelText("Label (optional)"), {
+        target: { value: "Company Max" },
+      });
+      fireEvent.change(within(group).getByLabelText("OAuth token"), {
+        target: { value: "sk-ant-oat-example" },
+      });
+      fireEvent.click(within(group).getByRole("button", { name: "Add shared account" }));
+      expect(within(group).getByLabelText("OAuth token")).toHaveValue("");
+      await within(group).findByText("Added Company Max. It shows in every account picker now.");
+      expect(posts()).toEqual([
+        [
+          "/v1/ae/claude-accounts/shared",
+          { name: "Team", label: "Company Max", token: "sk-ant-oat-example" },
+        ],
+      ]);
+      expect(within(group).queryByLabelText("OAuth token")).toBeNull();
+      await waitFor(() => expect(refetch).toHaveBeenCalled());
+      expect(invalidateAll).toHaveBeenCalled();
+    });
+
+    it("keeps the form open with the server's refusal and an empty token", async () => {
+      isAdmin = true;
+      serve(() => json(409, { error: { code: "exists", message: "Team already exists." } }));
+      render(<ClaudeAccounts host={host} />);
+      const group = screen.getByTestId("ae-shared-claude-accounts");
+      fireEvent.click(await within(group).findByRole("button", { name: "Add shared account" }));
+      fireEvent.change(within(group).getByLabelText("Name"), { target: { value: "Team" } });
+      fireEvent.change(within(group).getByLabelText("OAuth token"), {
+        target: { value: "sk-ant-oat-example" },
+      });
+      fireEvent.click(within(group).getByRole("button", { name: "Add shared account" }));
+      expect(await within(group).findByRole("alert")).toHaveTextContent("Team already exists.");
+      expect(within(group).getByLabelText("OAuth token")).toHaveValue("");
+      expect(within(group).getByLabelText("Name")).toHaveValue("Team");
+    });
+
+    it("asks for a name and token before sending anything", async () => {
+      isAdmin = true;
+      serve();
+      render(<ClaudeAccounts host={host} />);
+      const group = screen.getByTestId("ae-shared-claude-accounts");
+      fireEvent.click(await within(group).findByRole("button", { name: "Add shared account" }));
+      fireEvent.change(within(group).getByLabelText("OAuth token"), {
+        target: { value: "sk-ant-oat-example" },
+      });
+      fireEvent.click(within(group).getByRole("button", { name: "Add shared account" }));
+      expect(within(group).getByRole("alert")).toHaveTextContent(
+        "Enter a name and the OAuth token.",
+      );
+      expect(within(group).getByLabelText("OAuth token")).toHaveValue("");
+      expect(posts()).toEqual([]);
+    });
+
+    it("moves focus into the form on open and back to + Add on Cancel", async () => {
+      isAdmin = true;
+      serve();
+      render(<ClaudeAccounts host={host} />);
+      const group = screen.getByTestId("ae-shared-claude-accounts");
+      fireEvent.click(await within(group).findByRole("button", { name: "Add shared account" }));
+      expect(within(group).getByLabelText("Name")).toHaveFocus();
+      expect(within(group).getByLabelText("OAuth token")).toHaveAccessibleDescription(
+        /never comes back/,
+      );
+      fireEvent.click(within(group).getByRole("button", { name: "Cancel" }));
+      expect(within(group).getByRole("button", { name: "Add shared account" })).toHaveFocus();
+    });
+
+    it("keeps one status region mounted and puts a rename's outcome in it", async () => {
+      isAdmin = true;
+      serve();
+      render(<ClaudeAccounts host={host} />);
+      const group = screen.getByTestId("ae-shared-claude-accounts");
+      const region = within(group).getByRole("status");
+      fireEvent.click(await within(group).findByRole("button", { name: "Rename Company Max" }));
+      expect(within(group).getByLabelText("New label for Company Max")).toHaveFocus();
+      fireEvent.change(within(group).getByLabelText("New label for Company Max"), {
+        target: { value: "Team Max" },
+      });
+      fireEvent.click(within(group).getByRole("button", { name: "Save name" }));
+      await waitFor(() => expect(region).toHaveTextContent("Renamed to Team Max."));
+    });
+
+    it("renames through the label route", async () => {
+      isAdmin = true;
+      serve();
+      render(<ClaudeAccounts host={host} />);
+      const group = screen.getByTestId("ae-shared-claude-accounts");
+      fireEvent.click(await within(group).findByRole("button", { name: "Rename Company Max" }));
+      fireEvent.change(within(group).getByRole("textbox", { name: "New label for Company Max" }), {
+        target: { value: " Max plan " },
+      });
+      fireEvent.click(within(group).getByRole("button", { name: "Save name" }));
+      await within(group).findByText("Renamed to Max plan.");
+      expect(posts()).toEqual([
+        ["/v1/ae/claude-accounts/shared/Team/label", { label: "Max plan" }],
+      ]);
+    });
+
+    it("removes only after the one confirm, through the delete route", async () => {
+      isAdmin = true;
+      serve();
+      render(<ClaudeAccounts host={host} />);
+      const group = screen.getByTestId("ae-shared-claude-accounts");
+      fireEvent.click(await within(group).findByRole("button", { name: "Remove Company Max" }));
+      expect(posts()).toEqual([]);
+      fireEvent.click(within(group).getByRole("button", { name: "Remove for everyone" }));
+      await within(group).findByText("Removed Company Max.");
+      expect(posts()).toEqual([["/v1/ae/claude-accounts/shared/Team/delete", {}]]);
+    });
   });
 });

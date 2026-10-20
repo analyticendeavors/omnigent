@@ -1,3 +1,4 @@
+import { AeSharedClaudeAccountsGroup } from "./AeSharedClaudeAccountsGroup";
 import { ClaudeBrowserLogin } from "./ClaudeBrowserLogin";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -75,6 +76,7 @@ export function ClaudeAccounts({
           const accountId = row.env_var ?? "";
           const displayLabel = row.source;
           const shared = aeIsSharedAccount(accountId);
+          if (shared && !compact) return null; // The Shared group lists these.
           return (
             <div
               key={accountId}
@@ -267,6 +269,13 @@ export function ClaudeAccounts({
         <p role={messageIsError ? "alert" : "status"} className="text-xs">
           {message}
         </p>
+      )}
+      {!compact && (
+        <AeSharedClaudeAccountsGroup
+          hostId={host.host_id}
+          rows={rows}
+          onChanged={accounts.refetch}
+        />
       )}
     </div>
   );

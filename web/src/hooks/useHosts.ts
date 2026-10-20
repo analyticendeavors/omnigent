@@ -355,6 +355,18 @@ export function useStoreCredential(hostId: string) {
   });
 }
 
+/**
+ * Marks every host's detected credentials stale. The shared Claude accounts
+ * are one server-wide pool merged into each host's list, so a change to the
+ * pool must reach the cached lists of the hosts not on screen too.
+ */
+export function useInvalidateDetectedCredentials(): () => void {
+  const queryClient = useQueryClient();
+  return () => {
+    void queryClient.invalidateQueries({ queryKey: ["detected-credentials"] });
+  };
+}
+
 /** A credential already on the host, offered for one-click adopt (non-secret). */
 export interface DetectedCredential {
   family: string;

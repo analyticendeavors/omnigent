@@ -44,6 +44,81 @@ export async function aeFetchSharedClaudeAccounts(): Promise<AeSharedClaudeAccou
   }
 }
 
+// Settings manages the pool (2026-10-20): the full list with who added each
+// account, and the admin's add, relabel and remove. The server checks admin on
+// every change; the token goes in once and never comes back.
+
+/** One shared account as the full list reads it. */
+export interface AeSharedClaudeAccountDetail extends AeSharedClaudeAccount {
+  created_by: string;
+  created_at: string;
+}
+
+export interface AeSharedClaudeAccountList {
+  accounts: AeSharedClaudeAccountDetail[];
+  /** Whether the caller is an admin, who may add, relabel and remove. */
+  can_manage: boolean;
+  /** Whether the server has AE_SHARED_ACCOUNTS_KEY. */
+  key_configured: boolean;
+}
+
+export interface AeSharedClaudeAccountInput {
+  name: string;
+  label?: string;
+  token: string;
+}
+
+const sharedAccountPath = (name: string, action: string) =>
+  `${SHARED_ACCOUNTS_PATH}/${encodeURIComponent(name)}/${action}`;
+
+/** One call to the shared accounts routes; a refusal throws the server's own message. */
+async function aeSharedRequest<T>(path: string, body?: unknown): Promise<T> {
+  const res = await authenticatedFetch(
+    path,
+    body === undefined
+      ? undefined
+      : {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+  );
+  let answer: unknown = null;
+  try {
+    answer = await res.json();
+  } catch {
+    // A body that is not JSON keeps the status line below.
+  }
+  if (!res.ok) {
+    const message = (answer as { error?: { message?: unknown } } | null)?.error?.message;
+    throw new Error(
+      typeof message === "string" && message ? message : `Request failed (${res.status})`,
+    );
+  }
+  return answer as T;
+}
+
+/** The full list for Settings; throws when the server cannot answer it. */
+export async function aeReadSharedClaudeAccounts(): Promise<AeSharedClaudeAccountList> {
+  const answer = await aeSharedRequest<Partial<AeSharedClaudeAccountList> | null>(
+    SHARED_ACCOUNTS_PATH,
+  );
+  return {
+    accounts: Array.isArray(answer?.accounts) ? answer.accounts : [],
+    can_manage: answer?.can_manage === true,
+    key_configured: answer?.key_configured !== false,
+  };
+}
+
+export const aeAddSharedClaudeAccount = (input: AeSharedClaudeAccountInput) =>
+  aeSharedRequest<unknown>(SHARED_ACCOUNTS_PATH, input);
+
+export const aeRelabelSharedClaudeAccount = (name: string, label: string) =>
+  aeSharedRequest<unknown>(sharedAccountPath(name, "label"), { label });
+
+export const aeRemoveSharedClaudeAccount = (name: string) =>
+  aeSharedRequest<unknown>(sharedAccountPath(name, "delete"), {});
+
 /**
  * The host's rows with the shared accounts after its own logins. A host that
  * reports no Claude login rows gets none added (its accounts failed to load).
@@ -75,7 +150,7 @@ export function aeMergeSharedClaudeAccounts(
 }
 
 /** Tabler `users-group` (outline, @tabler/icons 3.46.0), inlined. */
-const USERS_GROUP: AeTablerIconNode = [
+export const AE_USERS_GROUP_ICON: AeTablerIconNode = [
   ["path", { d: "M10 13a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" }],
   ["path", { d: "M8 21v-1a2 2 0 0 1 2 -2h4a2 2 0 0 1 2 2v1" }],
   ["path", { d: "M15 5a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" }],
@@ -91,7 +166,7 @@ export function AeSharedAccountMarker() {
       className="ml-1 inline-flex shrink-0 items-center gap-0.5 rounded border px-1 text-[10px] font-medium text-muted-foreground"
       data-testid="ae-shared-account-marker"
     >
-      <AeTablerSvg node={USERS_GROUP} className="size-3" />
+      <AeTablerSvg node={AE_USERS_GROUP_ICON} className="size-3" />
       Shared
     </span>
   );
