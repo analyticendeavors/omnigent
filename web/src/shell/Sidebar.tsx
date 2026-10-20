@@ -188,6 +188,7 @@ import { ProjectRowIcon } from "./ProjectPicker";
 import { EmojiPicker } from "@/components/ProjectIconPicker";
 import { AeProjectIconGlyph } from "@/lib/aeTablerIcon";
 import { SessionStateBadge } from "@/components/SessionStateBadge";
+import { AeSessionHoverStatus } from "@/components/AeSessionHoverStatus";
 import { useSessionRunnerOnline } from "@/hooks/RunnerHealthProvider";
 import { useActiveRootSessionId } from "@/hooks/useSession";
 import { isSessionStoppable } from "@/lib/sessionStop";
@@ -4483,10 +4484,12 @@ function SessionTooltipContent({
   conversation,
   hostsById,
   hasError,
+  state = null,
 }: {
   conversation: Conversation;
   hostsById: ReadonlyMap<string, Host>;
   hasError: boolean;
+  state?: SessionState | null;
 }) {
   const serverInfo = useContext(ServerInfoContext);
   if (!isFeatureEnabled(serverInfo, "sidebar_grouping_ui")) {
@@ -4541,6 +4544,11 @@ function SessionTooltipContent({
           <span className="truncate">{sessionLocationLabel(conversation, hostsById)}</span>
         </span>
       </p>
+      <AeSessionHoverStatus
+        sessionId={conversation.id}
+        state={state}
+        updatedAt={conversation.updated_at * 1000}
+      />
       <SessionTooltipDetails conversation={conversation} />
       {hasError && <SessionErrorHint />}
     </TooltipContent>
@@ -5137,6 +5145,7 @@ function ConversationRowImpl({
               conversation={conversation}
               hostsById={hostsById}
               hasError={sessionState?.kind === "error"}
+              state={sessionState}
             />
           </Tooltip>
         )
@@ -5193,6 +5202,7 @@ function ConversationRowImpl({
             conversation={conversation}
             hostsById={hostsById}
             hasError={sessionState?.kind === "error"}
+            state={sessionState}
           />
         </Tooltip>
       )}

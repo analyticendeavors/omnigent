@@ -3436,6 +3436,42 @@ describe("Sidebar view options", () => {
     expect(screen.queryByTestId("session-tooltip-repo")).toBeNull();
   });
 
+  it("says what a running session is doing now in its tooltip", async () => {
+    const items = vi.spyOn(sessionsApi, "fetchSessionItemsPage").mockResolvedValue({
+      items: [
+        { type: "message", role: "user", created_at: Date.now() / 1000 - 90, content: [] },
+        {
+          type: "function_call",
+          name: "Bash",
+          arguments: JSON.stringify({ command: "just test", description: "Run the tests" }),
+        },
+      ],
+      hasMore: false,
+    } as unknown as Awaited<ReturnType<typeof sessionsApi.fetchSessionItemsPage>>);
+    try {
+      mockConversations([
+        conv("conv_busy", "Codex", {
+          status: "running",
+          owner: null,
+          updated_at: Math.floor(Date.now() / 1000),
+        }),
+      ]);
+      renderGroupingSidebar();
+
+      fireEvent.pointerMove(screen.getByRole("link", { name: "conv_busy" }), {
+        pointerType: "mouse",
+      });
+      await waitFor(() => {
+        const status = screen.getByTestId("ae-hover-status");
+        expect(status.dataset.kind).toBe("running");
+        expect(status).toHaveTextContent(/Working · 1m 3\ds/);
+        expect(status).toHaveTextContent("Now: Run the tests");
+      });
+    } finally {
+      items.mockRestore();
+    }
+  });
+
   it("names the creator in the session tooltip", async () => {
     const viewer = vi.spyOn(identity, "getCurrentUserId").mockReturnValue("viewer@example.com");
     try {
