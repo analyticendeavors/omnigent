@@ -361,7 +361,13 @@ function AeTriageHead({
 function AeTriageLines({ id, item, loaded }: { id: string; item: AeTriageCount; loaded: boolean }) {
   const missing = Math.max(0, item.count - item.lines.length);
   return (
-    <ul id={id} aria-label={item.label} className="mb-1 ml-5 space-y-0.5 text-xs">
+    // A bullet per note, so two notes in a row read as two (Tailwind's
+    // preflight strips the browser's list markers).
+    <ul
+      id={id}
+      aria-label={item.label}
+      className="mb-1 ml-5 list-disc space-y-0.5 text-xs marker:text-muted-foreground"
+    >
       {item.lines.map((line, index) => (
         // Two identical lines are still two absorptions.
         // oxlint-disable-next-line react/no-array-index-key
@@ -370,7 +376,7 @@ function AeTriageLines({ id, item, loaded }: { id: string; item: AeTriageCount; 
         </li>
       ))}
       {missing > 0 && (
-        <li className="text-muted-foreground">
+        <li className="list-none text-muted-foreground">
           {!loaded
             ? "The lines show once this session's messages load."
             : item.lines.length === 0

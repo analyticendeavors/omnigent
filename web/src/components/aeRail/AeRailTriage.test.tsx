@@ -238,6 +238,22 @@ describe("AeRailTriage", () => {
     expect(screen.queryByText(/older messages not loaded here/)).toBeNull();
   });
 
+  it("marks each note with a bullet, and the missing-lines note with none", () => {
+    show({ "ae.absorbed": "3" }, [
+      said("Absorbed: Rename the field, it blocked the build"),
+      said("Absorbed: Phone frame for the popover, same mockup"),
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: /Absorbed/ }));
+    const list = screen.getByRole("list", { name: "Absorbed" });
+    expect(list).toHaveClass("list-disc");
+    const items = within(list).getAllByRole("listitem");
+    expect(items).toHaveLength(3);
+    expect(items[0]).not.toHaveClass("list-none");
+    expect(items[1]).not.toHaveClass("list-none");
+    expect(items[2]).toHaveClass("list-none");
+    expect(items[2]).toHaveTextContent("1 more in older messages not loaded here.");
+  });
+
   it("lists one count's lines at a time below the shared row", () => {
     show({ "ae.absorbed": "1", "ae.unfiled": "1" }, [
       said("Absorbed: Tabler icon for the rail button, same file"),
