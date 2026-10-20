@@ -69,6 +69,7 @@ import { isIOSShell, onNativeSidebarDrag, setNativeServerSwitcherHidden } from "
 import { type Agent, useSessionAgent, useAgents } from "@/hooks/useAgents";
 import { AeFastModeSection } from "@/components/AeFastMode";
 import { useAeFastModePending } from "@/lib/aeFastMode";
+import { aeClaudeVersion, aeSplitPreviousBy, useAeClaudeVersions } from "@/lib/aeClaudeModels";
 import { AePlanLimitsPopover } from "@/components/AePlanLimits";
 import { AeTokenDefrag } from "@/components/AeTokenDefrag";
 import { SessionTeamControl } from "@/components/AeTeamControl";
@@ -864,12 +865,21 @@ export function ChatPage() {
         : fallbackPickerKind === "devin"
           ? "devin-native"
           : null;
-  const { data: hostProbeOptions } = useHostModelOptions(
+  // Version labels and older Claude models for this picker (omnigent-ae, 2026-10-19).
+  const aeSessionModelOptions = useAeClaudeVersions(
+    sessionModelOptions,
+    fallbackPickerKind === "claude",
+  );
+  const { data: aeRawHostProbeOptions } = useHostModelOptions(
     activeSession?.hostId ?? null,
     hostProbeHarness ?? "",
     !activeSession?.inferenceConfigured &&
       hostProbeHarness !== null &&
       sessionModelOptions.length === 0,
+  );
+  const hostProbeOptions = useAeClaudeVersions(
+    aeRawHostProbeOptions,
+    fallbackPickerKind === "claude",
   );
   // Identity-stable on purpose: substitute only when the host rows actually
   // exist, else keep the store's own array reference — a fresh [] here would
@@ -881,7 +891,7 @@ export function ChatPage() {
     hostProbeOptions != null &&
     hostProbeOptions.length > 0
       ? hostProbeOptions
-      : sessionModelOptions;
+      : aeSessionModelOptions;
 
   // The session is unreachable and a message can't wake it: the host is
   // offline (host-bound) or it isn't host-bound and the runner is down.
@@ -1144,7 +1154,7 @@ export function ChatPage() {
       codexModelOptions={codexModelOptions}
       inferenceConfigured={activeSession?.inferenceConfigured}
       inferenceError={activeSession?.inferenceError}
-      modelLabelOptions={sessionModelOptions}
+      modelLabelOptions={aeSessionModelOptions}
       showCodexPlanMode={shouldShowCodexPlanModeControl(capabilitySource)}
       showClaudePermissionMode={shouldShowPermissionModeControl(capabilitySource)}
       showCodexApprovalMode={shouldShowCodexApprovalModeControl(capabilitySource)}
@@ -4510,19 +4520,8 @@ function hasSessionConfig({
   return showModels || showEffort;
 }
 
-function claudeVersion(value: string) {
-  const match = /(?:^|[-_.])(fable|opus|sonnet|haiku)[-_ ](\d+)(?:[-_.](\d+))?(?=$|[-_[\s])/i.exec(
-    value,
-  );
-  return match
-    ? {
-        family: match[1].toLowerCase(),
-        major: Number(match[2]),
-        minor: Number(match[3] ?? 0),
-        minorText: match[3] ?? null,
-      }
-    : null;
-}
+// Shared with the new-chat picker so a dated id never reads its date as the minor.
+const claudeVersion = aeClaudeVersion;
 
 function compactModelChoices(
   choices: ComposerConfigChoice[],
@@ -4542,32 +4541,18 @@ function compactModelChoices(
   const more: ComposerConfigChoice[] = [];
   const seen = new Set<string>();
   const latestCodexByFamily = new Map<string, { id: string; major: number; minor: number }>();
-  const latestClaudeByFamily = new Map<string, { major: number; minor: number }>();
   if (kind === "claude") {
     let unresolvedCurrent: ComposerConfigChoice | undefined;
-    for (const choice of choices) {
-      const version = claudeChoiceVersion(choice);
-      if (!version) continue;
-      const latest = latestClaudeByFamily.get(version.family);
-      if (
-        !latest ||
-        version.major > latest.major ||
-        (version.major === latest.major && version.minor > latest.minor)
-      )
-        latestClaudeByFamily.set(version.family, version);
-    }
+    // The new-chat picker's definition of "previous" (omnigent-ae, 2026-10-19).
+    const split = aeSplitPreviousBy(choices, claudeChoiceVersion);
+    const previous = new Set(split.previous);
     const primaryIndex = new Map<string, number>();
     for (const choice of choices) {
       const id = choice.data?.["data-model-id"] ?? choice.key;
       const version = claudeChoiceVersion(choice);
       const alias = /^(fable|opus|sonnet|haiku)$/i.exec(id)?.[1]?.toLowerCase();
-      const latest = latestClaudeByFamily.get(version?.family ?? alias ?? "");
-      if (
-        version &&
-        latest &&
-        (version.major < latest.major ||
-          (version.major === latest.major && version.minor < latest.minor))
-      ) {
+      const latest = split.newest.get(version?.family ?? alias ?? "");
+      if (previous.has(choice)) {
         more.push(choice);
         continue;
       }
@@ -4672,7 +4657,7 @@ function CompactSessionChoices({
           {more.length > 0 && (
             <DropdownMenuSub>
               <DropdownMenuSubTrigger data-testid="composer-agent-more-models">
-                More models
+                {kind === "claude" ? "Previous models" : "More models"}
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="max-h-[70vh] max-w-[calc(100vw-2rem)] overflow-y-auto">
                 {more.map((choice) => (

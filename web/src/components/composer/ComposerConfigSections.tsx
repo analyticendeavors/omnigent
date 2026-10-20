@@ -26,9 +26,11 @@ export interface ComposerConfigSection {
   // loading/empty note. Page-local because it varies per surface.
   leading?: ReactNode;
   choices: ComposerConfigChoice[];
+  // Rendered after the choices, e.g. a "Previous models" submenu.
+  trailing?: ReactNode;
 }
 
-function ConfigChoices({ choices }: { choices: readonly ComposerConfigChoice[] }) {
+export function ConfigChoices({ choices }: { choices: readonly ComposerConfigChoice[] }) {
   return (
     <>
       {choices.map((choice) => (
@@ -86,6 +88,7 @@ export function ComposerConfigSections({
           <PickerSectionHeader>{section.header}</PickerSectionHeader>
           {section.leading}
           <ConfigChoices choices={section.choices} />
+          {section.trailing}
         </div>
       ))}
     </>

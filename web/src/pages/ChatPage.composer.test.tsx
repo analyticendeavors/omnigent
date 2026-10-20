@@ -36,6 +36,7 @@ import {
 import { serializeReplyDraft, type StoredReplyDraft } from "@/lib/replyDraft";
 import { COMPOSER_SEND_SHORTCUT_STORAGE_KEY } from "@/lib/composerSendShortcutPreferences";
 import { composerContextToLabels } from "@/lib/composerContextAdapters";
+import { aeWithClaudeVersions } from "@/lib/aeClaudeModels";
 import { CHAT_COLUMN_WIDTH } from "./chatLayout";
 
 vi.mock("@/shell/ClaudeAccounts", () => ({ ClaudeAccounts: () => null }));
@@ -1989,6 +1990,65 @@ describe("Composer model/effort label", () => {
       "aria-checked",
       "true",
     );
+  });
+
+  it("labels subscription rows with versions and lists older Claude models under Previous models", async () => {
+    useChatStore.setState({ llmModel: "opus" });
+    const source = { kind: "subscription", label: "Subscription", name: "claude" };
+    renderWithTooltips(
+      <Composer
+        {...composerProps({
+          showModels: true,
+          modelPickerKind: "claude",
+          codexModelOptions: aeWithClaudeVersions([
+            { id: "sonnet", model: "claude-sonnet-5-5", displayName: "Sonnet", source },
+            { id: "opus", model: "claude-opus-5-5", displayName: "Opus", source },
+            { id: "haiku", model: "claude-haiku-5-5", displayName: "Haiku", source },
+          ]),
+        })}
+      />,
+    );
+    expect(screen.getByTestId("composer-config-gear")).toHaveTextContent("Opus 5.5");
+    await openSessionModels();
+    const models = within(screen.getByTestId("composer-agent-models"));
+    expect(models.getByTestId("composer-agent-model-opus")).toHaveTextContent("Opus 5.5");
+    expect(models.getByTestId("composer-agent-model-opus")).toHaveAttribute("aria-checked", "true");
+    expect(screen.queryByTestId("composer-agent-model-claude-opus-5")).toBeNull();
+    const previous = screen.getByTestId("composer-agent-more-models");
+    expect(previous).toHaveTextContent("Previous models");
+    fireEvent.keyDown(previous, { key: "ArrowRight" });
+    for (const [id, name] of [
+      ["claude-opus-5", "Opus 5"],
+      ["claude-opus-4-8", "Opus 4.8"],
+      ["claude-sonnet-4-6", "Sonnet 4.6"],
+      ["claude-haiku-4-5", "Haiku 4.5"],
+    ])
+      expect(screen.getByTestId(`composer-agent-model-${id}`)).toHaveTextContent(name);
+  });
+
+  it.each([
+    ["opus", "Opus 5.5"],
+    ["claude-opus-5", "Opus 5"],
+  ])("labels the session model %s from the versioned label options", (llmModel, name) => {
+    useChatStore.setState({ llmModel });
+    const source = { kind: "subscription", label: "Subscription", name: "claude" };
+    const catalog = [
+      { id: "opus", model: "claude-opus-5-5", displayName: "Opus", source },
+      { id: "sonnet", model: "claude-sonnet-5-5", displayName: "Sonnet", source },
+    ];
+    render(
+      <Composer
+        {...composerProps({
+          showModels: true,
+          modelPickerKind: "claude",
+          codexModelOptions: catalog,
+          modelLabelOptions: aeWithClaudeVersions(catalog),
+        })}
+      />,
+    );
+    const pill = screen.getByTestId("composer-config-gear");
+    expect(pill).toHaveTextContent(name);
+    if (name === "Opus 5") expect(pill).not.toHaveTextContent("Opus 5.5");
   });
 
   it("resolves alias labels from shuffled host versions and keeps a selected old model in More", async () => {

@@ -393,6 +393,20 @@ describe("useHostModelOptions", () => {
     expect(result.current.data?.map((model) => model.displayName)).toEqual(["Sonnet 4.6"]);
   });
 
+  it("returns a Claude subscription catalog unchanged for every consumer", async () => {
+    const source = { kind: "subscription", label: "Subscription", name: "claude" };
+    const models = [{ id: "opus", model: "claude-opus-5-5", displayName: "Opus", source }];
+    fetchMock.mockResolvedValueOnce(mockResponse({ models }));
+
+    const { result } = renderHook(() => useHostModelOptions("host_1", "claude-native"), {
+      wrapper,
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    // Version labels and older models belong to the two pickers, not the shared query.
+    expect(result.current.data).toEqual(models);
+  });
+
   it("does not fetch without a selected host", async () => {
     renderHook(() => useHostModelOptions(null, "claude-native"), { wrapper });
     await Promise.resolve();

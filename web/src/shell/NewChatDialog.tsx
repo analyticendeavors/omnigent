@@ -26,8 +26,10 @@ import {
   PickerSectionHeader,
 } from "@/components/composer/HarnessMenuRow";
 import { ComposerConfigSections } from "@/components/composer/ComposerConfigSections";
+import { aeWithPreviousModels } from "@/components/composer/AePreviousModelsSub";
 import { buildFusionSections } from "@/components/composer/fusionSections";
 import { compactModelTriggerLabel, normalizeEffortLabel } from "@/lib/composerModelLabel";
+import { aeSplitPrevious, aeWithClaudeVersions } from "@/lib/aeClaudeModels";
 import {
   codexCreateApprovalOptions,
   applyCodexApprovalSelection,
@@ -3234,7 +3236,7 @@ export function NewChatLandingScreen() {
           (sandboxCatalogPending || sandboxCatalogError
             ? []
             : CLAUDE_NATIVE_MODELS.map((model) => ({ id: model.id, displayName: model.id }))))
-        : (availableClaudeModels ?? []).map((option) => ({
+        : aeWithClaudeVersions(availableClaudeModels ?? []).map((option) => ({
             id: option.id,
             model: option.model,
             displayName: nativeModelLabel(option),
@@ -3277,6 +3279,21 @@ export function NewChatLandingScreen() {
     [availablePiModels, sandboxSelected, sandboxCatalog],
   );
   const supportsPermissionMode = nativeAgentHasCapability(selectedAgent, "permissionMode");
+  // Older Claude versions go under "Previous models" (omnigent-ae, 2026-10-19).
+  const aeClaudeSelected = selectedNativeHarness === "claude-native" && !sandboxSelected;
+  const aePreviousClaudeModels = useMemo(
+    () =>
+      new Set(
+        aeClaudeSelected
+          ? aeSplitPrevious(
+              claudeModelOptions.filter(
+                (option: NativeModelOption) => option.source?.kind === "subscription",
+              ),
+            ).previous.map((option) => option.id)
+          : [],
+      ),
+    [aeClaudeSelected, claudeModelOptions],
+  );
   const supportsDevinMode = nativeAgentHasCapability(selectedAgent, "devinMode");
   const supportsApprovalMode = nativeAgentHasCapability(selectedAgent, "approvalMode");
   const supportsCursorMode = nativeAgentHasCapability(selectedAgent, "cursorMode");
@@ -3849,7 +3866,7 @@ export function NewChatLandingScreen() {
             supportsPermissionMode ||
             supportsDevinMode ||
             selectedNativeHarness === "codex-native"
-              ? {
+              ? aeWithPreviousModels(aePreviousClaudeModels, {
                   testId: "new-chat-landing-agent-models",
                   header: "Models",
                   leading: (
@@ -3933,7 +3950,7 @@ export function NewChatLandingScreen() {
                         className: "whitespace-normal break-words [&>span:last-child]:min-w-0",
                       })),
                   ],
-                }
+                })
               : undefined
           }
           efforts={

@@ -3907,6 +3907,47 @@ describe("NewChatLandingScreen", () => {
     expect(screen.getByTestId("new-chat-landing-agent-models")).toHaveTextContent("Opus");
   });
 
+  it("shows Claude versions and launches an older model from Previous models", async () => {
+    authenticatedFetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: "conv_new" }),
+    } as unknown as Response);
+    const source = { kind: "subscription", label: "Subscription", name: "claude" };
+    const claudeResult = {
+      ...SUCCESS_QUERY_STATE,
+      data: [
+        { id: "opus", model: "claude-opus-5-5", displayName: "Opus", isDefault: true, source },
+        { id: "sonnet", model: "claude-sonnet-5-5", displayName: "Sonnet", source },
+      ],
+    };
+    mockModelQueries((harness) =>
+      harness === "codex-native" ? CODEX_MODEL_OPTIONS_RESULT : claudeResult,
+    );
+    renderLanding();
+    const picker = screen.getByTestId("new-chat-landing-agent-select");
+    expect(picker).toHaveTextContent("Opus 5.5");
+    openAgentModels("a1");
+    const models = within(screen.getByTestId("new-chat-landing-agent-models"));
+    expect(models.getByTestId("new-chat-landing-agent-model-opus")).toHaveTextContent("Opus 5.5");
+    expect(models.getByTestId("new-chat-landing-agent-model-sonnet")).toHaveTextContent(
+      "Sonnet 5.5",
+    );
+    expect(screen.queryByTestId("new-chat-landing-agent-model-claude-opus-5")).toBeNull();
+    const previous = models.getByTestId("new-chat-landing-agent-models-previous");
+    expect(previous).toHaveTextContent("Previous models");
+    fireEvent.keyDown(previous, { key: "ArrowRight" });
+    expect(screen.getByTestId("new-chat-landing-agent-model-claude-opus-4-8")).toHaveTextContent(
+      "Opus 4.8",
+    );
+    expect(screen.getByTestId("new-chat-landing-agent-model-claude-sonnet-4-6")).toBeVisible();
+    fireEvent.click(screen.getByTestId("new-chat-landing-agent-model-claude-opus-5"));
+    expect(readHarnessOptions("claude-native").model).toBe("claude-opus-5");
+    expect(picker).not.toHaveTextContent("Opus 5.5");
+    closeMenu();
+    const { body } = await submitAndReadBody();
+    expect(body.model_override).toBe("claude-opus-5");
+  });
+
   it.each([true, false])(
     "honors the catalog display name without changing selection semantics (default=%s)",
     (isDefault) => {
