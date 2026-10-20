@@ -4625,7 +4625,12 @@ function CompactConfigChoice({ choice }: { choice: ComposerConfigChoice }) {
       onSelect={(event) => event.preventDefault()}
       onCheckedChange={choice.onSelect}
       data-testid={choice.testId}
-      className={cn("min-h-8 whitespace-normal break-words", choice.className)}
+      // In the two-column grid a right-edge check sits beside the next column's
+      // model and reads as its; the check goes before the name instead.
+      className={cn(
+        "min-h-8 pr-2! pl-7! whitespace-normal break-words [&>[data-slot=dropdown-menu-checkbox-item-indicator]]:right-auto [&>[data-slot=dropdown-menu-checkbox-item-indicator]]:left-1.5",
+        choice.className,
+      )}
       {...choice.data}
     >
       {choice.label}
