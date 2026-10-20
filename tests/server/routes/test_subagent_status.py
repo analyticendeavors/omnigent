@@ -19,11 +19,12 @@ from fastapi.responses import JSONResponse
 from omnigent.entities import MessageData, NewConversationItem, SlashCommandData
 from omnigent.errors import OmnigentError
 from omnigent.runtime import session_stream
-from omnigent.server import session_live_state, session_metadata_logging
+from omnigent.server import ae_subagent_liveness, session_live_state, session_metadata_logging
 from omnigent.server.routes import sessions
 from omnigent.server.routes._sessions import common
 from omnigent.server.routes.sessions import routes_events
 from omnigent.server.schemas import BackgroundTaskInfo, ErrorDetail
+from omnigent.server.subagent_activity import _completion_marker
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.scheduled_task_store.sqlalchemy_store import SqlAlchemyScheduledTaskStore
@@ -31,6 +32,7 @@ from tests.debug_log_helpers import capture_debug_rows
 from tests.server.routes.test_sessions_runner_relay import _ScriptedRunnerClient
 
 _BACKGROUND_TASK = BackgroundTaskInfo(status="running", description="Wait for CI")
+_CLAUDE_SUBAGENT = "claude-code-native-ui-subagent"
 
 
 async def _flush_live_state() -> None:
@@ -294,6 +296,67 @@ async def test_offline_sweep_refreshes_child_status_after_idle_observation(
             "status_lookup": "found",
         }.items()
     )
+
+
+@pytest.mark.parametrize(
+    ("wrapper", "native_id", "completion", "expected"),
+    [
+        pytest.param(_CLAUDE_SUBAGENT, True, None, "running", id="claude-lull-held"),
+        pytest.param(_CLAUDE_SUBAGENT, True, "completed", "idle", id="claude-after-return"),
+        pytest.param(_CLAUDE_SUBAGENT, False, None, "idle", id="claude-no-native-id"),
+        pytest.param(None, False, None, "idle", id="unlabelled-child"),
+        pytest.param("codex-native-ui-subagent", True, None, "idle", id="codex-child"),
+    ],
+)
+async def test_subagent_idle_waits_for_claude_completion(
+    status_route: _StatusRoute,
+    wrapper: str | None,
+    native_id: bool,
+    completion: str | None,
+    expected: str,
+) -> None:
+    route = status_route
+    sid = route.child_id
+    labels = {"omnigent.wrapper": wrapper} if wrapper else {}
+    if native_id:
+        labels["omnigent.claude_native.subagent_id"] = "agent-1"
+    route.store.set_labels(sid, labels)
+    if completion is not None:
+        route.store.append(route.parent_id, [_completion_marker("task", "agent-1", completion)])
+    route.published.reset_mock()
+    fields = {
+        "response_id": "resp_turn",
+        "background_task_count": 1,
+        "background_tasks": [_BACKGROUND_TASK.model_dump()],
+        "blocked_on": "permission",
+    }
+
+    try:
+        response = await route.client.post(
+            f"/v1/sessions/{sid}/events",
+            json={"type": "subagent.status", "data": {"idle": True, **fields}},
+        )
+        assert response.status_code == 202, response.text
+        assert response.json() == {"queued": False}
+        await _flush_live_state()
+
+        assert common._session_status_cache[sid] == expected
+        conv = route.store.get_conversation(sid)
+        assert conv is not None and conv.live_status == expected
+        assert common._session_background_task_count_cache[sid] == 1
+        child_events = [c.args[1] for c in route.published.call_args_list if c.args[0] == sid]
+        assert [event["status"] for event in child_events] == [expected]
+        if expected == "running":
+            # A held lull still carries its turn, blocked state and background tally.
+            assert child_events[0].items() >= fields.items()
+            assert common._session_active_response_cache[sid] == "resp_turn"
+            assert common._session_blocked_on_cache[sid] == "permission"
+            assert sid in ae_subagent_liveness._stale_timers
+        else:
+            assert sid not in ae_subagent_liveness._stale_timers
+    finally:
+        ae_subagent_liveness.cancel_stale_timer(sid)
+        common._session_blocked_on_cache.pop(sid, None)
 
 
 async def test_subagent_idle_preserves_failed_status(status_route: _StatusRoute) -> None:

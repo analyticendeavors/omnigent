@@ -20,6 +20,7 @@ from omnigent.entities import (
 from omnigent.harness_aliases import is_native_harness
 from omnigent.harnesses.codex_native.side_chat import is_side_chat_child
 from omnigent.runtime import session_stream
+from omnigent.server.ae_subagent_liveness import publish_claude_subagent_end
 from omnigent.server.schemas import OutputItemDoneEvent
 from omnigent.stores import ConversationStore
 
@@ -243,6 +244,8 @@ async def record_subagent_activity(
                 type="response.output_item.done", item=persisted.to_api_dict()
             )
             session_stream.publish(parent_id, event.model_dump())
+        if phase == "returned":
+            publish_claude_subagent_end(child, status, replayed=persisted.deduplicated)
         if phase == "delegated" and any(
             child.labels.get(label)
             for label in (

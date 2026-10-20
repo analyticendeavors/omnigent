@@ -77,6 +77,7 @@ from omnigent.server._elicitation_registry import (
     _ParkedHarnessElicitation,
     _PreResolvedHarnessElicitation,
 )
+from omnigent.server.ae_subagent_liveness import hold_premature_lull_idle
 from omnigent.server.auth import (
     LEVEL_EDIT,
     LEVEL_OWNER,
@@ -1931,6 +1932,15 @@ def register_events_routes(
                 raw_blocked_on if isinstance(raw_blocked_on, str) and raw_blocked_on else None
             )
             if body.type == _SUBAGENT_STATUS_TYPE:
+                if await hold_premature_lull_idle(
+                    conv,
+                    conversation_store,
+                    response_id=response_id,
+                    background_task_count=bg_count,
+                    background_tasks=bg_tasks,
+                    blocked_on=blocked_on,
+                ):
+                    return {"queued": False}
                 # A transcript lull publishes idle but is not a runner completion.
                 _publish_status(
                     session_id,
