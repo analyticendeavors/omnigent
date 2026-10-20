@@ -3,7 +3,14 @@
 // menu open, so Status and Move take one row each on a phone (omnigent-ae).
 
 import { ChevronRightIcon } from "lucide-react";
-import { type ComponentType, type ReactNode, useState } from "react";
+import {
+  type ComponentType,
+  type ReactNode,
+  useEffect,
+  useId,
+  useRef,
+  useSyncExternalStore,
+} from "react";
 import { cn } from "@/lib/utils";
 
 export interface AeMenuFoldItemProps {
@@ -11,8 +18,24 @@ export interface AeMenuFoldItemProps {
   className?: string;
   textValue?: string;
   "aria-expanded"?: boolean;
+  "aria-controls"?: string;
   onSelect?: (event: Event) => void;
   "data-testid"?: string;
+}
+
+// One fold open at a time across the open menu, so Status and Move never both
+// lengthen it. Only one row menu is ever open, so one module-wide value does.
+let openFold: string | null = null;
+const listeners = new Set<() => void>();
+
+function setOpenFold(next: string | null) {
+  openFold = next;
+  for (const listener of listeners) listener();
+}
+
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
 }
 
 export function AeMenuFold({
@@ -31,17 +54,33 @@ export function AeMenuFold({
   testId: string;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
+  const open = useSyncExternalStore(subscribe, () => openFold === testId);
+  const groupId = useId();
+  const group = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    // The menu scrolls when it runs out of room; bring the opened items into view.
+    if (open) group.current?.scrollIntoView?.({ block: "nearest" });
+  }, [open]);
+  // A closed menu unmounts its folds; the next one opens with both shut.
+  useEffect(
+    () => () => {
+      if (openFold === testId) setOpenFold(null);
+    },
+    [testId],
+  );
+
   return (
     <>
       <Item
         data-testid={testId}
         aria-expanded={open}
+        aria-controls={open ? groupId : undefined}
         textValue={label}
         onSelect={(event) => {
           // Keep the menu open: this row only shows or hides its items.
           event.preventDefault();
-          setOpen((was) => !was);
+          setOpenFold(open ? null : testId);
         }}
       >
         {icon}
@@ -58,7 +97,13 @@ export function AeMenuFold({
         />
       </Item>
       {open ? (
-        <div role="group" aria-label={label} className="mx-1 mb-1 rounded-md bg-muted/60 py-0.5">
+        <div
+          ref={group}
+          id={groupId}
+          role="group"
+          aria-label={label}
+          className="mx-1 mb-1 rounded-md bg-muted/60 py-0.5"
+        >
           {children}
         </div>
       ) : null}

@@ -168,7 +168,8 @@ describe("AeStatusMenu", () => {
     fireEvent.click(fold);
     // The row opens its items in place; the menu stays open.
     expect(fold).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("group", { name: "Status" })).toBeInTheDocument();
+    const group = screen.getByRole("group", { name: "Status" });
+    expect(fold).toHaveAttribute("aria-controls", group.id);
     expect(screen.getAllByTestId("ae-status-item")).toHaveLength(5);
     fireEvent.click(fold);
     expect(screen.queryAllByTestId("ae-status-item")).toHaveLength(0);

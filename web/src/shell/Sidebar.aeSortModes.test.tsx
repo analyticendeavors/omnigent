@@ -409,15 +409,20 @@ describe("Manual ordering", () => {
     openRowMenu("a");
     expect(screen.queryAllByTestId("ae-move-item")).toHaveLength(0);
     fireEvent.click(screen.getByTestId("ae-move-menu"));
-    fireEvent.click(screen.getByTestId("ae-status-menu"));
     expect(screen.getAllByTestId("ae-move-item").map((item) => item.textContent)).toEqual([
       "Move to top",
       "Move up",
       "Move down",
       "Move to bottom",
     ]);
-    // Plain items: the Status values stay the menu's only radio items.
+    // Plain items, not radio items: only Status holds a choice.
+    expect(screen.queryAllByRole("menuitemradio")).toHaveLength(0);
+    // One fold open at a time: opening Status shuts Move.
+    fireEvent.click(screen.getByTestId("ae-status-menu"));
     expect(screen.getAllByRole("menuitemradio")).toHaveLength(5);
+    expect(screen.queryAllByTestId("ae-move-item")).toHaveLength(0);
+    expect(screen.getByTestId("ae-move-menu")).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(screen.getByTestId("ae-move-menu"));
     fireEvent.click(screen.getByText("Move to bottom"));
     await waitFor(() => expect(rowIds()).toEqual(["b", "a"]));
   });
