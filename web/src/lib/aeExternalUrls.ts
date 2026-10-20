@@ -85,6 +85,37 @@ export function isAeFabricAdminLinkUrl(url: unknown): url is string {
   }
 }
 
+// Databricks links (omnigent-ae patch, 2026-10-19). The Admin Center's
+// Databricks section offers "Open in Databricks" for the workspace and for each
+// SQL warehouse, which the allowlists above refused, so the page fell back to
+// Copy. Exactly two shapes are admitted on any one-label workspace host under
+// cloud.databricks.com (Databricks on AWS), both https, with no userinfo, port,
+// query or fragment: the workspace's root, with or without its trailing slash
+// (the server sends it without), and one warehouse's page, whose id is 16
+// lowercase hex characters. A punycode label (xn--) is refused, so a lookalike
+// workspace name cannot show in the address bar as Unicode.
+const DATABRICKS_WORKSPACE =
+  "https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.cloud\\.databricks\\.com";
+const DATABRICKS_LINK = new RegExp(`^${DATABRICKS_WORKSPACE}(?:/|/sql/warehouses/[0-9a-f]{16})?$`);
+
+/**
+ * True for `https://<workspace>.cloud.databricks.com` (with or without a
+ * trailing slash) and `https://<workspace>.cloud.databricks.com/sql/warehouses/<id>`,
+ * and nothing else.
+ */
+export function isAeDatabricksLinkUrl(url: unknown): url is string {
+  if (typeof url !== "string") return false;
+  if (!DATABRICKS_LINK.test(url) || url.startsWith("https://xn--")) return false;
+  // The browser must read the string as the same URL, character for character
+  // (the bare workspace root reads back with its slash).
+  try {
+    const href = new URL(url).href;
+    return href === url || href === `${url}/`;
+  } catch {
+    return false;
+  }
+}
+
 /** The error code `navigation.openExternal` rejects with when no tab opened. */
 export const AE_POPUP_BLOCKED = "PopupBlocked";
 

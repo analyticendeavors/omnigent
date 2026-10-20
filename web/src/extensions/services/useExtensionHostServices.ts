@@ -5,6 +5,7 @@ import { resolveIdentity } from "@/lib/identity";
 import { getOmnigentServerIdentity } from "@/lib/host";
 import {
   aeOpenExternalWindow,
+  isAeDatabricksLinkUrl,
   isAeFabricAdminLinkUrl,
   isAeGithubLinkUrl,
 } from "@/lib/aeExternalUrls";
@@ -124,7 +125,8 @@ export function useExtensionHostServices(extension: ExtensionCatalogItem) {
           typeof url !== "string" ||
           (!externalUrlsRef.current.has(url) &&
             !isAeGithubLinkUrl(url) &&
-            !isAeFabricAdminLinkUrl(url))
+            !isAeFabricAdminLinkUrl(url) &&
+            !isAeDatabricksLinkUrl(url))
         ) {
           throw new ExtensionHostServiceError(
             "PermissionDenied",

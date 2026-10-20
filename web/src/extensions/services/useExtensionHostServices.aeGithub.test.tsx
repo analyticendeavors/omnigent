@@ -137,3 +137,33 @@ describe("navigation.openExternal and GitHub links (P25)", () => {
     expect(openExternal(["sessions.read"])).toBeUndefined();
   });
 });
+
+describe("navigation.openExternal and Databricks links", () => {
+  let open: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    open = vi.spyOn(window, "open").mockReturnValue({ opener: window } as unknown as Window);
+  });
+
+  afterEach(() => {
+    open.mockRestore();
+  });
+
+  it.each([
+    "https://dbc-00000000-0000.cloud.databricks.com",
+    "https://dbc-00000000-0000.cloud.databricks.com/sql/warehouses/0123456789abcdef",
+  ])("opens the Databricks link %s", async (url) => {
+    await expect(openExternal()?.({ url }, signal())).resolves.toBeNull();
+    expect(open).toHaveBeenCalledWith(url, "_blank");
+  });
+
+  it("still refuses a Databricks lookalike", async () => {
+    await expect(
+      openExternal()?.(
+        { url: "https://dbc-00000000-0000.cloud.databricks.com.evil.example" },
+        signal(),
+      ),
+    ).rejects.toMatchObject({ code: "PermissionDenied" });
+    expect(open).not.toHaveBeenCalled();
+  });
+});

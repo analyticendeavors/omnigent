@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isAeFabricAdminLinkUrl, isAeGithubLinkUrl } from "./aeExternalUrls";
+import { isAeDatabricksLinkUrl, isAeFabricAdminLinkUrl, isAeGithubLinkUrl } from "./aeExternalUrls";
 
 describe("isAeGithubLinkUrl", () => {
   it.each([
@@ -115,5 +115,54 @@ describe("isAeFabricAdminLinkUrl", () => {
     ["a trailing newline", `${AZURE}\n`],
   ])("rejects %s", (_name, url) => {
     expect(isAeFabricAdminLinkUrl(url)).toBe(false);
+  });
+});
+
+describe("isAeDatabricksLinkUrl", () => {
+  const HOST = "https://dbc-00000000-0000.cloud.databricks.com";
+  const WAREHOUSE = `${HOST}/sql/warehouses/0123456789abcdef`;
+
+  it.each([
+    ["the workspace", HOST],
+    ["the workspace with its slash", `${HOST}/`],
+    ["a warehouse", WAREHOUSE],
+    ["a named workspace", "https://acme.cloud.databricks.com"],
+    ["a label holding xn-- later", "https://abxn--c.cloud.databricks.com"],
+  ])("admits %s", (_name, url) => {
+    expect(isAeDatabricksLinkUrl(url)).toBe(true);
+  });
+
+  it.each([
+    ["not a string", 42],
+    ["http", HOST.replace("https:", "http:")],
+    ["another host", `${HOST}.evil.example`],
+    ["a lookalike domain", HOST.replace("cloud.databricks.com", "cloud-databricks.com")],
+    ["a nested subdomain", HOST.replace("https://", "https://x.")],
+    ["the bare domain", "https://cloud.databricks.com"],
+    ["Azure Databricks", "https://adb-1234567890123456.7.azuredatabricks.net"],
+    ["userinfo", HOST.replace("https://", "https://evil.example@")],
+    ["a port", `${HOST}:8443`],
+    ["a query", `${HOST}/?x=1`],
+    ["a fragment", `${HOST}/#x`],
+    ["another page", `${HOST}/sql/editor`],
+    ["a longer warehouse path", `${WAREHOUSE}/monitoring`],
+    ["a short warehouse id", WAREHOUSE.slice(0, -1)],
+    ["an upper case warehouse id", `${HOST}/sql/warehouses/0123456789ABCDEF`],
+    ["an upper case host", `https://${HOST.slice("https://".length).toUpperCase()}`],
+    ["a punycode label", "https://xn--80ak6aa92e.cloud.databricks.com"],
+    [
+      "a punycode warehouse",
+      "https://xn--80ak6aa92e.cloud.databricks.com/sql/warehouses/0123456789abcdef",
+    ],
+    ["a trailing dot", HOST.replace(".com", ".com.")],
+    ["a space", `${HOST} `],
+    ["a tab", `${HOST}\t`],
+    ["an encoded warehouse id", `${HOST}/sql/warehouses/0123456789abcde%66`],
+    ["a backslash", `${HOST}\\sql/warehouses/0123456789abcdef`],
+    ["a leading hyphen", "https://-acme.cloud.databricks.com"],
+    ["an encoded path", `${HOST}/sql%2Fwarehouses/0123456789abcdef`],
+    ["a trailing newline", `${HOST}\n`],
+  ])("rejects %s", (_name, url) => {
+    expect(isAeDatabricksLinkUrl(url)).toBe(false);
   });
 });
