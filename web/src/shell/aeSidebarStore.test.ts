@@ -300,4 +300,30 @@ describe("useAeSidebarView", () => {
     expect(listedFor("", "archived", true)).toBe(false);
     expect(listedFor("", "all", false)).toBe(false);
   });
+
+  it("loads further pages under Status ordering, so every session sorts by its icon", () => {
+    const client = new QueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client }, children);
+    for (const [ordering, loads] of [
+      ["status", 1],
+      ["updated", 0],
+    ] as const) {
+      const paged = { ...query, hasNextPage: true, fetchNextPage: vi.fn() } as typeof query;
+      renderHook(
+        () =>
+          useAeSidebarView({
+            view: { grouping: "default", ordering, show: [] },
+            orderFrozen: false,
+            conversationsQuery: paged,
+            searchQuery: "",
+            activeTab: "all",
+            onViewChange: vi.fn(),
+            available: true,
+          }),
+        { wrapper },
+      );
+      expect(paged.fetchNextPage).toHaveBeenCalledTimes(loads);
+    }
+  });
 });

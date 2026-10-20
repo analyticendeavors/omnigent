@@ -6,6 +6,7 @@ import {
   AE_TRIAGE_STATUS,
   type AeTriageGroup,
   aeGroupCounts,
+  aeSortByTriage,
   aeTriageGroupOf,
 } from "./aeTriage";
 
@@ -49,6 +50,40 @@ describe("aeTriageGroupOf", () => {
       "Working",
     );
     expect(aeTriageGroupOf({ ...session, labels: { "ae.status": "review" } }, null)).toBe("Review");
+  });
+});
+
+describe("aeSortByTriage", () => {
+  const at = (id: string, status?: string, pending = 0) => ({ ...row(status, pending), id });
+
+  it("sorts by the shown status and keeps the incoming order within one", () => {
+    const rows = [
+      at("ref", "reference"),
+      at("w1", "working"),
+      at("none"),
+      at("r", "review"),
+      at("w2", "working"),
+      at("blk", "working", 1),
+      at("p", "parked"),
+    ];
+    expect(aeSortByTriage(rows, null).map((r) => r.id)).toEqual([
+      "blk",
+      "w1",
+      "w2",
+      "r",
+      "none",
+      "p",
+      "ref",
+    ]);
+    expect(rows.map((r) => r.id)[0]).toBe("ref");
+  });
+
+  it("holds each row's group while a frozen map is passed", () => {
+    const frozen = new Map<string, AeTriageGroup>();
+    aeSortByTriage([at("a", "review"), at("b", "working")], frozen);
+    const changed = [at("a", "working"), at("b", "review")];
+    expect(aeSortByTriage(changed, frozen).map((r) => r.id)).toEqual(["b", "a"]);
+    expect(aeSortByTriage(changed, null).map((r) => r.id)).toEqual(["a", "b"]);
   });
 });
 

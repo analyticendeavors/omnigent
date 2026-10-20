@@ -287,7 +287,7 @@ export function useAeOrderMover(): (op: AeOrderOp) => boolean {
 /**
  * Load the list's further pages while `enabled`, up to the rows the background
  * refresh keeps current (`maxRefreshSessions`): a row past that window would
- * keep a stale status, which Triage groups by and Manual ranks among.
+ * keep a stale status, which Triage groups by, Status sorts by and Manual ranks among.
  */
 export function useAeLoadAllPages(query: SidebarListQuery, enabled: boolean): void {
   const { maxRefreshSessions } = useContext(SidebarConfigContext);

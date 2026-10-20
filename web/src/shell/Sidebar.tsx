@@ -1994,11 +1994,13 @@ function ConversationList({
       frozenStatus?.set(c.id, live);
       return live;
     };
-    // Status ordering is a stable sort by bucket, so updated_at order holds within one.
-    const allOrdered =
+    // Status ordering is a stable sort by bucket, so updated_at order holds within one;
+    // ae.applyOrder then sorts by status icon, keeping that order within an icon.
+    const allOrdered = ae.applyOrder(
       view.ordering === "status"
         ? groupConversations(byUpdated, statusOf, STATUS_BUCKETS).flatMap((g) => g.conversations)
-        : ae.applyOrder(byUpdated);
+        : byUpdated,
+    );
     // Grouped views fold Shared into the groups too, so the first group takes
     // the Projects header's place.
     const splitShared = groupingUi && !grouped;

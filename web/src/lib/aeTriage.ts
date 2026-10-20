@@ -34,13 +34,16 @@ const GROUP_OF = Object.fromEntries(
   }),
 ) as Record<AeStatus, AeTriageGroup>;
 
+/** What a row's Triage group reads. */
+export type AeTriageRow = Pick<Conversation, "id" | "labels" | "pending_elicitations_count">;
+
 /**
  * A row's group, from the status the row shows (blocked included). A `frozen`
  * map pins the first answer while the pointer is in the list, so a status
  * change under the cursor does not move the row to another group.
  */
 export function aeTriageGroupOf(
-  conversation: Pick<Conversation, "id" | "labels" | "pending_elicitations_count">,
+  conversation: AeTriageRow,
   frozen: Map<string, AeTriageGroup> | null,
 ): AeTriageGroup {
   const held = frozen?.get(conversation.id);
@@ -49,6 +52,17 @@ export function aeTriageGroupOf(
   const group: AeTriageGroup = status ? GROUP_OF[status] : "No status";
   frozen?.set(conversation.id, group);
   return group;
+}
+
+/** Rows in the Triage groups' order, each group keeping the order the rows came in. */
+export function aeSortByTriage<T extends AeTriageRow>(
+  rows: T[],
+  frozen: Map<string, AeTriageGroup> | null,
+): T[] {
+  const rank = new Map(
+    rows.map((row) => [row.id, AE_TRIAGE_GROUPS.indexOf(aeTriageGroupOf(row, frozen))]),
+  );
+  return [...rows].sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
 }
 
 /** Rows per group title, from the list's id-to-title map. */

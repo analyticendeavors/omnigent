@@ -29,7 +29,12 @@ import {
   aeIsOrderId,
   aeMoveInOrder,
 } from "@/lib/aeSessionOrder";
-import { type AeTriageGroup, aeTriageGroupOf } from "@/lib/aeTriage";
+import {
+  type AeTriageGroup,
+  type AeTriageRow,
+  aeSortByTriage,
+  aeTriageGroupOf,
+} from "@/lib/aeTriage";
 import type { SessionFilter } from "@/lib/sessionFilterPreferences";
 import type { SidebarViewPreferences } from "@/lib/sidebarViewPreferences";
 import { type ActiveChatOverride, sortByUpdatedAtDesc } from "./sidebarNav";
@@ -41,6 +46,10 @@ interface AeSidebarState {
   manual: boolean;
   /** The saved order while Manual is on, else `null`. */
   order: readonly string[] | null;
+  /** Status ordering sorts rows by their status icon. */
+  statusSort: boolean;
+  /** Triage groups held while the pointer is in the list. */
+  frozenTriage: Map<string, AeTriageGroup> | null;
   /** Each list's row ids as shown, by list key (`sessions`, `shared`, `group:…`, `folder:…`). */
   lists: ReadonlyMap<string, readonly string[]>;
   /** Each listed row's list key. */
@@ -58,6 +67,8 @@ const IDLE: AeSidebarState = {
   listed: false,
   manual: false,
   order: null,
+  statusSort: false,
+  frozenTriage: null,
   lists: new Map(),
   listOf: new Map(),
   units: null,
@@ -97,6 +108,19 @@ export function aeCancelPendingMoves(): void {
 
 const NO_ORDER: readonly string[] = [];
 
+type AeListRow = AeOrderRow & AeTriageRow;
+
+/** Rows in the saved order while Manual is on, by status icon while Status is, else as given. */
+function aeOrderRows<T extends AeListRow>(
+  rows: T[],
+  order: readonly string[] | null,
+  statusSort: boolean,
+  frozen: Map<string, AeTriageGroup> | null,
+): T[] {
+  if (order) return aeApplyManualOrder(rows, order);
+  return statusSort ? aeSortByTriage(rows, frozen) : rows;
+}
+
 /** What the session list needs from the AE view options. */
 export interface AeSidebarView {
   /** Rows are drop targets and offer Move: view options on, not searching, not Archived. */
@@ -105,10 +129,12 @@ export interface AeSidebarView {
   switchToManual: () => void;
   triage: boolean;
   order: readonly string[] | null;
+  /** Status ordering sorts by status icon (Blocked first, Reference last), outside search and Archived. */
+  statusSort: boolean;
   /** Triage groups held while the pointer is in the list. */
   frozenTriage: Map<string, AeTriageGroup> | null;
-  /** Rows in the saved order while Manual is on; `rows` itself otherwise. */
-  applyOrder: <T extends AeOrderRow>(rows: T[]) => T[];
+  /** Rows in the saved order while Manual is on, by status icon while Status is, else `rows`. */
+  applyOrder: <T extends AeListRow>(rows: T[]) => T[];
   /** A row's Triage group while Triage is on, else `null`. */
   triageTitle: (conversation: Conversation) => AeTriageGroup | null;
   /** Triage's Archived group shows: not while searching, nor on the Shared and Archived displays. */
@@ -136,11 +162,12 @@ export function useAeSidebarView({
   // Search results and archived rows keep upstream's order.
   const listed = available && !searchQuery && activeTab !== "archived";
   const manualOn = view.ordering === "manual" && listed;
+  const statusSort = view.ordering === "status" && listed;
   const triage = view.grouping === "triage";
   const { data } = useAeSidebarOrder(manualOn);
   const order = manualOn ? (data?.order ?? NO_ORDER) : null;
   const switchToManual = useCallback(() => onViewChange({ ordering: "manual" }), [onViewChange]);
-  useAeLoadAllPages(conversationsQuery, listed && (manualOn || triage));
+  useAeLoadAllPages(conversationsQuery, listed && (manualOn || triage || statusSort));
   useEffect(() => {
     if (!manualOn) aeCancelPendingMoves();
   }, [manualOn]);
@@ -158,14 +185,15 @@ export function useAeSidebarView({
       switchToManual,
       triage,
       order,
+      statusSort,
       frozenTriage,
-      applyOrder: <T extends AeOrderRow>(rows: T[]) =>
-        order ? aeApplyManualOrder(rows, order) : rows,
+      applyOrder: <T extends AeListRow>(rows: T[]) =>
+        aeOrderRows(rows, order, statusSort, frozenTriage),
       triageTitle: (conversation: Conversation) =>
         triage ? aeTriageGroupOf(conversation, frozenTriage) : null,
       archivedGroup,
     }),
-    [listed, order, switchToManual, triage, frozenTriage, archivedGroup],
+    [listed, order, statusSort, switchToManual, triage, frozenTriage, archivedGroup],
   );
 }
 
@@ -231,6 +259,8 @@ export function useAePublishSidebarScopes(
       listed: true,
       manual,
       order: ae.order,
+      statusSort: ae.statusSort,
+      frozenTriage: ae.frozenTriage,
       lists,
       listOf,
       units,
@@ -248,12 +278,14 @@ export function useAePublishSidebarScopes(
   );
 }
 
-/** A project folder's rows in the saved order while Manual is on. */
-export function useAeFolderOrder(): <T extends AeOrderRow>(rows: T[]) => T[] {
+/** A project folder's rows ordered like the session list: Manual's saved order, or Status's icons. */
+export function useAeFolderOrder(): <T extends AeListRow>(rows: T[]) => T[] {
   const order = useAeSidebarStore((s) => s.order);
+  const statusSort = useAeSidebarStore((s) => s.statusSort);
+  const frozen = useAeSidebarStore((s) => s.frozenTriage);
   return useCallback(
-    <T extends AeOrderRow>(rows: T[]) => (order ? aeApplyManualOrder(rows, order) : rows),
-    [order],
+    <T extends AeListRow>(rows: T[]) => aeOrderRows(rows, order, statusSort, frozen),
+    [order, statusSort, frozen],
   );
 }
 

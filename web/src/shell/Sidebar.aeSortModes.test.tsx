@@ -6,6 +6,7 @@
 //   3. Manual reads the saved order only while it is on, shows rows in it with
 //      new sessions on top, and moves rows from the row menu and by drag.
 //   4. A filed session dropped on a sibling in its own folder stays filed.
+//   5. Status ordering sorts by status icon, in Sessions and in project folders.
 
 import type * as IdentityModule from "@/lib/identity";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -746,5 +747,49 @@ describe("reorder off and deferred moves", () => {
     serve([row("new", 9), ...first, row("old", 1)]);
     view.rerenderSidebar();
     await waitFor(() => expect(rowIds()).toEqual(["new", "c", "a", "b", "old"]));
+  });
+});
+
+describe("Status ordering by status icon", () => {
+  it("sorts Sessions by status icon, then live state, then newest", async () => {
+    setView("default", "status");
+    serve([
+      row("ref", 9, { labels: { "ae.status": "reference" } }),
+      row("r", 8, { labels: { "ae.status": "review" } }),
+      row("w_idle", 7, { labels: { "ae.status": "working" } }),
+      row("none", 6),
+      row("w_run", 5, { labels: { "ae.status": "working" }, status: "running" }),
+      row("blk", 4, { labels: { "ae.status": "working" }, pending_elicitations_count: 1 }),
+      row("p", 3, { labels: { "ae.status": "parked" } }),
+    ]);
+    renderSidebar();
+    await waitFor(() =>
+      expect(rowIds()).toEqual(["blk", "w_run", "w_idle", "r", "none", "p", "ref"]),
+    );
+  });
+
+  it("sorts a project folder's rows by status icon too", async () => {
+    mocks.projects = ["Alpha"];
+    const filed = [
+      row("f_ref", 3, { labels: { omni_project: "Alpha", "ae.status": "reference" } }),
+      row("f_r", 2, { labels: { omni_project: "Alpha", "ae.status": "review" } }),
+      row("f_w", 1, { labels: { omni_project: "Alpha", "ae.status": "working" } }),
+    ];
+    mocks.folderRows = { Alpha: filed };
+    localStorage.setItem("omnigent:expanded-project-sections", JSON.stringify(["Alpha"]));
+    setView("default", "status");
+    serve([...filed, row("s1", 0)]);
+    renderSidebar();
+    await waitFor(() => expect(rowIds().slice(0, 3)).toEqual(["f_w", "f_r", "f_ref"]));
+  });
+
+  it("leaves Updated ordering newest first", async () => {
+    setView("default", "updated");
+    serve([
+      row("r", 3, { labels: { "ae.status": "review" } }),
+      row("w", 2, { labels: { "ae.status": "working" } }),
+    ]);
+    renderSidebar();
+    await waitFor(() => expect(rowIds()).toEqual(["r", "w"]));
   });
 });
