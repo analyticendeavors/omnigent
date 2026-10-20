@@ -9055,6 +9055,15 @@ async def _auto_create_claude_terminal(
             _claude_terminal_launch_cwd(env_spec, agent_os_env),
             env=_claude_terminal_launch_env(env_spec),
         )
+        from omnigent.runner.ae_launch_effort import record_launch_effort
+
+        await record_launch_effort(
+            server_client,
+            session_id,
+            env=_claude_terminal_launch_env(env_spec),
+            cwd=_claude_terminal_launch_cwd(env_spec, agent_os_env),
+            args=env_spec.args,
+        )
     except BaseException as seed_error:
         # No forwarder owns the routers yet, so release the ones this launch started.
         # A ``None`` handle would shut down whichever router is registered now.

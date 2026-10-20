@@ -2930,7 +2930,11 @@ async def test_auto_create_claude_terminal_resets_stale_bridge_id_label(
 
     # Exactly one PATCH request must have been sent to correct the label.
     # 0 means the fix was not applied and the relay would target the wrong dir.
-    patch_requests = [r for r in recorded_requests if r.method == "PATCH"]
+    patch_requests = [
+        r
+        for r in recorded_requests
+        if r.method == "PATCH" and b"ae.claude_effort_default" not in r.content
+    ]
     assert len(patch_requests) == 1, (
         f"Expected exactly one PATCH to correct the stale bridge_id label; "
         f"got {len(patch_requests)}. 0 means _auto_create_claude_terminal did "
@@ -3060,7 +3064,11 @@ async def test_auto_create_claude_terminal_honours_cleared_bridge_label(
 
     import json as _json
 
-    patch_requests = [r for r in recorded_requests if r.method == "PATCH"]
+    patch_requests = [
+        r
+        for r in recorded_requests
+        if r.method == "PATCH" and b"ae.claude_effort_default" not in r.content
+    ]
     assert len(patch_requests) == 1
     patch_body = _json.loads(patch_requests[0].content)
     assert (

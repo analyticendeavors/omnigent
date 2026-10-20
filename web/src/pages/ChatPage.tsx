@@ -69,6 +69,7 @@ import { isIOSShell, onNativeSidebarDrag, setNativeServerSwitcherHidden } from "
 import { type Agent, useSessionAgent, useAgents } from "@/hooks/useAgents";
 import { AeFastModeSection } from "@/components/AeFastMode";
 import { useAeFastModePending } from "@/lib/aeFastMode";
+import { aeEffortDefaultSuffix, useAeEffortDefault } from "@/lib/aeEffortDefault";
 import { aeClaudeVersion, aeSplitPreviousBy, useAeClaudeVersions } from "@/lib/aeClaudeModels";
 import { AePlanLimitsPopover } from "@/components/AePlanLimits";
 import { AeTokenDefrag } from "@/components/AeTokenDefrag";
@@ -4740,6 +4741,7 @@ function SessionHarnessPicker({
   const forkDialog = useForkDialog();
   const sessionModelSeeded = useChatStore((state) => state.sessionModelSeeded);
   const selectedEffort = useSessionEffort();
+  const effortDefault = useAeEffortDefault(modelPickerKind === "claude" ? conversationId : null);
   const costControlModeOverride = useChatStore((state) => state.costControlModeOverride);
   const routingOn = costRoutingEligible && costControlModeOverride === "on";
   const {
@@ -4952,11 +4954,11 @@ function SessionHarnessPicker({
         efforts={
           showEffort && availableEfforts.length > 0
             ? {
-                label: `${modelPickerKind === "pi" ? "Thinking level" : "Effort"}${effortLabel ? `: ${effortLabel}` : ""}`,
+                label: `${modelPickerKind === "pi" ? "Thinking level" : "Effort"}${effortLabel ? `: ${effortLabel}` : aeEffortDefaultSuffix(modelPickerKind, routingOn, effortDefault)}`,
                 choices: availableEfforts.map((effort) => ({
                   key: effort,
                   label: formatStatusEffortLabel(effort) ?? effort,
-                  checked: !routingOn && effort === selectedEffort,
+                  checked: !routingOn && effort === (selectedEffort ?? effortDefault),
                   disabled: routingOn || picksBusy || pendingModelChange !== null,
                   onSelect: () => void apply(() => useChatStore.getState().setEffort(effort)),
                   testId: `composer-agent-effort-${effort}`,
