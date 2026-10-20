@@ -52,6 +52,12 @@ function readStorage(key: string): string | null {
   }
 }
 
+/** Epoch seconds of the pane's last Clear for this root, or `null` when never cleared. */
+export function readAeAgentsClearedAt(rootSessionId: string): number | null {
+  const stored = Number(readStorage(clearedKey(rootSessionId)));
+  return Number.isFinite(stored) && stored > 0 ? stored : null;
+}
+
 function writeStorage(key: string, value: string | null): void {
   try {
     if (value === null) window.localStorage.removeItem(key);
@@ -122,10 +128,9 @@ export function AeAgentsSections(props: AeAgentsSectionsProps) {
 }
 
 function AgentsSectionsForRoot({ rootSessionId, agents, renderRow }: AeAgentsSectionsProps) {
-  const [clearedAt, setClearedAt] = useState<number | null>(() => {
-    const stored = Number(readStorage(clearedKey(rootSessionId)));
-    return Number.isFinite(stored) && stored > 0 ? stored : null;
-  });
+  const [clearedAt, setClearedAt] = useState<number | null>(() =>
+    readAeAgentsClearedAt(rootSessionId),
+  );
   const [finishedOpen, setFinishedOpen] = useState(() => readStorage(FINISHED_OPEN_KEY) === "1");
   const { running, finished, clearedCount } = splitAgentSections(agents, clearedAt);
   const cutoff = clearCutoff(finished, clearedAt);

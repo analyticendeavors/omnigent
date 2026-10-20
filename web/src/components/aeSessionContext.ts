@@ -56,6 +56,8 @@ export interface AeSessionContextsState {
   hidden?: number;
   /** Claude Code's own subagents running now; they report no context of their own. */
   subagents?: number;
+  /** Every Claude Code subagent row, running and finished, in server order. */
+  subagentRows?: ChildSessionInfo[];
   loading?: boolean;
   error?: string | null;
 }
@@ -310,7 +312,8 @@ export async function fetchAeSessionContexts(
       (error: unknown) => ({ rows: [] as ChildSessionInfo[], error: errorText(error) }),
     ),
   ]);
-  const subagents = children.rows.filter((child) => isNativeSubagent(child) && isRunning(child));
+  const subagentRows = children.rows.filter(isNativeSubagent);
+  const subagents = subagentRows.filter(isRunning);
   // Running children first, so the cap drops finished ones before live ones.
   const rows = children.rows
     .filter((child) => !isNativeSubagent(child))
@@ -337,6 +340,7 @@ export async function fetchAeSessionContexts(
     collaborators,
     hidden: rows.length - shown.length,
     subagents: subagents.length,
+    subagentRows,
     error: children.error,
   };
 }
