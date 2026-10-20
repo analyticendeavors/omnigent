@@ -126,6 +126,31 @@ async def test_validates_the_account_against_the_source_host(
     assert error.value.code == expected
 
 
+@pytest.mark.parametrize(("account", "ok"), [("shared:Team", True), ("shared:Gone", False)])
+async def test_a_shared_account_is_checked_against_this_server(
+    monkeypatch: pytest.MonkeyPatch, detected: list[dict[str, Any]], account: str, ok: bool
+) -> None:
+    from omnigent.onboarding import ae_shared_claude_accounts
+
+    _use_spec(monkeypatch, _Spec("claude-native"))
+    monkeypatch.setattr(
+        ae_shared_claude_accounts, "_server_resolver", lambda name: name == "shared:Team"
+    )
+    check = ae_fork_claude_account.validate_fork_claude_account(
+        _request(connected=True, owner="local"),
+        account=account,
+        agent=SimpleNamespace(id="agent", bundle_location="bundle"),
+        source=SimpleNamespace(host_id="host-local", inference_snapshot=None),
+        user_id=None,
+        host_type="external",
+    )
+    if ok:
+        await check
+        return
+    with pytest.raises(OmnigentError, match="unavailable"):
+        await check
+
+
 @pytest.mark.parametrize("binding", ["session", "auth", "env", "host"])
 async def test_refuses_provider_credentials_before_signing_in(
     monkeypatch: pytest.MonkeyPatch, detected: list[dict[str, Any]], binding: str

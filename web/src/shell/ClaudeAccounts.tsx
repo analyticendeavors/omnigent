@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useDetectedCredentials, useStoreCredential, type Host } from "@/hooks/useHosts";
+import { AeSharedAccountMarker, aeIsSharedAccount } from "@/lib/aeSharedClaudeAccounts";
 
 /** Host-owned subscription choices; no token is returned by the discovery API. */
 export function ClaudeAccounts({
@@ -73,6 +74,7 @@ export function ClaudeAccounts({
         {rows.map((row) => {
           const accountId = row.env_var ?? "";
           const displayLabel = row.source;
+          const shared = aeIsSharedAccount(accountId);
           return (
             <div
               key={accountId}
@@ -120,9 +122,10 @@ export function ClaudeAccounts({
                   }
                 >
                   {displayLabel}
+                  {shared && <AeSharedAccountMarker />}
                   {row.family === "claude-oauth-active" ? " (selected)" : ""}
                 </Button>
-                {!compact && (
+                {!compact && !shared && (
                   <Button
                     type="button"
                     variant="outline"

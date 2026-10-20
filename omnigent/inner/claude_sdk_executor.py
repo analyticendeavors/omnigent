@@ -2600,7 +2600,8 @@ class ClaudeSDKExecutor(Executor):
         if not env.get(_CLAUDE_API_KEY_HELPER_ENV_KEY):
             from omnigent.onboarding.claude_accounts import account_env_for_launch
 
-            env.update(account_env_for_launch(env))
+            # Off the event loop: a shared account asks the server for its token.
+            env.update(await run_sync_on_thread(account_env_for_launch, env))
         api_key_helper = env.pop(_CLAUDE_API_KEY_HELPER_ENV_KEY, None)
         # Teach Claude Code this gateway's spellings so no model surface routes
         # to an id the gateway rejects: pins for the family aliases, rewrites

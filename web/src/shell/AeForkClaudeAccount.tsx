@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { type DetectedCredential, useDetectedCredentials } from "@/hooks/useHosts";
+import { AeSharedAccountMarker, aeIsSharedAccount } from "@/lib/aeSharedClaudeAccounts";
 
 /** The session label the runner reads at Claude launch (server-internal). */
 export const AE_CLAUDE_ACCOUNT_LABEL = "omnigent.claude_native.account";
@@ -110,6 +111,7 @@ export function AeForkClaudeAccount({
               value={choice.account === "" ? DEFAULT_LOGIN : choice.account}
             >
               {choice.label}
+              {aeIsSharedAccount(choice.account) && <AeSharedAccountMarker />}
             </SelectItem>
           ))}
         </SelectContent>

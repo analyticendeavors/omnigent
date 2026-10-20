@@ -147,6 +147,29 @@ describe("ClaudeAccounts", () => {
     expect(screen.getByRole("alert").textContent).toBe("Could not save account name.");
     expect(screen.getByRole("textbox", { name: "Account label for Backup" })).toBeTruthy();
   });
+  it("marks shared accounts, selects them by id and offers no rename", () => {
+    rows = [
+      ...rows,
+      { family: "claude-oauth", source: "Company Max", env_var: "shared:Team" },
+      { family: "claude-oauth", source: "Team", env_var: "Team" },
+    ];
+    render(<ClaudeAccounts host={host} />);
+    const markers = screen.getAllByTestId("ae-shared-account-marker");
+    expect(markers).toHaveLength(1);
+    expect(markers[0]).toHaveTextContent("Shared");
+    expect(markers[0].querySelector("svg")).toBeTruthy();
+    const shared = screen.getByRole("button", { name: /Company Max/ });
+    expect(shared).toContainElement(markers[0]);
+    // The host's own "Team" keeps its rename; the shared account has none.
+    expect(screen.getByRole("button", { name: "Rename Team" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Rename Company Max/ })).toBeNull();
+    fireEvent.click(shared);
+    expect(mutate.mock.calls[0][0]).toEqual({
+      harness: "claude-native",
+      kind: "claude-oauth-select",
+      account_name: "shared:Team",
+    });
+  });
   it("disables account actions while a rename is pending", () => {
     const view = render(<ClaudeAccounts host={host} />);
     fireEvent.click(screen.getByRole("button", { name: "Rename Backup" }));

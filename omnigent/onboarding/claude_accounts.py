@@ -9,6 +9,12 @@ import threading
 from pathlib import Path
 
 from omnigent.onboarding import secrets
+from omnigent.onboarding.ae_shared_claude_accounts import (
+    descriptor,
+    is_shared,
+    shared_account_env,
+    shared_label,
+)
 from omnigent.onboarding.harness_auth import StoreCredentialResult
 from omnigent.onboarding.provider_config import _config_path
 
@@ -41,7 +47,11 @@ def _read() -> dict:
         or not isinstance(state.get("active"), str)
         or any(not isinstance(name, str) or not _valid_name(name) for name in state["accounts"])
         or len(set(state["accounts"])) != len(state["accounts"])
-        or (state["active"] and state["active"] not in state["accounts"])
+        or (
+            state["active"]
+            and state["active"] not in state["accounts"]
+            and not is_shared(state["active"])
+        )
     ):
         raise RuntimeError("Invalid Claude accounts. Repair claude-accounts.json on this host.")
     labels = state.get("labels", {})
@@ -76,7 +86,7 @@ def account_descriptors() -> list[dict[str, str | None]]:
             "env_var": name,
         }
         for name in ["", *available]
-    ]
+    ] + ([descriptor(state["active"], True)] if is_shared(state["active"]) else [])
 
 
 _ACCOUNT_LOCK = threading.RLock()
@@ -92,7 +102,9 @@ def change_account(
 def _change_account(
     kind: str, name: str, token: str = "", *, label: str | None = None
 ) -> StoreCredentialResult:
-    if name and not _valid_name(name):
+    if is_shared(name) and kind != "claude-oauth-select":
+        return StoreCredentialResult(False, None, "Shared accounts are managed in Admin Center.")
+    if name and not _valid_name(name) and not is_shared(name):
         return StoreCredentialResult(
             False, None, "Use a name of up to 64 letters, digits, spaces, - or _."
         )
@@ -124,7 +136,9 @@ def _change_account(
                 )
             secrets.store_secret(f"claude-oauth-{name}", token.strip())
             state["accounts"].append(name)
-        elif kind != "claude-oauth-select" or (name and name not in state["accounts"]):
+        elif kind != "claude-oauth-select" or (
+            name and name not in state["accounts"] and not is_shared(name)
+        ):
             return StoreCredentialResult(False, None, "Unknown Claude account.")
         if kind != "claude-oauth-rename":
             state["active"] = name
@@ -148,6 +162,8 @@ def account_env(name: str | None = None) -> dict[str, str]:
         name = state["active"]
     if not name:
         return {}
+    if is_shared(name):
+        return shared_account_env(name)
     if name not in state["accounts"]:
         raise RuntimeError("The selected Claude account is unavailable on this host.")
     token = secrets.load_secret(f"claude-oauth-{name}")
@@ -167,6 +183,8 @@ def account_env(name: str | None = None) -> dict[str, str]:
 
 def account_label(name: str) -> str:
     """Return the editable label for *name*, or *name* itself; never loads secrets."""
+    if is_shared(name):
+        return shared_label(name)
     try:
         label = _read().get("labels", {}).get(name)
     except Exception:

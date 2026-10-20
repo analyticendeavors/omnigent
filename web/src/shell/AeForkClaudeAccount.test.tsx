@@ -90,6 +90,28 @@ describe("AeForkClaudeAccount", () => {
     expect(onChange).toHaveBeenLastCalledWith("Work");
   });
 
+  it("marks a shared account and reports its id", () => {
+    rows.value = [
+      WORK,
+      DEFAULT,
+      { family: "claude-oauth", source: "Company", env_var: "shared:Team" },
+    ];
+    const onChange = vi.fn();
+    render(
+      <AeForkClaudeAccount
+        hostId="h"
+        currentAccount={undefined}
+        value={undefined}
+        onChange={onChange}
+      />,
+    );
+    openSelect();
+    const option = screen.getByRole("option", { name: /Company/ });
+    expect(option).toHaveTextContent("Shared");
+    fireEvent.click(option);
+    expect(onChange).toHaveBeenLastCalledWith("shared:Team");
+  });
+
   it("goes back to the source's account", () => {
     rows.value = [WORK, DEFAULT];
     const onChange = vi.fn();

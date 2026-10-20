@@ -18,6 +18,7 @@ from typing import Any
 from fastapi import Request
 
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.onboarding.ae_shared_claude_accounts import known_on_server
 from omnigent.onboarding.claude_accounts import CLAUDE_PROVIDER_ENV_KEYS
 
 _PROVIDER_FAMILIES = frozenset({"claude-provider-env", "claude-provider-config"})
@@ -110,5 +111,6 @@ async def validate_fork_claude_account(
         for item in credentials
         if item.get("family") in _ACCOUNT_FAMILIES
     }
-    if account not in available:
+    # A shared account (omnigent-ae) lives on this server, not on the host.
+    if account not in available and not known_on_server(account):
         raise _invalid("Selected Claude account is unavailable on this host.")

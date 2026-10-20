@@ -625,10 +625,11 @@ def _claude_login_detected() -> bool:
         the credentials file on any platform, or via the macOS Keychain through
         the CLI status fallback; ``False`` otherwise.
     """
-    from omnigent.onboarding.claude_accounts import account_env
+    from omnigent.onboarding.claude_accounts import _read, account_env, is_shared
 
     try:
-        if account_env():
+        # A selected shared account counts without fetching its token from the server.
+        if is_shared(_read()["active"]) or account_env():
             return True
     except (OSError, ValueError, RuntimeError):
         pass

@@ -7,6 +7,10 @@ import {
 } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { authenticatedFetch } from "@/lib/identity";
+import {
+  aeFetchSharedClaudeAccounts,
+  aeMergeSharedClaudeAccounts,
+} from "@/lib/aeSharedClaudeAccounts";
 import { ApiError } from "@/lib/sessionsApi";
 import type { NativeModelOption } from "@/lib/types";
 
@@ -371,12 +375,15 @@ export function useDetectedCredentials(hostId: string | null | undefined, enable
   return useQuery({
     queryKey: ["detected-credentials", hostId],
     queryFn: async (): Promise<DetectedCredential[]> => {
-      const res = await authenticatedFetch(
+      const detected = authenticatedFetch(
         `/v1/hosts/${encodeURIComponent(hostId ?? "")}/credentials/detected`,
       );
+      const shared = aeFetchSharedClaudeAccounts();
+      const res = await detected;
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const body = (await res.json()) as { credentials?: DetectedCredential[] };
-      return Array.isArray(body.credentials) ? body.credentials : [];
+      const rows = Array.isArray(body.credentials) ? body.credentials : [];
+      return aeMergeSharedClaudeAccounts(rows, await shared);
     },
     enabled: enabled && !!hostId,
     staleTime: 30_000,
