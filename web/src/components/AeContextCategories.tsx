@@ -224,8 +224,9 @@ export function AeContextCategoryRows({ data }: { data: ContextUsage }) {
     />
   );
   return (
-    <div className="flex flex-col gap-2" data-testid="ae-context-categories">
-      <div>
+    <div className="flex flex-col" data-testid="ae-context-categories">
+      {/* Spaced from the lists only while open; folded, it sits in their column. */}
+      <div className={cn(categoriesOpen && lists.length > 0 && "mb-2")}>
         <FoldToggle
           name={CATEGORIES_FOLD}
           count={windowRows.length + deferred.length}

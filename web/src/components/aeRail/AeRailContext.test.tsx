@@ -60,6 +60,28 @@ afterEach(() => {
 });
 
 describe("AeRailContext", () => {
+  it("shuts the Categories fold again when the rail moves to another session", async () => {
+    // The first session's snapshot is cached, so moving back draws it without a reload.
+    setSession("claude-native");
+    const first = sessionId;
+    const { rerender } = render(<AeRailContext sessionId={first} />);
+    await screen.findByRole("button", { name: /^Categories/ });
+    setSession("claude-native");
+    rerender(<AeRailContext sessionId={sessionId} />);
+    await waitFor(() => expect(contextCalls()).toBe(2));
+    fireEvent.click(await screen.findByRole("button", { name: /^Categories/ }));
+    expect(screen.getByRole("list", { name: "Context categories" })).toBeTruthy();
+    useChatStore.setState({ conversationId: first });
+    rerender(<AeRailContext sessionId={first} />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^Categories/ })).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      ),
+    );
+    expect(screen.queryByRole("list", { name: "Context categories" })).toBeNull();
+  });
+
   it("shows Claude's snapshot: totals, bar, rows, countdown and the snapshot's age", async () => {
     setSession("claude-native");
     render(<AeRailContext sessionId={sessionId} />);

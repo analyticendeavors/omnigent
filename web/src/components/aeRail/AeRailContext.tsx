@@ -189,6 +189,7 @@ function SnapshotBody({
             // basis-0 so the line never wraps for the text; it truncates instead.
             className="min-w-0 flex-1 basis-0 truncate text-xs text-muted-foreground"
             data-testid="ae-rail-countdown"
+            title={countdown ?? undefined}
           >
             {countdown}
           </span>
