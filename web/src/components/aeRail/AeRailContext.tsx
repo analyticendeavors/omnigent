@@ -1,6 +1,6 @@
 // The rail's Context section: Claude Code's category snapshot in full (rows by
 // size, deferred tools, the tool, memory, skill and agent lists), the
-// auto-compact countdown with Compact session, and the snapshot's age. Other
+// auto-compact countdown with Compact beside it, and the snapshot's age. Other
 // harnesses get the plain context bar from the chat store.
 
 import { useEffect, useState } from "react";
@@ -186,7 +186,8 @@ function SnapshotBody({
       {(countdown || canCompact) && (
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2">
           <span
-            className="min-w-0 truncate text-xs text-muted-foreground"
+            // basis-0 so the line never wraps for the text; it truncates instead.
+            className="min-w-0 flex-1 basis-0 truncate text-xs text-muted-foreground"
             data-testid="ae-rail-countdown"
           >
             {countdown}
@@ -264,12 +265,13 @@ export function CompactButton() {
         disabled={phase === "running"}
         onClick={onClick}
         data-testid="ae-rail-compact"
+        className="shrink-0"
       >
         {phase === "confirm"
           ? "Compact now?"
           : phase === "running"
             ? "Compacting..."
-            : "Compact session"}
+            : "Compact"}
       </Button>
       {error && (
         <p role="alert" className="basis-full text-xs text-destructive">

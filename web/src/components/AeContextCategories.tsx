@@ -194,10 +194,10 @@ function FoldToggle({
 }
 
 /**
- * Every category as a row: a folded Categories section (used ones largest
- * first, then the autocompact buffer and free space), then deferred tools
- * (muted, not in the window), then the folding lists of tools, memory files,
- * skills and agents.
+ * Every category as a row under a folded Categories section (used ones
+ * largest first, then the autocompact buffer and free space, then deferred
+ * tools, muted since they are not in the window), then the folding lists of
+ * tools, memory files, skills and agents.
  */
 export function AeContextCategoryRows({ data }: { data: ContextUsage }) {
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
@@ -228,22 +228,22 @@ export function AeContextCategoryRows({ data }: { data: ContextUsage }) {
       <div>
         <FoldToggle
           name={CATEGORIES_FOLD}
-          count={windowRows.length}
+          count={windowRows.length + deferred.length}
           expanded={categoriesOpen}
           controls="ae-context-categories-rows"
           onToggle={() => toggle(CATEGORIES_FOLD)}
         />
         {categoriesOpen && (
-          <ul id="ae-context-categories-rows" aria-label="Context categories" className="ml-5">
-            {windowRows.map(rowFor)}
-          </ul>
+          <div id="ae-context-categories-rows" className="ml-5 flex flex-col gap-2">
+            <ul aria-label="Context categories">{windowRows.map(rowFor)}</ul>
+            {deferred.length > 0 && (
+              <ul aria-label="Deferred tools" title="Loaded on demand; not in the context window">
+                {deferred.map(rowFor)}
+              </ul>
+            )}
+          </div>
         )}
       </div>
-      {deferred.length > 0 && (
-        <ul aria-label="Deferred tools" title="Loaded on demand; not in the context window">
-          {deferred.map(rowFor)}
-        </ul>
-      )}
       {lists.length > 0 && (
         <div className="flex flex-col">
           {lists.map((name) => {

@@ -214,13 +214,13 @@ describe("Compact session", () => {
     setSession("claude-native", { compact });
     render(<AeRailContext sessionId={sessionId} />);
     const button = await screen.findByTestId("ae-rail-compact");
-    expect(button.textContent).toBe("Compact session");
+    expect(button.textContent).toBe("Compact");
     fireEvent.click(button);
     expect(button.textContent).toBe("Compact now?");
     expect(compact).not.toHaveBeenCalled();
     fireEvent.click(button);
     expect(compact).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(button.textContent).toBe("Compact session"));
+    await waitFor(() => expect(button.textContent).toBe("Compact"));
   });
 
   it("drops the confirmation after three seconds", async () => {
@@ -236,7 +236,7 @@ describe("Compact session", () => {
     act(() => {
       vi.advanceTimersByTime(3000);
     });
-    expect(button.textContent).toBe("Compact session");
+    expect(button.textContent).toBe("Compact");
     fireEvent.click(button);
     expect(compact).not.toHaveBeenCalled();
   });
