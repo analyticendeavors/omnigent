@@ -4,10 +4,12 @@
 import { aeStampLastEvent } from "@/lib/aeSessionActivity";
 import { aeIsContentEvent, aeNextProgress, type AeSessionProgress } from "@/lib/aeSessionProgress";
 import type { StreamEvent } from "@/lib/events";
+import { aeNextSuggestion } from "@/lib/aeSuggestion";
 import { aeNoteCompactionFailed, aeNoteCompactionTotals } from "@/lib/aeTokenDefrag";
 
 export interface AeObservedState {
   aeProgress: AeSessionProgress | null;
+  aeSuggestion?: string | null;
   sessionStatus: string;
   tokensUsed?: number | null;
 }
@@ -20,7 +22,11 @@ export interface AeObservedState {
 export function aeObserveStreamEvent(
   event: StreamEvent,
   conversationId: string,
-  write: (patch: { lastEventAt?: number; aeProgress?: AeSessionProgress | null }) => void,
+  write: (patch: {
+    lastEventAt?: number;
+    aeProgress?: AeSessionProgress | null;
+    aeSuggestion?: string | null;
+  }) => void,
   read: () => AeObservedState | null,
 ): void {
   const state = read();
@@ -35,6 +41,10 @@ export function aeObserveStreamEvent(
     event.status === "running" &&
     state?.sessionStatus !== "running";
   if (aeIsContentEvent(event) || startsRunning) aeStampLastEvent(conversationId, write);
+  const suggestion = aeNextSuggestion(event, conversationId, state?.sessionStatus);
+  if (suggestion !== undefined && suggestion !== (state?.aeSuggestion ?? null)) {
+    write({ aeSuggestion: suggestion });
+  }
   const next = aeNextProgress(event, conversationId);
   if (next === undefined) return;
   if (next === null) {

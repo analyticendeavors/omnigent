@@ -3811,6 +3811,26 @@ class SessionProgressEvent(_SSEEventBase):
     tokens: str | None = None
 
 
+class SessionSuggestionEvent(_SSEEventBase):
+    """
+    A predicted next prompt for the composer to show as ghost text.
+
+    After a finished turn the claude-native forwarder asks a small model for
+    the user's likely next message and relays the one-line answer.
+
+    Category: **transient** (SSE-only). Nothing is persisted and there is no
+    replay. ``suggestion`` is ``None`` to clear it.
+
+    :param type: Always ``"session.suggestion"``.
+    :param conversation_id: The conversation whose stream this rides.
+    :param suggestion: The predicted prompt, e.g. ``"Run the tests"``, or ``None``.
+    """
+
+    type: Literal["session.suggestion"]
+    conversation_id: str
+    suggestion: str | None = None
+
+
 # ── Response pass-through events (response.*) ──────────────────────
 
 
@@ -4808,6 +4828,7 @@ ServerStreamEvent = Annotated[
     | SessionSupersededEvent
     | SessionBtwSidechatEvent
     | SessionProgressEvent
+    | SessionSuggestionEvent
     | SessionPresenceEvent
     # ── Transient (SSE-only) — session resource lifecycle ─────
     | SessionResourceCreatedEvent

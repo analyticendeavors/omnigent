@@ -2,6 +2,7 @@ import {
   forwardRef,
   useLayoutEffect,
   useRef,
+  useState,
   type ComponentPropsWithRef,
   type ComponentPropsWithoutRef,
   type KeyboardEvent,
@@ -18,6 +19,8 @@ import {
   isComposerSteerAllKey,
 } from "@/lib/composerSendShortcutPreferences";
 import { CHAT_COLUMN_WIDTH } from "@/pages/chatLayout";
+import { aeIsSuggestionAcceptKey, aeShownSuggestion } from "@/lib/aeSuggestion";
+import { AeSuggestionGhost } from "./AeSuggestionGhost";
 
 export const COMPOSER_COLUMN_WIDTH = `w-full ${CHAT_COLUMN_WIDTH}`;
 
@@ -92,12 +95,18 @@ interface ChatComposerProps extends Omit<ComponentPropsWithoutRef<"div">, "child
     leadingTestId?: string;
     trailingTestId?: string;
   };
+  /** A predicted next prompt, drawn as ghost text while the box is empty. */
+  aeSuggestion?: string | null;
 }
 
 export const ChatComposer = forwardRef<HTMLDivElement, ChatComposerProps>(function ChatComposer(
-  { className, input, keyboard, slots, actions, ...props },
+  { className, input, keyboard, slots, actions, aeSuggestion, ...props },
   ref,
 ) {
+  // Esc hides the suggestion until the next one (a new turn clears the old first).
+  const [aeDismissed, setAeDismissed] = useState<string | null>(null);
+  if (aeDismissed !== null && aeDismissed !== aeSuggestion) setAeDismissed(null);
+  const aeGhost = aeDismissed ? null : aeShownSuggestion(aeSuggestion, input.value);
   const actionRowRef = useRef<HTMLDivElement>(null);
   const actionWidthRef = useRef<HTMLDivElement>(null);
   const leadingRef = useRef<HTMLDivElement>(null);
@@ -119,7 +128,15 @@ export const ChatComposer = forwardRef<HTMLDivElement, ChatComposerProps>(functi
       >
         {slots?.inputPrefix}
         {slots?.inputBackdrop}
-        <ComposerTextInput input={input} keyboard={keyboard} />
+        <ComposerTextInput
+          input={input}
+          keyboard={keyboard}
+          aeSuggestion={aeGhost}
+          onAeDismiss={() => setAeDismissed(aeGhost)}
+        />
+        {aeGhost && (
+          <AeSuggestionGhost text={aeGhost} onAccept={(el) => aeFillSuggestion(el, aeGhost)} />
+        )}
         {slots?.inputHint}
       </ComposerInputArea>
       {slots?.attachments}
@@ -253,14 +270,37 @@ function insertComposerText(
   textarea.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
+/** Put an accepted suggestion in the box (never sends) with the caret at its end. */
+function aeFillSuggestion(textarea: HTMLTextAreaElement, text: string) {
+  textarea.focus();
+  insertComposerText(textarea, text, 0, textarea.value.length);
+}
+
 export function ComposerTextInput({
   input,
   keyboard,
-}: Pick<ChatComposerProps, "input" | "keyboard">) {
+  aeSuggestion,
+  onAeDismiss,
+}: Pick<ChatComposerProps, "input" | "keyboard" | "aeSuggestion"> & { onAeDismiss?: () => void }) {
   return (
     <ComposerTextarea
       {...input}
+      placeholder={aeSuggestion ? "" : input.placeholder}
       onKeyDown={(event) => {
+        // Tab takes a shown suggestion and Esc hides it; with none shown, or
+        // mid-composition, both keys are untouched.
+        if (aeSuggestion && !event.nativeEvent.isComposing) {
+          if (aeIsSuggestionAcceptKey(event)) {
+            event.preventDefault();
+            aeFillSuggestion(event.currentTarget, aeSuggestion);
+            return;
+          }
+          if (event.key === "Escape" && onAeDismiss) {
+            event.preventDefault();
+            onAeDismiss();
+            return;
+          }
+        }
         // A newline in every mode and on touch devices; completion menus never see it.
         if (isComposerAltNewlineKey({ ...event, isComposing: event.nativeEvent.isComposing })) {
           event.preventDefault();

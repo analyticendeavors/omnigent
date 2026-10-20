@@ -5638,6 +5638,7 @@
             "session.resource.deleted": "#/components/schemas/SessionResourceDeletedEvent",
             "session.sandbox_status": "#/components/schemas/SessionSandboxStatusEvent",
             "session.status": "#/components/schemas/SessionStatusEvent",
+            "session.suggestion": "#/components/schemas/SessionSuggestionEvent",
             "session.superseded": "#/components/schemas/SessionSupersededEvent",
             "session.terminal.activity": "#/components/schemas/SessionTerminalActivityEvent",
             "session.terminal_pending": "#/components/schemas/SessionTerminalPendingEvent",
@@ -5711,6 +5712,9 @@
           },
           {
             "$ref": "#/components/schemas/SessionProgressEvent"
+          },
+          {
+            "$ref": "#/components/schemas/SessionSuggestionEvent"
           },
           {
             "$ref": "#/components/schemas/SessionPresenceEvent"
@@ -8230,6 +8234,54 @@
           "status"
         ],
         "title": "SessionStatusEvent",
+        "type": "object"
+      },
+      "SessionSuggestionEvent": {
+        "description": "A predicted next prompt for the composer to show as ghost text.\n\nAfter a finished turn the claude-native forwarder asks a small model for\nthe user's likely next message and relays the one-line answer.\n\nCategory: **transient** (SSE-only). Nothing is persisted and there is no\nreplay. `suggestion` is `None` to clear it.",
+        "properties": {
+          "conversation_id": {
+            "description": "The conversation whose stream this rides.",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "sequence_number": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sequence Number"
+          },
+          "suggestion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The predicted prompt, e.g. `\"Run the tests\"`, or `None`.",
+            "title": "Suggestion"
+          },
+          "type": {
+            "const": "session.suggestion",
+            "description": "Always `\"session.suggestion\"`.",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "conversation_id"
+        ],
+        "title": "SessionSuggestionEvent",
         "type": "object"
       },
       "SessionSupersededEvent": {

@@ -999,6 +999,8 @@ class ClaudeHookRecord:
     failure_category: str | None = None
     failure_message: str | None = None
     failure_context: FailureContext | None = None
+    # ``Stop`` only: the turn's final reply text, for the prompt-suggestion side call.
+    last_assistant_message: str | None = None
 
 
 @dataclass(frozen=True)
@@ -3919,6 +3921,7 @@ def _hook_record_from_jsonl_record(record: _JsonlRecord) -> ClaudeHookRecord:
         task_status = "completed"
     background_task_count = 0
     background_tasks: list[_JsonObject] | None = None
+    raw_last = payload.get("last_assistant_message") if isinstance(payload, dict) else None
     if event_name == "Stop" and isinstance(payload, dict):
         raw_bg = payload.get("background_tasks")
         if isinstance(raw_bg, list):
@@ -4008,6 +4011,9 @@ def _hook_record_from_jsonl_record(record: _JsonlRecord) -> ClaudeHookRecord:
         failure_category=failure_category,
         failure_message=failure_message,
         failure_context=failure_context,
+        last_assistant_message=(
+            raw_last if event_name == "Stop" and isinstance(raw_last, str) else None
+        ),
     )
 
 

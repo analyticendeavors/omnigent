@@ -58,6 +58,7 @@ from omnigent.spec.types import (
 )
 from omnigent.stores.conversation_store import RUNNER_LIVENESS_TTL_S
 from omnigent.util.ae_session_progress import EXTERNAL_SESSION_PROGRESS_TYPE
+from omnigent.util.ae_session_suggestion import EXTERNAL_SESSION_SUGGESTION_TYPE
 
 # Pinned to the historical module path so log records keep landing on the
 # ``omnigent.server.routes.sessions`` logger after the split into this package.
@@ -573,6 +574,7 @@ _ALLOWED_EVENT_TYPES: frozenset[str] = frozenset(ITEM_TYPE_TO_DATA_CLS.keys()) |
     _EXTERNAL_ELICITATION_RESOLVED_TYPE,
     _EXTERNAL_SESSION_STATUS_TYPE,
     _EXTERNAL_SESSION_PROGRESS_TYPE,
+    EXTERNAL_SESSION_SUGGESTION_TYPE,
     _SUBAGENT_STATUS_TYPE,
     _EXTERNAL_SESSION_USAGE_TYPE,
     _EXTERNAL_COMPACTION_STATUS_TYPE,

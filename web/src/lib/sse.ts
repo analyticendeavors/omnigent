@@ -10,6 +10,7 @@
 
 import { readSubagentActivity } from "./subagentActivity";
 import { aeParseSessionProgress } from "./aeSessionProgress";
+import { aeParseSessionSuggestion } from "./aeSuggestion";
 import { codexQuestionsFrom } from "./blocks";
 import type {
   BrowserActionRequestEvent,
@@ -882,6 +883,7 @@ export function parseEvent(rawType: string, data: Record<string, unknown>): Stre
     } satisfies SessionSupersededEvent;
   }
   if (eventType === "session.progress") return aeParseSessionProgress(data);
+  if (eventType === "session.suggestion") return aeParseSessionSuggestion(data);
   if (eventType === "session.btw_sidechat") {
     const conversationId = data.conversation_id;
     const question = data.question;

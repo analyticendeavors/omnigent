@@ -693,6 +693,8 @@ export interface ConversationState {
   aeRunningSince: number | null;
   /** The terminal's live spinner line (`session.progress`), or `null` when none shows. */
   aeProgress: AeSessionProgress | null;
+  /** The predicted next prompt (`session.suggestion`) for the composer's ghost text. */
+  aeSuggestion: string | null;
   /**
    * Whether the active session is a native-terminal wrapper
    * (claude-native / codex-native), derived from the `omnigent.wrapper`
@@ -1887,6 +1889,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
   lastEventAt: null,
   aeRunningSince: null,
   aeProgress: null,
+  aeSuggestion: null,
   isNativeTerminalSession: false,
   nativeVendorOwnsModel: false,
   boundAgentId: null,
@@ -4541,6 +4544,7 @@ async function bindStream(
         // Events seen on an earlier visit are stale; the snapshot's blocks date it.
         lastEventAt: null,
         aeProgress: null,
+        aeSuggestion: null,
         // This conversation's own effective effort, which is what a warm switch
         // back re-projects (it does not re-bind, so it cannot recompute it).
         sessionReasoningEffort: effectiveEffort,

@@ -31,6 +31,7 @@ import {
   composerSendShortcutKeys,
   KeyboardShortcutTooltipContent,
 } from "@/components/KeyboardShortcut";
+import { aeComposerSuggestion } from "@/lib/aeSuggestion";
 import { useLocation, useNavigate, useParams, useRebasePath } from "@/lib/routing";
 import { Button } from "@/components/ui/button";
 import {
@@ -2406,6 +2407,7 @@ function ComposerImpl(
   const conversationId = useChatStore((s) => s.conversationId);
   const queuedMessages = useChatStore((s) => s.queuedMessages);
   const sessionStatus = useChatStore((s) => s.sessionStatus);
+  const aeSuggestion = useChatStore((s) => s.aeSuggestion);
   const flushBoundAgentId = useChatStore((s) => s.boundAgentId);
   const maybeFlushQueuedHead = useChatStore((s) => s.maybeFlushQueuedHead);
   const dequeueMessage = useChatStore((s) => s.dequeueMessage);
@@ -3622,6 +3624,16 @@ function ComposerImpl(
       </div>
       <ChatComposer
         keyboard={{ submitWithModEnter, preventsKeyboardSubmit }}
+        aeSuggestion={aeComposerSuggestion(aeSuggestion, {
+          busy: isWorking || sessionStatus === "running",
+          blocked:
+            disabled ||
+            unreachable ||
+            isReadOnly ||
+            composerLockedByBtw ||
+            hasPendingElicitation ||
+            draft.quotes.length > 0,
+        })}
         ref={bindComposerCard}
         className={cn(
           "mx-auto",

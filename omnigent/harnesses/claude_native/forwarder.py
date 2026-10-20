@@ -26,6 +26,12 @@ from omnigent.harnesses.claude_native.ae_pane_progress import (
     clear_progress_on_rotation,
     relay_progress,
 )
+from omnigent.harnesses.claude_native.ae_prompt_suggest import (
+    SuggestionState,
+    cancel_prompt_suggestion,
+    clear_prompt_suggestion,
+    schedule_prompt_suggestion,
+)
 from omnigent.harnesses.claude_native.ae_subagent_model import report_subagent_model
 from omnigent.harnesses.claude_native.bridge import (
     BRIDGE_ID_LABEL_KEY,
@@ -914,6 +920,8 @@ class _ForwardDedupeState:
     session_not_bound_logged_for: str | None = None
     # Live spinner line last relayed as ``external_session_progress``.
     progress_relay: ProgressRelayState = field(default_factory=ProgressRelayState)
+    # The next-prompt side call after a finished turn (ae_prompt_suggest).
+    prompt_suggest: SuggestionState = field(default_factory=SuggestionState)
 
 
 @dataclass(frozen=True)
@@ -1358,6 +1366,7 @@ async def forward_claude_transcript_to_session(
                         await clear_progress_on_rotation(
                             client, old_session_id=session_id, state=dedupe.progress_relay
                         )
+                        cancel_prompt_suggestion(dedupe.prompt_suggest)
                         session_id = rotation
                         state = None
                         hook_state = None
@@ -1402,6 +1411,7 @@ async def forward_claude_transcript_to_session(
                         await clear_progress_on_rotation(
                             client, old_session_id=session_id, state=dedupe.progress_relay
                         )
+                        cancel_prompt_suggestion(dedupe.prompt_suggest)
                         session_id = rotation
                         state = None
                         hook_state = None
@@ -1582,6 +1592,7 @@ async def forward_claude_transcript_to_session(
                             dedupe=dedupe,
                         )
             except asyncio.CancelledError:
+                cancel_prompt_suggestion(dedupe.prompt_suggest)
                 await _cancel_subagent_forward_task(subagent_task)
                 raise
             except TimeoutError:
@@ -1621,6 +1632,7 @@ async def forward_claude_transcript_to_session(
             try:
                 await asyncio.sleep(_loop_retry_delay_s(poll_interval_s, loop_failures))
             except asyncio.CancelledError:
+                cancel_prompt_suggestion(dedupe.prompt_suggest)
                 await _cancel_subagent_forward_task(subagent_task)
                 raise
 
@@ -4046,6 +4058,7 @@ async def _forward_available_status_events(
             if record.event_name == "UserPromptSubmit" and not _is_subagent_hook_record(
                 record, parent_claude_session_ids=parent_claude_session_ids
             ):
+                await clear_prompt_suggestion(client, state=dedupe.prompt_suggest)
                 with contextlib.suppress(Exception):
                     # This proves Claude saw a submit; later hooks can still block the turn.
                     _logger.info(
@@ -4361,6 +4374,16 @@ async def _forward_available_status_events(
             )
             return durable
         retry_tracker.clear(retry_key)
+        if status == "idle":
+            schedule_prompt_suggestion(
+                client,
+                session_id=session_id,
+                transcript_path=record.transcript_path,
+                recorded_at=record.recorded_at,
+                state=dedupe.prompt_suggest,
+                last_assistant_message=record.last_assistant_message,
+                bridge_dir=bridge_dir,
+            )
         if response_id is not None:
             # The turn ended — record its id as a pending settle so a later
             # assistant entry still inheriting it is marked as a scheduled
