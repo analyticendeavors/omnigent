@@ -1,8 +1,9 @@
 // The sidebar's manual session order (omnigent-ae, 2026-10-19): one saved list
 // of session ids per user (`GET` and `PUT /v1/ae/sidebar`) ranks every list the
 // sidebar shows, Sessions, Shared, each project folder and each group alike.
-// A session the saved order does not hold sorts above the ranked ones, in the
-// list's own order, so a new session lands on top of its list.
+// A session the saved order does not hold sorts above the ranked ones when it
+// is newer than all of them (a new session lands on top of its list), else
+// below them (an older row that loaded late stays under the arranged ones).
 
 /** The most ids the server keeps; it refuses a longer order. */
 export const AE_ORDER_MAX = 500;
@@ -29,49 +30,86 @@ function rankOf(order: readonly string[]): Map<string, number> {
   return rank;
 }
 
-/**
- * Rows in manual order: the ones `order` does not hold first, in their
- * incoming order, then the rest by rank. An empty order returns `rows` itself.
- */
-export function aeApplyManualOrder<T extends { id: string }>(
-  rows: T[],
-  order: readonly string[],
-): T[] {
-  if (order.length === 0) return rows;
-  const rank = rankOf(order);
-  const unranked = rows.filter((row) => !rank.has(row.id));
-  const ranked = rows
-    .filter((row) => rank.has(row.id))
-    .sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
-  return [...unranked, ...ranked];
+/** What ranking needs from a row. */
+export interface AeOrderRow {
+  id: string;
+  created_at?: number | null;
 }
 
 /**
- * The saved order after moving `id` within its list. `loadedIds` is every
- * loaded row (window and folder rows alike) in the lists' own order; the ones
- * the saved order lacks are written in first, in that order, so every list
- * still shows what it showed. `scopeIds` are the members of the moved row's
- * list, in any order: the list as shown is derived from the order, so a move
- * replayed on a fresh order lands where it would have on that order. The moved
- * id then sits next to its new neighbour in the list, which changes no other
- * list. Returns `order` itself when the move changes nothing.
+ * Rows in manual order. With no row ranked, `rows` itself. Otherwise the
+ * unranked rows created after the newest ranked one first, then the ranked
+ * rows by rank, then the other unranked rows; unranked rows keep their
+ * incoming order.
+ */
+export function aeApplyManualOrder<T extends AeOrderRow>(rows: T[], order: readonly string[]): T[] {
+  if (order.length === 0) return rows;
+  const rank = rankOf(order);
+  const ranked = rows
+    .filter((row) => rank.has(row.id))
+    .sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
+  if (ranked.length === 0) return rows;
+  const newest = Math.max(...ranked.map((row) => row.created_at ?? 0));
+  const isNew = (row: T) => !rank.has(row.id) && (row.created_at ?? 0) > newest;
+  const isOld = (row: T) => !rank.has(row.id) && (row.created_at ?? 0) <= newest;
+  return [...rows.filter(isNew), ...ranked, ...rows.filter(isOld)];
+}
+
+/**
+ * `order` with every row of `units` ranked where it shows now, so applying the
+ * result shows each unit as before. A unit is one set of rows the sidebar
+ * ranks in one call (the session list, each project folder), in its incoming
+ * order.
+ */
+function materialize(order: readonly string[], units: readonly (readonly AeOrderRow[])[]) {
+  const full = [...order];
+  const placed = new Set(order);
+  for (const unit of units) {
+    // A copy: the rank cache is keyed by array, and `full` grows in place.
+    const shown = aeApplyManualOrder([...unit], [...full]).map((row) => row.id);
+    const firstRanked = shown.findIndex((rowId) => placed.has(rowId));
+    if (firstRanked < 0) {
+      full.unshift(...shown.filter((rowId) => !placed.has(rowId)));
+      for (const rowId of shown) placed.add(rowId);
+      continue;
+    }
+    // New rows above the first ranked one; each other row right after its predecessor.
+    const above = shown.slice(0, firstRanked).filter((rowId) => !placed.has(rowId));
+    full.splice(full.indexOf(shown[firstRanked]), 0, ...above);
+    for (const rowId of above) placed.add(rowId);
+    for (let index = firstRanked + 1; index < shown.length; index += 1) {
+      const rowId = shown[index];
+      if (placed.has(rowId)) continue;
+      full.splice(full.indexOf(shown[index - 1]) + 1, 0, rowId);
+      placed.add(rowId);
+    }
+  }
+  return full;
+}
+
+/**
+ * The saved order after moving `id` within its list. `units` holds every
+ * loaded row (see `materialize`); each is ranked where it shows first, so no
+ * other row moves. `scopeIds` are the members of the moved row's list, in any
+ * order: the list as shown is derived from the order, so a move replayed on a
+ * fresh order lands where it would have on that order. The moved id then sits
+ * next to its new neighbour in the list, which changes no other list. Returns
+ * `order` itself when the move changes nothing.
  */
 export function aeMoveInOrder({
   order,
-  loadedIds,
+  units,
   scopeIds,
   id,
   to,
 }: {
   order: readonly string[];
-  loadedIds: readonly string[];
+  units: readonly (readonly AeOrderRow[])[];
   scopeIds: readonly string[];
   id: string;
   to: AeMoveTo;
 }): readonly string[] {
-  const known = new Set(order);
-  const prepend = loadedIds.filter((rowId) => !known.has(rowId));
-  const full = [...prepend, ...order];
+  const full = materialize(order, units);
   const members = new Set(scopeIds);
   const shown = full.filter((rowId) => members.has(rowId));
   const from = shown.indexOf(id);
@@ -95,7 +133,8 @@ export function aeMoveInOrder({
   const next = full.filter((rowId) => rowId !== id);
   if (dest > 0) next.splice(next.indexOf(moved[dest - 1]) + 1, 0, id);
   else next.splice(next.indexOf(moved[1]), 0, id);
-  return aeTrimOrder(next, new Set(loadedIds), id);
+  const loaded = new Set(units.flatMap((unit) => unit.map((row) => row.id)));
+  return aeTrimOrder(next, loaded, id);
 }
 
 /**

@@ -1895,7 +1895,15 @@ function ConversationList({
     frozenKeysRef.current.clear();
     frozenStatusRef.current.clear();
   }, [orderFrozen]);
-  const ae = useAeSidebarView({ view, orderFrozen, conversationsQuery, searchQuery, activeTab });
+  const ae = useAeSidebarView({
+    view,
+    orderFrozen,
+    conversationsQuery,
+    searchQuery,
+    activeTab,
+    onViewChange: updateView,
+    available: groupingUi,
+  });
 
   // Build sections: Pinned and Archived are peeled off; the rest splits into
   // the viewer's own sessions (Chats) and ones shared with them. Archived

@@ -41,7 +41,7 @@ const moveTop = (id: string): AeOrderOp => ({
   id,
   to: "top",
   scopeIds: LOADED,
-  loadedIds: LOADED,
+  units: [LOADED.map((rowId) => ({ id: rowId }))],
 });
 
 let client: QueryClient;
@@ -184,7 +184,7 @@ describe("aeEnqueueOrder ids and settling", () => {
       id: C,
       to: "top",
       scopeIds: ["temp:new", ...LOADED],
-      loadedIds: LOADED,
+      units: [LOADED.map((rowId) => ({ id: rowId }))],
     });
     aeEnqueueOrder(client, { kind: "set", order: ["temp:new", C, A, B] });
     await waitFor(() => expect(putBodies().length).toBeGreaterThan(0));

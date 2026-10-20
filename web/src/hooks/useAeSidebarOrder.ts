@@ -10,7 +10,7 @@ import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-quer
 import { useCallback, useContext, useEffect, useRef } from "react";
 import { showToast } from "@/components/ui/toast";
 import type { SidebarListQuery } from "@/hooks/useSidebarData";
-import { type AeMoveTo, aeIsOrderId, aeMoveInOrder } from "@/lib/aeSessionOrder";
+import { type AeMoveTo, type AeOrderRow, aeIsOrderId, aeMoveInOrder } from "@/lib/aeSessionOrder";
 import { authenticatedFetch } from "@/lib/identity";
 import { SidebarConfigContext } from "@/lib/sidebarConfig";
 
@@ -87,7 +87,8 @@ export type AeOrderOp =
       id: string;
       to: AeMoveTo;
       scopeIds: readonly string[];
-      loadedIds: readonly string[];
+      /** Every loaded row, by ranking unit (see `aeMoveInOrder`). */
+      units: readonly (readonly AeOrderRow[])[];
     }
   | { kind: "set"; order: readonly string[] };
 
@@ -95,7 +96,7 @@ function applyOp(order: readonly string[], op: AeOrderOp): readonly string[] {
   if (op.kind === "set") return op.order;
   return aeMoveInOrder({
     order,
-    loadedIds: op.loadedIds,
+    units: op.units,
     scopeIds: op.scopeIds,
     id: op.id,
     to: op.to,
@@ -133,6 +134,14 @@ export function reasonOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** The toast for a change to the order that could not be made. */
+export function aeShowOrderError(error: unknown): void {
+  showToast(
+    `Could not save the session order: ${reasonOf(error)}. ` +
+      `Your recent changes to it were undone; try again.`,
+  );
+}
+
 function isBusy(queue: SaveQueue | undefined): boolean {
   return !!queue && (queue.inflight || queue.pending.length > 0);
 }
@@ -155,10 +164,7 @@ async function flush(queryClient: QueryClient, queue: SaveQueue): Promise<void> 
     queue.pending = [];
     queue.replayed = false;
     queryClient.setQueryData(AE_SIDEBAR_QUERY_KEY, queue.acked);
-    showToast(
-      `Could not save the session order: ${reasonOf(error)}. ` +
-        `Your recent changes to it were undone; try again.`,
-    );
+    aeShowOrderError(error);
     settle(queue, false);
     return;
   }
@@ -244,12 +250,25 @@ export function aeOrderSettled(queryClient: QueryClient): Promise<boolean> {
   });
 }
 
+function readOrder(queryClient: QueryClient): Promise<AeSidebarOrder> {
+  return fetchAeSidebarOrder().then((fetched) => mergeFetched(queryClient, fetched));
+}
+
+/** A fresh read of the saved order into the cache; a cached or failed read never counts. */
+export function aeFetchOrder(queryClient: QueryClient): Promise<AeSidebarOrder> {
+  return queryClient.fetchQuery({
+    queryKey: AE_SIDEBAR_QUERY_KEY,
+    queryFn: () => readOrder(queryClient),
+    staleTime: 0,
+  });
+}
+
 /** The saved order, read only while `enabled` (Manual ordering on). */
 export function useAeSidebarOrder(enabled: boolean) {
   const queryClient = useQueryClient();
   return useQuery({
     queryKey: AE_SIDEBAR_QUERY_KEY,
-    queryFn: async () => mergeFetched(queryClient, await fetchAeSidebarOrder()),
+    queryFn: () => readOrder(queryClient),
     enabled,
     staleTime: 30_000,
     refetchInterval: enabled ? REFRESH_MS : false,

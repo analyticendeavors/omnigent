@@ -30,8 +30,9 @@ import {
 } from "./aeSidebarStore";
 
 /**
- * A row as a drop target for its own list's order: on only while Manual is on,
- * for listed rows outside Pinned, Archived and selection. A pending save never
+ * A row as a drop target for its own list's order, in any Ordering (outside
+ * Manual a drop switches to it): on for listed rows outside Pinned, Archived
+ * and selection. A pending save never
  * toggles it, since every toggle re-measures every target mid-drag. The
  * insertion line shows on the row under the pointer, never on the dragged one,
  * portaled above the drag preview, which sits on the pointer and hid it.
@@ -44,7 +45,7 @@ export function useAeOrderRow(
     selectionMode,
   }: { isPinned: boolean; isArchived: boolean; selectionMode: boolean },
 ): { setNodeRef: (node: HTMLElement | null) => void; insertion: ReactNode } {
-  const listed = useAeSidebarStore((s) => s.manual && s.listOf.has(id));
+  const listed = useAeSidebarStore((s) => s.listed && s.listOf.has(id));
   const enabled = listed && !isPinned && !isArchived && !selectionMode;
   const { setNodeRef, isOver, active } = useDroppable({
     id: `ae-order:${id}`,
@@ -126,7 +127,8 @@ const MOVES: {
 ];
 
 /**
- * The row menu's Move items while Manual is on: a submenu on desktop, and
+ * The row menu's Move items for a listed row, in any Ordering (outside Manual
+ * they switch to it): a submenu on desktop, and
  * plain items under a "Move" heading on a phone, like the Status items. Plain
  * items rather than radio items: they act, they hold no choice.
  */
