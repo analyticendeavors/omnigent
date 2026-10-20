@@ -12893,6 +12893,82 @@ def test_http_ingress_authenticates_before_draining_a_bounded_body(tmp_path: Pat
         httpd.server_close()
 
 
+@pytest.mark.parametrize(
+    ("age_s", "owner_alive", "fresh"),
+    [
+        # Young: never probed, so a live hook in another pid namespace is safe.
+        (30.0, False, True),
+        # Missed a refresh and its hook is gone (a deploy killed it mid-wait).
+        (100.0, False, False),
+        # Missed a refresh but its hook still runs (slow to wake): the TTL decides.
+        (100.0, True, True),
+        # Past the TTL, alive or not.
+        (500.0, True, False),
+    ],
+)
+def test_approval_wait_marker_of_a_dead_hook_reads_stale_before_the_ttl(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    age_s: float,
+    owner_alive: bool,
+    fresh: bool,
+) -> None:
+    """
+    A deploy SIGTERMs a parked permission hook before its cleanup, and the next
+    runner refused every send as a pending Claude prompt for the whole TTL.
+    """
+    monkeypatch.setattr("omnigent.harnesses.claude_native.bridge._TRUSTED_PARENT", tmp_path)
+    monkeypatch.setattr(
+        "omnigent.harnesses.claude_native.bridge._BRIDGE_ROOT_PARENT", tmp_path / "omnigent-test"
+    )
+    monkeypatch.setattr(
+        "omnigent.harnesses.claude_native.bridge._APPROVAL_WAIT_ROOT",
+        tmp_path / "omnigent-test" / "approval-parent" / "approval-waits",
+    )
+    probed: list[int] = []
+
+    def fake_alive(pid: int) -> bool:
+        probed.append(pid)
+        return owner_alive
+
+    monkeypatch.setattr("omnigent.inner._proc.process_alive", fake_alive)
+    marker = claude_native_bridge.approval_wait_marker_path("conv_wait")
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    claude_native_bridge.touch_approval_wait_marker(marker)
+    touched = time.time() - age_s
+    os.utime(marker, (touched, touched))
+
+    assert claude_native_bridge.approval_wait_is_fresh("conv_wait") is fresh
+    assert marker.exists() is fresh
+    if age_s < claude_native_bridge.APPROVAL_WAIT_ORPHAN_GRACE_S:
+        assert probed == []
+    elif age_s < claude_native_bridge.APPROVAL_WAIT_MARKER_TTL_S:
+        assert probed == [os.getpid()]
+
+
+def test_approval_wait_marker_without_a_pid_falls_back_to_the_ttl(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A marker name with no pid is never judged dead; only the TTL expires it."""
+    monkeypatch.setattr("omnigent.harnesses.claude_native.bridge._TRUSTED_PARENT", tmp_path)
+    monkeypatch.setattr(
+        "omnigent.harnesses.claude_native.bridge._BRIDGE_ROOT_PARENT", tmp_path / "omnigent-test"
+    )
+    monkeypatch.setattr(
+        "omnigent.harnesses.claude_native.bridge._APPROVAL_WAIT_ROOT",
+        tmp_path / "omnigent-test" / "approval-parent" / "approval-waits",
+    )
+    monkeypatch.setattr("omnigent.inner._proc.process_alive", lambda _pid: False)
+    marker = claude_native_bridge.approval_wait_marker_path("conv_wait")
+    odd = marker.with_name(f"{marker.name.split('.')[0]}.x.wait")
+    odd.parent.mkdir(parents=True, exist_ok=True)
+    claude_native_bridge.touch_approval_wait_marker(odd)
+    touched = time.time() - 100.0
+    os.utime(odd, (touched, touched))
+    assert claude_native_bridge.approval_wait_is_fresh("conv_wait")
+
+
 def test_approval_wait_marker_tracks_a_parked_permission_hook(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

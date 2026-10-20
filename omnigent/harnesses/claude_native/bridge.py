@@ -203,6 +203,11 @@ APPROVAL_WAIT_MARKER_REFRESH_S = 60.0
 # Several refresh intervals of slack, so a hook that is slow to wake never
 # reads stale; a hook killed mid-wait leaves a marker that expires on its own.
 APPROVAL_WAIT_MARKER_TTL_S = 420.0
+# Past this age a live hook has missed a refresh, so the marker's pid is
+# probed and a dead one makes the marker stale before the TTL (a deploy kills
+# a parked hook before its cleanup). Younger markers are never probed, so a
+# hook whose pid reads differently here (a launcher's pid namespace) is safe.
+APPROVAL_WAIT_ORPHAN_GRACE_S = APPROVAL_WAIT_MARKER_REFRESH_S + 30.0
 _CONFIG_FILE = "bridge.json"
 _SERVER_FILE = "server.json"
 # Control socket of one ``serve-mcp`` process under the harness socket root,
@@ -1533,6 +1538,26 @@ def touch_approval_wait_marker(marker: Path) -> None:
         _logger.debug("Could not touch approval-wait marker", exc_info=True)
 
 
+def _approval_wait_owner_alive(marker: Path) -> bool:
+    """
+    Whether the hook that wrote *marker* is still running.
+
+    The hook names its marker ``<digest>.<pid>.wait`` on this host
+    (:func:`approval_wait_marker_path`).
+
+    :param marker: Marker path from :func:`approval_wait_marker_path`.
+    :returns: ``False`` only when the pid parses and that process is gone or a
+        zombie; ``True`` otherwise, leaving the TTL to decide.
+    """
+    from omnigent.inner._proc import process_alive
+
+    try:
+        pid = int(marker.name.split(".")[-2])
+    except (IndexError, ValueError):
+        return True
+    return pid <= 0 or process_alive(pid)
+
+
 def clear_approval_wait_marker(marker: Path) -> None:
     """
     Remove an approval-wait marker.
@@ -1559,8 +1584,9 @@ def approval_wait_is_fresh(session_id: str, *, bridge_dir: Path | None = None) -
         ``"conv_abc123"``.
     :param bridge_dir: Derive the marker root from this bridge, matching the hook writer.
     :returns: ``True`` when any marker was touched within
-        :data:`APPROVAL_WAIT_MARKER_TTL_S`; ``False`` when none exists, all
-        are stale, or the root is unreadable.
+        :data:`APPROVAL_WAIT_ORPHAN_GRACE_S`, or within
+        :data:`APPROVAL_WAIT_MARKER_TTL_S` by a hook still running; ``False``
+        when none exists, all are stale or orphaned, or the root is unreadable.
     """
     root = bridge_dir.parent / _APPROVAL_WAIT_DIR_NAME if bridge_dir else _APPROVAL_WAIT_ROOT
     try:
@@ -1574,7 +1600,10 @@ def approval_wait_is_fresh(session_id: str, *, bridge_dir: Path | None = None) -
             touched_at = marker.stat().st_mtime
         except OSError:
             continue
-        if now - touched_at < APPROVAL_WAIT_MARKER_TTL_S:
+        age = now - touched_at
+        if age < APPROVAL_WAIT_ORPHAN_GRACE_S or (
+            age < APPROVAL_WAIT_MARKER_TTL_S and _approval_wait_owner_alive(marker)
+        ):
             fresh = True
         else:
             clear_approval_wait_marker(marker)
@@ -1592,7 +1621,7 @@ def hold_approval_wait_marker(marker: Path) -> Iterator[None]:
     wait) reads as parked exactly like one a gateway severs every few
     minutes. The refresher is stopped before the marker is cleared so a late
     touch cannot resurrect it; a hook killed mid-wait takes the thread with
-    it and its marker simply expires.
+    it, and its marker reads stale once it misses a refresh and its pid is gone.
 
     :param marker: Marker path from :func:`approval_wait_marker_path`.
     :returns: ``None`` for the duration of the block.
