@@ -1179,7 +1179,7 @@ function SidebarImpl({
                   // transparent 1px border so the icon lands exactly on that
                   // column, flush with the Inbox row and folder rows.
                   SIDEBAR_ROW,
-                  "group/new-session w-full justify-start border-0 font-normal",
+                  "group/new-session @container/new-session w-full justify-start border-0 font-normal",
                   SIDEBAR_HOVER_HIGHLIGHT,
                   isNewChatPage && SIDEBAR_ACTIVE_HIGHLIGHT,
                 )}
@@ -1209,7 +1209,7 @@ function SidebarImpl({
                   New session
                   <CompactShortcutKeys
                     keys={NEW_SESSION_KEYS}
-                    className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 opacity-0 transition-opacity group-focus-visible/new-session:opacity-100 [@media((hover:hover)_and_(pointer:fine))]:group-hover/new-session:opacity-100"
+                    className="pointer-events-none absolute top-1/2 right-2 hidden -translate-y-1/2 opacity-0 transition-opacity @[13rem]/new-session:flex group-focus-visible/new-session:opacity-100 [@media((hover:hover)_and_(pointer:fine))]:group-hover/new-session:opacity-100"
                   />
                 </Link>
               </Button>

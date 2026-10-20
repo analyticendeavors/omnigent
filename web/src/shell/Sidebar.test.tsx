@@ -1189,6 +1189,8 @@ describe("Sidebar session list", () => {
       "absolute",
       "top-1/2",
       "right-2",
+      "hidden",
+      "@[13rem]/new-session:flex",
       "-translate-y-1/2",
       "opacity-0",
       "group-focus-visible/new-session:opacity-100",
