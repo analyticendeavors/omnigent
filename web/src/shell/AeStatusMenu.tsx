@@ -24,6 +24,7 @@ import {
 import { readAeSlotLimit, rememberAeSlotLimit } from "@/lib/aeSlotLimit";
 import { authenticatedFetch } from "@/lib/identity";
 import type { ConversationsInfiniteData } from "@/lib/sessionListCache";
+import { AeMenuFold } from "@/shell/AeMenuFold";
 
 /** What each item writes, mirroring the Parking Lot page's button titles. */
 export const AE_STATUS_HINTS: Record<AeStatus, string> = {
@@ -317,9 +318,9 @@ function StatusItems({
 }
 
 /**
- * The Status submenu: a side flyout on desktop; inline under a "Status"
- * heading on mobile, where the sidebar's menus have no room to fly out (the
- * same reason upstream swaps its project picker in place there).
+ * The Status submenu: a side flyout on desktop; on mobile, where the sidebar's
+ * menus have no room to fly out, one row showing the current status that folds
+ * the items open under it, so the phone menu fits the screen.
  */
 export function AeStatusMenu({
   components: C,
@@ -332,11 +333,25 @@ export function AeStatusMenu({
 }) {
   const isMobile = useIsMobileViewport();
   if (isMobile) {
+    const current = aeStatusOf(conversation.labels);
+    const CurrentIcon = current ? AE_STATUS_ICONS[current] : null;
     return (
-      <>
-        <p className="px-2 pt-1.5 pb-0.5 text-xs text-muted-foreground">Status</p>
+      <AeMenuFold
+        Item={C.Item}
+        icon={<CircleDotIcon className="size-3.5" />}
+        label="Status"
+        value={
+          current && CurrentIcon ? (
+            <>
+              {AE_STATUS_WORDS[current]}
+              <CurrentIcon className="size-3.5" aria-hidden="true" />
+            </>
+          ) : null
+        }
+        testId="ae-status-menu"
+      >
         <StatusItems components={C} conversation={conversation} onDone={onDone} />
-      </>
+      </AeMenuFold>
     );
   }
   return (

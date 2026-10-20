@@ -400,14 +400,16 @@ describe("Manual ordering", () => {
     expect(lastPut()).toEqual({ order: ["c", "a", "b"], revision: 3 });
   });
 
-  it("lists the Move items flat under a Move label on a phone", async () => {
+  it("folds the Move items under one Move row on a phone", async () => {
     mocks.isMobile = true;
     setView("default", "manual");
     serve([row("a", 3), row("b", 2)]);
     renderSidebar();
     await waitFor(() => expect(useAeSidebarStore.getState().manual).toBe(true));
     openRowMenu("a");
-    expect(screen.getByText("Move", { selector: "p" })).toBeInTheDocument();
+    expect(screen.queryAllByTestId("ae-move-item")).toHaveLength(0);
+    fireEvent.click(screen.getByTestId("ae-move-menu"));
+    fireEvent.click(screen.getByTestId("ae-status-menu"));
     expect(screen.getAllByTestId("ae-move-item").map((item) => item.textContent)).toEqual([
       "Move to top",
       "Move up",
@@ -429,6 +431,7 @@ describe("Manual ordering", () => {
     const units = useAeSidebarStore.getState().units?.() ?? [];
     expect(units.flat().map((unitRow) => unitRow.id)).not.toContain("temp:new");
     openRowMenu("b");
+    fireEvent.click(screen.getByTestId("ae-move-menu"));
     fireEvent.click(screen.getByText("Move up"));
     await waitFor(() => expect(sidebarCalls("PUT")).toHaveLength(1));
     expect(lastPut().order).toEqual(["b", "a"]);

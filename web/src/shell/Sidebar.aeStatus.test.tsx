@@ -416,11 +416,13 @@ describe("Status submenu in the row menus", () => {
     expect(screen.getByTestId("ae-status-menu")).toBeInTheDocument();
   });
 
-  it("lists the five values inline with the stored one checked on mobile", () => {
+  it("folds the five values under one Status row with the stored one checked on mobile", () => {
     mocks.isMobile = true;
     mockConversations([conv("p", { labels: { "ae.status": "parked" } })]);
     renderSidebar();
     fireEvent.pointerDown(screen.getByTestId("conversation-actions"), { button: 0 });
+    expect(screen.queryAllByRole("menuitemradio")).toHaveLength(0);
+    fireEvent.click(screen.getByTestId("ae-status-menu"));
     const items = screen.getAllByRole("menuitemradio");
     expect(items.map((item) => item.textContent)).toEqual([
       "Working",

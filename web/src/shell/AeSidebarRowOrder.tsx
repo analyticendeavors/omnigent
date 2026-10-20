@@ -28,6 +28,7 @@ import {
   aePlaceOf,
   useAeSidebarStore,
 } from "./aeSidebarStore";
+import { AeMenuFold } from "./AeMenuFold";
 
 /**
  * A row as a drop target for its own list's order, in any Ordering (outside
@@ -128,9 +129,9 @@ const MOVES: {
 
 /**
  * The row menu's Move items for a listed row, in any Ordering (outside Manual
- * they switch to it): a submenu on desktop, and
- * plain items under a "Move" heading on a phone, like the Status items. Plain
- * items rather than radio items: they act, they hold no choice.
+ * they switch to it): a submenu on desktop, and one row that folds the
+ * items open under it on a phone, like Status. Plain items rather than radio
+ * items: they act, they hold no choice.
  */
 export function AeMoveMenu({
   components: C,
@@ -162,10 +163,14 @@ export function AeMoveMenu({
   ));
   if (isMobile) {
     return (
-      <>
-        <p className="px-2 pt-1.5 pb-0.5 text-xs text-muted-foreground">Move</p>
+      <AeMenuFold
+        Item={C.Item}
+        icon={<AeTablerSvg node={AE_ICON_ARROWS_SORT} className="size-3.5" />}
+        label="Move"
+        testId="ae-move-menu"
+      >
         {items}
-      </>
+      </AeMenuFold>
     );
   }
   return (

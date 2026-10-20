@@ -158,12 +158,20 @@ describe("AeStatusMenu", () => {
     expect(checked).toHaveLength(0);
   });
 
-  it("renders the items inline under a heading on mobile", () => {
+  it("folds the items under one row showing the current status on mobile", () => {
     mocks.isMobile = true;
     renderMenu(conv("s1", { labels: { "ae.status": "parked" } }));
-    expect(screen.queryByTestId("ae-status-menu")).toBeNull();
-    expect(screen.getByText("Status")).toBeInTheDocument();
+    const fold = screen.getByTestId("ae-status-menu");
+    expect(fold).toHaveTextContent("StatusParked");
+    expect(fold).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryAllByTestId("ae-status-item")).toHaveLength(0);
+    fireEvent.click(fold);
+    // The row opens its items in place; the menu stays open.
+    expect(fold).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("group", { name: "Status" })).toBeInTheDocument();
     expect(screen.getAllByTestId("ae-status-item")).toHaveLength(5);
+    fireEvent.click(fold);
+    expect(screen.queryAllByTestId("ae-status-item")).toHaveLength(0);
   });
 
   it("writes the label through the session PATCH and paints the row", async () => {
