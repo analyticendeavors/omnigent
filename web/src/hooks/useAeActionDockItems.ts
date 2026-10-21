@@ -6,6 +6,7 @@
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { AE_PR_POLL_MS } from "@/components/AePrCards";
+import { useAeLimitGate } from "@/hooks/useAeLimitGate";
 import { fetchPullRequestInfo } from "@/hooks/usePullRequests";
 import {
   type AeDeployTrack,
@@ -237,9 +238,11 @@ export function useAeActionDockItems(
   }, [track, now]);
 
   const questions = useDockQuestions(sessionId);
+  const limit = useAeLimitGate(sessionId);
   const items = aeDockArrange(
     [
       ...aeDockQuestions(questions),
+      ...(limit.item ? [limit.item] : []),
       ...aeDockMerges(withCards),
       ...aeDockDeploys(withCards, deploys, track, dismissedDeploys, now),
     ],
@@ -248,6 +251,7 @@ export function useAeActionDockItems(
   return {
     items,
     dismiss: (anchor) => {
+      if (anchor === limit.item?.anchor) return limit.dismiss();
       dismissedDeploys.add(anchor);
       setDismissals((n) => n + 1);
     },

@@ -1,6 +1,6 @@
 // The action dock: what waits on the user in this chat (a question, a pull
 // request ready to merge, a merge on its way to the box), inside the composer's
-// workspace bar. The most urgent item sits after the folder and PR chips with
+// workspace bar, and an account near its usage limit. The most urgent item sits after the folder and PR chips with
 // its button, a badge per other kind sits before the bar's right cluster, and
 // the caret opens a list as a tray above the bar (designs E1 and D3b). An item
 // hides while its own card is on screen. Nothing waiting draws nothing.
@@ -22,29 +22,43 @@ import {
 import {
   AE_ICON_ARROW_DOWN,
   AE_ICON_CHEVRON_UP,
+  AE_ICON_GAUGE,
   AE_ICON_HELP_CIRCLE,
+  AE_ICON_MESSAGE_PLUS,
   AE_ICON_ROCKET,
+  AE_ICON_SPARKLES,
+  AE_ICON_USER_SHARE,
   AE_ICON_X,
 } from "@/lib/aeActionDockIcons";
 import { AE_ICON_CHEVRON_DOWN } from "@/lib/aeAgentsIcons";
 import { AE_ICON_CHECK, AE_ICON_MERGE, AE_ICON_PR_OPEN } from "@/lib/aePrIcons";
+import { aeLimitGateShort, aeLimitGateText } from "@/lib/aeLimitGate";
 import { AE_ADMIN_CENTER_PATH } from "@/lib/aePrDeploy";
 import { aeCiText } from "@/lib/aePrs";
 import { AeTablerSvg } from "@/lib/aeTablerIcon";
 import type { AeTablerIconNode } from "@/lib/aeTablerIconData";
-import { Link } from "@/lib/routing";
+import { Link, useNavigate } from "@/lib/routing";
 import { cn } from "@/lib/utils";
+import { useForkDialog } from "@/shell/ForkDialogContext";
 
 const GREEN = "text-emerald-600 dark:text-emerald-400";
 const AMBER = "text-amber-600 dark:text-amber-400";
+const RED = "text-red-600 dark:text-red-400";
 
 const KIND_STYLE: Record<AeDockKind, { icon: AeTablerIconNode; tone: string; tint: string }> = {
   question: { icon: AE_ICON_HELP_CIRCLE, tone: AMBER, tint: "bg-amber-500/15" },
+  limit: { icon: AE_ICON_GAUGE, tone: RED, tint: "bg-red-500/15" },
   merge: { icon: AE_ICON_PR_OPEN, tone: GREEN, tint: "bg-emerald-500/15" },
   deploy: { icon: AE_ICON_ROCKET, tone: MERGED_TEXT, tint: "bg-purple-500/15" },
 };
 
 const ACTION = "h-6 shrink-0 px-2 text-xs";
+
+/** What the limit item's buttons do; ChatPage supplies the model menu opener. */
+export interface AeLimitActions {
+  onSwitchModel?: () => void;
+  onSwitchAccount?: () => void;
+}
 
 /** Scroll the feed to the pending question's card. */
 function jumpTo(anchor: string) {
@@ -65,8 +79,27 @@ function ItemIcon({ item }: { item: AeDockItem }) {
   );
 }
 
-/** The words after the icon: the question, or the number and its state. */
+/** The words after the icon: the question, the limit, or the number and its state. */
 function ItemBody({ item, now, expanded }: { item: AeDockItem; now: number; expanded: boolean }) {
+  if (item.kind === "limit") {
+    const text = aeLimitGateText(item.gate, now);
+    return (
+      <>
+        <span
+          className={cn("min-w-0 truncate", !expanded && "hidden md:inline")}
+          title={text}
+          data-ae-lead-text=""
+        >
+          {text}
+        </span>
+        {!expanded && (
+          <span className="shrink-0 font-semibold whitespace-nowrap md:hidden" title={text}>
+            {aeLimitGateShort(item.gate)}
+          </span>
+        )}
+      </>
+    );
+  }
   if (item.kind === "question") {
     return (
       <span className="min-w-0 truncate" title={item.text} data-ae-lead-text="">
@@ -102,18 +135,130 @@ function ItemBody({ item, now, expanded }: { item: AeDockItem; now: number; expa
   );
 }
 
+function DismissButton({
+  label,
+  onClick,
+  className = "flex",
+}: {
+  label: string;
+  onClick: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        "size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground",
+        className,
+      )}
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      data-testid="ae-dock-dismiss"
+    >
+      <AeTablerSvg node={AE_ICON_X} className="size-3.5" />
+    </button>
+  );
+}
+
+/**
+ * Icon and label from md up, the icon alone on a phone. The strip shows the
+ * short label so the limit's own words keep their room; the list the full one.
+ */
+/** Its own component so only a shown limit item needs a router (composer tests render without one). */
+function NewChatButton({ inList }: { inList: boolean }) {
+  const navigate = useNavigate();
+  return (
+    <LimitButton
+      icon={AE_ICON_MESSAGE_PLUS}
+      label="New chat"
+      short="New chat"
+      inList={inList}
+      onClick={() => navigate("/")}
+      testId="ae-dock-limit-new"
+    />
+  );
+}
+
+function LimitButton({
+  icon,
+  label,
+  short,
+  inList,
+  onClick,
+  testId,
+}: {
+  icon: AeTablerIconNode;
+  label: string;
+  short: string;
+  inList: boolean;
+  onClick: () => void;
+  testId: string;
+}) {
+  return (
+    <Button
+      variant="outline"
+      className={cn(ACTION, "w-6 px-0 md:w-auto md:px-2")}
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      data-testid={testId}
+    >
+      <AeTablerSvg node={icon} className="size-3" />
+      <span className="hidden md:inline">{inList ? label : short}</span>
+    </Button>
+  );
+}
+
 function ItemActions({
   item,
   confirming,
   onMerge,
   onDismiss,
+  limitActions,
+  inList,
 }: {
   item: AeDockItem;
   confirming: boolean;
   onMerge: () => void;
   onDismiss: () => void;
+  limitActions: AeLimitActions;
+  /** A line of the opened list, not the strip. */
+  inList: boolean;
 }) {
   switch (item.kind) {
+    case "limit":
+      return (
+        <>
+          {limitActions.onSwitchModel && (
+            <LimitButton
+              icon={AE_ICON_SPARKLES}
+              label="Switch model"
+              short="Model"
+              inList={inList}
+              onClick={limitActions.onSwitchModel}
+              testId="ae-dock-limit-model"
+            />
+          )}
+          {item.canSwitchAccount && limitActions.onSwitchAccount && (
+            <LimitButton
+              icon={AE_ICON_USER_SHARE}
+              label="Switch account"
+              short="Account"
+              inList={inList}
+              onClick={limitActions.onSwitchAccount}
+              testId="ae-dock-limit-account"
+            />
+          )}
+          <NewChatButton inList={inList} />
+          {/* A phone strip has no room for it; the opened list has. */}
+          <DismissButton
+            label="Dismiss until this limit resets"
+            onClick={onDismiss}
+            className={inList ? "flex" : "hidden md:flex"}
+          />
+        </>
+      );
     case "question":
       return (
         <Button
@@ -150,15 +295,7 @@ function ItemActions({
               </Link>
             </Button>
           )}
-          <button
-            type="button"
-            className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-            aria-label={`Dismiss #${item.number}`}
-            onClick={onDismiss}
-            data-testid="ae-dock-dismiss"
-          >
-            <AeTablerSvg node={AE_ICON_X} className="size-3.5" />
-          </button>
+          <DismissButton label={`Dismiss #${item.number}`} onClick={onDismiss} />
         </>
       );
   }
@@ -256,11 +393,26 @@ function useAeBadgeCompaction(
 }
 
 /** Nothing outside a query client (isolated composer tests render without one). */
-export function AeActionDock({ sessionId }: { sessionId?: string }) {
-  return useContext(QueryClientContext) ? <Dock sessionId={sessionId} /> : null;
+export function AeActionDock({
+  sessionId,
+  onSwitchModel,
+}: {
+  sessionId?: string;
+  /** Opens the composer's model menu (the limit item's Switch model). */
+  onSwitchModel?: () => void;
+}) {
+  return useContext(QueryClientContext) ? (
+    <Dock sessionId={sessionId} onSwitchModel={onSwitchModel} />
+  ) : null;
 }
 
-function Dock({ sessionId }: { sessionId?: string }) {
+function Dock({ sessionId, onSwitchModel }: { sessionId?: string; onSwitchModel?: () => void }) {
+  const forkDialog = useForkDialog();
+  const limitActions: AeLimitActions = {
+    onSwitchModel,
+    // A full clone of this session, history included; the dialog's account row picks the login.
+    onSwitchAccount: forkDialog ? () => forkDialog.openForkDialog() : undefined,
+  };
   const onScreen = useAeCardsOnScreen();
   const { items, dismiss } = useAeActionDockItems(sessionId, onScreen);
   // Always starts closed: an open tray left over from an earlier visit would
@@ -337,9 +489,10 @@ function Dock({ sessionId }: { sessionId?: string }) {
         }}
       />
     ) : null;
-  const actions = (item: AeDockItem) => (
+  const actions = (item: AeDockItem, inList: boolean) => (
     <ItemActions
       item={item}
+      inList={inList}
       confirming={confirming === item.key}
       onMerge={() => {
         // The strip has no room for the confirm step: it opens in the list.
@@ -352,6 +505,7 @@ function Dock({ sessionId }: { sessionId?: string }) {
         setConfirming((key) => (key === item.key ? null : item.key));
       }}
       onDismiss={() => dismiss(item.anchor)}
+      limitActions={limitActions}
     />
   );
   const { lead } = summary;
@@ -386,7 +540,7 @@ function Dock({ sessionId }: { sessionId?: string }) {
           >
             <ItemIcon item={lead} />
             <ItemBody item={lead} now={now} expanded={liveNotice} />
-            {actions(lead)}
+            {actions(lead, false)}
             {summary.more > 0 && (
               <span className="shrink-0 whitespace-nowrap text-muted-foreground">
                 +{summary.more}
@@ -455,7 +609,7 @@ function Dock({ sessionId }: { sessionId?: string }) {
                   <ItemIcon item={item} />
                   <ItemBody item={item} now={now} expanded />
                   <span className="flex-1" />
-                  {actions(item)}
+                  {actions(item, true)}
                 </div>
                 {confirmFor(item)}
               </li>

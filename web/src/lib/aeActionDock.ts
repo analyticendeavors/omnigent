@@ -2,13 +2,17 @@
 // first. Pure, so ordering, badges, hiding and the deploy lifecycle are
 // unit-tested (aeActionDock.test.ts). omnigent-ae, 2026-10-20.
 
+import { type AeLimitGate, aeLimitGateShort } from "@/lib/aeLimitGate";
 import { type AePrDeploy, aeHasDeployState } from "@/lib/aePrDeploy";
 import { type AePrCard, aeCiText, aeReadyToMerge } from "@/lib/aePrs";
 
-export type AeDockKind = "question" | "merge" | "deploy";
+export type AeDockKind = "question" | "limit" | "merge" | "deploy";
 
-/** Urgency: a question blocks the agent, a merge waits on a click, a deploy only on time. */
-export const AE_DOCK_KINDS: readonly AeDockKind[] = ["question", "merge", "deploy"];
+/**
+ * Urgency: a question blocks the agent, a usage limit is about to, a merge
+ * waits on a click, a deploy only on time.
+ */
+export const AE_DOCK_KINDS: readonly AeDockKind[] = ["question", "limit", "merge", "deploy"];
 
 /** A deploy item that went live stays this long, then clears. */
 export const AE_DOCK_LIVE_MS = 60_000;
@@ -45,7 +49,15 @@ export interface AeDockDeploy extends ItemBase {
   liveAt: number | null;
 }
 
-export type AeDockItem = AeDockQuestion | AeDockMerge | AeDockDeploy;
+/** The account's 5-hour or weekly window at or past the gate (aeLimitGate.ts). */
+export interface AeDockLimit extends ItemBase {
+  kind: "limit";
+  gate: AeLimitGate;
+  /** A fork onto another account is possible: a Claude session, another login, fork allowed. */
+  canSwitchAccount: boolean;
+}
+
+export type AeDockItem = AeDockQuestion | AeDockLimit | AeDockMerge | AeDockDeploy;
 
 /** "owner/repo#123", the inline card's and merged row's `data-ae-pr`. */
 export function aeDockPrAnchor(repo: string, number: number): string {
@@ -215,6 +227,8 @@ export function aeDockBadgeLabel(
   switch (first.kind) {
     case "question":
       return many ? `${items.length} questions` : "Question waiting";
+    case "limit":
+      return aeLimitGateShort(first.gate);
     case "merge":
       return many ? `${items.length} to merge` : `#${first.number} ready`;
     case "deploy": {

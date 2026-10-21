@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
@@ -9,6 +9,7 @@ import { useAePublishDockQuestions } from "@/hooks/useAeActionDockItems";
 import type { AnyBlock } from "@/lib/blocks";
 import { authenticatedFetch } from "@/lib/identity";
 import type { AePrCard } from "@/lib/aePrs";
+import { ForkDialogContextProvider } from "@/shell/ForkDialogContext";
 import { useChatStore } from "@/store/chatStore";
 import { AeActionDock } from "./AeActionDock";
 import { ComposerWorkspaceBar } from "./composer/ComposerControls";
@@ -465,5 +466,194 @@ describe("AeActionDock", () => {
     await screen.findByTestId("ae-dock-merge");
     expect(screen.getAllByTestId("ae-dock-merge")).toHaveLength(1);
     expect(screen.getByTestId("ae-dock-lead").textContent).not.toContain("more");
+  });
+});
+
+// ── the usage gate ─────────────────────────────────────────────────────
+
+const RESETS = new Date(Date.now() + 2 * 86_400_000).toISOString();
+
+function limitsAnswer(used: number, harness: "claude" | "codex" = "claude", resets = RESETS) {
+  return {
+    now: new Date().toISOString(),
+    harnesses: {
+      [harness]: {
+        harness,
+        source: "statusline",
+        observed_at: new Date().toISOString(),
+        plan: null,
+        note: null,
+        account: null,
+        account_label: "AE Default",
+        windows: [
+          {
+            id: "five_hour",
+            label: "5-hour limit",
+            used_percent: 20,
+            resets_at: RESETS,
+            window_minutes: 300,
+          },
+          {
+            id: "seven_day",
+            label: "Weekly",
+            used_percent: used,
+            resets_at: resets,
+            window_minutes: 10080,
+          },
+        ],
+      },
+    },
+  };
+}
+
+const TWO_LOGINS = [
+  { family: "claude-oauth-active", source: "AE Default", env_var: "" },
+  { family: "claude-oauth", source: "Personal", env_var: "personal" },
+];
+
+function serveLimits(answer: () => unknown, logins: unknown[] = TWO_LOGINS) {
+  vi.mocked(authenticatedFetch).mockImplementation((input: URL | RequestInfo) => {
+    const path = String(input);
+    if (path.startsWith("/v1/ae/limits")) return json(answer());
+    if (path.includes("/credentials/detected")) return json({ credentials: logins });
+    return json({ error: { message: "nope" } }, 404);
+  });
+}
+
+function Where() {
+  return <span data-testid="where">{useLocation().pathname}</span>;
+}
+
+function renderLimitDock({
+  harness = "claude-native",
+  canFork = true,
+  disabledReason,
+  noModelMenu = false,
+  onSwitchModel = vi.fn(),
+  openForkDialog = vi.fn(),
+}: {
+  harness?: string;
+  canFork?: boolean;
+  disabledReason?: string;
+  noModelMenu?: boolean;
+  onSwitchModel?: () => void;
+  openForkDialog?: () => void;
+} = {}) {
+  useChatStore.setState({ conversationId: "s1", blocks: [], sessionHarness: harness });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  qc.setQueryData(["session", "s1"], { id: "s1", hostId: "h1", labels: {} });
+  render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={["/c/s1"]}>
+        <ForkDialogContextProvider
+          value={{ currentSessionId: "s1", canFork, disabledReason, openForkDialog }}
+        >
+          <Where />
+          <ComposerWorkspaceBar data-testid="composer-workspace-controls">
+            <AeActionDock sessionId="s1" onSwitchModel={noModelMenu ? undefined : onSwitchModel} />
+          </ComposerWorkspaceBar>
+        </ForkDialogContextProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+  return { onSwitchModel, openForkDialog };
+}
+
+describe("AeActionDock usage gate", () => {
+  afterEach(() => useChatStore.setState({ sessionHarness: null }));
+
+  it("leads with the limit and its three buttons", async () => {
+    serveLimits(() => limitsAnswer(92));
+    renderLimitDock();
+    const lead = await screen.findByTestId("ae-dock-lead");
+    expect(lead.textContent).toContain("AE Default is at 92% of its weekly limit, resets");
+    expect(within(lead).getByTestId("ae-dock-limit-model")).toBeTruthy();
+    expect(await within(lead).findByTestId("ae-dock-limit-account")).toBeTruthy();
+    expect(within(lead).getByTestId("ae-dock-limit-new")).toBeTruthy();
+    expect(within(lead).getByTestId("ae-dock-dismiss")).toBeTruthy();
+  });
+
+  it("draws nothing below 90 percent", async () => {
+    serveLimits(() => limitsAnswer(89));
+    renderLimitDock();
+    await waitFor(() => expect(authenticatedFetch).toHaveBeenCalled());
+    expect(screen.queryByTestId("ae-action-dock")).toBeNull();
+  });
+
+  it("each button calls its handler", async () => {
+    serveLimits(() => limitsAnswer(95));
+    const { onSwitchModel, openForkDialog } = renderLimitDock();
+    fireEvent.click(await screen.findByTestId("ae-dock-limit-model"));
+    expect(onSwitchModel).toHaveBeenCalledTimes(1);
+    fireEvent.click(await screen.findByTestId("ae-dock-limit-account"));
+    expect(openForkDialog).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("where").textContent).toBe("/c/s1");
+    fireEvent.click(screen.getByTestId("ae-dock-limit-new"));
+    expect(screen.getByTestId("where").textContent).toBe("/");
+  });
+
+  it("hides Switch account with no other login", async () => {
+    serveLimits(() => limitsAnswer(95), [TWO_LOGINS[0]]);
+    renderLimitDock();
+    await screen.findByTestId("ae-dock-limit-new");
+    await waitFor(() =>
+      expect(authenticatedFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/credentials/detected"),
+      ),
+    );
+    expect(screen.queryByTestId("ae-dock-limit-account")).toBeNull();
+  });
+
+  it("hides Switch account on Codex", async () => {
+    serveLimits(() => limitsAnswer(95, "codex"));
+    renderLimitDock({ harness: "codex-native" });
+    expect(await screen.findByTestId("ae-dock-limit-new")).toBeTruthy();
+    expect(screen.getByTestId("ae-dock-lead").textContent).toContain("95% of its weekly limit");
+    expect(screen.queryByTestId("ae-dock-limit-account")).toBeNull();
+  });
+
+  for (const [why, opts] of [
+    ["cannot be forked", { canFork: false }],
+    ["has a fork restriction", { disabledReason: "Forking is off for this session." }],
+  ] as const) {
+    it(`hides Switch account when the session ${why}`, async () => {
+      serveLimits(() => limitsAnswer(95));
+      renderLimitDock(opts);
+      await screen.findByTestId("ae-dock-limit-new");
+      await waitFor(() =>
+        expect(authenticatedFetch).toHaveBeenCalledWith(
+          expect.stringContaining("/credentials/detected"),
+        ),
+      );
+      expect(screen.queryByTestId("ae-dock-limit-account")).toBeNull();
+    });
+  }
+
+  it("Switch model is absent without a model menu to open", async () => {
+    serveLimits(() => limitsAnswer(95));
+    renderLimitDock({ noModelMenu: true });
+    await screen.findByTestId("ae-dock-limit-new");
+    expect(screen.queryByTestId("ae-dock-limit-model")).toBeNull();
+  });
+
+  it("a dismissal holds across a remount until the window resets", async () => {
+    let resets = RESETS;
+    serveLimits(() => limitsAnswer(93, "claude", resets));
+    renderLimitDock();
+    fireEvent.click(await screen.findByTestId("ae-dock-dismiss"));
+    expect(screen.queryByTestId("ae-action-dock")).toBeNull();
+    cleanup();
+    renderLimitDock();
+    const limitReads = () =>
+      vi
+        .mocked(authenticatedFetch)
+        .mock.calls.filter(([path]) => String(path).startsWith("/v1/ae/limits")).length;
+    await waitFor(() => expect(limitReads()).toBe(2));
+    await act(async () => {});
+    expect(screen.queryByTestId("ae-action-dock")).toBeNull();
+    cleanup();
+    resets = new Date(Date.now() + 9 * 86_400_000).toISOString();
+    renderLimitDock();
+    expect(await screen.findByTestId("ae-dock-limit-new")).toBeTruthy();
   });
 });

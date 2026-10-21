@@ -3602,7 +3602,15 @@ function ComposerImpl(
             onOpen={openComposerGithubTab}
           />
           <AeTokenDefrag key={conversationId} />
-          <AeActionDock key={`ae-dock:${conversationId}`} sessionId={conversationId ?? undefined} />
+          <AeActionDock
+            key={`ae-dock:${conversationId}`}
+            sessionId={conversationId ?? undefined}
+            onSwitchModel={
+              showModels && codexModelOptions.length > 0 && !isReadOnly && !unreachable
+                ? () => setPickerOpenNonce((n) => n + 1)
+                : undefined
+            }
+          />
           <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1">
             <div
               data-testid="composer-task-indicators"
