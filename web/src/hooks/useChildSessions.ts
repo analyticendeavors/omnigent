@@ -256,10 +256,13 @@ export async function fetchChildSessions(sessionId: string): Promise<ChildSessio
  *     tab is backgrounded). The execution-logs panel passes a value
  *     here so the dropdown updates when new sub-agents spawn;
  *     callers that just need a snapshot (the rail card) can omit it.
+ * @param enabled - False reads only the cached list and fetches nothing,
+ *     e.g. while the rail's Agents section is folded.
  */
 export function useChildSessions(
   conversationId: string | null,
   pollMs?: number | null,
+  enabled = true,
 ): UseChildSessionsResult {
   const sessionId = isTempConvId(conversationId) ? null : conversationId;
   const { data, isLoading, error } = useQuery({
@@ -268,11 +271,11 @@ export function useChildSessions(
         ? ["conversation", null, "child_sessions"]
         : childSessionsQueryKey(sessionId),
     queryFn: () => fetchChildSessions(sessionId as string),
-    enabled: sessionId !== null,
+    enabled: sessionId !== null && enabled,
     staleTime: 60_000,
     retry: false,
     refetchOnMount: false,
-    refetchInterval: pollMs ?? false,
+    refetchInterval: enabled ? (pollMs ?? false) : false,
   });
   return {
     children: data ?? [],

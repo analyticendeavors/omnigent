@@ -80,6 +80,27 @@ describe("AeAgentsSections", () => {
     expect(window.localStorage.getItem("ae.agentsPane.finishedOpen")).toBe("1");
   });
 
+  it("shows failed agents in their own open Failed section, never counted as finished", () => {
+    renderSections([
+      child({ id: "a" }),
+      running("b"),
+      child({ id: "dead", current_task_status: "failed" }),
+      child({ id: "c" }),
+    ]);
+    expect(screen.getByTestId("agents-failed-section")).toHaveTextContent("Failed1");
+    expect(screen.getByTestId("agents-finished-toggle")).toHaveTextContent("Finished2");
+    // Failed rows show while Finished stays folded.
+    expect(rowIds()).toEqual(["b", "dead"]);
+  });
+
+  it("clears a failed-only list from the Failed header", () => {
+    renderSections([running("b"), child({ id: "dead", current_task_status: "failed" })]);
+    expect(screen.queryByTestId("agents-finished-section")).toBeNull();
+    fireEvent.click(screen.getByTestId("agents-clear-finished"));
+    expect(rowIds()).toEqual(["b"]);
+    expect(screen.queryByTestId("agents-failed-section")).toBeNull();
+  });
+
   it("clears finished agents from the view and brings them back", () => {
     window.localStorage.setItem("ae.agentsPane.finishedOpen", "1");
     const { rerender } = renderSections([child({ id: "a" }), running("b")]);

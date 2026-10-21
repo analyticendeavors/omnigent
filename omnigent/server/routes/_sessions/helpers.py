@@ -10895,6 +10895,8 @@ def _child_session_summary_from_conversation(
     # Derive busy from the relay-fed cache; tasks table is gone.
     if cached_status is None:
         cached_status = _session_status_cache.get(conv.id)
+    if cached_status is None and conv.live_status == "failed":
+        cached_status = "failed"  # AE: a restart empties the cache; the row keeps the failure.
     if cached_status in ("running", "waiting"):
         busy = True
     else:

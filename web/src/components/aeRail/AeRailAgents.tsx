@@ -1,10 +1,12 @@
 // The rail's Agents section: each collaborator's own context window (never
 // summed), then Claude Code's subagents: running ones with a one-line note on
-// what each is doing (its newest step), finished ones under their own Finished group.
+// what each is doing (its newest step), failed ones always shown under Failed,
+// finished ones under their own Finished group. Rows come from the same live
+// child list the Agents tab reads, so the two always agree.
 
 import { useState } from "react";
 import { RunningDot } from "@/components/RunningDot";
-import type { ChildSessionInfo } from "@/hooks/useChildSessions";
+import { type ChildSessionInfo, useChildSessions } from "@/hooks/useChildSessions";
 import { type AeRailSectionProps, useAeRailSectionActive } from "@/lib/aeSessionRail";
 import { cn } from "@/lib/utils";
 import {
@@ -23,6 +25,7 @@ import {
   type AeContextEntry,
   aeModelName,
   buildCollaboratorContext,
+  isNativeSubagent,
   useAeSessionContexts,
 } from "../aeSessionContext";
 import { AeRailSection } from "./AeRailSection";
@@ -89,6 +92,9 @@ function rowTime(child: ChildSessionInfo, nowMs: number): string {
 function SubagentDot({ child }: { child: ChildSessionInfo }) {
   const { activity } = childStatus(child);
   if (activity === "working") return <RunningDot className="mt-0.5" />;
+  if (activity === "failed") {
+    return <AeRailIcon name="warning" className="mt-0.5 size-3 text-destructive" />;
+  }
   return (
     <span
       aria-hidden
@@ -180,6 +186,20 @@ function SubagentRow({
   );
 }
 
+/** "1 running · 1 failed · 2 finished", leaving out zero parts; none when all are zero. */
+export function aeRailAgentsSummary(
+  running: number,
+  failed: number,
+  finished: number,
+): string | undefined {
+  const parts = [
+    running > 0 ? `${running} running` : null,
+    failed > 0 ? `${failed} failed` : null,
+    finished > 0 ? `${finished} finished` : null,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(" · ") : undefined;
+}
+
 export function AeRailAgents({ sessionId }: AeRailSectionProps) {
   const harness = useChatStore((s) => (s.conversationId === sessionId ? s.sessionHarness : null));
   const model = useChatStore((s) => (s.conversationId === sessionId ? s.llmModel : null));
@@ -192,6 +212,9 @@ export function AeRailAgents({ sessionId }: AeRailSectionProps) {
   );
   // Claude Code collaborators report their window through the limits relay's status lines.
   const statusLines = useAeLimits(active, sessionId).data?.harnesses.claude?.contexts;
+  // The Agents tab's own list, kept live by the session stream between polls.
+  // Folded, it only reads the cached list, so the folded summary keeps its counts.
+  const { children } = useChildSessions(sessionId, POLL_MS, active);
   const [finishedOpen, setFinishedOpen] = useState(readFinishedOpen);
   const openTab = useAeRailOpenWorkspaceTab();
   const openAgents = openTab ? () => openTab("subagents") : undefined;
@@ -202,27 +225,31 @@ export function AeRailAgents({ sessionId }: AeRailSectionProps) {
     entry: buildCollaboratorContext(c, statusLines, now),
   }));
   // Rows cleared in the Agents tab stay cleared here too.
-  const split = splitAgentSections(sessions.subagentRows ?? [], readAeAgentsClearedAt(sessionId));
+  const split = splitAgentSections(
+    children.filter(isNativeSubagent),
+    readAeAgentsClearedAt(sessionId),
+  );
   const runningSubagents = split.running;
   const steps = useAeSubagentSteps(
     active,
     runningSubagents.map((c) => c.id),
   );
-  // Newest finish first.
-  const finishedSubagents = [...split.finished].sort(
-    (a, b) => (b.updated_at ?? b.created_at ?? 0) - (a.updated_at ?? a.created_at ?? 0),
-  );
+  // Newest end first.
+  const newestFirst = (a: ChildSessionInfo, b: ChildSessionInfo) =>
+    (b.updated_at ?? b.created_at ?? 0) - (a.updated_at ?? a.created_at ?? 0);
+  const failedSubagents = [...split.failed].sort(newestFirst);
+  const finishedSubagents = [...split.finished].sort(newestFirst);
   const running = rows.filter((r) => r.running).length + runningSubagents.length;
   const finished = rows.length - rows.filter((r) => r.running).length + finishedSubagents.length;
   const hidden = sessions.hidden ?? 0;
-  const subagentCount = runningSubagents.length + finishedSubagents.length;
+  const failed = failedSubagents.length;
+  const subagentCount = runningSubagents.length + failed + finishedSubagents.length;
   const empty = rows.length === 0 && subagentCount === 0;
   const toggleFinished = () => {
     writeFinishedOpen(!finishedOpen);
     setFinishedOpen(!finishedOpen);
   };
-  const summary =
-    running > 0 ? `${running} running` : finished > 0 ? `${finished} finished` : undefined;
+  const summary = aeRailAgentsSummary(running, failed, finished);
   return (
     <AeRailSection id="agents" summary={summary}>
       <div className="flex flex-col gap-2 text-sm" data-testid="ae-rail-agents">
@@ -268,6 +295,21 @@ export function AeRailAgents({ sessionId }: AeRailSectionProps) {
                 nowMs={now}
                 onOpen={openAgents}
               />
+            ))}
+          </div>
+        )}
+        {failed > 0 && (
+          <div
+            className="flex flex-col border-t border-border/60 pt-1"
+            data-testid="ae-rail-agents-failed"
+          >
+            <div className="flex min-h-7 items-center gap-1">
+              <AeRailIcon name="warning" className="size-3.5 text-destructive" />
+              <span className="flex-1">Failed</span>
+              <span className="text-xs tabular-nums text-muted-foreground">{failed}</span>
+            </div>
+            {failedSubagents.map((child) => (
+              <SubagentRow key={child.id} child={child} nowMs={now} onOpen={openAgents} />
             ))}
           </div>
         )}

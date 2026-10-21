@@ -365,3 +365,30 @@ async def test_startup_sweep_warns_without_a_sql_store(
 ) -> None:
     assert await ae_subagent_liveness.sweep_stale_claude_subagents(Mock(spec=[])) == 0
     assert "conversation store has no _session" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("live_status", "task_status"),
+    [("failed", "failed"), ("idle", None), ("running", None)],
+)
+def test_child_summary_keeps_a_persisted_failure_after_a_restart(
+    db_uri: str, live_status: str, task_status: str | None
+) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    parent_id, child_id = _claude_child(store)
+    # After a restart the status cache is empty; only the row remembers the end.
+    store.set_session_live_status(child_id, live_status)
+    common._session_status_cache.pop(child_id, None)
+    conv = store.get_conversation(child_id)
+    assert conv is not None and conv.live_status == live_status
+    summary = _child_session_summary_from_conversation(conv, parent_id, None)
+    assert summary.current_task_status == task_status
+    assert summary.busy is False
+    # A live edge still wins over the row.
+    common._session_status_cache[child_id] = "running"
+    try:
+        live = _child_session_summary_from_conversation(conv, parent_id, None)
+        assert live.current_task_status == "in_progress"
+        assert live.busy is True
+    finally:
+        common._session_status_cache.pop(child_id, None)

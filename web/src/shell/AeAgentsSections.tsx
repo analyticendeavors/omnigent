@@ -16,6 +16,7 @@ import {
   AE_ICON_TRASH,
 } from "@/lib/aeAgentsIcons";
 import { interrupt } from "@/lib/sessionsApi";
+import { AE_RAIL_ICONS } from "@/components/aeRail/aeRailIcons";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chatStore";
 import { TodoPanel } from "./TodoPanel";
@@ -132,8 +133,8 @@ function AgentsSectionsForRoot({ rootSessionId, agents, renderRow }: AeAgentsSec
     readAeAgentsClearedAt(rootSessionId),
   );
   const [finishedOpen, setFinishedOpen] = useState(() => readStorage(FINISHED_OPEN_KEY) === "1");
-  const { running, finished, clearedCount } = splitAgentSections(agents, clearedAt);
-  const cutoff = clearCutoff(finished, clearedAt);
+  const { running, failed, finished, clearedCount } = splitAgentSections(agents, clearedAt);
+  const cutoff = clearCutoff([...failed, ...finished], clearedAt);
 
   if (agents.length === 0) return null;
 
@@ -148,6 +149,19 @@ function AgentsSectionsForRoot({ rootSessionId, agents, renderRow }: AeAgentsSec
     writeStorage(clearedKey(rootSessionId), String(cutoff));
     setClearedAt(cutoff);
   };
+  const clearButton =
+    cutoff !== null ? (
+      <button
+        type="button"
+        onClick={clearFinished}
+        className={ICON_BUTTON}
+        aria-label="Clear finished agents from this list"
+        title="Clear finished"
+        data-testid="agents-clear-finished"
+      >
+        <AeTablerSvg node={AE_ICON_TRASH} className="size-4" />
+      </button>
+    ) : null;
   const restoreCleared = () => {
     writeStorage(clearedKey(rootSessionId), null);
     setClearedAt(null);
@@ -165,6 +179,20 @@ function AgentsSectionsForRoot({ rootSessionId, agents, renderRow }: AeAgentsSec
       )}
       {running.length > 0 && <ColumnHeader withStop />}
       {running.map(renderRow)}
+      {failed.length > 0 && (
+        <li data-testid="agents-failed-section" className="mt-1 border-t border-border/60">
+          <SectionHeader>
+            <AeTablerSvg node={AE_RAIL_ICONS.warning} className="size-3.5 shrink-0 text-destructive" />
+            <span>Failed</span>
+            <span className="tabular-nums">{failed.length}</span>
+            <span className="flex-1" />
+            {/* With no Finished header, Clear lives here so failed-only lists can be cleared. */}
+            {finished.length === 0 && clearButton}
+          </SectionHeader>
+        </li>
+      )}
+      {failed.length > 0 && <ColumnHeader withStop={false} />}
+      {failed.map(renderRow)}
       {(finished.length > 0 || clearedCount > 0) && (
         <li data-testid="agents-finished-section" className="mt-1 border-t border-border/60">
           <SectionHeader>
@@ -194,18 +222,7 @@ function AgentsSectionsForRoot({ rootSessionId, agents, renderRow }: AeAgentsSec
                 <AeTablerSvg node={AE_ICON_RESTORE} className="size-4" />
               </button>
             )}
-            {finished.length > 0 && cutoff !== null && (
-              <button
-                type="button"
-                onClick={clearFinished}
-                className={ICON_BUTTON}
-                aria-label="Clear finished agents from this list"
-                title="Clear finished"
-                data-testid="agents-clear-finished"
-              >
-                <AeTablerSvg node={AE_ICON_TRASH} className="size-4" />
-              </button>
-            )}
+            {finished.length > 0 && clearButton}
           </SectionHeader>
         </li>
       )}

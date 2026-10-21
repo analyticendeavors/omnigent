@@ -8,9 +8,9 @@ import { nativeCodingAgentForSubagentWrapper, WRAPPER_LABEL_KEY } from "@/lib/na
 import { childStatus, type AgentActivity } from "./subagentStatus";
 
 /**
- * Activities that keep a row under Running. Everything else folds into
- * Finished: done, idle, failed, a dropped runner, and a stopped task
- * (`cancelled`, which `childStatus` reports as `other`).
+ * Activities that keep a row under Running. Everything else has ended:
+ * `failed` gets its own Failed section, and the rest fold into Finished
+ * (done, idle, a dropped runner, a stopped task).
  */
 const RUNNING_ACTIVITIES: ReadonlySet<AgentActivity> = new Set([
   "working",
@@ -22,16 +22,23 @@ export function isChildFinished(child: ChildSessionInfo): boolean {
   return !RUNNING_ACTIVITIES.has(childStatus(child).activity);
 }
 
+/** True for a row whose run failed; never counted as finished. */
+export function isChildFailed(child: ChildSessionInfo): boolean {
+  return childStatus(child).activity === "failed";
+}
+
 export interface AgentSections {
   running: ChildSessionInfo[];
+  /** Ended rows whose run failed (not a dropped runner), kept out of `finished`. */
+  failed: ChildSessionInfo[];
   finished: ChildSessionInfo[];
   /** Finished rows hidden by the pane's Clear button. */
   clearedCount: number;
 }
 
 /**
- * Split the root's children into Running and Finished, in server order,
- * dropping finished rows last updated at or before `clearedAt`.
+ * Split the root's children into Running, Failed and Finished, in server
+ * order, dropping ended rows last updated at or before `clearedAt`.
  *
  * @param children - The root session's child rows, in server order.
  * @param clearedAt - Epoch seconds of the last Clear, or `null` when never cleared.
@@ -41,6 +48,7 @@ export function splitAgentSections(
   clearedAt: number | null,
 ): AgentSections {
   const running: ChildSessionInfo[] = [];
+  const failed: ChildSessionInfo[] = [];
   const finished: ChildSessionInfo[] = [];
   let clearedCount = 0;
   for (const child of children) {
@@ -48,11 +56,13 @@ export function splitAgentSections(
       running.push(child);
     } else if (clearedAt !== null && (child.updated_at ?? 0) <= clearedAt) {
       clearedCount += 1;
+    } else if (isChildFailed(child)) {
+      failed.push(child);
     } else {
       finished.push(child);
     }
   }
-  return { running, finished, clearedCount };
+  return { running, failed, finished, clearedCount };
 }
 
 /**

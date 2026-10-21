@@ -278,7 +278,7 @@ function toSnapshot(session: Session): AeSessionSnapshot {
 /** Claude Code's own subagents run inside its process and report no context of their own. */
 const NATIVE_SUBAGENT_WRAPPER = "claude-code-native-ui-subagent";
 
-function isNativeSubagent(child: ChildSessionInfo): boolean {
+export function isNativeSubagent(child: ChildSessionInfo): boolean {
   return child.labels?.["omnigent.wrapper"] === NATIVE_SUBAGENT_WRAPPER;
 }
 

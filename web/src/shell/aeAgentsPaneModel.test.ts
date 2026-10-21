@@ -33,7 +33,7 @@ const running = (id: string, extra: Partial<ChildSessionInfo> = {}) =>
 const claudeTask = { labels: { "omnigent.wrapper": "claude-code-native-ui-subagent" } };
 
 describe("splitAgentSections", () => {
-  it("puts live agents under Running and settled or failed ones under Finished", () => {
+  it("puts live agents under Running, failed ones under Failed and settled ones under Finished", () => {
     const sections = splitAgentSections(
       [
         child({ id: "done" }),
@@ -44,7 +44,8 @@ describe("splitAgentSections", () => {
       null,
     );
     expect(sections.running.map((c) => c.id)).toEqual(["busy", "asking"]);
-    expect(sections.finished.map((c) => c.id)).toEqual(["done", "failed"]);
+    expect(sections.finished.map((c) => c.id)).toEqual(["done"]);
+    expect(sections.failed.map((c) => c.id)).toEqual(["failed"]);
     expect(sections.clearedCount).toBe(0);
   });
 

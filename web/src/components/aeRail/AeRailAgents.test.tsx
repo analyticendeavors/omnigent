@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { type ReactElement, type ReactNode, useState } from "react";
 import {
+  act,
   cleanup,
   fireEvent,
   render as rtlRender,
@@ -14,7 +15,7 @@ vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
 
 import { authenticatedFetch } from "@/lib/identity";
 import { useAeSessionRailStore } from "@/lib/aeSessionRail";
-import { AeRailAgents } from "./AeRailAgents";
+import { AeRailAgents, aeRailAgentsSummary } from "./AeRailAgents";
 
 /** A fresh QueryClient per render, retries off, as the app's provider supplies one. */
 function QueryWrapper({ children }: { children: ReactNode }) {
@@ -97,7 +98,7 @@ describe("AeRailAgents", () => {
     );
     render(<AeRailAgents sessionId="conv_root" />);
     await waitFor(() => expect(screen.getAllByTestId("ae-rail-agent")).toHaveLength(3));
-    expect(screen.getByText("4 running")).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("4 running · 1 finished")).toBeTruthy());
     const rows = screen.getAllByTestId("ae-rail-agent").map((row) => row.textContent);
     expect(rows).toEqual([
       "Review the diffCodex · gpt-6-astra22%",
@@ -278,5 +279,63 @@ describe("AeRailAgents", () => {
     render(<AeRailAgents sessionId="conv_root" />);
     useAeSessionRailStore.setState({ open: false, folded: {} });
     expect(authenticatedFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("AeRailAgents failed subagents", () => {
+  it("lists a failed subagent under its own open Failed group, never under Finished", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    route([
+      child("conv_live", { tool: "Build the grid", labels: SUBAGENT, created_at: now - 60 }),
+      child("conv_dead", {
+        tool: "Build the redesign",
+        labels: SUBAGENT,
+        busy: false,
+        current_task_status: "failed",
+        created_at: now - 900,
+        updated_at: now - 600,
+      }),
+      child("conv_done1", {
+        tool: "Screenshot it",
+        labels: SUBAGENT,
+        busy: false,
+        current_task_status: "completed",
+      }),
+      child("conv_done2", {
+        tool: "Read the docs",
+        labels: SUBAGENT,
+        busy: false,
+        current_task_status: "completed",
+      }),
+    ]);
+    render(<AeRailAgents sessionId="conv_root" />);
+    await waitFor(() =>
+      expect(screen.getByText("1 running · 1 failed · 2 finished")).toBeTruthy(),
+    );
+    const group = screen.getByTestId("ae-rail-agents-failed");
+    const failedRows = within(group).getAllByTestId("ae-rail-subagent");
+    expect(failedRows.map((row) => row.getAttribute("data-session"))).toEqual(["conv_dead"]);
+    expect(failedRows[0].getAttribute("data-activity")).toBe("failed");
+    expect(failedRows[0].textContent).toContain("Failed");
+    // The Finished toggle counts only the two that simply ended.
+    expect(screen.getByTestId("ae-rail-agents-finished-toggle").textContent).toContain("2");
+    expect(screen.queryByText("Nothing running now.")).toBeNull();
+  });
+
+  it("keeps the counts in the summary after the section is folded", async () => {
+    route([
+      child("conv_dead", { labels: SUBAGENT, busy: false, current_task_status: "failed" }),
+    ]);
+    render(<AeRailAgents sessionId="conv_root" />);
+    await waitFor(() => expect(screen.getByText("1 failed")).toBeTruthy());
+    act(() => useAeSessionRailStore.setState({ folded: { agents: true } }));
+    expect(screen.getByText("1 failed")).toBeTruthy();
+  });
+
+  it("builds the summary from the non-zero parts only", () => {
+    expect(aeRailAgentsSummary(1, 1, 2)).toBe("1 running · 1 failed · 2 finished");
+    expect(aeRailAgentsSummary(0, 1, 2)).toBe("1 failed · 2 finished");
+    expect(aeRailAgentsSummary(2, 0, 0)).toBe("2 running");
+    expect(aeRailAgentsSummary(0, 0, 0)).toBeUndefined();
   });
 });
