@@ -67,7 +67,7 @@ from typing import Any
 from urllib.parse import quote
 
 from omnigent import config as _config
-from omnigent.runner import pr_resource
+from omnigent.runner import _ae_gh_auth_cache, pr_resource
 from omnigent.runner.git_providers import local_git
 from omnigent.runner.session_prs import PullRequestRef
 from omnigent.runtime.filesystem_registry import _git_timeout_seconds
@@ -201,6 +201,7 @@ def _gh(argv: list[str], *, cwd: str, token: str | None = None) -> tuple[int | N
         and time.monotonic() >= deadline
     ):
         _pr_title_timed_out.set(True)
+    _ae_gh_auth_cache.note_gh_result(result, token=token)
     return result
 
 
@@ -247,6 +248,12 @@ def _owner_repo_from_pr_url(url: str | None) -> str | None:
 
 
 def _list_accounts(root: str) -> tuple[bool, list[dict[str, Any]]]:
+    return _ae_gh_auth_cache.cached_accounts(
+        lambda: _list_accounts_uncached(root), deadline=_pr_title_deadline.get()
+    )
+
+
+def _list_accounts_uncached(root: str) -> tuple[bool, list[dict[str, Any]]]:
     """Return ``(authenticated, accounts)`` from ``gh auth status --json hosts``.
 
     ``accounts`` is ``[{login, active, state, host}]``; ``authenticated`` is true

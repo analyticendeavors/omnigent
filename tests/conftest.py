@@ -316,6 +316,12 @@ def _reset_runner_catalog_cache() -> Generator[None, None, None]:
 
 
 @pytest.fixture(autouse=True)
+def _no_gh_auth_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Turn off the host-wide ``gh auth status`` cache, which outlives a test's stubs."""
+    monkeypatch.setenv("OMNIGENT_GH_AUTH_CACHE_SECONDS", "0")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_claude_native_state(
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,
