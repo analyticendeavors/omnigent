@@ -118,7 +118,7 @@ function ItemBody({ item, now, expanded }: { item: AeDockItem; now: number; expa
   return (
     <>
       {/* The chat links' preview on hover; no title, which would show over it. */}
-      <AePrLinkHoverCard href={item.url}>
+      <AePrLinkHoverCard href={item.url} side="top">
         <a
           href={item.url}
           target="_blank"

@@ -123,9 +123,12 @@ function AePrPreview({ repo, number }: { repo: string; number: number }) {
 /** Wraps a chat link to a GitHub pull request; any other link passes through. */
 export function AePrLinkHoverCard({
   href,
+  side,
   children,
 }: {
   href: string | undefined;
+  /** Where the preview opens; the action dock passes "top" to keep the composer clear. */
+  side?: "top" | "bottom";
   children: ReactElement;
 }) {
   const ref = pullRequestOf(href);
@@ -133,7 +136,7 @@ export function AePrLinkHoverCard({
   return (
     <HoverCard openDelay={300} closeDelay={100}>
       <HoverCardTrigger asChild>{children}</HoverCardTrigger>
-      <HoverCardContent align="start" className="w-80">
+      <HoverCardContent align="start" side={side} className="w-80">
         <AePrPreview repo={ref.repo} number={ref.number} />
       </HoverCardContent>
     </HoverCard>

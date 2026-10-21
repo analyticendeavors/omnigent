@@ -191,6 +191,8 @@ describe("AeActionDock", () => {
     fireEvent.focus(link);
     const preview = await screen.findByTestId("ae-pr-hover");
     expect(within(preview).getByText("PR 180")).toBeTruthy();
+    // Above the bar, like the tray, so it never covers the composer.
+    expect(preview.closest("[data-side]")).toHaveAttribute("data-side", "top");
   });
 
   it("renders inside the workspace bar, the caret after the bar's right cluster", async () => {
