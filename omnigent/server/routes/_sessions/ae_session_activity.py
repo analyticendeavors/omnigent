@@ -13,10 +13,19 @@ extra I/O: the child ids come from the one batched
 ``list_child_conversation_ids_by_parent`` query the list builder already
 makes. Like the existing child status roll-up, the counts are as fresh as
 this replica's relay caches.
+
+A closed (archived) child never counts. ``sys_session_close`` archives the
+child, and a child still marked running when that happened used to keep its
+parent's badge lit for hours. The list builders now ask
+``list_child_conversation_ids_by_parent`` to leave archived children out (the
+flag sits on the row that query already reads), and ``settle_archived_session``
+drops a closed session's busy status, cache and stored ``live_status``, once
+the archive teardown runs.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Literal
 
 from omnigent.runtime import pending_elicitations
@@ -26,10 +35,44 @@ from omnigent.server.routes._sessions.common import (
     _session_status_cache,
 )
 
+_logger = logging.getLogger(__name__)
+
 # Relay statuses that mean a child is still doing work; ``waiting`` covers a
 # child parked on an approval. A child still booting has no relay status yet,
 # so it counts from its first ``running`` edge, a few seconds later.
 _BUSY_CHILD_STATUSES = frozenset({"running", "waiting"})
+
+
+def settle_archived_session(session_id: str, persisted_status: str | None = None) -> bool:
+    """
+    Publish idle for an archived session that is still marked running or waiting.
+
+    Runs from the archive teardown, after the best-effort stop, so the stop
+    had its chance to end the turn the normal way. A closed sub-agent whose
+    runner is gone never sends that idle edge, and its busy mark would
+    otherwise count toward the parent's badge and read ``running`` on
+    ``GET /v1/sessions/{id}`` for good. ``failed`` is left alone, and the
+    Claude subagent staleness check (patch 0125) is cancelled, since the
+    session is settled here.
+
+    :param session_id: Archived session/conversation identifier.
+    :param persisted_status: The row's stored ``live_status``, read when this
+        replica's cache has no entry (a restart emptied it), e.g. ``"running"``.
+    :returns: Whether an idle edge was published. Best-effort: a failure
+        logs and returns ``False``, so the rest of the teardown still runs.
+    """
+    from omnigent.server.ae_subagent_liveness import cancel_stale_timer
+    from omnigent.server.routes._sessions.helpers import _publish_status
+
+    try:
+        if _session_status_cache.get(session_id, persisted_status) not in _BUSY_CHILD_STATUSES:
+            return False
+        cancel_stale_timer(session_id)
+        _publish_status(session_id, "idle")
+        return True
+    except Exception:  # noqa: BLE001 (archive teardown steps are all best-effort)
+        _logger.warning("Could not settle archived session %s", session_id, exc_info=True)
+        return False
 
 
 def session_background_task_count(session_id: str) -> int:
@@ -49,7 +92,8 @@ def session_active_child_count(child_session_ids: list[str]) -> int:
 
     A child counts while its relay status is running or waiting, or while it
     has an approval prompt outstanding (a prompt can land before the child's
-    status edge does). A failed child never counts.
+    status edge does). A failed child never counts. Archived (closed)
+    children are left out by the caller's child-id query.
 
     :param child_session_ids: Direct child ids of one session, e.g.
         ``["conv_child1", "conv_child2"]``.

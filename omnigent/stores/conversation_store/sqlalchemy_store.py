@@ -1413,6 +1413,8 @@ class SqlAlchemyConversationStore(ConversationStore):
     def list_child_conversation_ids_by_parent(
         self,
         parent_conversation_ids: list[str],
+        *,
+        include_archived: bool = True,
     ) -> dict[str, list[str]]:
         """
         Return direct sub-agent child ids grouped by parent conversation.
@@ -1428,6 +1430,7 @@ class SqlAlchemyConversationStore(ConversationStore):
         :param parent_conversation_ids: Parent conversation ids to
             inspect, e.g. ``["conv_parent1", "conv_parent2"]``.
             Duplicates are tolerated.
+        :param include_archived: ``False`` leaves archived children out.
         :returns: Mapping from every unique input parent id to direct
             child ids. Parents with no direct sub-agent children, or ids
             that do not exist, map to an empty list.
@@ -1437,12 +1440,16 @@ class SqlAlchemyConversationStore(ConversationStore):
         if not unique_ids:
             return result
 
+        statement = (
+            select(SqlConversation.parent_conversation_id, SqlConversation.id)
+            .where(SqlConversation.workspace_id == current_workspace_id())
+            .where(SqlConversation.parent_conversation_id.in_(unique_ids))
+        )
+        if not include_archived:
+            statement = statement.where(SqlConversation.archived.is_(False))
         with self._conv_session("list_child_conversation_ids_by_parent") as ap_sess:
             rows = ap_sess.execute(
-                select(SqlConversation.parent_conversation_id, SqlConversation.id)
-                .where(SqlConversation.workspace_id == current_workspace_id())
-                .where(SqlConversation.parent_conversation_id.in_(unique_ids))
-                .order_by(
+                statement.order_by(
                     SqlConversation.parent_conversation_id,
                     desc(SqlConversation.created_at),
                     desc(self._tiebreaker_col),

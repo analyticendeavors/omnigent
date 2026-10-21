@@ -624,6 +624,8 @@ class ConversationStore(ABC):
     def list_child_conversation_ids_by_parent(
         self,
         parent_conversation_ids: list[str],
+        *,
+        include_archived: bool = True,
     ) -> dict[str, list[str]]:
         """
         Return direct sub-agent child ids grouped by parent conversation.
@@ -637,6 +639,8 @@ class ConversationStore(ABC):
         :param parent_conversation_ids: Parent conversation ids to
             inspect, e.g. ``["conv_parent1", "conv_parent2"]``.
             Duplicates are tolerated.
+        :param include_archived: ``False`` leaves archived (closed)
+            children out, as the sidebar's busy-child count needs.
         :returns: Mapping from every unique input parent id to the
             matching direct child ids. Parents with no direct sub-agent
             children, or ids that do not exist, map to an empty list.

@@ -27,6 +27,7 @@ from omnigent.server.routes._sessions.ae_session_activity import (
     session_active_child_count,
     session_background_task_count,
     session_blocked_on,
+    settle_archived_session,
 )
 from omnigent.server.routes._sessions.common import _session_blocked_on_cache
 from omnigent.server.routes.sessions import create_sessions_router
@@ -348,3 +349,100 @@ def test_updates_stream_pushes_change_when_background_count_moves(
 
         sessions_routes._session_background_task_count_cache.pop(parent_id, None)
         assert _recv_parent_change(ws, parent_id)["background_task_count"] == 0
+
+
+def test_closed_child_stops_counting_while_open_sibling_still_counts(
+    app: FastAPI, stores: Stores, touched, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Archiving a running child (``sys_session_close``) drops it from the badge at once."""
+    # Keep the deferred teardown from firing; it is covered on its own below.
+    monkeypatch.setattr(sessions_routes, "_ARCHIVE_STOP_UNDO_GRACE_S", 3600.0)
+    parent_id = _seed_parent(stores, touched, "parent")
+    closed = _seed_child(stores, touched, parent_id, "running")
+    _seed_child(stores, touched, parent_id, "running")
+    client = TestClient(app)
+    assert _list_rows(app)[parent_id]["active_child_count"] == 2
+
+    resp = client.patch(f"/v1/sessions/{closed}", json={"archived": True}, headers=_HEADERS)
+    assert resp.status_code == 200, resp.text
+    assert _list_rows(app)[parent_id]["active_child_count"] == 1
+
+    # An Undo brings a still-running child back into the count.
+    resp = client.patch(f"/v1/sessions/{closed}", json={"archived": False}, headers=_HEADERS)
+    assert resp.status_code == 200, resp.text
+    assert _list_rows(app)[parent_id]["active_child_count"] == 2
+
+
+def test_archived_child_with_outstanding_approval_does_not_count(
+    app: FastAPI, stores: Stores, touched
+) -> None:
+    """A closed child is left out even with an approval and a busy cached status."""
+    parent_id = _seed_parent(stores, touched, "parent")
+    child = _seed_child(stores, touched, parent_id, "waiting")
+    pending_elicitations.record_publish(
+        child, {"type": "response.elicitation_request", "elicitation_id": "elicit_closed"}
+    )
+    assert _list_rows(app)[parent_id]["active_child_count"] == 1
+
+    stores[0].update_conversation(child, archived=True)
+
+    assert _list_rows(app)[parent_id]["active_child_count"] == 0
+
+
+def test_child_id_query_leaves_archived_children_out_only_when_asked(
+    stores: Stores, touched
+) -> None:
+    """The default keeps archived children, for recovery and the stop sweep."""
+    conversation_store = stores[0]
+    parent_id = _seed_parent(stores, touched, "parent")
+    closed = _seed_child(stores, touched, parent_id, None)
+    open_child = _seed_child(stores, touched, parent_id, None)
+    conversation_store.update_conversation(closed, archived=True)
+
+    every = conversation_store.list_child_conversation_ids_by_parent([parent_id])
+    unarchived = conversation_store.list_child_conversation_ids_by_parent(
+        [parent_id], include_archived=False
+    )
+
+    assert set(every[parent_id]) == {closed, open_child}
+    assert unarchived[parent_id] == [open_child]
+
+
+def test_settle_archived_session_publishes_idle_only_for_busy(stores: Stores, touched) -> None:
+    """Running, waiting and a stored running settle idle; idle and failed stay put."""
+    parent_id = _seed_parent(stores, touched, "parent")
+    running = _seed_child(stores, touched, parent_id, "running")
+    waiting = _seed_child(stores, touched, parent_id, "waiting")
+    failed = _seed_child(stores, touched, parent_id, "failed")
+    idle = _seed_child(stores, touched, parent_id, "idle")
+    restarted = _seed_child(stores, touched, parent_id, None)
+
+    assert settle_archived_session(running) is True
+    assert settle_archived_session(waiting) is True
+    assert settle_archived_session(failed) is False
+    assert settle_archived_session(idle) is False
+    assert settle_archived_session(restarted, "running") is True
+
+    cache = sessions_routes._session_status_cache
+    assert [cache.get(c) for c in (running, waiting, failed, idle, restarted)] == [
+        "idle",
+        "idle",
+        "failed",
+        "idle",
+        "idle",
+    ]
+
+
+def test_archive_teardown_settles_a_closed_child_still_marked_running(
+    stores: Stores, touched
+) -> None:
+    """The deferred archive stop leaves a closed child idle, not running for good."""
+    conversation_store = stores[0]
+    parent_id = _seed_parent(stores, touched, "parent")
+    child = _seed_child(stores, touched, parent_id, "running")
+    conversation_store.update_conversation(child, archived=True)
+
+    asyncio.run(orchestration._archive_stop(child, conversation_store, None, None))
+
+    assert sessions_routes._session_status_cache.get(child) == "idle"
+    assert session_active_child_count([child]) == 0

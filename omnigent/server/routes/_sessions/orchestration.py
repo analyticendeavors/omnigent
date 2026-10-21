@@ -173,6 +173,7 @@ from omnigent.server.routes._sessions.ae_session_activity import (
     session_background_task_count,
     session_blocked_on,
     session_turn_active,
+    settle_archived_session,
 )
 
 # Shared constants, state, and small dataclasses live in the _sessions.common
@@ -971,6 +972,7 @@ async def _archive_stop(
                 exc_info=True,
                 extra={"session_id": session_id},
             )
+    settle_archived_session(session_id, conv.live_status)
     # Runs after the runner teardown so the agent isn't left in a deleted cwd.
     if delete_worktree and conv.git_branch and conv.workspace and conv.host_id:
         from omnigent.server.routes._host_worktree import WORKTREE_ROOT_LABEL_KEY

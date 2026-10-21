@@ -1581,6 +1581,7 @@ def register_core_routes(
                 asyncio.to_thread(
                     conversation_store.list_child_conversation_ids_by_parent,
                     conv_ids,
+                    include_archived=False,
                 ),
             )
             user_is_admin = (
@@ -1594,6 +1595,7 @@ def register_core_routes(
                 asyncio.to_thread(
                     conversation_store.list_child_conversation_ids_by_parent,
                     conv_ids,
+                    include_archived=False,
                 ),
             )
             perms_by_conv = {}
@@ -1788,6 +1790,7 @@ def register_core_routes(
             asyncio.to_thread(
                 conversation_store.list_child_conversation_ids_by_parent,
                 conv_ids,
+                include_archived=False,
             ),
             _comments_fingerprints_for(conv_ids),
         )
