@@ -24,7 +24,7 @@ from omnigent.harnesses.codex_egress import (
     certificate_failure_message,
     is_connection_retry,
 )
-from omnigent.harnesses.codex_native import side_chat
+from omnigent.harnesses.codex_native import ae_prompt_suggest, side_chat
 from omnigent.harnesses.codex_native.app_server import (
     CodexAppServerClient,
     CodexAppServerResponseError,
@@ -498,6 +498,9 @@ class _CodexForwarderState:
     # the block finalizes when the turn's assistant message arrives.
     reasoning_stream_item_id: str | None = None
     turn_diff_by_turn: dict[str, str] = field(default_factory=dict)
+    ae_prompt_suggest: ae_prompt_suggest.CodexSuggestionState = field(
+        default_factory=ae_prompt_suggest.CodexSuggestionState
+    )
     # Whether model output has already settled the synthesized MCP startup
     # round. The round is seeded once per forwarder connection (never on
     # thread rotation), so a settled round stays settled and later items
@@ -2179,6 +2182,9 @@ async def supervise_forwarder(
                     )
                     if rotated:
                         forwarder_state.note_parent_rotation(target.session_id)
+                        ae_prompt_suggest.reset_prompt_suggestion(
+                            forwarder_state.ae_prompt_suggest
+                        )
                         subscribe_task.cancel()
                         with contextlib.suppress(asyncio.CancelledError):
                             await subscribe_task
@@ -2231,6 +2237,7 @@ async def supervise_forwarder(
                 except Exception:  # noqa: BLE001 - keep the long-lived mirror alive.
                     _logger.warning("Codex forwarder event handling failed", exc_info=True)
         finally:
+            ae_prompt_suggest.cancel_prompt_suggestion(forwarder_state.ae_prompt_suggest)
             if mcp_settle_timer is not None:
                 mcp_settle_timer.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -3711,6 +3718,7 @@ async def _maybe_handle_turn_event(
                 await delta_coalescer.flush()
             await _handle_turn_started(client, session_id, bridge_dir, params)
             if forwarder_state is not None:
+                ae_prompt_suggest.cancel_prompt_suggestion(forwarder_state.ae_prompt_suggest)
                 # A new turn opens a fresh reasoning block: the next reasoning
                 # delta must emit ``response.reasoning.started`` again.
                 forwarder_state.reasoning_stream_item_id = None
@@ -4003,6 +4011,16 @@ async def _handle_terminal_turn_boundary_inner(
     handled = terminal.handled
     if terminal.edge is not None:
         await _post_turn_status_edge(client, session_id, terminal.edge)
+        if forwarder_state is not None:
+            ae_prompt_suggest.schedule_codex_prompt_suggestion(
+                client,
+                session_id=session_id,
+                method=method,
+                params=params,
+                status=terminal.edge.status,
+                turn_id=terminal.edge.turn_id,
+                forwarder_state=forwarder_state,
+            )
     if handled:
         await elicitation_tracker.resolve_by_terminal_turn_event(
             client,
@@ -5169,6 +5187,8 @@ async def _handle_completed_item_inner(
     if not isinstance(item, dict):
         return
     item_type = item.get("type")
+    if forwarder_state is not None:
+        ae_prompt_suggest.note_turn_item(forwarder_state, session_id, params, item)
     turn_id = _turn_id_from_payload(params)
     if item_type in {"agentMessage", "plan"} and forwarder_state is not None and turn_id:
         item_id = item.get("id")
@@ -6142,6 +6162,7 @@ async def _ensure_user_message_posted(
         "turnId": turn_id,
         "item": user_item,
     }
+    ae_prompt_suggest.note_turn_item(forwarder_state, session_id, recovered_params, user_item)
     source_id = _claim_completed_item(recovered_params, user_item, forwarder_state)
     if source_id is None:
         return

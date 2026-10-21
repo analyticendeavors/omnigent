@@ -13,14 +13,15 @@ from typing import Any
 import httpx
 import pytest
 
+import omnigent.harnesses.ae_prompt_suggest_core as core
 import omnigent.harnesses.claude_native.ae_prompt_suggest as suggest
 import omnigent.harnesses.claude_native.forwarder as forwarder
 from omnigent.harnesses.claude_native.bridge import record_hook_event
 from tests.harnesses.claude_native.forwarder._support import _start_recording_server
 
 ON = {suggest.ENABLE_ENV_VAR: "1"}
-# The on_path fixture stubs the account check; the account tests put this back.
-_REAL_USES_DEFAULT_ACCOUNT = suggest.uses_default_account
+# The on_path fixture stubs the account lookup; the account tests put this back.
+_REAL_SESSION_LOGIN_ENV = suggest.session_login_env
 
 
 def _user(text: str) -> dict[str, Any]:
@@ -76,8 +77,10 @@ def _fake_claude(tmp_path: Path, body: str) -> Path:
         "import json, os, sys, time\n"
         "stdin = sys.stdin.read()\n"
         f"with open({str(log)!r}, 'a') as f:\n"
+        "    cfg = os.environ.get('CLAUDE_CONFIG_DIR', '')\n"
+        "    files = sorted(os.listdir(cfg)) if cfg and os.path.isdir(cfg) else []\n"
         "    f.write(json.dumps({'argv': sys.argv[1:], 'cwd': os.getcwd(), 'pid': os.getpid(),\n"
-        "        'env': dict(os.environ), 'stdin': stdin}) + '\\n')\n"
+        "        'env': dict(os.environ), 'stdin': stdin, 'config_files': files}) + '\\n')\n"
         f"{body}\n",
         encoding="utf-8",
     )
@@ -97,10 +100,10 @@ def on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.delenv(suggest.CLAUDE_PATH_ENV_VAR, raising=False)
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "test-token")
-    monkeypatch.setattr(suggest.tempfile, "tempdir", str(tmp_path / "tmp"))
+    monkeypatch.setattr(core.tempfile, "tempdir", str(tmp_path / "tmp"))
     (tmp_path / "tmp").mkdir()
     monkeypatch.setattr(suggest, "uses_default_provider", lambda bridge_dir, env=None: True)
-    monkeypatch.setattr(suggest, "uses_default_account", lambda bridge_dir: True)
+    monkeypatch.setattr(suggest, "session_login_env", lambda bridge_dir, state=None: {})
     return tmp_path
 
 
@@ -404,6 +407,7 @@ def test_default_provider_runs(tmp_path: Path) -> None:
     ("env", "settings"),
     [
         ({"ANTHROPIC_BASE_URL": "https://gateway.example"}, {}),
+        ({"ANTHROPIC_API_KEY": "sk-ant-api-raw"}, {}),
         ({"CLAUDE_CODE_USE_BEDROCK": "1"}, {}),
         ({"CLAUDE_CODE_USE_VERTEX": "1"}, {}),
         ({}, {"apiKeyHelper": "print-token"}),
@@ -708,6 +712,41 @@ async def test_a_typed_prompt_clears_a_shown_suggestion(on_path: Path, tmp_path:
 
 
 @pytest.mark.asyncio
+async def test_a_cancel_mid_post_still_gets_its_clear(
+    on_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A new prompt landing while the suggestion's POST is in flight still clears it."""
+    _fake_claude(on_path, "print('Open a draft PR')")
+    posting = asyncio.Event()
+    real_post = core.post_suggestion
+
+    async def slow_post(client: httpx.AsyncClient, *, session_id: str, suggestion: Any) -> None:
+        if suggestion is not None:
+            posting.set()
+            await asyncio.sleep(60)
+        await real_post(client, session_id=session_id, suggestion=suggestion)
+
+    monkeypatch.setattr(core, "post_suggestion", slow_post)
+    server = _Server()
+    state = suggest.SuggestionState()
+    async with server.client() as client:
+        task = asyncio.create_task(
+            core.suggest_and_post(
+                client,
+                session_id="conv_a",
+                context=suggest.TurnContext("fix it", "Fixed."),
+                state=state,
+            )
+        )
+        state.task = task
+        await asyncio.wait_for(posting.wait(), 10)
+        await suggest.clear_prompt_suggestion(client, state=state)
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert server.posts == [{"type": "external_session_suggestion", "data": {"suggestion": None}}]
+
+
+@pytest.mark.asyncio
 async def test_no_post_after_the_client_closed(on_path: Path, tmp_path: Path) -> None:
     _fake_claude(on_path, "time.sleep(1); print('late')")
     server = _Server()
@@ -782,28 +821,62 @@ async def test_the_forwarder_exit_cancels_the_side_call(
 
 # ── Named Claude accounts ──────────────────────────────────────────
 
+_ACCOUNT_TOKEN = "sk-ant-oat-account-token-for-tests"
 
-def test_default_account_runs_and_named_or_unknown_skips(tmp_path: Path) -> None:
+
+@pytest.fixture
+def host_accounts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A host with one named account, "AE Backup", whose token sits in this host's secrets."""
+    from omnigent.onboarding import claude_accounts
+
+    store = tmp_path / "claude-accounts.json"
+    store.write_text(json.dumps({"accounts": ["AE Backup"], "active": ""}))
+    monkeypatch.setattr(claude_accounts, "_path", lambda: store)
+    monkeypatch.setattr(
+        claude_accounts.secrets,
+        "load_secret",
+        lambda name: _ACCOUNT_TOKEN if name == "claude-oauth-AE Backup" else None,
+    )
+    monkeypatch.setattr(suggest, "session_login_env", _REAL_SESSION_LOGIN_ENV)
+
+
+def test_session_account_reads_the_status_line_sidecar(tmp_path: Path) -> None:
     """The statusLine shim writes "" for the default login and the name otherwise."""
-    assert not suggest.uses_default_account(None)
-    assert not suggest.uses_default_account(tmp_path)  # no render yet: unknown
+    assert suggest.session_account(None) is None
+    assert suggest.session_account(tmp_path) is None  # no render yet: unknown
     (tmp_path / "claude_account").write_text("")
-    assert suggest.uses_default_account(tmp_path)
-    (tmp_path / "claude_account").write_text("AE Backup")
-    assert not suggest.uses_default_account(tmp_path)
+    assert suggest.session_account(tmp_path) == ""
+    (tmp_path / "claude_account").write_text("AE Backup\n")
+    assert suggest.session_account(tmp_path) == "AE Backup"
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(("account", "calls"), [("", 1), ("AE Backup", 0)])
-async def test_a_named_account_session_makes_no_call(
-    on_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, account: str, calls: int
+def test_the_account_login_resolves_as_the_launch_does(
+    host_accounts: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(suggest, "uses_default_account", _REAL_USES_DEFAULT_ACCOUNT)
-    log = _fake_claude(on_path, "print('Open a draft PR')")
-    bridge_dir = tmp_path / "bridge"
-    bridge_dir.mkdir()
-    (bridge_dir / "claude_account").write_text(account)
-    server = _Server()
+    """Same environment the terminal launch gets from account_env_for_launch."""
+    from omnigent.onboarding.claude_accounts import account_env_for_launch
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert core.account_login_env("") == {}
+    assert core.account_login_env(None) == {}  # the host's active account is the default
+    login = core.account_login_env("AE Backup")
+    assert login == account_env_for_launch({}, account_name="AE Backup")
+    assert login is not None and login["CLAUDE_CODE_OAUTH_TOKEN"] == _ACCOUNT_TOKEN
+    assert login["ANTHROPIC_API_KEY"] == "" and login["ANTHROPIC_AUTH_TOKEN"] == ""
+    assert core.account_login_env("Gone") is None  # not on this host
+    # The launch's provider-conflict check holds: a raw API key and a named account.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api-raw")
+    assert core.account_login_env("AE Backup") is None
+    # None follows the host's active account.
+    (tmp_path / "claude-accounts.json").write_text(
+        json.dumps({"accounts": ["AE Backup"], "active": "AE Backup"})
+    )
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    active = core.account_login_env(None)
+    assert active is not None and active["CLAUDE_CODE_OAUTH_TOKEN"] == _ACCOUNT_TOKEN
+
+
+async def _schedule_in(server: _Server, tmp_path: Path, bridge_dir: Path) -> None:
     state = suggest.SuggestionState()
     async with server.client() as client:
         suggest.schedule_prompt_suggestion(
@@ -817,7 +890,73 @@ async def test_a_named_account_session_makes_no_call(
         )
         assert state.task is not None
         await state.task
-    assert len(_calls(log)) == calls
-    assert len(server.posts) == calls
-    for call in _calls(log):
-        assert call["env"].get("CLAUDE_CODE_OAUTH_TOKEN") == "test-token"  # no account token
+
+
+@pytest.mark.asyncio
+async def test_a_named_account_session_calls_on_that_account_via_env_only(
+    on_path: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    host_accounts: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The host's default login is a fresh credentials file; it must not be copied.
+    home = tmp_path / "home"
+    _credentials(home, 3600)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN")
+    log = _fake_claude(on_path, "print('Open a draft PR')")
+    bridge_dir = tmp_path / "bridge"
+    bridge_dir.mkdir()
+    (bridge_dir / "claude_account").write_text("AE Backup")
+    server = _Server()
+    caplog.set_level("DEBUG")
+    await _schedule_in(server, tmp_path, bridge_dir)
+    (call,) = _calls(log)
+    assert call["env"]["CLAUDE_CODE_OAUTH_TOKEN"] == _ACCOUNT_TOKEN
+    assert call["env"]["ANTHROPIC_API_KEY"] == ""  # blanked, as the launch does
+    assert call["config_files"] == []  # no login file copied into the private dir
+    assert "OMNIGENT_CLAUDE_ACCOUNT" not in call["env"]
+    assert server.posts == [
+        {"type": "external_session_suggestion", "data": {"suggestion": "Open a draft PR"}}
+    ]
+    assert _ACCOUNT_TOKEN not in caplog.text
+    assert _leftover_dirs(on_path) == []
+
+
+@pytest.mark.asyncio
+async def test_the_default_account_session_keeps_the_default_login(
+    on_path: Path, tmp_path: Path, host_accounts: None
+) -> None:
+    log = _fake_claude(on_path, "print('Open a draft PR')")
+    bridge_dir = tmp_path / "bridge"
+    bridge_dir.mkdir()
+    (bridge_dir / "claude_account").write_text("")
+    server = _Server()
+    await _schedule_in(server, tmp_path, bridge_dir)
+    (call,) = _calls(log)
+    assert call["env"]["CLAUDE_CODE_OAUTH_TOKEN"] == "test-token"  # the host default
+    assert len(server.posts) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("account", ["Gone", None])
+async def test_an_unresolvable_or_unknown_account_skips(
+    on_path: Path,
+    tmp_path: Path,
+    host_accounts: None,
+    account: str | None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    log = _fake_claude(on_path, "print('x')")
+    bridge_dir = tmp_path / "bridge"
+    bridge_dir.mkdir()
+    if account is not None:
+        (bridge_dir / "claude_account").write_text(account)
+    server = _Server()
+    caplog.set_level("DEBUG")
+    await _schedule_in(server, tmp_path, bridge_dir)
+    assert _calls(log) == []
+    assert server.posts == []
+    assert "prompt suggestion skipped" in caplog.text
