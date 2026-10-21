@@ -304,6 +304,7 @@ export function HarnessPickerEntry({
   tooltipTestId,
   testId,
   configTestId,
+  configClassName,
   editTestId,
   focusConfig = false,
   onConfigFocused,
@@ -320,6 +321,7 @@ export function HarnessPickerEntry({
   tooltipTestId?: string;
   testId?: string;
   configTestId?: string;
+  configClassName?: string;
   editTestId?: string;
   focusConfig?: boolean;
   onConfigFocused?: () => void;
@@ -446,7 +448,10 @@ export function HarnessPickerEntry({
           <HarnessPickerSubContent
             focusSelected={focusConfig}
             onSelectedFocus={onConfigFocused}
-            className="composer-agent-menu composer-agent-config-menu max-h-[var(--radix-dropdown-menu-content-available-height)] w-[13.75rem] max-w-[calc(100vw-2rem)] overflow-y-auto p-2"
+            className={cn(
+              "composer-agent-menu composer-agent-config-menu max-h-[var(--radix-dropdown-menu-content-available-height)] w-[13.75rem] max-w-[calc(100vw-2rem)] overflow-y-auto p-2",
+              configClassName,
+            )}
             sideOffset={-4}
             data-testid={configTestId}
             onFocusOutside={(event) => {

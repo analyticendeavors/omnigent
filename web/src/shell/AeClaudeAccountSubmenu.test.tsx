@@ -58,6 +58,11 @@ describe("AeClaudeAccountSubmenu", () => {
     expect(row).toHaveAttribute("title", "For new chats. This chat keeps the login it started with.");
     openSubmenu();
     expect(screen.getByTestId("composer-claude-account-scope")).toHaveTextContent("For new chats");
+    // The hint wraps under the rows instead of setting the submenu's width.
+    expect(screen.getByTestId("composer-claude-account-scope")).toHaveClass("w-0", "min-w-full");
+    expect(
+      screen.getByTestId("composer-claude-account-scope").closest('[role="menu"]'),
+    ).toHaveClass("w-max");
     expect(screen.getByTestId("composer-claude-account-default")).toHaveAttribute(
       "aria-checked",
       "true",

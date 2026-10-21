@@ -1,14 +1,21 @@
 import { useLoadedConversations } from "@/hooks/useSidebarData";
 import { useComposerContext } from "@/hooks/useComposerContext";
 import { useSlashCompletion } from "@/hooks/useSlashCompletion";
-import { ClaudeAccounts } from "./ClaudeAccounts";
 import {
   HarnessPicker,
   HarnessPickerEntry,
   HarnessPickerConfigPage,
   HarnessPickerSubContent,
 } from "@/components/composer/HarnessPicker";
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type KeyboardEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useNavigate, useSearchParams } from "@/lib/routing";
 import { MAIN_CANVAS_ID } from "@/canvas/canvasLayout";
 import { CANVAS_QUERY_PARAM, canvasLocation } from "@/canvas/canvasNavigation";
@@ -25,11 +32,18 @@ import {
   HarnessMenuNavigationLabel,
   PickerSectionHeader,
 } from "@/components/composer/HarnessMenuRow";
-import { ComposerConfigSections } from "@/components/composer/ComposerConfigSections";
+import {
+  ComposerConfigSections,
+  type ComposerConfigSection,
+} from "@/components/composer/ComposerConfigSections";
+import { AeCompactSessionChoices } from "@/components/composer/AeCompactSessionChoices";
 import { aeWithPreviousModels } from "@/components/composer/AePreviousModelsSub";
 import { buildFusionSections } from "@/components/composer/fusionSections";
 import { compactModelTriggerLabel, normalizeEffortLabel } from "@/lib/composerModelLabel";
 import { aeSplitPrevious, aeWithClaudeVersions } from "@/lib/aeClaudeModels";
+import { AE_MENU_NOTE_CLASS, AE_MENU_WIDTH_CLASS } from "@/lib/aeMenuRow";
+import { aeModelRowForDigit } from "@/lib/aeModelShortcut";
+import { AeClaudeAccountSubmenu } from "./AeClaudeAccountSubmenu";
 import {
   codexCreateApprovalOptions,
   applyCodexApprovalSelection,
@@ -1392,6 +1406,7 @@ export function AgentHarnessPicker({
   onOpenChange,
   dropdownModal = false,
   contentClassName,
+  configClassName,
   contentAlign = "end",
   triggerClassName,
   triggerLabelClassName,
@@ -1444,6 +1459,8 @@ export function AgentHarnessPicker({
   dropdownModal?: boolean;
   /** Extra classes merged onto the dropdown content (e.g. a tighter max-h). */
   contentClassName?: string;
+  /** Extra classes merged onto the selected entry's configuration submenu. */
+  configClassName?: string;
   /** Dropdown alignment. Defaults to "end" (composer footer). */
   contentAlign?: "start" | "center" | "end";
   /** Extra classes merged onto the trigger Button. */
@@ -1659,6 +1676,7 @@ export function AgentHarnessPicker({
         }}
         onSelect={() => onSelectAgent(agent)}
         configContent={active ? selectedConfigContent : null}
+        configClassName={configClassName}
         focusConfig={focusConfigAgentId === agent.id}
         onConfigFocused={() => {
           setFocusConfigAgentId((current) => (current === agent.id ? null : current));
@@ -3798,11 +3816,146 @@ export function NewChatLandingScreen() {
     setCostControlMode(null);
     rememberPickerOptions(selectedNativeHarness, { model: modelUid, effort: "", routing: "off" });
   };
+  // Codex and subscription-only Claude draw the chat's one-column session menu.
+  // Pi (model search), Devin, sandbox and mixed-source Claude catalogs keep the
+  // sectioned list, whose rows the compact list would merge or move.
+  const aeCompactPicker =
+    !sandboxHasModelCatalog &&
+    (selectedNativeHarness === "codex-native" ||
+      (selectedNativeHarness === "claude-native" &&
+        claudeModelOptions.every(
+          (option: NativeModelOption) => !option.source || option.source.kind === "subscription",
+        )));
+  const aeModelsSection: ComposerConfigSection | undefined =
+    sandboxHasModelCatalog ||
+    supportsModelPicker ||
+    supportsPermissionMode ||
+    supportsDevinMode ||
+    selectedNativeHarness === "codex-native"
+      ? {
+          testId: "new-chat-landing-agent-models",
+          header: "Models",
+          leading: (
+            <>
+              {sandboxHasModelCatalog && sandboxModels.data?.provider_label && (
+                <div
+                  className="px-2 py-1 text-xs text-muted-foreground"
+                  data-testid="sandbox-model-provider"
+                >
+                  {sandboxModels.data.provider_label}
+                </div>
+              )}
+              {selectedNativeHarness === "pi-native" && (
+                <Input
+                  aria-label="Search models"
+                  placeholder="Search models…"
+                  value={pickerModelSearch}
+                  onChange={(event) => setPickerModelSearch(event.target.value)}
+                  onKeyDown={(event) => event.stopPropagation()}
+                  data-testid="new-chat-landing-agent-model-search"
+                />
+              )}
+              {pickerModelsLoading && pickerModelOptions.length === 0 && (
+                <div className={cn(AE_MENU_NOTE_CLASS, "px-2 py-1 text-xs text-muted-foreground")}>
+                  Loading models…
+                </div>
+              )}
+              {!pickerModelsLoading && pickerModelOptions.length === 0 && (
+                <div className={cn(AE_MENU_NOTE_CLASS, "px-2 py-1 text-xs text-muted-foreground")}>
+                  {pickerModelsError?.message ?? "Models unavailable"}
+                </div>
+              )}
+            </>
+          ),
+          choices: [
+            ...(sandboxDefaultModelsEnabled ||
+            (!sandboxInferenceConfigured &&
+              pickerModelOptions.length > 0 &&
+              !pickerModelOptions.some((option) => option.isDefault))
+              ? [
+                  {
+                    key: "__default__",
+                    label: "Default",
+                    checked: !routingOn && pickedModel === "",
+                    onSelect: () => selectPickerModel(MODEL_SELECT_DEFAULT),
+                    testId: "new-chat-landing-agent-model-default",
+                  },
+                ]
+              : []),
+            ...pickerModelOptions
+              .filter((option) =>
+                pickerModelSearch
+                  .toLowerCase()
+                  .trim()
+                  .split(/\s+/)
+                  .every((term) =>
+                    `${option.id} ${nativeModelLabel(option)}`.toLowerCase().includes(term),
+                  ),
+              )
+              .map((option) => ({
+                key: option.id,
+                label: visibleModelLabel(nativeModelLabel(option)),
+                checked:
+                  !routingOn &&
+                  (option.fusion !== undefined
+                    ? isFusionModelUid(pickedModel) ||
+                      (pickedModel === "" && option.isDefault === true)
+                    : pickedModel === option.id ||
+                      (pickedModel === "" && option.isDefault === true)),
+                // The Fusion row always opens its Lead/Sidekick selectors,
+                // even when Fusion is the catalog default (routing it
+                // through MODEL_SELECT_DEFAULT would hide them).
+                onSelect: option.fusion
+                  ? () => selectFusionModel(option.fusion!.default)
+                  : () => selectPickerModel(option.isDefault ? MODEL_SELECT_DEFAULT : option.id),
+                testId: `new-chat-landing-agent-model-${option.id}`,
+                data: { "data-model-id": option.id, "data-model-wire": option.model },
+                title: nativeModelLabel(option),
+                className: "whitespace-normal break-words [&>span:last-child]:min-w-0",
+              })),
+          ],
+        }
+      : undefined;
+  const aeEffortsSection: ComposerConfigSection | undefined =
+    pickerEffortOptions.length > 0
+      ? {
+          testId: "new-chat-landing-agent-efforts",
+          header: selectedNativeHarness === "pi-native" ? "Thinking level" : "Effort",
+          choices: [
+            {
+              key: "__default__",
+              label: "Default",
+              checked: !routingOn && pickedEffort === "",
+              disabled: routingOn,
+              onSelect: () => selectPickerEffort(EFFORT_SELECT_NONE),
+              testId: "new-chat-landing-agent-effort-default",
+            },
+            ...pickerEffortOptions.map((option) => ({
+              key: option.value,
+              label: option.label,
+              checked: !routingOn && pickedEffort === option.value,
+              disabled: routingOn,
+              onSelect: () => selectPickerEffort(option.value),
+              testId: `new-chat-landing-agent-effort-${option.value}`,
+            })),
+          ],
+        }
+      : undefined;
+  // A digit picks the numbered model row from anywhere in the menu.
+  const aePickModelByDigit = (event: KeyboardEvent<HTMLDivElement>) => {
+    const row = aeModelRowForDigit(event.currentTarget, event);
+    if (!row) return;
+    event.preventDefault();
+    row.click();
+  };
   const selectedConfigContent =
     selectedAgent && isEntryConfigurable(selectedAgent) ? (
-      <>
+      <div onKeyDown={aeCompactPicker ? aePickModelByDigit : undefined}>
         {selectedNativeHarness === "claude-native" && (
-          <ClaudeAccounts host={harnessWarningHost} compact />
+          <>
+            <AeClaudeAccountSubmenu host={harnessWarningHost} scope="For new chats." />
+            {harnessWarningHost && <DropdownMenuSeparator />}
+          </>
         )}
         {smartRoutingEligible && (
           <>
@@ -3861,124 +4014,11 @@ export function NewChatLandingScreen() {
               : undefined
           }
           models={
-            sandboxHasModelCatalog ||
-            supportsModelPicker ||
-            supportsPermissionMode ||
-            supportsDevinMode ||
-            selectedNativeHarness === "codex-native"
-              ? aeWithPreviousModels(aePreviousClaudeModels, {
-                  testId: "new-chat-landing-agent-models",
-                  header: "Models",
-                  leading: (
-                    <>
-                      {sandboxHasModelCatalog && sandboxModels.data?.provider_label && (
-                        <div
-                          className="px-2 py-1 text-xs text-muted-foreground"
-                          data-testid="sandbox-model-provider"
-                        >
-                          {sandboxModels.data.provider_label}
-                        </div>
-                      )}
-                      {selectedNativeHarness === "pi-native" && (
-                        <Input
-                          aria-label="Search models"
-                          placeholder="Search models…"
-                          value={pickerModelSearch}
-                          onChange={(event) => setPickerModelSearch(event.target.value)}
-                          onKeyDown={(event) => event.stopPropagation()}
-                          data-testid="new-chat-landing-agent-model-search"
-                        />
-                      )}
-                      {pickerModelsLoading && pickerModelOptions.length === 0 && (
-                        <div className="px-2 py-1 text-xs text-muted-foreground">
-                          Loading models…
-                        </div>
-                      )}
-                      {!pickerModelsLoading && pickerModelOptions.length === 0 && (
-                        <div className="px-2 py-1 text-xs text-muted-foreground">
-                          {pickerModelsError?.message ?? "Models unavailable"}
-                        </div>
-                      )}
-                    </>
-                  ),
-                  choices: [
-                    ...(sandboxDefaultModelsEnabled ||
-                    (!sandboxInferenceConfigured &&
-                      pickerModelOptions.length > 0 &&
-                      !pickerModelOptions.some((option) => option.isDefault))
-                      ? [
-                          {
-                            key: "__default__",
-                            label: "Default",
-                            checked: !routingOn && pickedModel === "",
-                            onSelect: () => selectPickerModel(MODEL_SELECT_DEFAULT),
-                            testId: "new-chat-landing-agent-model-default",
-                          },
-                        ]
-                      : []),
-                    ...pickerModelOptions
-                      .filter((option) =>
-                        pickerModelSearch
-                          .toLowerCase()
-                          .trim()
-                          .split(/\s+/)
-                          .every((term) =>
-                            `${option.id} ${nativeModelLabel(option)}`.toLowerCase().includes(term),
-                          ),
-                      )
-                      .map((option) => ({
-                        key: option.id,
-                        label: visibleModelLabel(nativeModelLabel(option)),
-                        checked:
-                          !routingOn &&
-                          (option.fusion !== undefined
-                            ? isFusionModelUid(pickedModel) ||
-                              (pickedModel === "" && option.isDefault === true)
-                            : pickedModel === option.id ||
-                              (pickedModel === "" && option.isDefault === true)),
-                        // The Fusion row always opens its Lead/Sidekick selectors,
-                        // even when Fusion is the catalog default (routing it
-                        // through MODEL_SELECT_DEFAULT would hide them).
-                        onSelect: option.fusion
-                          ? () => selectFusionModel(option.fusion!.default)
-                          : () =>
-                              selectPickerModel(
-                                option.isDefault ? MODEL_SELECT_DEFAULT : option.id,
-                              ),
-                        testId: `new-chat-landing-agent-model-${option.id}`,
-                        title: nativeModelLabel(option),
-                        className: "whitespace-normal break-words [&>span:last-child]:min-w-0",
-                      })),
-                  ],
-                })
+            aeModelsSection && !aeCompactPicker
+              ? aeWithPreviousModels(aePreviousClaudeModels, aeModelsSection)
               : undefined
           }
-          efforts={
-            pickerEffortOptions.length > 0
-              ? {
-                  testId: "new-chat-landing-agent-efforts",
-                  header: selectedNativeHarness === "pi-native" ? "Thinking level" : "Effort",
-                  choices: [
-                    {
-                      key: "__default__",
-                      label: "Default",
-                      checked: !routingOn && pickedEffort === "",
-                      disabled: routingOn,
-                      onSelect: () => selectPickerEffort(EFFORT_SELECT_NONE),
-                      testId: "new-chat-landing-agent-effort-default",
-                    },
-                    ...pickerEffortOptions.map((option) => ({
-                      key: option.value,
-                      label: option.label,
-                      checked: !routingOn && pickedEffort === option.value,
-                      disabled: routingOn,
-                      onSelect: () => selectPickerEffort(option.value),
-                      testId: `new-chat-landing-agent-effort-${option.value}`,
-                    })),
-                  ],
-                }
-              : undefined
-          }
+          efforts={aeCompactPicker ? undefined : aeEffortsSection}
           extra={
             pickerFusion !== undefined && fusionSelected && !routingOn
               ? buildFusionSections({
@@ -3990,7 +4030,27 @@ export function NewChatLandingScreen() {
               : undefined
           }
         />
-      </>
+        {aeCompactPicker && (
+          <>
+            {selectedAgentHasAdvancedSettings && <DropdownMenuSeparator />}
+            <AeCompactSessionChoices
+              kind={selectedNativeHarness === "claude-native" ? "claude" : "codex"}
+              testIdPrefix="new-chat-landing-agent"
+              models={aeModelsSection}
+              efforts={
+                aeEffortsSection && {
+                  label: "Effort",
+                  value: routingOn
+                    ? null
+                    : (pickerEffortOptions.find((option) => option.value === pickedEffort)?.label ??
+                      "Default"),
+                  choices: aeEffortsSection.choices,
+                }
+              }
+            />
+          </>
+        )}
+      </div>
     ) : null;
   const hostModelCatalogs: Record<string, NativeModelOption[] | undefined> = {
     "claude-native": availableClaudeModels,
@@ -6971,6 +7031,7 @@ export function NewChatLandingScreen() {
                         autoHarnessActive={smartRoutingHarnessSelected}
                         onSelectAutoHarness={handleSelectSmartRoutingHarness}
                         contentClassName={COMPOSER_HARNESS_MENU_SIZE}
+                        configClassName={aeCompactPicker ? AE_MENU_WIDTH_CLASS : undefined}
                         triggerClassName="text-[13px] leading-5"
                       />
                     </div>

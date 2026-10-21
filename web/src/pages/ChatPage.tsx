@@ -14,7 +14,6 @@ import {
   type ChangeEvent,
   type FormEvent,
   type KeyboardEvent,
-  type ReactNode,
   forwardRef,
   memo,
   useCallback,
@@ -51,14 +50,7 @@ import {
   ComposerPermissionPicker,
   ComposerConfigTooltipRows,
 } from "@/components/composer/ComposerControls";
-import {
-  DropdownMenuCheckboxItem,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-} from "@/components/ui/dropdown-menu";
+import { DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { useAppName } from "@/lib/branding";
 import { cn } from "@/lib/utils";
 import { QueuedMessagesStrip } from "@/pages/QueuedMessagesStrip";
@@ -76,14 +68,15 @@ import {
   aeEffortSourceTag,
   useAeEffortDefault,
 } from "@/lib/aeEffortDefault";
-import { aeClaudeVersion, aeSplitPreviousBy, useAeClaudeVersions } from "@/lib/aeClaudeModels";
-import { AE_MENU_ROW_CLASS } from "@/lib/aeMenuRow";
+import { aeClaudeVersion, useAeClaudeVersions } from "@/lib/aeClaudeModels";
+import { AE_MENU_NOTE_CLASS, AE_MENU_WIDTH_CLASS } from "@/lib/aeMenuRow";
 import { aeModelRowForDigit } from "@/lib/aeModelShortcut";
 import { AePlanLimitsPopover } from "@/components/AePlanLimits";
 import { AeActionDock } from "@/components/AeActionDock";
 import { AeTokenDefrag } from "@/components/AeTokenDefrag";
 import { SessionTeamControl } from "@/components/AeTeamControl";
 import { AeClaudeAccountSubmenu } from "@/shell/AeClaudeAccountSubmenu";
+import { AeCompactSessionChoices } from "@/components/composer/AeCompactSessionChoices";
 import { agentDisplayLabel } from "@/components/AgentInfo";
 import {
   BRAIN_HARNESS_LABELS,
@@ -246,10 +239,7 @@ import {
 } from "@/lib/smartRoutingAvailability";
 import { useHostModelOptions, useHosts } from "@/hooks/useHosts";
 import { nativeModelLabel } from "@/components/HarnessConfigControls";
-import {
-  ComposerConfigSections,
-  type ComposerConfigChoice,
-} from "@/components/composer/ComposerConfigSections";
+import { ComposerConfigSections } from "@/components/composer/ComposerConfigSections";
 import { buildFusionSections } from "@/components/composer/fusionSections";
 import { fusionOption, isFusionModelUid } from "@/lib/devinFusion";
 import { ComposerWorkspaceStatus } from "@/components/composer/ComposerWorkspaceStatus";
@@ -4544,197 +4534,6 @@ function hasSessionConfig({
 // Shared with the new-chat picker so a dated id never reads its date as the minor.
 const claudeVersion = aeClaudeVersion;
 
-function compactModelChoices(
-  choices: ComposerConfigChoice[],
-  kind: NativeModelPickerKind | null,
-): {
-  primary: ComposerConfigChoice[];
-  more: ComposerConfigChoice[];
-  unresolvedCurrent?: ComposerConfigChoice;
-} {
-  const claudeChoiceVersion = (choice: ComposerConfigChoice) =>
-    claudeVersion(choice.data?.["data-model-wire"] ?? "") ??
-    claudeVersion(choice.data?.["data-model-id"] ?? choice.key) ??
-    (typeof choice.label === "string" ? claudeVersion(choice.label) : null);
-  const codexModel = (id: string) =>
-    /^gpt-(\d+)(?:\.(\d+))?(?:-(codex|mini|nano|luna|sol|spark|astra))?(?:$|-)/i.exec(id);
-  const primary: ComposerConfigChoice[] = [];
-  const more: ComposerConfigChoice[] = [];
-  const seen = new Set<string>();
-  const latestCodexByFamily = new Map<string, { id: string; major: number; minor: number }>();
-  if (kind === "claude") {
-    let unresolvedCurrent: ComposerConfigChoice | undefined;
-    // The new-chat picker's definition of "previous" (omnigent-ae, 2026-10-19).
-    const split = aeSplitPreviousBy(choices, claudeChoiceVersion);
-    const previous = new Set(split.previous);
-    const primaryIndex = new Map<string, number>();
-    for (const choice of choices) {
-      const id = choice.data?.["data-model-id"] ?? choice.key;
-      const version = claudeChoiceVersion(choice);
-      const alias = /^(fable|opus|sonnet|haiku)$/i.exec(id)?.[1]?.toLowerCase();
-      const latest = split.newest.get(version?.family ?? alias ?? "");
-      if (previous.has(choice)) {
-        more.push(choice);
-        continue;
-      }
-      // An unversioned alias cannot claim the newest version when the catalog has a versioned row.
-      if (!version && alias && latest) {
-        if (choice.checked)
-          unresolvedCurrent = {
-            ...choice,
-            label: <>{choice.label} (current, version unknown)</>,
-            disabled: true,
-            testId: "composer-agent-current-model",
-          };
-        continue;
-      }
-      const variant = /\[[^\]]+\]/.exec(id)?.[0] ?? "";
-      const key = version && `${version.family}:${version.major}.${version.minor}:${variant}`;
-      const existingIndex = key ? primaryIndex.get(key) : undefined;
-      if (existingIndex !== undefined) {
-        const existing = primary[existingIndex];
-        const existingId = existing.data?.["data-model-id"] ?? existing.key;
-        if (
-          (choice.checked && !existing.checked) ||
-          (choice.checked === existing.checked &&
-            alias &&
-            !/^(fable|opus|sonnet|haiku)$/i.test(existingId))
-        )
-          primary[existingIndex] = choice;
-        continue;
-      }
-      if (key) primaryIndex.set(key, primary.length);
-      primary.push(choice);
-    }
-    return { primary, more, unresolvedCurrent };
-  }
-  if (kind === "codex") {
-    for (const choice of choices) {
-      const id = choice.data?.["data-model-id"] ?? choice.key;
-      const match = codexModel(id);
-      if (!match) continue;
-      const family = match[3] ?? "base";
-      const major = Number(match[1]);
-      const minor = Number(match[2] ?? 0);
-      const latest = latestCodexByFamily.get(family);
-      if (!latest || major > latest.major || (major === latest.major && minor > latest.minor))
-        latestCodexByFamily.set(family, { id, major, minor });
-    }
-  }
-  for (const choice of choices) {
-    const id = choice.data?.["data-model-id"] ?? choice.key;
-    const codexFamily = kind === "codex" ? codexModel(id) : null;
-    const family = codexFamily ? `codex:${codexFamily[1] ?? "base"}` : id;
-    const latestCodex =
-      codexFamily !== null && latestCodexByFamily.get(codexFamily[3] ?? "base")?.id === id;
-    if (choice.checked || (codexFamily ? latestCodex : !seen.has(family))) {
-      primary.push(choice);
-      seen.add(family);
-    } else {
-      more.push(choice);
-    }
-  }
-  return { primary, more };
-}
-
-function CompactConfigChoice({
-  choice,
-  shortcut,
-}: {
-  choice: ComposerConfigChoice;
-  /** The digit that picks this row while the menu is open. */
-  shortcut?: string;
-}) {
-  return (
-    <DropdownMenuCheckboxItem
-      checked={choice.checked}
-      disabled={choice.disabled}
-      onSelect={(event) => event.preventDefault()}
-      onCheckedChange={choice.onSelect}
-      data-testid={choice.testId}
-      data-model-shortcut={shortcut}
-      // The check goes before the name, as desktop Claude Code draws it, which
-      // leaves the right edge for the shortcut digit or a tag.
-      className={cn(AE_MENU_ROW_CLASS, choice.className)}
-      {...choice.data}
-    >
-      {choice.label}
-      {shortcut && (
-        <span
-          aria-hidden="true"
-          className="ml-auto pl-3 text-xs text-muted-foreground"
-          data-testid="composer-agent-model-shortcut"
-        >
-          {shortcut}
-        </span>
-      )}
-    </DropdownMenuCheckboxItem>
-  );
-}
-
-function CompactSessionChoices({
-  models,
-  efforts,
-  kind,
-}: {
-  models?: { leading?: ReactNode; choices: ComposerConfigChoice[] };
-  efforts?: { label: string; value?: string | null; choices: ComposerConfigChoice[] };
-  kind: NativeModelPickerKind | null;
-}) {
-  const { primary, more, unresolvedCurrent } = compactModelChoices(models?.choices ?? [], kind);
-  return (
-    <>
-      {models && (
-        <div data-testid="composer-agent-models">
-          {models.leading}
-          {unresolvedCurrent && <CompactConfigChoice choice={unresolvedCurrent} />}
-          {primary.map((choice, index) => (
-            <CompactConfigChoice
-              key={choice.key}
-              choice={choice}
-              shortcut={index < 9 ? String(index + 1) : undefined}
-            />
-          ))}
-        </div>
-      )}
-      {efforts && (
-        <div data-testid="composer-agent-efforts">
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger data-testid="composer-agent-effort-trigger" className="pl-7">
-              {efforts.label}
-              {efforts.value && (
-                <span
-                  className="ml-auto min-w-0 truncate text-muted-foreground"
-                  data-testid="composer-agent-effort-current"
-                >
-                  {efforts.value}
-                </span>
-              )}
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent className="max-h-[70vh] overflow-y-auto">
-              {efforts.choices.map((choice) => (
-                <CompactConfigChoice key={choice.key} choice={choice} />
-              ))}
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
-        </div>
-      )}
-      {models && more.length > 0 && (
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger data-testid="composer-agent-more-models" className="pl-7">
-            {kind === "claude" ? "Previous models" : "More models"}
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent className="max-h-[70vh] max-w-[calc(100vw-2rem)] overflow-y-auto">
-            {more.map((choice) => (
-              <CompactConfigChoice key={choice.key} choice={choice} />
-            ))}
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
-      )}
-    </>
-  );
-}
-
 function SessionHarnessPicker({
   busy,
   busyRef,
@@ -4954,14 +4753,17 @@ function SessionHarnessPicker({
           <DropdownMenuSeparator />
         </>
       )}
-      <CompactSessionChoices
+      <AeCompactSessionChoices
         kind={modelPickerKind}
         models={
           showModels
             ? {
                 leading:
                   (inferenceConfigured && inferenceError) || modelOptions.length === 0 ? (
-                    <div className="px-2 py-1 text-xs text-muted-foreground" role="status">
+                    <div
+                      className={cn(AE_MENU_NOTE_CLASS, "px-2 py-1 text-xs text-muted-foreground")}
+                      role="status"
+                    >
                       {inferenceError ?? "No usable models are available for this session."}
                     </div>
                   ) : undefined,
@@ -5106,6 +4908,7 @@ function SessionHarnessPicker({
   return (
     <HarnessPicker
       open={menuOpen}
+      contentClassName={AE_MENU_WIDTH_CLASS}
       onOpenChange={(next) => {
         if (!next || (!disabled && !busy && configurable)) setMenuOpen(next);
         if (!next) setConfigOpen(false);
@@ -5148,7 +4951,7 @@ function SessionHarnessPicker({
           valueTestId="composer-agent-model-summary"
           testId="composer-agent-edit"
           configTestId="composer-agent-config-menu"
-          configClassName="w-[19rem]"
+          configClassName={AE_MENU_WIDTH_CLASS}
         >
           {configContent}
         </HarnessPickerConfigRow>

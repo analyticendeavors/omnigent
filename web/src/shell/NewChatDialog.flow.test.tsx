@@ -52,6 +52,14 @@ import { CapabilitiesProvider } from "@/lib/CapabilitiesContext";
 import type { ServerInfo } from "@/lib/capabilities";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
+// Claude Code and Codex draw the chat's session menu on New Chat (omnigent-ae,
+// 2026-10-21): the effort rows sit in a submenu off the Effort row.
+function openNewChatEffortMenu(): void {
+  const trigger = screen.queryByTestId("new-chat-landing-agent-effort-trigger");
+  if (trigger && trigger.getAttribute("data-state") !== "open")
+    fireEvent.keyDown(trigger, { key: "ArrowRight" });
+}
+
 // The landing screen drives the real Web-start flow end to end: the host and
 // first agent auto-select, the working directory seeds from the host's most-
 // recent path, the composer message is the first prompt, and hitting send
@@ -1889,6 +1897,7 @@ describe("NewChatLandingScreen create flow", () => {
     // Model and effort selections apply directly from the Edit submenu.
     openAgentModels("ag_native");
     fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Opus" }));
+    openNewChatEffortMenu();
     fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "High" }));
     fireEvent.keyDown(screen.getByTestId("new-chat-landing-agent-models"), { key: "Escape" });
     typeMessage("go");
@@ -2003,12 +2012,14 @@ describe("NewChatLandingScreen create flow", () => {
       "aria-checked",
       "true",
     );
+    openNewChatEffortMenu();
     expect(screen.getByTestId("new-chat-landing-agent-effort-high")).toHaveAttribute(
       "aria-checked",
       "true",
     );
 
     fireEvent.click(screen.getByTestId("new-chat-landing-agent-model-default"));
+    openNewChatEffortMenu();
     fireEvent.click(screen.getByTestId("new-chat-landing-agent-effort-default"));
     const stored = JSON.parse(localStorage.getItem("omnigent:last-mode-by-harness") ?? "{}")[
       "claude-native"

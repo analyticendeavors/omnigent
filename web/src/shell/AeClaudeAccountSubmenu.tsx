@@ -12,7 +12,7 @@ import {
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useDetectedCredentials, useStoreCredential, type Host } from "@/hooks/useHosts";
-import { AE_MENU_ROW_CLASS } from "@/lib/aeMenuRow";
+import { AE_MENU_NOTE_CLASS, AE_MENU_ROW_CLASS, AE_MENU_WIDTH_CLASS } from "@/lib/aeMenuRow";
 import { AeSharedAccountMarker, aeIsSharedAccount } from "@/lib/aeSharedClaudeAccounts";
 import { cn } from "@/lib/utils";
 
@@ -22,10 +22,13 @@ export const AE_ACCOUNT_SCOPE = "For new chats. This chat keeps the login it sta
 export function AeClaudeAccountSubmenu({
   host,
   disabled = false,
+  scope = AE_ACCOUNT_SCOPE,
 }: {
   host: Host | null | undefined;
   /** Another configuration change is running. */
   disabled?: boolean;
+  /** What the pick applies to, shown above the rows and as the row's tooltip. */
+  scope?: string;
 }) {
   const [error, setError] = useState<string | null>(null);
   const accounts = useDetectedCredentials(host?.host_id, !!host);
@@ -46,7 +49,7 @@ export function AeClaudeAccountSubmenu({
       <DropdownMenuSubTrigger
         data-testid="composer-claude-account"
         className="pl-7 [&>svg:last-child]:ml-1"
-        title={AE_ACCOUNT_SCOPE}
+        title={scope}
       >
         Account
         <span
@@ -56,9 +59,12 @@ export function AeClaudeAccountSubmenu({
           {value}
         </span>
       </DropdownMenuSubTrigger>
-      <DropdownMenuSubContent className="max-h-[70vh] max-w-[calc(100vw-2rem)] overflow-y-auto">
-        <p className="px-2 pt-1 pb-1.5 text-xs text-muted-foreground" data-testid="composer-claude-account-scope">
-          {AE_ACCOUNT_SCOPE}
+      <DropdownMenuSubContent className={cn(AE_MENU_WIDTH_CLASS, "max-h-[70vh] overflow-y-auto")}>
+        <p
+          className={cn(AE_MENU_NOTE_CLASS, "px-2 pt-1 pb-1.5 text-xs text-muted-foreground")}
+          data-testid="composer-claude-account-scope"
+        >
+          {scope}
         </p>
         {rows.map((row) => {
           const accountId = row.env_var ?? "";
@@ -73,7 +79,11 @@ export function AeClaudeAccountSubmenu({
               onCheckedChange={() => {
                 setError(null);
                 store.mutate(
-                  { harness: "claude-native", kind: "claude-oauth-select", account_name: accountId },
+                  {
+                    harness: "claude-native",
+                    kind: "claude-oauth-select",
+                    account_name: accountId,
+                  },
                   { onError: (failure) => setError(failure.message) },
                 );
               }}
@@ -85,12 +95,12 @@ export function AeClaudeAccountSubmenu({
           );
         })}
         {unavailable && (
-          <p role="alert" className="px-2 py-1 text-xs text-destructive">
+          <p role="alert" className={cn(AE_MENU_NOTE_CLASS, "px-2 py-1 text-xs text-destructive")}>
             Could not load Claude accounts. Check the host account configuration.
           </p>
         )}
         {error && (
-          <p role="alert" className="px-2 py-1 text-xs text-destructive">
+          <p role="alert" className={cn(AE_MENU_NOTE_CLASS, "px-2 py-1 text-xs text-destructive")}>
             {error}
           </p>
         )}
