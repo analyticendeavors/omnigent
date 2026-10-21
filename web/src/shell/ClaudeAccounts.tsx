@@ -1,3 +1,4 @@
+import { AeClaudeAccountRemoveButton, AeClaudeAccountRemoveConfirm } from "./AeClaudeAccountRemove";
 import { AeSharedClaudeAccountsGroup } from "./AeSharedClaudeAccountsGroup";
 import { ClaudeBrowserLogin } from "./ClaudeBrowserLogin";
 import { useState } from "react";
@@ -20,6 +21,7 @@ export function ClaudeAccounts({
   const [message, setMessage] = useState("");
   const [messageIsError, setMessageIsError] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
   const [accountLabel, setAccountLabel] = useState("");
   const accounts = useDetectedCredentials(host?.host_id, !!host);
   const store = useStoreCredential(host?.host_id ?? "");
@@ -136,6 +138,7 @@ export function ClaudeAccounts({
                     disabled={store.isPending}
                     onClick={() => {
                       setEditingId(accountId);
+                      setRemovingId(null);
                       setAccountLabel(displayLabel);
                       setMessage("");
                     }}
@@ -143,7 +146,37 @@ export function ClaudeAccounts({
                     Rename
                   </Button>
                 )}
+                {!compact && !shared && accountId && (
+                  <AeClaudeAccountRemoveButton
+                    label={displayLabel}
+                    disabled={store.isPending}
+                    onClick={() => {
+                      setRemovingId(accountId);
+                      setEditingId(null);
+                      setMessage("");
+                    }}
+                  />
+                )}
               </div>
+              {!compact && removingId === accountId && (
+                <AeClaudeAccountRemoveConfirm
+                  hostName={host.name}
+                  accountId={accountId}
+                  label={displayLabel}
+                  selected={row.family === "claude-oauth-active"}
+                  store={store}
+                  onDone={() => {
+                    setRemovingId(null);
+                    setMessageIsError(false);
+                    setMessage("Account removed.");
+                  }}
+                  onFail={(error) => {
+                    setMessageIsError(true);
+                    setMessage(error.message);
+                  }}
+                  onCancel={() => setRemovingId(null)}
+                />
+              )}
               {!compact && editingId === accountId && (
                 <div className="flex min-w-0 flex-wrap gap-1">
                   <Input

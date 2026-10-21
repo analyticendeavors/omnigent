@@ -1618,6 +1618,7 @@ def create_hosts_router(
             "claude-oauth-add",
             "claude-oauth-select",
             "claude-oauth-rename",
+            "claude-oauth-delete",
             "claude-login-start",
             "claude-login-poll",
             "claude-login-code",

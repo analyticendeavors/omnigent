@@ -104,6 +104,53 @@ describe("ClaudeAccounts", () => {
       secret: "sk-ant-oat-example",
     });
   });
+  it("offers Remove on a personal login, not on the default CLI login nor in the picker", () => {
+    const view = render(<ClaudeAccounts host={host} />);
+    expect(screen.getByRole("button", { name: "Remove Backup" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Remove Default CLI account" })).toBeNull();
+    view.unmount();
+    render(<ClaudeAccounts host={host} compact />);
+    expect(screen.queryByRole("button", { name: /^Remove/ })).toBeNull();
+  });
+  it("removes a login after one confirm, through the delete kind", () => {
+    render(<ClaudeAccounts host={host} />);
+    fireEvent.click(screen.getByRole("button", { name: "Remove Backup" }));
+    expect(mutate).not.toHaveBeenCalled();
+    expect(screen.getByText(/Removes Backup and its token from Laptop/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Remove account" }));
+    expect(mutate.mock.calls[0][0]).toEqual({
+      harness: "claude-native",
+      kind: "claude-oauth-delete",
+      account_name: "Backup",
+    });
+    act(() => mutate.mock.calls[0][1].onSuccess());
+    expect(screen.getByText("Account removed.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Remove account" })).toBeNull();
+  });
+  it("closes the remove confirm when Rename opens, and names the fallback for the selected login", () => {
+    rows = [
+      { family: "claude-oauth", source: "Default CLI account", env_var: "" },
+      { family: "claude-oauth-active", source: "Backup", env_var: "Backup" },
+    ];
+    render(<ClaudeAccounts host={host} />);
+    fireEvent.click(screen.getByRole("button", { name: "Remove Backup" }));
+    expect(screen.getByText(/New chats use the Default CLI account/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Rename Backup" }));
+    expect(screen.queryByRole("button", { name: "Remove account" })).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Account label for Backup" })).toBeTruthy();
+  });
+  it("cancels a remove without sending anything, and shows a refusal", () => {
+    render(<ClaudeAccounts host={host} />);
+    fireEvent.click(screen.getByRole("button", { name: "Remove Backup" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(mutate).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Remove account" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Remove Backup" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove account" }));
+    act(() => mutate.mock.calls[0][1].onError(new Error("Host offline")));
+    expect(screen.getByRole("button", { name: "Remove account" })).toBeTruthy();
+    expect(screen.getByText("Host offline")).toBeTruthy();
+  });
   it("renames the default account using its empty stable ID", () => {
     render(<ClaudeAccounts host={host} />);
     fireEvent.click(screen.getByRole("button", { name: "Rename Default CLI account" }));

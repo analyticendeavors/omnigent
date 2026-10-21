@@ -1,7 +1,9 @@
+import json
 from pathlib import Path
 
 import pytest
 
+from omnigent.onboarding import claude_accounts, secrets
 from omnigent.onboarding.claude_accounts import account_descriptors, account_env, change_account
 
 
@@ -202,15 +204,70 @@ def test_rename_rejects_duplicate_invalid_and_missing_labels():
     assert account_env()["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat-backup"
 
 
-def test_rename_frame_roundtrip():
+def test_delete_removes_the_account_its_label_and_token_and_keeps_the_rest():
+    assert change_account("claude-oauth-add", "Backup", "sk-ant-oat-backup").stored
+    assert change_account("claude-oauth-add", "Work", "sk-ant-oat-work").stored
+    assert change_account("claude-oauth-rename", "Backup", label="Personal").stored
+    assert change_account("claude-oauth-select", "Work").stored
+
+    result = change_account("claude-oauth-delete", "Backup")
+
+    assert result.stored
+    rows = account_descriptors()
+    assert [(r["source"], r["env_var"]) for r in rows] == [
+        ("Default CLI account", ""),
+        ("Work", "Work"),
+    ]
+    assert rows[1]["family"] == "claude-oauth-active"
+    assert secrets.load_secret("claude-oauth-Backup") is None
+    assert account_env()["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat-work"
+    assert "Backup" not in json.loads(claude_accounts._path().read_text()).get("labels", {})
+
+
+def test_delete_of_the_active_account_falls_back_to_the_default_login():
+    assert change_account("claude-oauth-add", "Backup", "sk-ant-oat-backup").stored
+    assert account_env()["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat-backup"
+
+    assert change_account("claude-oauth-delete", "Backup").stored
+
+    assert account_env() == {}
+    assert [r["env_var"] for r in account_descriptors()] == [""]
+
+
+def test_delete_refuses_the_default_login_unknown_and_shared_accounts():
+    assert change_account("claude-oauth-add", "Backup", "sk-ant-oat-backup").stored
+    default = change_account("claude-oauth-delete", "")
+    assert not default.stored and "default CLI login" in (default.reason or "")
+    assert not change_account("claude-oauth-delete", "missing").stored
+    shared = change_account("claude-oauth-delete", "shared:Team")
+    assert not shared.stored and "Admin Center" in (shared.reason or "")
+    assert account_env("Backup")["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat-backup"
+
+
+def test_delete_keeps_the_account_when_the_token_cannot_be_removed(monkeypatch):
+    assert change_account("claude-oauth-add", "Backup", "sk-ant-oat-backup").stored
+    monkeypatch.setattr(secrets, "delete_secret", lambda name: None)
+
+    result = change_account("claude-oauth-delete", "Backup")
+
+    assert not result.stored and "Could not remove the token" in (result.reason or "")
+    assert [r["env_var"] for r in account_descriptors()] == ["", "Backup"]
+    assert account_env()["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat-backup"
+
+
+@pytest.mark.parametrize(
+    ("kind", "account_name", "account_label"),
+    [("claude-oauth-rename", "", "Primary"), ("claude-oauth-delete", "Backup", None)],
+)
+def test_account_frame_roundtrip(kind, account_name, account_label):
     from omnigent.host.frames import HostStoreSecretFrame, decode_host_frame, encode_host_frame
 
     frame = HostStoreSecretFrame(
         request_id="request",
         harness="claude-native",
-        kind="claude-oauth-rename",
-        account_name="",
-        account_label="Primary",
+        kind=kind,
+        account_name=account_name,
+        account_label=account_label,
     )
     assert decode_host_frame(encode_host_frame(frame)) == frame
 

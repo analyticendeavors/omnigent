@@ -3100,7 +3100,12 @@ class HostProcess:
                 else None,
             )
 
-        if frame.kind in ("claude-oauth-add", "claude-oauth-select", "claude-oauth-rename"):
+        if frame.kind in (
+            "claude-oauth-add",
+            "claude-oauth-select",
+            "claude-oauth-rename",
+            "claude-oauth-delete",
+        ):
             from omnigent.onboarding.claude_accounts import change_account
 
             if install_key != ANTHROPIC_FAMILY:

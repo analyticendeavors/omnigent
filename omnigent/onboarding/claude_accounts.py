@@ -112,6 +112,7 @@ def _change_account(
         return StoreCredentialResult(
             False, None, "Enter a name and the OAuth token from claude setup-token."
         )
+    delete_token: str | None = None
     try:
         state = _read()
         if kind == "claude-oauth-rename":
@@ -136,11 +137,24 @@ def _change_account(
                 )
             secrets.store_secret(f"claude-oauth-{name}", token.strip())
             state["accounts"].append(name)
+        elif kind == "claude-oauth-delete":
+            if not name:
+                return StoreCredentialResult(
+                    False, None, "The default CLI login cannot be removed."
+                )
+            if name not in state["accounts"]:
+                return StoreCredentialResult(False, None, "Unknown Claude account.")
+            # Running chats keep the token they launched with; new ones cannot pick it.
+            delete_token = f"claude-oauth-{name}"
+            state["accounts"].remove(name)
+            state.get("labels", {}).pop(name, None)
+            if state["active"] == name:
+                state["active"] = ""
         elif kind != "claude-oauth-select" or (
             name and name not in state["accounts"] and not is_shared(name)
         ):
             return StoreCredentialResult(False, None, "Unknown Claude account.")
-        if kind != "claude-oauth-rename":
+        if kind not in ("claude-oauth-rename", "claude-oauth-delete"):
             state["active"] = name
         path = _path()
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -148,12 +162,30 @@ def _change_account(
         with temporary.open("w") as handle:
             os.chmod(temporary, 0o600)
             json.dump(state, handle)
+        if delete_token and not _delete_token(delete_token):
+            # The record stays until the token is confirmed gone: a locked keyring
+            # makes delete_secret fall back to the file and leave the token behind.
+            temporary.unlink(missing_ok=True)
+            return StoreCredentialResult(
+                False,
+                None,
+                "Could not remove the token on this host. Check its keyring and try again.",
+            )
         temporary.replace(path)
         return StoreCredentialResult(True, name, None)
     except Exception:
         return StoreCredentialResult(
             False, None, "Could not save the Claude account on this host."
         )
+
+
+def _delete_token(secret_name: str) -> bool:
+    """Delete a login's token and report whether it is gone."""
+    secrets.delete_secret(secret_name)
+    try:
+        return not secrets.load_secret(secret_name)
+    except Exception:
+        return False
 
 
 def account_env(name: str | None = None) -> dict[str, str]:
