@@ -63,6 +63,7 @@ import {
   stripPendingElicitations,
 } from "@/components/chat/chatBubbleParts";
 import { SCROLL_RESTORE_BUDGET_MS } from "@/shell/useScrollRestore";
+import { useAePublishDockQuestions } from "@/hooks/useAeActionDockItems";
 
 export interface TranscriptProps {
   hostId: string | null | undefined;
@@ -179,6 +180,7 @@ function TranscriptImpl({
     () => (pendingUserMessages.length > 0 ? [] : pendingCodexQuestions(blocks)),
     [blocks, pendingUserMessages.length],
   );
+  useAePublishDockQuestions(conversationId, pendingElicitations, codexQuestions);
   const streamBubbles = useMemo(
     () => (pendingElicitations.length === 0 ? bubbles : stripPendingElicitations(bubbles)),
     [bubbles, pendingElicitations.length],
@@ -409,6 +411,7 @@ function TranscriptImpl({
                     from="assistant"
                     className="max-w-full"
                     data-testid="bottom-elicitation"
+                    data-ae-question={item.elicitationId}
                   >
                     <MessageContent className="w-full">
                       <ElicitationCard item={item} />
@@ -417,7 +420,12 @@ function TranscriptImpl({
                 ))}
                 {display.conversationId &&
                   codexQuestions.map(({ itemId, questions }) => (
-                    <Message key={itemId} from="assistant" className="max-w-full">
+                    <Message
+                      key={itemId}
+                      from="assistant"
+                      className="max-w-full"
+                      data-ae-question={itemId}
+                    >
                       <MessageContent className="w-full">
                         <CodexQuestionCard
                           conversationId={display.conversationId!}

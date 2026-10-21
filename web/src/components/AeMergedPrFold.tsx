@@ -11,6 +11,7 @@
 
 import { useState } from "react";
 import { AePrCardView, MERGED_TEXT } from "@/components/AePrCards";
+import { AePrDeployStatus } from "@/components/AePrDeployStatus";
 import { AePrLinkHoverCard } from "@/components/AePrLinkHoverCard";
 import { AE_ICON_CHEVRON_RIGHT } from "@/lib/aeAgentsIcons";
 import { AE_ICON_EXTERNAL_LINK, AE_ICON_MERGE, AE_ICON_PR_CLOSED } from "@/lib/aePrIcons";
@@ -152,6 +153,7 @@ export function AeMergedPrFold({
                 target="_blank"
                 rel="noreferrer"
                 data-testid="ae-pr-fold-chip"
+                data-ae-pr={`${pr.repo.toLowerCase()}#${pr.number}`}
                 className="rounded border border-border px-1.5 text-xs text-muted-foreground hover:text-foreground"
                 onClick={(event) => event.stopPropagation()}
               >
@@ -160,11 +162,14 @@ export function AeMergedPrFold({
             </AePrLinkHoverCard>
           ))}
         </span>
-        {!multiRepo && (
-          <span className="ml-auto hidden shrink-0 text-xs text-muted-foreground sm:inline">
-            {prs[0].repo.split("/").pop()}
-          </span>
-        )}
+        <span className="ml-auto flex shrink-0 items-center gap-1.5">
+          <AePrDeployStatus prs={prs} />
+          {!multiRepo && (
+            <span className="hidden text-xs text-muted-foreground sm:inline">
+              {prs[0].repo.split("/").pop()}
+            </span>
+          )}
+        </span>
       </div>
       {open && (
         <ul className="border-t border-border py-1">

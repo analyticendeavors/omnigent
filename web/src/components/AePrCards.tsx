@@ -305,7 +305,7 @@ function MergedNote({
   );
 }
 
-function ConfirmMerge({
+export function ConfirmMerge({
   card,
   updateWaiting,
   sessionId,
@@ -715,6 +715,7 @@ export function AePrCardView({
     <article
       data-testid={inline ? "ae-pr-inline" : "ae-pr-card"}
       data-pr={url}
+      data-ae-pr={inline ? `${repo.toLowerCase()}#${number}` : undefined}
       className={cn(
         "@container/aepr flex flex-col gap-1.5 rounded-lg border border-border bg-background px-3 py-2",
         // A set width, not max-w only: the container ignores its content, so

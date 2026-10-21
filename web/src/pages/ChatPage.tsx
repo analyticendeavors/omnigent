@@ -80,6 +80,7 @@ import { aeClaudeVersion, aeSplitPreviousBy, useAeClaudeVersions } from "@/lib/a
 import { AE_MENU_ROW_CLASS } from "@/lib/aeMenuRow";
 import { aeModelRowForDigit } from "@/lib/aeModelShortcut";
 import { AePlanLimitsPopover } from "@/components/AePlanLimits";
+import { AeActionDock } from "@/components/AeActionDock";
 import { AeTokenDefrag } from "@/components/AeTokenDefrag";
 import { SessionTeamControl } from "@/components/AeTeamControl";
 import { AeClaudeAccountSubmenu } from "@/shell/AeClaudeAccountSubmenu";
@@ -3587,6 +3588,7 @@ function ComposerImpl(
             SubagentComposerTray). Truthy (not just non-null) so an empty
             label never peeks a nameless tray. */}
         {subAgentLabel ? <SubagentComposerTray label={subAgentLabel} /> : null}
+        <AeActionDock key={conversationId} sessionId={conversationId ?? undefined} />
         <ComposerWorkspaceBar
           data-testid="composer-workspace-controls"
           className={cn(
