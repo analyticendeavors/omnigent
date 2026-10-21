@@ -226,6 +226,14 @@ async function drag(sourceId: string, targetId: string) {
   await act(async () => {
     fireEvent.mouseUp(document, target);
   });
+  // A drop leaves dnd-kit's click blocker (a capture-phase listener on document)
+  // up for 50 ms; a click before it lifts, in this test or the next, never
+  // reaches React. This timer starts after dnd-kit's, so it fires after it.
+  await act(async () => {
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50);
+    });
+  });
   return insertion;
 }
 
