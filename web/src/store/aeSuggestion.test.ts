@@ -60,11 +60,23 @@ describe("chat store aeSuggestion", () => {
 
     sink.push("session.suggestion", { conversation_id: "conv_sug_a", suggestion: "Open a PR" });
     await tick();
-    expect(useChatStore.getState().aeSuggestion).toBe("Open a PR");
+    expect(useChatStore.getState().aeSuggestion).toEqual(["Open a PR"]);
 
     sink.push("session.status", { conversation_id: "conv_sug_a", status: "running" });
     await tick();
     expect(useChatStore.getState().aeSuggestion).toBeNull();
+    controller.abort();
+  });
+
+  it("holds the ranked list in order", async () => {
+    const { sink, controller } = bindPumped("conv_sug_e");
+    sink.push("session.suggestion", {
+      conversation_id: "conv_sug_e",
+      suggestion: "Open a PR",
+      suggestions: ["Open a PR", "Run the tests", "Ship it"],
+    });
+    await tick();
+    expect(useChatStore.getState().aeSuggestion).toEqual(["Open a PR", "Run the tests", "Ship it"]);
     controller.abort();
   });
 
@@ -81,7 +93,7 @@ describe("chat store aeSuggestion", () => {
     const { sink, controller } = bindPumped("conv_sug_c");
     sink.push("session.suggestion", { conversation_id: "conv_sug_c", suggestion: "Ship it" });
     await tick();
-    expect(useChatStore.getState().aeSuggestion).toBe("Ship it");
+    expect(useChatStore.getState().aeSuggestion).toEqual(["Ship it"]);
     sink.push("session.suggestion", { conversation_id: "conv_sug_c", suggestion: null });
     await tick();
     expect(useChatStore.getState().aeSuggestion).toBeNull();

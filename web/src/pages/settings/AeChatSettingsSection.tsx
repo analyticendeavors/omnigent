@@ -6,6 +6,7 @@ import { useId } from "react";
 import { AeTokenDefragSetting } from "@/components/AeTokenDefrag";
 import { Switch } from "@/components/ui/switch";
 import { AeSessionListSetting } from "./AeSessionListSetting";
+import { AeSuggestionKeysSetting } from "./AeSuggestionKeysSetting";
 import { useAeSessionRailStore } from "@/lib/aeSessionRail";
 
 /** The title and description SettingsPage's `Section` shell gives this section. */
@@ -46,6 +47,7 @@ export function AeChatSettingsSection() {
     <div data-testid="ae-chat-settings" className="flex flex-col gap-6">
       <OpenRailInEverySessionControl />
       <AeTokenDefragSetting />
+      <AeSuggestionKeysSetting />
       <AeSessionListSetting />
     </div>
   );

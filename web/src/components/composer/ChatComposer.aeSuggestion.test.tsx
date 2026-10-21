@@ -1,9 +1,12 @@
 import { useState } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { AE_SUGGESTION_KEYS_STORAGE_KEY, writeAeSuggestionKey } from "@/lib/aeSuggestionKeys";
 import { ChatComposer } from "./ChatComposer";
 
-function renderComposer(suggestion: string | null, initial = "") {
+function renderComposer(suggestion: string | readonly string[] | null, initial = "") {
+  // One list for the whole render, as the store holds it.
+  const suggestions = typeof suggestion === "string" ? [suggestion] : suggestion;
   const onKeyDown = vi.fn();
   const onSubmit = vi.fn();
   function Editor() {
@@ -12,7 +15,7 @@ function renderComposer(suggestion: string | null, initial = "") {
       <form onSubmit={onSubmit}>
         <ChatComposer
           keyboard={{ submitWithModEnter: false, preventsKeyboardSubmit: false }}
-          aeSuggestion={suggestion}
+          aeSuggestion={suggestions}
           input={{
             "aria-label": "Draft",
             placeholder: "Send a message…",
@@ -47,6 +50,8 @@ function mockWidth(narrow: boolean) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  writeAeSuggestionKey("next", null);
+  writeAeSuggestionKey("previous", null);
 });
 
 describe("ChatComposer prompt suggestion", () => {
@@ -126,13 +131,13 @@ describe("ChatComposer prompt suggestion", () => {
     const onKeyDown = vi.fn();
     function Editor() {
       const [value, setValue] = useState("");
-      const [suggestion, setSuggestion] = useState<string | null>("Open a draft PR");
+      const [suggestion, setSuggestion] = useState<string[] | null>(["Open a draft PR"]);
       return (
         <>
           <button type="button" onClick={() => setSuggestion(null)}>
             turn starts
           </button>
-          <button type="button" onClick={() => setSuggestion("Open a draft PR")}>
+          <button type="button" onClick={() => setSuggestion(["Open a draft PR"])}>
             turn ends
           </button>
           <ChatComposer
@@ -163,6 +168,73 @@ describe("ChatComposer prompt suggestion", () => {
     expect(screen.getByTestId("ae-suggestion-text")).toHaveTextContent("Open a draft PR");
     fireEvent.keyDown(input, { key: "Tab" });
     expect(input).toHaveValue("Open a draft PR");
+  });
+
+  it("shows no counter for a single guess, and Alt+] then types as usual", () => {
+    const { input, onKeyDown } = renderComposer("Open a draft PR");
+    expect(screen.queryByTestId("ae-suggestion-next")).toBeNull();
+    expect(fireEvent.keyDown(input, { key: "]", code: "BracketRight", altKey: true })).toBe(true);
+    expect(onKeyDown).toHaveBeenCalledTimes(1);
+  });
+
+  it("Alt+] and Alt+[ step through the guesses, wrapping, and Tab takes the one shown", () => {
+    const { input, onKeyDown } = renderComposer(["Open a PR", "Run the tests", "Ship it"]);
+    const text = () => screen.getByTestId("ae-suggestion-text");
+    const counter = () => screen.getByTestId("ae-suggestion-next");
+    expect(text()).toHaveTextContent("Open a PR");
+    expect(counter()).toHaveTextContent("1/3");
+    // On a Mac, Option+] reports "‘" as the key; the physical key is what counts.
+    expect(fireEvent.keyDown(input, { key: "‘", code: "BracketRight", altKey: true })).toBe(false);
+    expect(text()).toHaveTextContent("Run the tests");
+    expect(counter()).toHaveTextContent("2/3");
+    fireEvent.keyDown(input, { key: "[", code: "BracketLeft", altKey: true });
+    fireEvent.keyDown(input, { key: "[", code: "BracketLeft", altKey: true });
+    expect(text()).toHaveTextContent("Ship it");
+    expect(onKeyDown).not.toHaveBeenCalled();
+    // The step is the composer's alone: a window hotkey on the same keys never sees it.
+    const appHotkey = vi.fn();
+    window.addEventListener("keydown", appHotkey);
+    fireEvent.keyDown(input, { key: "]", code: "BracketRight", altKey: true });
+    window.removeEventListener("keydown", appHotkey);
+    expect(appHotkey).not.toHaveBeenCalled();
+    expect(text()).toHaveTextContent("Open a PR");
+    fireEvent.keyDown(input, { key: "[", code: "BracketLeft", altKey: true });
+    fireEvent.keyDown(input, { key: "Tab" });
+    expect(input).toHaveValue("Ship it");
+  });
+
+  it("a tap on the counter shows the next guess without filling the box", () => {
+    const { input } = renderComposer(["Open a PR", "Run the tests"]);
+    fireEvent.click(screen.getByTestId("ae-suggestion-next"));
+    expect(screen.getByTestId("ae-suggestion-text")).toHaveTextContent("Run the tests");
+    expect(screen.getByTestId("ae-suggestion-next")).toHaveTextContent("2/2");
+    expect(input).toHaveValue("");
+    fireEvent.click(screen.getByTestId("ae-suggestion-hint"));
+    expect(input).toHaveValue("Run the tests");
+  });
+
+  it("uses the keys saved in Settings instead of the defaults", () => {
+    writeAeSuggestionKey("next", {
+      code: "KeyJ",
+      alt: false,
+      ctrl: true,
+      meta: false,
+      shift: false,
+    });
+    expect(window.localStorage.getItem(AE_SUGGESTION_KEYS_STORAGE_KEY)).toContain("KeyJ");
+    const { input, onKeyDown } = renderComposer(["Open a PR", "Run the tests"]);
+    fireEvent.keyDown(input, { key: "]", code: "BracketRight", altKey: true });
+    expect(screen.getByTestId("ae-suggestion-text")).toHaveTextContent("Open a PR");
+    expect(onKeyDown).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(input, { key: "j", code: "KeyJ", ctrlKey: true });
+    expect(screen.getByTestId("ae-suggestion-text")).toHaveTextContent("Run the tests");
+  });
+
+  it("wraps a long guess instead of cutting it off", () => {
+    renderComposer("word ".repeat(24).trim());
+    const text = screen.getByTestId("ae-suggestion-text");
+    expect(text).not.toHaveClass("truncate");
+    expect(text).toHaveClass("whitespace-normal");
   });
 
   it("says Tap to use below 640 px wide", () => {

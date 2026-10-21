@@ -30,10 +30,14 @@ async def _session_with_capture(
 async def test_suggestion_is_published_as_a_transient_session_suggestion(
     client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The predicted prompt reaches the stream as ``session.suggestion`` and nothing persists."""
+    """The ranked prompts reach the stream as ``session.suggestion`` and nothing persists."""
     session_id, published = await _session_with_capture(client, monkeypatch)
 
-    for data in ({"suggestion": "  Open a draft PR "}, {"suggestion": None}):
+    for data in (
+        {"suggestion": "  Open a draft PR ", "suggestions": ["  Open a draft PR ", "Ship it"]},
+        {"suggestion": "Run the tests"},
+        {"suggestion": None, "suggestions": None},
+    ):
         resp = await client.post(
             f"/v1/sessions/{session_id}/events",
             json={"type": "external_session_suggestion", "data": data},
@@ -49,6 +53,17 @@ async def test_suggestion_is_published_as_a_transient_session_suggestion(
                 "sequence_number": None,
                 "conversation_id": session_id,
                 "suggestion": "Open a draft PR",
+                "suggestions": ["Open a draft PR", "Ship it"],
+            },
+        ),
+        (
+            session_id,
+            {
+                "type": "session.suggestion",
+                "sequence_number": None,
+                "conversation_id": session_id,
+                "suggestion": "Run the tests",
+                "suggestions": ["Run the tests"],
             },
         ),
         (
@@ -58,6 +73,7 @@ async def test_suggestion_is_published_as_a_transient_session_suggestion(
                 "sequence_number": None,
                 "conversation_id": session_id,
                 "suggestion": None,
+                "suggestions": None,
             },
         ),
     ]
@@ -74,12 +90,17 @@ async def test_suggestion_is_published_as_a_transient_session_suggestion(
         {"suggestion": 7},
         {"suggestion": "x" * 121},
         {"suggestion": "two\nlines"},
+        {"suggestions": []},
+        {"suggestions": "Open a PR"},
+        {"suggestions": ["a", "b", "c", "d"]},
+        {"suggestions": ["Open a PR", "x" * 121]},
+        {"suggestions": ["Open a PR", "  "]},
     ],
 )
 async def test_suggestion_rejects_bad_shapes(
     client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch, data: dict[str, Any]
 ) -> None:
-    """An empty, mistyped, overlong or multi-line suggestion is a 400 and publishes nothing."""
+    """A bad guess (empty, mistyped, overlong, two lines) or list is a 400; nothing publishes."""
     session_id, published = await _session_with_capture(client, monkeypatch)
 
     resp = await client.post(

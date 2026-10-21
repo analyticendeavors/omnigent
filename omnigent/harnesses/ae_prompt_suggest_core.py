@@ -3,12 +3,12 @@ The prompt-suggestion side call every native harness shares.
 
 After a finished turn a harness forwarder hands this module the turn's last
 user prompt and last reply; it makes one small side call
-(``claude -p --model haiku``) and posts the one-line answer as a transient
-``external_session_suggestion`` event that the web composer shows as ghost
-text. The Claude forwarder (``claude_native/ae_prompt_suggest.py``) and the
+(``claude -p --model haiku``) and posts up to three ranked one-line answers as
+a transient ``external_session_suggestion`` event that the web composer shows
+as ghost text, best first. The Claude forwarder (``claude_native/ae_prompt_suggest.py``) and the
 Codex forwarder (``codex_native/ae_prompt_suggest.py``) each own only how they
 see a turn end and read its text; the call, its isolation, its login, the trim
-to one line, cancel and the event post live here once.
+to clean lines, cancel and the event post live here once.
 
 The side call is isolated from everything the session itself uses: no hooks
 (a ``Stop`` hook firing from it would start another call, for ever), no
@@ -27,9 +27,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import difflib
 import json
 import logging
 import os
+import re
 import shutil
 import signal
 import tempfile
@@ -44,6 +46,7 @@ import httpx
 from omnigent.util.ae_session_suggestion import (
     EXTERNAL_SESSION_SUGGESTION_TYPE,
     MAX_SUGGESTION_CHARS,
+    MAX_SUGGESTIONS,
 )
 
 _logger = logging.getLogger(__name__)
@@ -65,11 +68,19 @@ MIN_TOKEN_LIFETIME_S: Final = 600.0
 
 SYSTEM_PROMPT: Final = (
     "You predict the next message a user will type to their coding assistant. "
-    "You get the user's last message and the assistant's reply. Answer with the "
-    "user's most likely next message, in the user's own voice and style, as one "
-    f"line of at most {MAX_SUGGESTION_CHARS} characters, with no quotes and no "
-    f"explanation. If no next message is clearly likely, answer {NONE_REPLY}."
+    "You get the user's last message and the assistant's reply. Answer with up to "
+    f"{MAX_SUGGESTIONS} clearly different likely next messages, most likely first, "
+    "one per line, each in the user's own voice and style and at most "
+    f"{MAX_SUGGESTION_CHARS} characters, with no numbering, no quotes and no "
+    "explanation. Give fewer lines rather than weak ones. If no next message is "
+    f"clearly likely, answer {NONE_REPLY}."
 )
+# Two guesses this alike (difflib ratio, case-folded) count as one, unless the
+# words they differ in carry a digit or an identifier ("PR 121" vs "PR 122").
+DUPLICATE_RATIO: Final = 0.85
+_IDENTIFIER_RE: Final = re.compile(r"[\d_./]")
+# A list marker the model may add despite the prompt: "1.", "2)", "-", "*", "•".
+_LIST_MARKER_RE: Final = re.compile(r"^(?:\d+[.)]|[-*•])\s+")
 
 # Environment the side call must not inherit: OmniGent's runner wiring and
 # tokens, and Claude Code's own session and suggestion switches.
@@ -159,24 +170,59 @@ def build_side_call_prompt(context: TurnContext) -> str:
     )
 
 
-def clean_suggestion(raw: str) -> str | None:
-    """
-    The suggestion to show, from the side call's raw output.
+def _is_none(raw: str) -> bool:
+    return raw.strip().strip("\"'`“”‘’").rstrip(".").upper() == NONE_REPLY
 
-    :param raw: Everything the side call printed.
-    :returns: The first non-empty line without wrapping quotes, cut at a word
-        boundary to :data:`MAX_SUGGESTION_CHARS`; ``None`` for ``NONE`` or
-        empty output.
-    """
-    line = next((ln.strip() for ln in raw.splitlines() if ln.strip()), "")
+
+def _clean_line(raw: str) -> str | None:
+    """One output line without list marker or wrapping quotes, cut at a word to the bound."""
+    line = _LIST_MARKER_RE.sub("", raw.strip())
     line = line.strip("\"'`“”‘’").strip()
-    if not line or line.rstrip(".").upper() == NONE_REPLY:
+    # A bracketed aside is the model explaining itself, not a guess.
+    if not line or line.startswith(("(", "[")):
         return None
     if len(line) > MAX_SUGGESTION_CHARS:
         cut = line[:MAX_SUGGESTION_CHARS]
         space = cut.rfind(" ")
         line = (cut[:space] if space > MAX_SUGGESTION_CHARS // 2 else cut).rstrip(" ,;:")
     return line or None
+
+
+def _is_near_duplicate(line: str, kept: list[str]) -> bool:
+    folded = line.casefold()
+    words = set(folded.rstrip(".!?").split())
+    for other in kept:
+        other_folded = other.casefold()
+        if difflib.SequenceMatcher(None, folded, other_folded).ratio() < DUPLICATE_RATIO:
+            continue
+        differing = words ^ set(other_folded.rstrip(".!?").split())
+        if not any(_IDENTIFIER_RE.search(word) for word in differing):
+            return True
+    return False
+
+
+def clean_suggestions(raw: str) -> list[str]:
+    """
+    The ranked suggestions to show, from the side call's raw output.
+
+    :param raw: Everything the side call printed, one guess per line.
+    :returns: Up to :data:`MAX_SUGGESTIONS` lines in the model's order, each
+        without list marker or wrapping quotes and cut at a word boundary to
+        :data:`MAX_SUGGESTION_CHARS`; near duplicates of an earlier line and
+        bracketed asides dropped. Reading stops at a ``NONE`` line, so ``NONE``
+        first, or empty output, gives none.
+    """
+    kept: list[str] = []
+    for raw_line in raw.splitlines():
+        if _is_none(raw_line):
+            break
+        line = _clean_line(raw_line)
+        if line is None or _is_near_duplicate(line, kept):
+            continue
+        kept.append(line)
+        if len(kept) == MAX_SUGGESTIONS:
+            break
+    return kept
 
 
 def side_call_argv(claude_bin: str) -> list[str]:
@@ -343,29 +389,29 @@ async def run_side_call(
     *,
     timeout_s: float = SIDE_CALL_TIMEOUT_S,
     login_env: Mapping[str, str] | None = None,
-) -> str | None:
+) -> list[str]:
     """
-    Run one isolated ``claude -p`` call and return its cleaned answer.
+    Run one isolated ``claude -p`` call and return its cleaned answers.
 
     :param prompt: The side call's user message.
     :param timeout_s: Seconds before the call is killed.
     :param login_env: The account's login environment from
         :func:`account_login_env`, layered over this process's; ``None`` or
         ``{}`` keeps the default login.
-    :returns: The suggestion, or ``None`` on ``NONE``, a failure, a timeout or
-        no usable login.
+    :returns: The ranked suggestions, or ``[]`` on ``NONE``, a failure, a
+        timeout or no usable login.
     :raises asyncio.CancelledError: When a newer turn cancels the call; the
         process group is killed first.
     """
     claude_bin = _claude_binary()
     if claude_bin is None:
         _logger.debug("prompt suggestion skipped: no claude binary on PATH")
-        return None
+        return []
     base = {**os.environ, **(login_env or {})}
     with _side_call_dirs() as (cwd, config_dir):
         if not copy_login(config_dir, env=base):
             _logger.debug("prompt suggestion skipped: no login valid for the next 10 minutes")
-            return None
+            return []
         proc = await asyncio.create_subprocess_exec(
             *side_call_argv(claude_bin),
             stdin=asyncio.subprocess.PIPE,
@@ -383,12 +429,12 @@ async def run_side_call(
                 await proc.wait()
             if isinstance(exc, TimeoutError):
                 _logger.debug("prompt suggestion side call timed out after %.0fs", timeout_s)
-                return None
+                return []
             raise
     if proc.returncode != 0:
         _logger.debug("prompt suggestion side call exited %s", proc.returncode)
-        return None
-    return clean_suggestion(stdout.decode("utf-8", errors="replace"))
+        return []
+    return clean_suggestions(stdout.decode("utf-8", errors="replace"))
 
 
 def uses_default_provider(bridge_dir: Path | None, env: Mapping[str, str] | None = None) -> bool:
@@ -454,19 +500,31 @@ async def is_child_session(
 
 
 async def post_suggestion(
-    client: httpx.AsyncClient, *, session_id: str, suggestion: str | None
+    client: httpx.AsyncClient, *, session_id: str, suggestions: list[str] | None
 ) -> None:
     """
     Post one transient ``external_session_suggestion`` event.
 
+    ``data.suggestion`` repeats the top guess, so a page loaded before the
+    list existed still shows it.
+
     :param client: Omnigent HTTP client.
     :param session_id: Omnigent session/conversation id, e.g. ``"conv_abc123"``.
-    :param suggestion: The predicted prompt, or ``None`` to clear it.
+    :param suggestions: The ranked predicted prompts, best first, or ``None``
+        to clear them.
     :raises httpx.HTTPError: If the request fails or is rejected.
     """
+    data = (
+        {"suggestion": suggestions[0], "suggestions": suggestions}
+        if suggestions
+        else {
+            "suggestion": None,
+            "suggestions": None,
+        }
+    )
     resp = await client.post(
         f"/v1/sessions/{session_id}/events",
-        json={"type": EXTERNAL_SESSION_SUGGESTION_TYPE, "data": {"suggestion": suggestion}},
+        json={"type": EXTERNAL_SESSION_SUGGESTION_TYPE, "data": data},
     )
     resp.raise_for_status()
 
@@ -480,17 +538,17 @@ async def suggest_and_post(
     login_env: Mapping[str, str] | None = None,
 ) -> None:
     """
-    Run the side call for one turn and post its answer, if any.
+    Run the side call for one turn and post its answers, if any.
 
     The caller has applied its own skip rules. Raises only on cancel or a
     failed post; each harness's task wrapper logs the latter.
     """
-    suggestion = await run_side_call(build_side_call_prompt(context), login_env=login_env)
-    if suggestion is None or client.is_closed:
+    suggestions = await run_side_call(build_side_call_prompt(context), login_env=login_env)
+    if not suggestions or client.is_closed:
         return
     # Marked first, so a cancel while the POST is in flight still gets its clear.
     state.shown = session_id
-    await post_suggestion(client, session_id=session_id, suggestion=suggestion)
+    await post_suggestion(client, session_id=session_id, suggestions=suggestions)
 
 
 def cancel_prompt_suggestion(state: SuggestionState) -> None:
@@ -512,6 +570,6 @@ async def clear_prompt_suggestion(client: httpx.AsyncClient, *, state: Suggestio
     if session_id is None or client.is_closed:
         return
     try:
-        await post_suggestion(client, session_id=session_id, suggestion=None)
+        await post_suggestion(client, session_id=session_id, suggestions=None)
     except httpx.HTTPError:
         _logger.debug("prompt suggestion clear failed; session=%s", session_id, exc_info=True)

@@ -1,15 +1,25 @@
-// A predicted next prompt, relayed as `session.suggestion` after a finished
-// Claude turn (the forwarder's `ae_prompt_suggest` side call), and the rules
-// for when the composer shows it as ghost text.
+// The predicted next prompts (up to three, best first), relayed as
+// `session.suggestion` after a finished turn (the forwarder's
+// `ae_prompt_suggest` side call), and the rules for when the composer shows
+// them as ghost text.
 
-import { useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore } from "react";
 import type { StreamEvent } from "@/lib/events";
 
-/** `session.suggestion`: transient, never persisted. `suggestion` is `null` to clear. */
+/** The ranked guesses a conversation holds, best first; never empty. */
+export type AeSuggestions = readonly string[];
+
+/** `session.suggestion`: transient, never persisted. `suggestions` is `null` to clear. */
 export interface AeSessionSuggestionEvent {
   type: "session_suggestion";
   conversationId: string;
-  suggestion: string | null;
+  suggestions: AeSuggestions | null;
+}
+
+const MAX_SUGGESTIONS = 3;
+
+function oneLine(raw: unknown): string {
+  return typeof raw === "string" ? raw.replace(/\s+/g, " ").trim() : "";
 }
 
 /** Parse a `session.suggestion` SSE payload, or `null` when it is malformed. */
@@ -18,13 +28,25 @@ export function aeParseSessionSuggestion(
 ): AeSessionSuggestionEvent | null {
   const conversationId = data.conversation_id;
   if (typeof conversationId !== "string" || !conversationId) return null;
-  const raw = data.suggestion;
-  if (raw === null || raw === undefined) {
-    return { type: "session_suggestion", conversationId, suggestion: null };
-  }
-  if (typeof raw !== "string") return null;
-  const suggestion = raw.replace(/\s+/g, " ").trim();
-  return { type: "session_suggestion", conversationId, suggestion: suggestion || null };
+  // `suggestions` is the ranked list; a server from before it sends `suggestion` alone.
+  const raw = data.suggestions ?? (data.suggestion == null ? null : [data.suggestion]);
+  if (raw === null) return { type: "session_suggestion", conversationId, suggestions: null };
+  if (!Array.isArray(raw) || raw.some((s) => typeof s !== "string")) return null;
+  const suggestions = raw.map(oneLine).filter(Boolean).slice(0, MAX_SUGGESTIONS);
+  return {
+    type: "session_suggestion",
+    conversationId,
+    suggestions: suggestions.length ? suggestions : null,
+  };
+}
+
+/** Whether two held lists show the same guesses (the store skips a no-op write). */
+export function aeSameSuggestions(
+  a: AeSuggestions | null | undefined,
+  b: AeSuggestions | null | undefined,
+): boolean {
+  if (!a || !b) return (a ?? null) === (b ?? null);
+  return a.length === b.length && a.every((s, i) => s === b[i]);
 }
 
 // A new turn or a rotated session makes the last guess stale.
@@ -34,19 +56,19 @@ const CLEARS_SUGGESTION_TYPES: ReadonlySet<StreamEvent["type"]> = new Set<Stream
 ]);
 
 /**
- * The suggestion a conversation should hold after `event`: the relayed one,
- * or `null` once a turn starts. A suggestion that arrives while a turn runs
- * belongs to the turn before it and is dropped. `undefined` leaves it as is.
+ * The suggestions a conversation should hold after `event`: the relayed ones,
+ * or `null` once a turn starts. Suggestions that arrive while a turn runs
+ * belong to the turn before it and are dropped. `undefined` leaves them as is.
  */
 export function aeNextSuggestion(
   event: StreamEvent,
   conversationId: string,
   sessionStatus: string | undefined,
-): string | null | undefined {
+): AeSuggestions | null | undefined {
   if (event.type === "session_suggestion") {
     if (event.conversationId !== conversationId) return undefined;
-    if (event.suggestion !== null && sessionStatus === "running") return undefined;
-    return event.suggestion;
+    if (event.suggestions !== null && sessionStatus === "running") return undefined;
+    return event.suggestions;
   }
   if (event.type === "session_status") {
     if (event.conversationId !== conversationId) return undefined;
@@ -56,23 +78,46 @@ export function aeNextSuggestion(
 }
 
 /**
- * What the composer may show: the suggestion only while no turn runs and the
- * box accepts input; the composer itself also hides it once anything is typed.
+ * What the composer may show: the suggestions only while no turn runs and the
+ * box accepts input; the composer itself also hides them once anything is typed.
  */
 export function aeComposerSuggestion(
-  suggestion: string | null,
+  suggestions: AeSuggestions | null,
   { busy, blocked }: { busy: boolean; blocked: boolean },
-): string | null {
-  return busy || blocked ? null : suggestion;
+): AeSuggestions | null {
+  return busy || blocked ? null : suggestions;
 }
 
-/** The ghost text to draw over the textarea: only over an empty box. */
+/** The guesses to draw as ghost text over the textarea: only over an empty box. */
 export function aeShownSuggestion(
-  suggestion: string | null | undefined,
+  suggestions: AeSuggestions | null | undefined,
   value: unknown,
-): string | null {
-  if (!suggestion) return null;
-  return value === undefined || value === "" ? suggestion : null;
+): AeSuggestions | null {
+  if (!suggestions?.length) return null;
+  return value === undefined || value === "" ? suggestions : null;
+}
+
+/**
+ * The guess the ghost shows out of `list`, and a step to the next or previous
+ * one (wrapping). New guesses start at the top; clearing typed text brings
+ * back the same guesses at the same place.
+ */
+export function useAeSuggestionCycle(list: AeSuggestions | null): {
+  text: string | null;
+  index: number;
+  count: number;
+  cycle: (step: 1 | -1) => void;
+} {
+  const [pick, setPick] = useState<{ list: AeSuggestions | null; index: number }>({
+    list: null,
+    index: 0,
+  });
+  const count = list?.length ?? 0;
+  const index = pick.list === list && pick.index < count ? pick.index : 0;
+  const cycle = (step: 1 | -1) => {
+    if (count > 1) setPick({ list, index: (index + step + count) % count });
+  };
+  return { text: list?.[index] ?? null, index, count, cycle };
 }
 
 // Tailwind's `sm` line: below it there is no Tab key to offer.

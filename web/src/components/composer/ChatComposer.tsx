@@ -19,7 +19,12 @@ import {
   isComposerSteerAllKey,
 } from "@/lib/composerSendShortcutPreferences";
 import { CHAT_COLUMN_WIDTH } from "@/pages/chatLayout";
-import { aeIsSuggestionAcceptKey, aeShownSuggestion } from "@/lib/aeSuggestion";
+import {
+  aeIsSuggestionAcceptKey,
+  aeShownSuggestion,
+  useAeSuggestionCycle,
+} from "@/lib/aeSuggestion";
+import { aeSuggestionCycleStep } from "@/lib/aeSuggestionKeys";
 import { AeSuggestionGhost } from "./AeSuggestionGhost";
 
 export const COMPOSER_COLUMN_WIDTH = `w-full ${CHAT_COLUMN_WIDTH}`;
@@ -95,18 +100,21 @@ interface ChatComposerProps extends Omit<ComponentPropsWithoutRef<"div">, "child
     leadingTestId?: string;
     trailingTestId?: string;
   };
-  /** A predicted next prompt, drawn as ghost text while the box is empty. */
-  aeSuggestion?: string | null;
+  /** The predicted next prompts, best first, drawn as ghost text while the box is empty. */
+  aeSuggestion?: readonly string[] | null;
 }
 
 export const ChatComposer = forwardRef<HTMLDivElement, ChatComposerProps>(function ChatComposer(
   { className, input, keyboard, slots, actions, aeSuggestion, ...props },
   ref,
 ) {
-  // Esc hides the suggestion until the next one (a new turn clears the old first).
-  const [aeDismissed, setAeDismissed] = useState<string | null>(null);
+  // Esc hides the suggestions until the next ones (a new turn clears the old first).
+  const [aeDismissed, setAeDismissed] = useState<readonly string[] | null>(null);
   if (aeDismissed !== null && aeDismissed !== aeSuggestion) setAeDismissed(null);
-  const aeGhost = aeDismissed ? null : aeShownSuggestion(aeSuggestion, input.value);
+  const aeCycle = useAeSuggestionCycle(
+    aeDismissed ? null : aeShownSuggestion(aeSuggestion, input.value),
+  );
+  const aeGhost = aeCycle.text;
   const actionRowRef = useRef<HTMLDivElement>(null);
   const actionWidthRef = useRef<HTMLDivElement>(null);
   const leadingRef = useRef<HTMLDivElement>(null);
@@ -132,10 +140,17 @@ export const ChatComposer = forwardRef<HTMLDivElement, ChatComposerProps>(functi
           input={input}
           keyboard={keyboard}
           aeSuggestion={aeGhost}
-          onAeDismiss={() => setAeDismissed(aeGhost)}
+          onAeDismiss={() => setAeDismissed(aeSuggestion ?? null)}
+          onAeCycle={aeCycle.count > 1 ? aeCycle.cycle : undefined}
         />
         {aeGhost && (
-          <AeSuggestionGhost text={aeGhost} onAccept={(el) => aeFillSuggestion(el, aeGhost)} />
+          <AeSuggestionGhost
+            text={aeGhost}
+            index={aeCycle.index}
+            count={aeCycle.count}
+            onCycle={aeCycle.cycle}
+            onAccept={(el) => aeFillSuggestion(el, aeGhost)}
+          />
         )}
         {slots?.inputHint}
       </ComposerInputArea>
@@ -281,14 +296,19 @@ export function ComposerTextInput({
   keyboard,
   aeSuggestion,
   onAeDismiss,
-}: Pick<ChatComposerProps, "input" | "keyboard" | "aeSuggestion"> & { onAeDismiss?: () => void }) {
+  onAeCycle,
+}: Pick<ChatComposerProps, "input" | "keyboard"> & {
+  aeSuggestion?: string | null;
+  onAeDismiss?: () => void;
+  onAeCycle?: (step: 1 | -1) => void;
+}) {
   return (
     <ComposerTextarea
       {...input}
       placeholder={aeSuggestion ? "" : input.placeholder}
       onKeyDown={(event) => {
-        // Tab takes a shown suggestion and Esc hides it; with none shown, or
-        // mid-composition, both keys are untouched.
+        // Tab takes a shown suggestion, Esc hides it and the cycle keys step
+        // through the others; with none shown, or mid-composition, all are untouched.
         if (aeSuggestion && !event.nativeEvent.isComposing) {
           if (aeIsSuggestionAcceptKey(event)) {
             event.preventDefault();
@@ -298,6 +318,14 @@ export function ComposerTextInput({
           if (event.key === "Escape" && onAeDismiss) {
             event.preventDefault();
             onAeDismiss();
+            return;
+          }
+          const step = onAeCycle ? aeSuggestionCycleStep(event) : 0;
+          if (step) {
+            // Ours alone: no app hotkey on the same keys fires as well.
+            event.preventDefault();
+            event.stopPropagation();
+            onAeCycle?.(step);
             return;
           }
         }

@@ -8237,7 +8237,7 @@
         "type": "object"
       },
       "SessionSuggestionEvent": {
-        "description": "A predicted next prompt for the composer to show as ghost text.\n\nAfter a finished turn the claude-native forwarder asks a small model for\nthe user's likely next message and relays the one-line answer.\n\nCategory: **transient** (SSE-only). Nothing is persisted and there is no\nreplay. `suggestion` is `None` to clear it.",
+        "description": "Predicted next prompts for the composer to show as ghost text.\n\nAfter a finished turn a native forwarder asks a small model for the user's\nlikely next messages and relays up to three one-line answers, best first.\n\nCategory: **transient** (SSE-only). Nothing is persisted and there is no\nreplay. `suggestion` and `suggestions` are `None` to clear them.",
         "properties": {
           "conversation_id": {
             "description": "The conversation whose stream this rides.",
@@ -8267,8 +8267,24 @@
               }
             ],
             "default": null,
-            "description": "The predicted prompt, e.g. `\"Run the tests\"`, or `None`.",
+            "description": "The top guess, e.g. `\"Run the tests\"`, or `None`.",
             "title": "Suggestion"
+          },
+          "suggestions": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Every guess best first, e.g. `[\"Run the tests\", \"Open a PR\"]`, or `None`.",
+            "title": "Suggestions"
           },
           "type": {
             "const": "session.suggestion",

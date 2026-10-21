@@ -5,36 +5,72 @@ import {
   aeIsSuggestionAcceptKey,
   aeNextSuggestion,
   aeParseSessionSuggestion,
+  aeSameSuggestions,
   aeShownSuggestion,
 } from "./aeSuggestion";
 
 const KEY = { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false };
 
 function suggestion(text: string | null, conversationId = "conv_a"): StreamEvent {
-  return { type: "session_suggestion", conversationId, suggestion: text };
+  return { type: "session_suggestion", conversationId, suggestions: text === null ? null : [text] };
 }
 
 describe("aeParseSessionSuggestion", () => {
-  it("reads a suggestion, a clear, and collapses whitespace", () => {
+  it("reads a ranked list, a clear, and collapses whitespace", () => {
     expect(
-      aeParseSessionSuggestion({ conversation_id: "c", suggestion: " Run\nthe  tests " }),
-    ).toEqual({ type: "session_suggestion", conversationId: "c", suggestion: "Run the tests" });
-    expect(aeParseSessionSuggestion({ conversation_id: "c", suggestion: null })).toEqual({
+      aeParseSessionSuggestion({
+        conversation_id: "c",
+        suggestion: "Run the tests",
+        suggestions: [" Run\nthe  tests ", "Open a PR"],
+      }),
+    ).toEqual({
       type: "session_suggestion",
       conversationId: "c",
-      suggestion: null,
+      suggestions: ["Run the tests", "Open a PR"],
+    });
+    expect(
+      aeParseSessionSuggestion({ conversation_id: "c", suggestion: null, suggestions: null }),
+    ).toEqual({ type: "session_suggestion", conversationId: "c", suggestions: null });
+  });
+
+  it("reads a lone suggestion from a server that predates the list", () => {
+    expect(aeParseSessionSuggestion({ conversation_id: "c", suggestion: "Ship it" })).toEqual({
+      type: "session_suggestion",
+      conversationId: "c",
+      suggestions: ["Ship it"],
     });
   });
 
-  it("rejects a payload without a conversation or with a non-string suggestion", () => {
+  it("keeps at most three and drops blank guesses", () => {
+    expect(
+      aeParseSessionSuggestion({ conversation_id: "c", suggestions: ["a", " ", "b", "c", "d"] })
+        ?.suggestions,
+    ).toEqual(["a", "b", "c"]);
+    expect(
+      aeParseSessionSuggestion({ conversation_id: "c", suggestions: ["  "] })?.suggestions,
+    ).toBeNull();
+  });
+
+  it("rejects a payload without a conversation or with a non-string guess", () => {
     expect(aeParseSessionSuggestion({ suggestion: "x" })).toBeNull();
     expect(aeParseSessionSuggestion({ conversation_id: "c", suggestion: 7 })).toBeNull();
+    expect(aeParseSessionSuggestion({ conversation_id: "c", suggestions: ["a", 7] })).toBeNull();
+    expect(aeParseSessionSuggestion({ conversation_id: "c", suggestions: "a" })).toBeNull();
+  });
+});
+
+describe("aeSameSuggestions", () => {
+  it("compares by content", () => {
+    expect(aeSameSuggestions(["a", "b"], ["a", "b"])).toBe(true);
+    expect(aeSameSuggestions(["a", "b"], ["b", "a"])).toBe(false);
+    expect(aeSameSuggestions(null, undefined)).toBe(true);
+    expect(aeSameSuggestions(["a"], null)).toBe(false);
   });
 });
 
 describe("aeNextSuggestion", () => {
   it("keeps this conversation's suggestion while idle and ignores another's", () => {
-    expect(aeNextSuggestion(suggestion("Open a PR"), "conv_a", "idle")).toBe("Open a PR");
+    expect(aeNextSuggestion(suggestion("Open a PR"), "conv_a", "idle")).toEqual(["Open a PR"]);
     expect(aeNextSuggestion(suggestion("Open a PR", "conv_b"), "conv_a", "idle")).toBeUndefined();
   });
 
@@ -63,15 +99,18 @@ describe("aeNextSuggestion", () => {
 
 describe("composer visibility", () => {
   it("shows only when idle and the box accepts input", () => {
-    expect(aeComposerSuggestion("Go", { busy: false, blocked: false })).toBe("Go");
-    expect(aeComposerSuggestion("Go", { busy: true, blocked: false })).toBeNull();
-    expect(aeComposerSuggestion("Go", { busy: false, blocked: true })).toBeNull();
+    const go = ["Go", "Stop"];
+    expect(aeComposerSuggestion(go, { busy: false, blocked: false })).toBe(go);
+    expect(aeComposerSuggestion(go, { busy: true, blocked: false })).toBeNull();
+    expect(aeComposerSuggestion(go, { busy: false, blocked: true })).toBeNull();
   });
 
   it("draws the ghost only over an empty box", () => {
-    expect(aeShownSuggestion("Go", "")).toBe("Go");
-    expect(aeShownSuggestion("Go", "h")).toBeNull();
+    const go = ["Go"];
+    expect(aeShownSuggestion(go, "")).toBe(go);
+    expect(aeShownSuggestion(go, "h")).toBeNull();
     expect(aeShownSuggestion(null, "")).toBeNull();
+    expect(aeShownSuggestion([], "")).toBeNull();
   });
 
   it("takes plain Tab only", () => {

@@ -182,21 +182,31 @@ def test_side_call_prompt_stays_within_the_budget() -> None:
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
-        ("Run the tests again\n", "Run the tests again"),
-        ('"Open a draft PR"', "Open a draft PR"),
-        ("\n\nNONE\n", None),
-        ("none.", None),
-        ("", None),
-        ("first line\nsecond line", "first line"),
+        ("Run the tests again\n", ["Run the tests again"]),
+        ('"Open a draft PR"', ["Open a draft PR"]),
+        ("\n\nNONE\n", []),
+        ("none.", []),
+        ("", []),
+        ("first line\n\nsecond line", ["first line", "second line"]),
+        ("1. Run the tests\n2) Open a PR\n- Ship it", ["Run the tests", "Open a PR", "Ship it"]),
+        ("a\nb\nc\nd", ["a", "b", "c"]),
+        (
+            "Run the tests again\nrun the tests again.\nOpen a PR",
+            ["Run the tests again", "Open a PR"],
+        ),
+        ("Open a PR\nNONE", ["Open a PR"]),
+        ("NONE\nThere is no clearly likely next message.", []),
+        ("Run the tests\n(The user will likely want to verify)", ["Run the tests"]),
+        ("Merge PR 121\nMerge PR 122", ["Merge PR 121", "Merge PR 122"]),
+        ("Run test_a.py\nRun test_b.py", ["Run test_a.py", "Run test_b.py"]),
     ],
 )
-def test_clean_suggestion(raw: str, expected: str | None) -> None:
-    assert suggest.clean_suggestion(raw) == expected
+def test_clean_suggestions(raw: str, expected: list[str]) -> None:
+    assert suggest.clean_suggestions(raw) == expected
 
 
-def test_clean_suggestion_cuts_long_lines_at_a_word() -> None:
-    cleaned = suggest.clean_suggestion("word " * 60)
-    assert cleaned is not None
+def test_clean_suggestions_cuts_long_lines_at_a_word() -> None:
+    (cleaned,) = suggest.clean_suggestions("word " * 60)
     assert len(cleaned) <= suggest.MAX_SUGGESTION_CHARS
     assert cleaned.endswith("word")
 
@@ -252,7 +262,7 @@ async def test_side_call_runs_the_fake_claude_isolated(
     log = _fake_claude(on_path, "print('Run the tests again')")
     monkeypatch.setenv("OMNIGENT_TOKEN", "secret")
     result = await suggest.run_side_call("the prompt")
-    assert result == "Run the tests again"
+    assert result == ["Run the tests again"]
     (call,) = _calls(log)
     assert call["argv"][:3] == ["-p", "--model", "haiku"]
     assert "--no-session-persistence" in call["argv"]
@@ -267,16 +277,16 @@ async def test_side_call_runs_the_fake_claude_isolated(
 @pytest.mark.asyncio
 async def test_side_call_none_and_failure_read_as_no_suggestion(on_path: Path) -> None:
     _fake_claude(on_path, "print('NONE')")
-    assert await suggest.run_side_call("p") is None
+    assert await suggest.run_side_call("p") == []
     _fake_claude(on_path, "print('boom'); sys.exit(3)")
-    assert await suggest.run_side_call("p") is None
+    assert await suggest.run_side_call("p") == []
 
 
 @pytest.mark.asyncio
 async def test_side_call_times_out_and_is_killed(on_path: Path) -> None:
     log = _fake_claude(on_path, "time.sleep(30); print('late')")
     started = time.monotonic()
-    assert await suggest.run_side_call("p", timeout_s=1.0) is None
+    assert await suggest.run_side_call("p", timeout_s=1.0) == []
     assert time.monotonic() - started < 10
     (call,) = _calls(log)
     with pytest.raises(ProcessLookupError):
@@ -294,7 +304,7 @@ async def test_timeout_kills_the_whole_process_group(on_path: Path) -> None:
         f"open({str(pid_file)!r}, 'w').write(str(child.pid))\n"
         "time.sleep(30)",
     )
-    assert await suggest.run_side_call("p", timeout_s=1.5) is None
+    assert await suggest.run_side_call("p", timeout_s=1.5) == []
     grandchild = int(pid_file.read_text())
     for _ in range(50):
         try:
@@ -327,7 +337,7 @@ async def test_the_call_writes_claude_json_only_in_its_private_dir(
         "open(target, 'w').write('{\"numStartups\": 2}')\n"
         "print('ok')",
     )
-    assert await suggest.run_side_call("p") == "ok"
+    assert await suggest.run_side_call("p") == ["ok"]
     assert (home / ".claude.json").read_text() == "{}"
     assert _calls(log)[0]["env"]["CLAUDE_CONFIG_DIR"] != str(home / ".claude")
 
@@ -378,7 +388,7 @@ async def test_no_login_means_no_call(on_path: Path, monkeypatch: pytest.MonkeyP
     log = _fake_claude(on_path, "print('x')")
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(on_path / "nowhere"))
-    assert await suggest.run_side_call("p") is None
+    assert await suggest.run_side_call("p") == []
     assert _calls(log) == []
     assert _leftover_dirs(on_path) == []
 
@@ -462,7 +472,10 @@ async def test_finished_turn_posts_one_transient_suggestion(on_path: Path, tmp_p
     server = _Server()
     await _schedule(server, _finished_turn(tmp_path), suggest.SuggestionState())
     assert server.posts == [
-        {"type": "external_session_suggestion", "data": {"suggestion": "Open a draft PR"}}
+        {
+            "type": "external_session_suggestion",
+            "data": {"suggestion": "Open a draft PR", "suggestions": ["Open a draft PR"]},
+        }
     ]
     assert len(_calls(log)) == 1
     assert "fix the failing test" in _calls(log)[0]["stdin"]
@@ -552,7 +565,10 @@ async def test_a_newer_turn_cancels_the_older_call(on_path: Path, tmp_path: Path
         with pytest.raises(asyncio.CancelledError):
             await older
     assert server.posts == [
-        {"type": "external_session_suggestion", "data": {"suggestion": "second answer"}}
+        {
+            "type": "external_session_suggestion",
+            "data": {"suggestion": "second answer", "suggestions": ["second answer"]},
+        }
     ]
     first_call = _calls(log)[0]
     with pytest.raises(ProcessLookupError):
@@ -679,7 +695,10 @@ async def test_the_hook_reply_reaches_the_side_call(on_path: Path, tmp_path: Pat
         server, half, suggest.SuggestionState(), last_assistant_message="Deployed to staging."
     )
     assert server.posts == [
-        {"type": "external_session_suggestion", "data": {"suggestion": "Ship it"}}
+        {
+            "type": "external_session_suggestion",
+            "data": {"suggestion": "Ship it", "suggestions": ["Ship it"]},
+        }
     ]
     assert "Deployed to staging." in _calls(log)[0]["stdin"]
 
@@ -707,7 +726,7 @@ async def test_a_typed_prompt_clears_a_shown_suggestion(on_path: Path, tmp_path:
         await suggest.clear_prompt_suggestion(client, state=state)
         await suggest.clear_prompt_suggestion(client, state=state)  # nothing shown: no post
     assert server.posts[1:] == [
-        {"type": "external_session_suggestion", "data": {"suggestion": None}}
+        {"type": "external_session_suggestion", "data": {"suggestion": None, "suggestions": None}}
     ]
 
 
@@ -720,11 +739,11 @@ async def test_a_cancel_mid_post_still_gets_its_clear(
     posting = asyncio.Event()
     real_post = core.post_suggestion
 
-    async def slow_post(client: httpx.AsyncClient, *, session_id: str, suggestion: Any) -> None:
-        if suggestion is not None:
+    async def slow_post(client: httpx.AsyncClient, *, session_id: str, suggestions: Any) -> None:
+        if suggestions is not None:
             posting.set()
             await asyncio.sleep(60)
-        await real_post(client, session_id=session_id, suggestion=suggestion)
+        await real_post(client, session_id=session_id, suggestions=suggestions)
 
     monkeypatch.setattr(core, "post_suggestion", slow_post)
     server = _Server()
@@ -743,7 +762,9 @@ async def test_a_cancel_mid_post_still_gets_its_clear(
         await suggest.clear_prompt_suggestion(client, state=state)
         with pytest.raises(asyncio.CancelledError):
             await task
-    assert server.posts == [{"type": "external_session_suggestion", "data": {"suggestion": None}}]
+    assert server.posts == [
+        {"type": "external_session_suggestion", "data": {"suggestion": None, "suggestions": None}}
+    ]
 
 
 @pytest.mark.asyncio
@@ -919,7 +940,10 @@ async def test_a_named_account_session_calls_on_that_account_via_env_only(
     assert call["config_files"] == []  # no login file copied into the private dir
     assert "OMNIGENT_CLAUDE_ACCOUNT" not in call["env"]
     assert server.posts == [
-        {"type": "external_session_suggestion", "data": {"suggestion": "Open a draft PR"}}
+        {
+            "type": "external_session_suggestion",
+            "data": {"suggestion": "Open a draft PR", "suggestions": ["Open a draft PR"]},
+        }
     ]
     assert _ACCOUNT_TOKEN not in caplog.text
     assert _leftover_dirs(on_path) == []

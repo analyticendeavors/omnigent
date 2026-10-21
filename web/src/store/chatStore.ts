@@ -693,8 +693,8 @@ export interface ConversationState {
   aeRunningSince: number | null;
   /** The terminal's live spinner line (`session.progress`), or `null` when none shows. */
   aeProgress: AeSessionProgress | null;
-  /** The predicted next prompt (`session.suggestion`) for the composer's ghost text. */
-  aeSuggestion: string | null;
+  /** The predicted next prompts, best first (`session.suggestion`), for the composer's ghost text. */
+  aeSuggestion: readonly string[] | null;
   /**
    * Whether the active session is a native-terminal wrapper
    * (claude-native / codex-native), derived from the `omnigent.wrapper`
