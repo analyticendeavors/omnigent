@@ -40,7 +40,7 @@ export function ComposerWorkspaceBar({ className, ...props }: ComponentPropsWith
     <div
       ref={barRef}
       className={cn(
-        "composer-workspace-surface group/composer-workspace relative z-0 -mb-px flex h-7 min-w-0 items-center gap-0.5 rounded-t-2xl border border-b-0 border-border py-0.5 md:h-[37px] md:gap-2 md:py-1.5",
+        "composer-workspace-surface group/composer-workspace relative z-0 -mb-px flex has-[[data-ae-dock-open]]:rounded-tl-none has-[[data-ae-dock-open]]:rounded-tr-none has-[[data-ae-dock-open]]:z-20 h-7 min-w-0 items-center gap-0.5 rounded-t-2xl border border-b-0 border-border py-0.5 md:h-[37px] md:gap-2 md:py-1.5",
         COMPOSER_CONTENT_INSET_CLASS,
         COMPOSER_TRAY_INSET_CLASS,
         className,

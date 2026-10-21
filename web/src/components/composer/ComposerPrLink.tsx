@@ -61,6 +61,7 @@ export function ComposerPrLink({
     <button
       type="button"
       data-testid="composer-pr-link"
+      data-ae-count={prCount}
       onClick={() => onOpen()}
       aria-label={label}
       title={
@@ -70,6 +71,8 @@ export function ComposerPrLink({
       }
       className={cn(
         "group flex min-w-0 items-center gap-1 rounded text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+        // omnigent-ae: icon and count while the action dock shares the bar.
+        "tabular-nums group-has-[[data-ae-dock-items]]/composer-workspace:after:content-[attr(data-ae-count)]",
         className,
       )}
     >
@@ -79,7 +82,7 @@ export function ComposerPrLink({
           directory and branch text, which frees the room it needs. */}
       <span
         data-workspace-collapse-label=""
-        className="truncate tabular-nums underline-offset-2 group-hover:underline group-focus-visible:underline"
+        className="truncate tabular-nums underline-offset-2 group-hover:underline group-focus-visible:underline group-has-[[data-ae-dock-items]]/composer-workspace:hidden"
         title={label}
       >
         {label}

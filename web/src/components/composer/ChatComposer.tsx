@@ -67,7 +67,7 @@ export const COMPOSER_COLLAPSED_LABEL_CLASS =
  * percentage are short and informative, so they stay visible.
  */
 export const COMPOSER_WORKSPACE_COLLAPSED_LABEL_CLASS =
-  "group-data-[labels=collapsed]/composer-workspace:hidden";
+  "group-data-[labels=collapsed]/composer-workspace:hidden group-has-[[data-ae-dock-items]]/composer-workspace:hidden";
 
 export interface ComposerKeyIntent {
   shouldSubmitFromKeyboard: boolean;

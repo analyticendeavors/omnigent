@@ -3578,7 +3578,6 @@ function ComposerImpl(
             SubagentComposerTray). Truthy (not just non-null) so an empty
             label never peeks a nameless tray. */}
         {subAgentLabel ? <SubagentComposerTray label={subAgentLabel} /> : null}
-        <AeActionDock key={conversationId} sessionId={conversationId ?? undefined} />
         <ComposerWorkspaceBar
           data-testid="composer-workspace-controls"
           className={cn(
@@ -3603,6 +3602,7 @@ function ComposerImpl(
             onOpen={openComposerGithubTab}
           />
           <AeTokenDefrag key={conversationId} />
+          <AeActionDock key={`ae-dock:${conversationId}`} sessionId={conversationId ?? undefined} />
           <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1">
             <div
               data-testid="composer-task-indicators"
