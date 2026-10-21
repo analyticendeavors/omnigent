@@ -342,6 +342,8 @@ export function ConfirmMerge({
       }
     },
   });
+  // The dock and the card can both show this confirm; one merge at a time.
+  const merging = useIsMutating({ mutationKey: ["ae-pr-merge", card.repo, card.number] }) > 0;
   const label = aeMergeLabel(method, card.base_ref);
   const choice = methods.length > 1 && Boolean(recommended && methods.includes(recommended));
   return (
@@ -422,11 +424,11 @@ export function ConfirmMerge({
           </Button>
           <Button
             className={cn(TOUCH, "min-w-0 flex-1 @[30rem]/aepr:flex-none")}
-            disabled={merge.isPending || updateWaiting || !card.merge.allowed}
+            disabled={merging || updateWaiting || !card.merge.allowed}
             title={label}
             onClick={() => merge.mutate()}
           >
-            {merge.isPending && (
+            {merging && (
               <AeTablerSvg node={AE_ICON_LOADER} className="size-3.5 animate-spin" />
             )}
             <span className="truncate">{label}</span>
@@ -715,7 +717,6 @@ export function AePrCardView({
     <article
       data-testid={inline ? "ae-pr-inline" : "ae-pr-card"}
       data-pr={url}
-      data-ae-pr={inline ? `${repo.toLowerCase()}#${number}` : undefined}
       className={cn(
         "@container/aepr flex flex-col gap-1.5 rounded-lg border border-border bg-background px-3 py-2",
         // A set width, not max-w only: the container ignores its content, so

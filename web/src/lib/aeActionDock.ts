@@ -20,7 +20,7 @@ export const AE_DOCK_LIVE_MS = 60_000;
 interface ItemBase {
   /** Unique across the dock. */
   key: string;
-  /** The `data-ae-pr` or `data-ae-question` value of the item's card in the feed. */
+  /** Identifies the item for dismissal; a question's is its card's `data-ae-question`. */
   anchor: string;
   /** Age within its kind: lower is older. */
   order: number;
@@ -59,7 +59,7 @@ export interface AeDockLimit extends ItemBase {
 
 export type AeDockItem = AeDockQuestion | AeDockLimit | AeDockMerge | AeDockDeploy;
 
-/** "owner/repo#123", the inline card's and merged row's `data-ae-pr`. */
+/** "owner/repo#123", a pull request item's anchor. */
 export function aeDockPrAnchor(repo: string, number: number): string {
   return `${repo.toLowerCase()}#${number}`;
 }
@@ -173,14 +173,18 @@ export function aeDockDeploys(
   return items;
 }
 
-/** Most urgent first, oldest first within a kind, minus items whose card is on screen. */
+/**
+ * Most urgent first, oldest first within a kind, minus questions whose card is
+ * on screen (it floats just above the dock). Every other item stays, wherever
+ * the feed is scrolled.
+ */
 export function aeDockArrange(
   items: readonly AeDockItem[],
-  onScreen: ReadonlySet<string>,
+  questionsOnScreen: ReadonlySet<string>,
 ): AeDockItem[] {
   const rank = (item: AeDockItem) => AE_DOCK_KINDS.indexOf(item.kind);
   return items
-    .filter((item) => !onScreen.has(item.anchor))
+    .filter((item) => item.kind !== "question" || !questionsOnScreen.has(item.anchor))
     .sort((a, b) => rank(a) - rank(b) || a.order - b.order);
 }
 

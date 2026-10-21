@@ -182,9 +182,14 @@ describe("arrange and summary", () => {
     ]);
   });
 
-  it("hides an item while its card is on screen", () => {
+  it("hides a question whose card is on screen, never a pull request", () => {
     const arranged = aeDockArrange(sample(), new Set(["q1", anchor(181)]));
-    expect(arranged.map((item) => item.anchor)).toEqual(["q2", anchor(180), anchor(179)]);
+    expect(arranged.map((item) => item.anchor)).toEqual([
+      "q2",
+      anchor(180),
+      anchor(181),
+      anchor(179),
+    ]);
   });
 
   it("leads with the most urgent and badges each other kind", () => {
@@ -199,7 +204,10 @@ describe("arrange and summary", () => {
   });
 
   it("badges a single question and a merge lead with no extras", () => {
-    const arranged = aeDockArrange(sample(), new Set(["q2", anchor(181)]));
+    const arranged = aeDockArrange(
+      sample().filter((item) => item.anchor !== anchor(181)),
+      new Set(["q2"]),
+    );
     const withoutFirst = arranged.filter((item) => item.anchor !== "q1");
     const summary = aeDockSummary(withoutFirst, clock)!;
     expect(summary.lead.kind).toBe("merge");

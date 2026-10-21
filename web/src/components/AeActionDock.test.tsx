@@ -76,7 +76,7 @@ function renderDock(texts: string[], pending: Question[] = []) {
     available: true,
     prs: tracked.map((u) => ({ url: u })),
   });
-  return render(
+  const view = render(
     <QueryClientProvider client={qc}>
       <MemoryRouter>
         <Questions pending={pending} />
@@ -89,6 +89,7 @@ function renderDock(texts: string[], pending: Question[] = []) {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...view, qc };
 }
 
 function serve(cards: Record<number, AePrCard>) {
@@ -376,66 +377,51 @@ describe("AeActionDock", () => {
     expect(screen.queryByTestId("ae-action-dock")).toBeNull();
   });
 
-  it("hides an item while its card is on screen in the feed", async () => {
-    const observed: Element[] = [];
-    let report: (entries: Partial<IntersectionObserverEntry>[]) => void = () => {};
-    class FakeObserver {
+  it("hides a question while its card is on screen, and keeps the merges", async () => {
+    // Every observed element reports itself visible at once.
+    class VisibleObserver {
+      callback: (entries: Partial<IntersectionObserverEntry>[]) => void;
       constructor(callback: (entries: Partial<IntersectionObserverEntry>[]) => void) {
-        report = callback;
+        this.callback = callback;
       }
-      observe(el: Element) {
-        observed.push(el);
+      observe(target: Element) {
+        this.callback([{ target, isIntersecting: true }]);
       }
       unobserve() {}
       disconnect() {}
     }
-    vi.stubGlobal("IntersectionObserver", FakeObserver);
+    vi.stubGlobal("IntersectionObserver", VisibleObserver);
+    const feedCard = document.createElement("article");
+    feedCard.setAttribute("data-ae-question", question.elicitationId);
+    document.body.appendChild(feedCard);
     try {
-      const feedCard = document.createElement("article");
-      feedCard.setAttribute("data-ae-pr", `${REPO}#180`);
-      document.body.appendChild(feedCard);
       serve({ 180: card(180) });
-      renderDock([`Opened ${url(180)}`]);
-      await screen.findByTestId("ae-dock-merge");
-      expect(observed).toContain(feedCard);
-      act(() => report([{ target: feedCard, isIntersecting: true }]));
-      expect(screen.queryByTestId("ae-action-dock")).toBeNull();
-      act(() => report([{ target: feedCard, isIntersecting: false }]));
-      expect(screen.getByTestId("ae-dock-merge")).toBeTruthy();
-      feedCard.remove();
+      renderDock([`Opened ${url(180)}`], [question]);
+      const lead = await screen.findByTestId("ae-dock-lead");
+      await waitFor(() => expect(within(lead).getByTestId("ae-dock-merge")).toBeTruthy());
+      expect(screen.queryByTestId("ae-dock-jump")).toBeNull();
     } finally {
+      feedCard.remove();
       vi.unstubAllGlobals();
     }
   });
 
   it("a confirm whose item leaves the dock closes, with the tray opened for it", async () => {
-    let report: (entries: Partial<IntersectionObserverEntry>[]) => void = () => {};
-    class FakeObserver {
-      constructor(callback: (entries: Partial<IntersectionObserverEntry>[]) => void) {
-        report = callback;
-      }
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    }
-    vi.stubGlobal("IntersectionObserver", FakeObserver);
-    try {
-      const feedCard = document.createElement("article");
-      feedCard.setAttribute("data-ae-pr", `${REPO}#180`);
-      document.body.appendChild(feedCard);
-      serve({ 180: card(180), 181: card(181) });
-      renderDock([`Opened ${url(180)} and ${url(181)}`]);
-      await waitFor(() => expect(screen.getByTestId("ae-dock-lead").textContent).toContain("#180"));
-      fireEvent.click(within(screen.getByTestId("ae-dock-lead")).getByTestId("ae-dock-merge"));
-      expect(screen.getByRole("group", { name: "Confirm merge" })).toBeTruthy();
-      act(() => report([{ target: feedCard, isIntersecting: true }]));
-      expect(screen.queryByRole("group", { name: "Confirm merge" })).toBeNull();
-      expect(screen.queryByTestId("ae-dock-tray")).toBeNull();
-      expect(screen.getByTestId("ae-dock-lead").textContent).toContain("#181");
-      feedCard.remove();
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    serve({ 180: card(180), 181: card(181) });
+    const { qc } = renderDock([`Opened ${url(180)} and ${url(181)}`]);
+    await waitFor(() => expect(screen.getByTestId("ae-dock-lead").textContent).toContain("#180"));
+    fireEvent.click(within(screen.getByTestId("ae-dock-lead")).getByTestId("ae-dock-merge"));
+    expect(screen.getByRole("group", { name: "Confirm merge" })).toBeTruthy();
+    // Merged from its own card in the feed, so the dock's item goes.
+    const [query] = qc.getQueryCache().findAll({
+      predicate: (q) => q.queryKey[0] === "ae-pr" && q.queryKey[2] === 180,
+    });
+    act(() => qc.setQueryData(query.queryKey, card(180, { state: "merged" })));
+    await waitFor(() =>
+      expect(screen.queryByRole("group", { name: "Confirm merge" })).toBeNull(),
+    );
+    expect(screen.queryByTestId("ae-dock-tray")).toBeNull();
+    expect(screen.getByTestId("ae-dock-lead").textContent).toContain("#181");
   });
 
   it("offers nothing for a pull request the session does not track", async () => {

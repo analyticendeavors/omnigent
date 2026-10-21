@@ -153,7 +153,6 @@ export function AeMergedPrFold({
                 target="_blank"
                 rel="noreferrer"
                 data-testid="ae-pr-fold-chip"
-                data-ae-pr={`${pr.repo.toLowerCase()}#${pr.number}`}
                 className="rounded border border-border px-1.5 text-xs text-muted-foreground hover:text-foreground"
                 onClick={(event) => event.stopPropagation()}
               >

@@ -151,12 +151,12 @@ const dismissedDeploys = new Set<string>();
 // ── the hook ───────────────────────────────────────────────────────────
 
 /**
- * The dock's items, arranged, minus any whose card is on screen (`onScreen`
- * holds `data-ae-pr` and `data-ae-question` values).
+ * The dock's items, arranged, minus questions whose card is on screen
+ * (`questionsOnScreen` holds `data-ae-question` values).
  */
 export function useAeActionDockItems(
   sessionId: string | undefined,
-  onScreen: ReadonlySet<string>,
+  questionsOnScreen: ReadonlySet<string>,
 ): { items: AeDockItem[]; dismiss: (anchor: string) => void } {
   const joined = useChatStore((s) =>
     s.conversationId === sessionId ? aePrUrlsInBlocks(s.blocks).join("\n") : "",
@@ -246,7 +246,7 @@ export function useAeActionDockItems(
       ...aeDockMerges(withCards),
       ...aeDockDeploys(withCards, deploys, track, dismissedDeploys, now),
     ],
-    onScreen,
+    questionsOnScreen,
   );
   return {
     items,
@@ -258,12 +258,12 @@ export function useAeActionDockItems(
   };
 }
 
-// ── cards on screen ────────────────────────────────────────────────────
+// ── question cards on screen ───────────────────────────────────────────
 
-const ANCHORS = "[data-ae-pr],[data-ae-question]";
+const ANCHORS = "[data-ae-question]";
 
 function anchorOf(el: Element): string | null {
-  return el.getAttribute("data-ae-pr") ?? el.getAttribute("data-ae-question");
+  return el.getAttribute("data-ae-question");
 }
 
 function sameSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
@@ -271,10 +271,10 @@ function sameSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
 }
 
 /**
- * The `data-ae-pr` and `data-ae-question` values of feed cards now on screen.
- * The feed is virtualized, so a mutation observer picks up cards as they mount.
+ * The `data-ae-question` values of question cards now on screen. The feed is
+ * virtualized, so a mutation observer picks up cards as they mount.
  */
-export function useAeCardsOnScreen(): ReadonlySet<string> {
+export function useAeQuestionsOnScreen(): ReadonlySet<string> {
   const [onScreen, setOnScreen] = useState<ReadonlySet<string>>(() => new Set());
   useEffect(() => {
     if (typeof IntersectionObserver === "undefined") return;

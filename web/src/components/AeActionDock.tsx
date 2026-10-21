@@ -2,15 +2,16 @@
 // request ready to merge, a merge on its way to the box), inside the composer's
 // workspace bar, and an account near its usage limit. The most urgent item sits after the folder and PR chips with
 // its button, a badge per other kind sits before the bar's right cluster, and
-// the caret opens a list as a tray above the bar (designs E1 and D3b). An item
-// hides while its own card is on screen. Nothing waiting draws nothing.
+// the caret opens a list as a tray above the bar (designs E1 and D3b). A question
+// hides while its own card is on screen; every other item stays, wherever the
+// feed is scrolled. Nothing waiting draws nothing.
 
 import { QueryClientContext, useIsMutating, useQueryClient } from "@tanstack/react-query";
 import { type RefObject, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ConfirmMerge, MERGED_TEXT } from "@/components/AePrCards";
 import { COMPOSER_CONTENT_INSET_CLASS } from "@/components/composer/ChatComposer";
 import { Button } from "@/components/ui/button";
-import { useAeActionDockItems, useAeCardsOnScreen } from "@/hooks/useAeActionDockItems";
+import { useAeActionDockItems, useAeQuestionsOnScreen } from "@/hooks/useAeActionDockItems";
 import {
   type AeDockItem,
   type AeDockKind,
@@ -413,8 +414,8 @@ function Dock({ sessionId, onSwitchModel }: { sessionId?: string; onSwitchModel?
     // A full clone of this session, history included; the dialog's account row picks the login.
     onSwitchAccount: forkDialog ? () => forkDialog.openForkDialog() : undefined,
   };
-  const onScreen = useAeCardsOnScreen();
-  const { items, dismiss } = useAeActionDockItems(sessionId, onScreen);
+  const questionsOnScreen = useAeQuestionsOnScreen();
+  const { items, dismiss } = useAeActionDockItems(sessionId, questionsOnScreen);
   // Always starts closed: an open tray left over from an earlier visit would
   // cover the newest lines of the chat.
   const [open, setOpen] = useState(false);
