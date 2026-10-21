@@ -157,7 +157,11 @@ export function ConversationBreadcrumb({
           )}
         </Link>
       ) : (
-        (titleSlot ?? <span className="min-w-0 truncate text-foreground">{conversationTitle}</span>)
+        (titleSlot ?? (
+          <span className="breadcrumb-title min-w-0 truncate text-foreground">
+            {conversationTitle}
+          </span>
+        ))
       )}
       {actions}
       {isChildSession && (

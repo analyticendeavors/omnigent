@@ -25,7 +25,7 @@ export function HeaderTitle({ conversationId, title }: { conversationId: string;
             type="button"
             data-testid="header-title"
             onClick={() => setEditing(true)}
-            className="min-w-0 cursor-pointer truncate rounded text-left text-foreground hover:underline focus-visible:underline focus-visible:outline-none"
+            className="breadcrumb-title min-w-0 cursor-pointer truncate rounded text-left text-foreground hover:underline focus-visible:underline focus-visible:outline-none"
           >
             {title}
           </button>

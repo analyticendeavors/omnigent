@@ -936,18 +936,14 @@ html[data-electron-mac] .breadcrumb-folder {
   -webkit-app-region: no-drag;
 }
 
-/* Native shells carry their own chrome (server switcher), so the folder /
- * title / sub-agent segments are redundant there. Keep the parent-session
- * link: native back is off and edge-pan opens the sidebar, so that link is
- * the only in-header climb-out of a sub-agent. Hide the empty nav when there
- * is no parent link (top-level). Not scoped to a width media query so it
- * holds on wider native shells (e.g. iPad) too. */
-[data-ios-native] .conversation-breadcrumb:not(:has(> a.breadcrumb-parent-link)),
-[data-android-native] .conversation-breadcrumb:not(:has(> a.breadcrumb-parent-link)) {
-  display: none;
-}
-[data-ios-native] .conversation-breadcrumb > :not(a.breadcrumb-parent-link),
-[data-android-native] .conversation-breadcrumb > :not(a.breadcrumb-parent-link) {
+/* Native shells carry their own chrome (server switcher), which makes the
+ * folder and sub-agent segments redundant but does not name the session, so
+ * the session title stays. The parent-session link stays too: it is the only
+ * in-header climb-out of a sub-agent. Holds at every width (iPad too). */
+[data-ios-native] .conversation-breadcrumb > :not(a.breadcrumb-parent-link):not(.breadcrumb-title),
+[data-android-native]
+  .conversation-breadcrumb
+  > :not(a.breadcrumb-parent-link):not(.breadcrumb-title) {
   display: none;
 }
 
