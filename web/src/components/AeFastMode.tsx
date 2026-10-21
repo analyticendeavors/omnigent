@@ -27,6 +27,7 @@ import { useChatStore } from "@/store/chatStore";
 
 export const AE_FAST_MODE_HINT = "Faster Opus output; bills usage credits";
 export const AE_FAST_MODE_NEEDS_PER_SESSION = "Needs per-session fast mode on this host";
+export const AE_FAST_MODE_NEEDS_OPUS = "Choose a supported Opus model to turn on fast mode";
 
 /** The design system's Switch, drawn without a button: the menu item is the control. */
 function SwitchTrack({ checked, disabled }: { checked: boolean; disabled: boolean }) {
@@ -88,8 +89,11 @@ export function AeFastModeSection({
   const pending = state.pending !== null;
   const checked = state.pending ?? state.enabled ?? false;
   // Why turning it on is unavailable; off stays allowed while it is on or unknown.
-  const onBlocked = !aeFastModeModelSupported(model, modelLabel)
-    ? "Choose a supported Opus model to turn on fast mode"
+  // An unsupported model is the common case, so it is the row's tooltip, not a
+  // second line; the host's limit is rarer and stays visible.
+  const modelUnsupported = !aeFastModeModelSupported(model, modelLabel);
+  const onBlocked = modelUnsupported
+    ? AE_FAST_MODE_NEEDS_OPUS
     : state.perSession === false
       ? AE_FAST_MODE_NEEDS_PER_SESSION
       : null;
@@ -99,7 +103,7 @@ export function AeFastModeSection({
   const note = pending
     ? (state.pendingReason ?? `Turning fast mode ${state.pending ? "on" : "off"}…`)
     : (state.error ??
-      onBlocked ??
+      (modelUnsupported ? null : onBlocked) ??
       (state.enabled === null && state.settled ? "Unknown until the session replies" : null));
 
   return (
@@ -112,7 +116,7 @@ export function AeFastModeSection({
           disabled={disabled}
           aria-labelledby={labelId}
           aria-describedby={note ? `${hintId} ${noteId}` : hintId}
-          title={AE_FAST_MODE_HINT}
+          title={modelUnsupported ? AE_FAST_MODE_NEEDS_OPUS : AE_FAST_MODE_HINT}
           aria-busy={pending || undefined}
           data-testid="composer-fast-mode-switch"
           onSelect={(event) => event.preventDefault()}
@@ -125,7 +129,7 @@ export function AeFastModeSection({
               Fast mode
             </span>
             <span id={hintId} className="sr-only">
-              {AE_FAST_MODE_HINT}
+              {modelUnsupported ? `${AE_FAST_MODE_HINT}. ${AE_FAST_MODE_NEEDS_OPUS}` : AE_FAST_MODE_HINT}
             </span>
             {note && (
               <span

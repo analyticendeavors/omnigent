@@ -1,13 +1,15 @@
-// The Effort row's value when a Claude session has no pick: the level Claude
-// Code takes from its settings, which the runner records per model in a session
-// label (omnigent/runner/ae_launch_effort.py). Read from the sidebar's
+// The effort a Claude session runs at when it has no pick: the level Claude
+// Code takes from its settings files, which the runner records per model in a
+// session label (omnigent/runner/ae_launch_effort.py), else the level Claude
+// Code itself falls back to for the model. The label is read from the sidebar's
 // `["conversations"]` cache, so it costs no request.
 
 import { type QueryClient, QueryClientContext } from "@tanstack/react-query";
 import { useCallback, useContext, useSyncExternalStore } from "react";
 import type { Conversation } from "@/hooks/useConversations";
+import { aeClaudeVersion } from "@/lib/aeClaudeModels";
 import { comparableModelId } from "@/lib/codexNativeModels";
-import { formatStatusEffortLabel } from "@/lib/composerModelLabel";
+import { normalizeEffortLabel } from "@/lib/composerModelLabel";
 import type { ConversationsInfiniteData } from "@/lib/sessionListCache";
 
 export const AE_EFFORT_DEFAULT_LABEL = "ae.claude_effort_default";
@@ -101,13 +103,69 @@ export function aeEffortDefaultFor(
   return levels.find(([key]) => key === ANY_MODEL)?.[1] ?? null;
 }
 
-/** The Effort row's suffix for a Claude session with no pick, else `""`. */
-export function aeEffortDefaultSuffix(
-  pickerKind: string | null | undefined,
-  routingOn: boolean,
-  recorded: string | null,
-): string {
-  if (pickerKind !== "claude" || routingOn) return "";
-  const label = formatStatusEffortLabel(recorded);
-  return label ? `: ${label} (default)` : ": Claude default";
+// Claude Code's own default effort per model, read from the model catalog in
+// the installed Claude Code binary (2.1.306, 2026-10-20) with
+// scripts/claude-effort-defaults.py in omnigent-ae; rerun it after a Claude
+// Code bump and update this table. Keyed by family and "major.minor".
+export const CLAUDE_CODE_DEFAULT_EFFORT: Readonly<Record<string, string>> = {
+  "opus 5.5": "medium",
+  "opus 5": "high",
+  "opus 4.8": "high",
+  "opus 4.7": "xhigh",
+  "opus 4.6": "high",
+  "sonnet 5.5": "medium",
+  "sonnet 5": "high",
+  "sonnet 4.6": "high",
+  "haiku 5.5": "medium",
+  "fable 5.1": "high",
+  "fable 5": "high",
+};
+
+/** Claude Code's built-in default for a model id, alias or label; null when unknown. */
+export function aeClaudeCodeDefaultEffort(
+  model: string | null | undefined,
+  options: readonly ModelOption[] = [],
+): string | null {
+  if (!model) return null;
+  const version = aeClaudeVersion(canonicalModel(model, options)) ?? aeClaudeVersion(model);
+  if (!version) return null;
+  const key = `${version.family} ${version.major}${version.minor ? `.${version.minor}` : ""}`;
+  return CLAUDE_CODE_DEFAULT_EFFORT[key] ?? null;
+}
+
+/** Where a Claude session's unpinned effort comes from. */
+export type AeEffortSource = "settings" | "claude";
+
+export interface AeEffortResolved {
+  level: string;
+  source: AeEffortSource;
+}
+
+/**
+ * The effort an unpinned Claude session runs at: a settings-file level the
+ * runner recorded (`settings`), else Claude Code's own default for the model
+ * (`claude`); null when the model is unknown. With no model reported yet, the
+ * picker's default model stands in.
+ */
+export function aeEffortResolved(
+  raw: string | null,
+  model: string | null | undefined,
+  options: readonly ModelOption[] = [],
+): AeEffortResolved | null {
+  const settings = aeEffortDefaultFor(raw, model, options);
+  if (settings) return { level: settings, source: "settings" };
+  const current = model || options.find((option) => option.isDefault)?.id;
+  const builtIn = aeClaudeCodeDefaultEffort(current, options);
+  return builtIn ? { level: builtIn, source: "claude" } : null;
+}
+
+/** Claude Code's word for a level: Low, Medium, High, Extra (xhigh) or Max. */
+export function aeClaudeEffortLabel(effort: string | null | undefined): string | null {
+  if (!effort) return null;
+  return effort.toLowerCase() === "xhigh" ? "Extra" : normalizeEffortLabel(effort);
+}
+
+/** The tag beside the resolved level in the Effort submenu. */
+export function aeEffortSourceTag(source: AeEffortSource): string {
+  return source === "settings" ? "settings" : "default";
 }

@@ -71,15 +71,18 @@ import { type Agent, useSessionAgent, useAgents } from "@/hooks/useAgents";
 import { AeFastModeSection } from "@/components/AeFastMode";
 import { useAeFastModePending } from "@/lib/aeFastMode";
 import {
-  aeEffortDefaultFor,
-  aeEffortDefaultSuffix,
+  aeClaudeEffortLabel,
+  aeEffortResolved,
+  aeEffortSourceTag,
   useAeEffortDefault,
 } from "@/lib/aeEffortDefault";
 import { aeClaudeVersion, aeSplitPreviousBy, useAeClaudeVersions } from "@/lib/aeClaudeModels";
+import { AE_MENU_ROW_CLASS } from "@/lib/aeMenuRow";
+import { aeModelRowForDigit } from "@/lib/aeModelShortcut";
 import { AePlanLimitsPopover } from "@/components/AePlanLimits";
 import { AeTokenDefrag } from "@/components/AeTokenDefrag";
 import { SessionTeamControl } from "@/components/AeTeamControl";
-import { ClaudeAccounts } from "@/shell/ClaudeAccounts";
+import { AeClaudeAccountSubmenu } from "@/shell/AeClaudeAccountSubmenu";
 import { agentDisplayLabel } from "@/components/AgentInfo";
 import {
   BRAIN_HARNESS_LABELS,
@@ -246,7 +249,6 @@ import {
   ComposerConfigSections,
   type ComposerConfigChoice,
 } from "@/components/composer/ComposerConfigSections";
-import { PickerSectionHeader } from "@/components/composer/HarnessMenuRow";
 import { buildFusionSections } from "@/components/composer/fusionSections";
 import { fusionOption, isFusionModelUid } from "@/lib/devinFusion";
 import { ComposerWorkspaceStatus } from "@/components/composer/ComposerWorkspaceStatus";
@@ -4633,7 +4635,14 @@ function compactModelChoices(
   return { primary, more };
 }
 
-function CompactConfigChoice({ choice }: { choice: ComposerConfigChoice }) {
+function CompactConfigChoice({
+  choice,
+  shortcut,
+}: {
+  choice: ComposerConfigChoice;
+  /** The digit that picks this row while the menu is open. */
+  shortcut?: string;
+}) {
   return (
     <DropdownMenuCheckboxItem
       checked={choice.checked}
@@ -4641,15 +4650,22 @@ function CompactConfigChoice({ choice }: { choice: ComposerConfigChoice }) {
       onSelect={(event) => event.preventDefault()}
       onCheckedChange={choice.onSelect}
       data-testid={choice.testId}
-      // In the two-column grid a right-edge check sits beside the next column's
-      // model and reads as its; the check goes before the name instead.
-      className={cn(
-        "min-h-8 pr-2! pl-7! whitespace-normal break-words [&>[data-slot=dropdown-menu-checkbox-item-indicator]]:right-auto [&>[data-slot=dropdown-menu-checkbox-item-indicator]]:left-1.5",
-        choice.className,
-      )}
+      data-model-shortcut={shortcut}
+      // The check goes before the name, as desktop Claude Code draws it, which
+      // leaves the right edge for the shortcut digit or a tag.
+      className={cn(AE_MENU_ROW_CLASS, choice.className)}
       {...choice.data}
     >
       {choice.label}
+      {shortcut && (
+        <span
+          aria-hidden="true"
+          className="ml-auto pl-3 text-xs text-muted-foreground"
+          data-testid="composer-agent-model-shortcut"
+        >
+          {shortcut}
+        </span>
+      )}
     </DropdownMenuCheckboxItem>
   );
 }
@@ -4660,7 +4676,7 @@ function CompactSessionChoices({
   kind,
 }: {
   models?: { leading?: ReactNode; choices: ComposerConfigChoice[] };
-  efforts?: { label: string; choices: ComposerConfigChoice[] };
+  efforts?: { label: string; value?: string | null; choices: ComposerConfigChoice[] };
   kind: NativeModelPickerKind | null;
 }) {
   const { primary, more, unresolvedCurrent } = compactModelChoices(models?.choices ?? [], kind);
@@ -4668,34 +4684,30 @@ function CompactSessionChoices({
     <>
       {models && (
         <div data-testid="composer-agent-models">
-          <PickerSectionHeader>Models</PickerSectionHeader>
           {models.leading}
           {unresolvedCurrent && <CompactConfigChoice choice={unresolvedCurrent} />}
-          <div className="grid grid-cols-2 gap-0.5 max-[480px]:grid-cols-1">
-            {primary.map((choice) => (
-              <CompactConfigChoice key={choice.key} choice={choice} />
-            ))}
-          </div>
-          {more.length > 0 && (
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger data-testid="composer-agent-more-models">
-                {kind === "claude" ? "Previous models" : "More models"}
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="max-h-[70vh] max-w-[calc(100vw-2rem)] overflow-y-auto">
-                {more.map((choice) => (
-                  <CompactConfigChoice key={choice.key} choice={choice} />
-                ))}
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-          )}
+          {primary.map((choice, index) => (
+            <CompactConfigChoice
+              key={choice.key}
+              choice={choice}
+              shortcut={index < 9 ? String(index + 1) : undefined}
+            />
+          ))}
         </div>
       )}
       {efforts && (
         <div data-testid="composer-agent-efforts">
-          {models && <DropdownMenuSeparator />}
           <DropdownMenuSub>
-            <DropdownMenuSubTrigger data-testid="composer-agent-effort-trigger">
+            <DropdownMenuSubTrigger data-testid="composer-agent-effort-trigger" className="pl-7">
               {efforts.label}
+              {efforts.value && (
+                <span
+                  className="ml-auto min-w-0 truncate text-muted-foreground"
+                  data-testid="composer-agent-effort-current"
+                >
+                  {efforts.value}
+                </span>
+              )}
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent className="max-h-[70vh] overflow-y-auto">
               {efforts.choices.map((choice) => (
@@ -4704,6 +4716,18 @@ function CompactSessionChoices({
             </DropdownMenuSubContent>
           </DropdownMenuSub>
         </div>
+      )}
+      {models && more.length > 0 && (
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger data-testid="composer-agent-more-models" className="pl-7">
+            {kind === "claude" ? "Previous models" : "More models"}
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="max-h-[70vh] max-w-[calc(100vw-2rem)] overflow-y-auto">
+            {more.map((choice) => (
+              <CompactConfigChoice key={choice.key} choice={choice} />
+            ))}
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
       )}
     </>
   );
@@ -4778,7 +4802,15 @@ function SessionHarnessPicker({
     modelLabelOptions,
     modelLabelHostId,
   );
-  const effortDefault = aeEffortDefaultFor(effortDefaults, effectiveModel, modelOptions);
+  // The level an unpinned Claude session runs at, and where it comes from.
+  const effortResolved =
+    modelPickerKind === "claude"
+      ? aeEffortResolved(effortDefaults, effectiveModel, modelOptions)
+      : null;
+  const effortWord = (effort: string | null | undefined) =>
+    modelPickerKind === "claude"
+      ? aeClaudeEffortLabel(effort)
+      : formatStatusEffortLabel(effort ?? null);
   const modelSummary = modelLabelLoading
     ? "Loading model…"
     : modelLabelUnavailable
@@ -4794,6 +4826,10 @@ function SessionHarnessPicker({
     name: nativeAgent?.agentName ?? agentName ?? subAgentName ?? "",
     harness: nativeAgent?.harness ?? sessionHarness,
   };
+  const effortLabel = showEffort && !routingOn ? effortWord(selectedEffort) : null;
+  // The chip and the Effort row show the pick, else the level Claude Code runs at.
+  const effortShown =
+    effortLabel ?? (showEffort && !routingOn ? effortWord(effortResolved?.level) : null);
   const summary = useSessionConfigSummary({
     harnessLabel,
     showModels,
@@ -4802,6 +4838,11 @@ function SessionHarnessPicker({
     effectiveModel,
     modelLabel: modelSummary,
     costRoutingEligible,
+    effortText:
+      effortLabel ??
+      (effortShown && effortResolved
+        ? `${effortShown} (${aeEffortSourceTag(effortResolved.source)})`
+        : null),
   });
   const configurable =
     showClaudeAccounts ||
@@ -4810,7 +4851,6 @@ function SessionHarnessPicker({
       showEffort,
     }) ||
     (conversationId !== null && subAgentName === null);
-  const effortLabel = showEffort && !routingOn ? formatStatusEffortLabel(selectedEffort) : null;
   const label = routingOn
     ? SMART_ROUTING_LABEL
     : modelLabelLoading
@@ -4881,9 +4921,21 @@ function SessionHarnessPicker({
       if (useChatStore.getState().conversationId !== sourceSessionId) return;
       if (selectedEffort !== null) await store.setEffort(null);
     });
+  // A digit picks the numbered model row from anywhere in the menu.
+  const pickModelByDigit = (event: KeyboardEvent<HTMLDivElement>) => {
+    const row = aeModelRowForDigit(event.currentTarget, event);
+    if (!row) return;
+    event.preventDefault();
+    row.click();
+  };
   const configContent = (
-    <>
-      {showClaudeAccounts && <ClaudeAccounts host={accountHost} compact />}
+    <div onKeyDown={pickModelByDigit} data-testid="composer-agent-config-content">
+      {showClaudeAccounts && (
+        <>
+          <AeClaudeAccountSubmenu host={accountHost} disabled={picksBusy} />
+          {showModels && <DropdownMenuSeparator />}
+        </>
+      )}
       {costRoutingEligible && showModels && (
         <>
           <DropdownMenuItem
@@ -4976,11 +5028,25 @@ function SessionHarnessPicker({
         efforts={
           showEffort && availableEfforts.length > 0
             ? {
-                label: `${modelPickerKind === "pi" ? "Thinking level" : "Effort"}${effortLabel ? `: ${effortLabel}` : aeEffortDefaultSuffix(modelPickerKind, routingOn, effortDefault)}`,
+                label: modelPickerKind === "pi" ? "Thinking level" : "Effort",
+                value: effortShown,
                 choices: availableEfforts.map((effort) => ({
                   key: effort,
-                  label: formatStatusEffortLabel(effort) ?? effort,
-                  checked: !routingOn && effort === (selectedEffort ?? effortDefault),
+                  label:
+                    effortResolved && effort === effortResolved.level ? (
+                      <>
+                        {effortWord(effort) ?? effort}
+                        <span
+                          className="ml-auto pl-3 text-xs text-muted-foreground"
+                          data-testid="composer-agent-effort-tag"
+                        >
+                          {aeEffortSourceTag(effortResolved.source)}
+                        </span>
+                      </>
+                    ) : (
+                      (effortWord(effort) ?? effort)
+                    ),
+                  checked: !routingOn && effort === (selectedEffort ?? effortResolved?.level ?? null),
                   disabled: routingOn || picksBusy || pendingModelChange !== null,
                   onSelect: () => void apply(() => useChatStore.getState().setEffort(effort)),
                   testId: `composer-agent-effort-${effort}`,
@@ -5033,7 +5099,7 @@ function SessionHarnessPicker({
           </DropdownMenuItem>
         </>
       )}
-    </>
+    </div>
   );
   return (
     <HarnessPicker
@@ -5045,7 +5111,7 @@ function SessionHarnessPicker({
       trigger={{
         label: "Configure session",
         model: label,
-        effort: effortLabel ?? undefined,
+        effort: effortShown ?? undefined,
         icon: <ComposerAgentIcon agent={iconAgent} />,
         disabled: busy || !configurable,
         "aria-disabled": disabled || busy || !configurable,
@@ -5102,6 +5168,7 @@ function useSessionConfigSummary({
   effectiveModel,
   modelLabel,
   costRoutingEligible,
+  effortText = null,
 }: {
   harnessLabel: string | null;
   showModels: boolean;
@@ -5110,6 +5177,9 @@ function useSessionConfigSummary({
   effectiveModel: string | null;
   modelLabel: string | null;
   costRoutingEligible: boolean;
+  /** The effort in the caller's words: the pick, else the level an unpinned
+   *  session runs at with its source, e.g. "High (default)". */
+  effortText?: string | null;
 }): { label: string; value: string }[] {
   const selectedEffort = useSessionEffort();
   const costControlModeOverride = useChatStore((s) => s.costControlModeOverride);
@@ -5126,7 +5196,7 @@ function useSessionConfigSummary({
   // Suppress Effort while routing is on: the router picks the model and its
   // effort per turn, so a pinned effort doesn't apply and would mislead.
   if (showEffort && !routingOn) {
-    const effortValue = formatStatusEffortLabel(selectedEffort);
+    const effortValue = effortText ?? formatStatusEffortLabel(selectedEffort);
     if (effortValue) rows.push({ label: "Effort", value: effortValue });
   }
   if (!routingOn) {

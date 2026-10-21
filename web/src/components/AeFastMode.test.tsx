@@ -141,8 +141,10 @@ describe("AeFastModeSection", () => {
     serve(false, () => Promise.resolve(json(200, { enabled: true })));
     renderSection({ model, modelLabel });
 
-    await waitFor(() => expect(note()).toHaveTextContent("Choose a supported Opus model"));
-    expect(fastSwitch()).toHaveAttribute("data-disabled");
+    await waitFor(() => expect(fastSwitch()).toHaveAttribute("data-disabled"));
+    // The reason is the row's tooltip, so the row stays one line.
+    expect(fastSwitch()).toHaveAttribute("title", "Choose a supported Opus model to turn on fast mode");
+    expect(note()).toBeNull();
     fireEvent.click(fastSwitch());
     expect(puts()).toHaveLength(0);
   });
@@ -153,8 +155,10 @@ describe("AeFastModeSection", () => {
   ])("can be turned off on a model without fast mode while %s", async (_label, state) => {
     serve(state, () => Promise.resolve(json(200, { enabled: false })));
     renderSection({ model: "claude-sonnet-5", modelLabel: "Sonnet 5" });
-    await waitFor(() => expect(note()).toHaveTextContent("Choose a supported Opus model"));
-    expect(fastSwitch()).toHaveAttribute("aria-checked", state ? "true" : "false");
+    await waitFor(() =>
+      expect(fastSwitch()).toHaveAttribute("aria-checked", state ? "true" : "false"),
+    );
+    expect(fastSwitch()).toHaveAttribute("title", "Choose a supported Opus model to turn on fast mode");
     expect(fastSwitch()).not.toHaveAttribute("data-disabled");
 
     fireEvent.click(fastSwitch());

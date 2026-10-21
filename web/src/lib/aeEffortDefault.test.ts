@@ -1,6 +1,13 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
-import { aeEffortDefaultFor, aeEffortDefaultSuffix, readAeEffortDefault } from "./aeEffortDefault";
+import {
+  aeClaudeCodeDefaultEffort,
+  aeClaudeEffortLabel,
+  aeEffortDefaultFor,
+  aeEffortResolved,
+  aeEffortSourceTag,
+  readAeEffortDefault,
+} from "./aeEffortDefault";
 
 function cacheWith(labels: Record<string, string>) {
   const qc = new QueryClient();
@@ -81,18 +88,65 @@ describe("aeEffortDefaultFor", () => {
   });
 });
 
-describe("aeEffortDefaultSuffix", () => {
-  it("names the recorded level as the default", () => {
-    expect(aeEffortDefaultSuffix("claude", false, "high")).toBe(": High (default)");
+describe("aeClaudeCodeDefaultEffort", () => {
+  it("knows Claude Code's own default for a model id, alias or label", () => {
+    expect(aeClaudeCodeDefaultEffort("claude-fable-5-1")).toBe("high");
+    expect(aeClaudeCodeDefaultEffort("claude-opus-5-5[1m]")).toBe("medium");
+    expect(aeClaudeCodeDefaultEffort("claude-opus-5")).toBe("high");
+    expect(aeClaudeCodeDefaultEffort("Sonnet 5.5")).toBe("medium");
+    expect(aeClaudeCodeDefaultEffort("opus", [{ id: "opus", model: "claude-opus-4-7" }])).toBe(
+      "xhigh",
+    );
   });
 
-  it("says Claude default when no level is recorded", () => {
-    expect(aeEffortDefaultSuffix("claude", false, null)).toBe(": Claude default");
+  it("gives null for a model it has no row for, or no version", () => {
+    expect(aeClaudeCodeDefaultEffort("claude-opus-4-1")).toBe(null);
+    expect(aeClaudeCodeDefaultEffort("opus")).toBe(null);
+    expect(aeClaudeCodeDefaultEffort(null)).toBe(null);
+  });
+});
+
+describe("aeEffortResolved", () => {
+  const options = [{ id: "fable", model: "claude-fable-5-1", isDefault: true }];
+
+  it("takes a settings-file level before Claude Code's default", () => {
+    expect(
+      aeEffortResolved(JSON.stringify({ "claude-fable-5-1": "max" }), "claude-fable-5-1"),
+    ).toEqual({ level: "max", source: "settings" });
+    expect(aeEffortResolved(JSON.stringify({ "*": "low" }), "claude-opus-5-5")).toEqual({
+      level: "low",
+      source: "settings",
+    });
   });
 
-  it("stays blank under smart routing and for other harnesses", () => {
-    expect(aeEffortDefaultSuffix("claude", true, "high")).toBe("");
-    expect(aeEffortDefaultSuffix("codex", false, "high")).toBe("");
-    expect(aeEffortDefaultSuffix(null, false, null)).toBe("");
+  it("falls back to Claude Code's default for the model, or the picker's default model", () => {
+    expect(aeEffortResolved(null, "claude-fable-5-1")).toEqual({ level: "high", source: "claude" });
+    expect(
+      aeEffortResolved(JSON.stringify({ "claude-opus-5-5": "high" }), "claude-sonnet-5-5"),
+    ).toEqual({ level: "medium", source: "claude" });
+    expect(aeEffortResolved(null, null, options)).toEqual({ level: "high", source: "claude" });
+  });
+
+  it("gives null when neither names a level", () => {
+    expect(aeEffortResolved(null, "claude-opus-4-1")).toBe(null);
+    expect(aeEffortResolved(null, null)).toBe(null);
+  });
+});
+
+describe("aeClaudeEffortLabel", () => {
+  it("uses Claude Code's words, Extra for xhigh", () => {
+    expect(["low", "medium", "high", "xhigh", "max"].map(aeClaudeEffortLabel)).toEqual([
+      "Low",
+      "Medium",
+      "High",
+      "Extra",
+      "Max",
+    ]);
+    expect(aeClaudeEffortLabel(null)).toBe(null);
+  });
+
+  it("tags a settings-file level and Claude Code's own default apart", () => {
+    expect(aeEffortSourceTag("settings")).toBe("settings");
+    expect(aeEffortSourceTag("claude")).toBe("default");
   });
 });

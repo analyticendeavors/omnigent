@@ -40,6 +40,7 @@ import { aeWithClaudeVersions } from "@/lib/aeClaudeModels";
 import { CHAT_COLUMN_WIDTH } from "./chatLayout";
 
 vi.mock("@/shell/ClaudeAccounts", () => ({ ClaudeAccounts: () => null }));
+vi.mock("@/shell/AeClaudeAccountSubmenu", () => ({ AeClaudeAccountSubmenu: () => null }));
 // Switch harness opens AppShell's fork dialog; the composer renders without AppShell here.
 const forkDialog = vi.hoisted(() => ({
   canFork: true,
@@ -1966,7 +1967,7 @@ describe("Composer model/effort label", () => {
     expect(screen.getByTestId("composer-agent-effort-high")).toBeVisible();
   });
 
-  it("keeps the newest Claude versions in the grid and older versions under More models", async () => {
+  it("lists the newest Claude versions as numbered rows and older versions under Previous models", async () => {
     useChatStore.setState({ llmModel: "sonnet" });
     renderWithTooltips(
       <Composer
@@ -1979,7 +1980,13 @@ describe("Composer model/effort label", () => {
     );
     await openSessionModels();
     const models = screen.getByTestId("composer-agent-models");
-    expect(models.querySelector(".grid-cols-2")).toBeTruthy();
+    expect(models.querySelector(".grid-cols-2")).toBeNull();
+    expect(within(models).queryByText("Models")).toBeNull();
+    expect(
+      within(models)
+        .getAllByTestId("composer-agent-model-shortcut")
+        .map((shortcut) => shortcut.textContent),
+    ).toEqual(["1", "2", "3", "4"]);
     expect(within(models).getByTestId("composer-agent-model-sonnet_5")).toHaveTextContent(
       "Sonnet 5",
     );
@@ -2256,6 +2263,137 @@ describe("Composer model/effort label", () => {
     expect(label()).toHaveTextContent("Opus");
     expect(label()).not.toHaveTextContent("High");
     expect(screen.queryByTestId("composer-agent-effort-value")).toBeNull();
+  });
+
+  it("shows the level Claude Code runs at when nothing is pinned, tagged with its source", async () => {
+    useChatStore.setState({ llmModel: "fable", sessionReasoningEffort: null });
+    renderWithTooltips(
+      <Composer
+        {...composerProps({
+          modelPickerKind: "claude",
+          showModels: true,
+          effortLevels: ["low", "medium", "high", "xhigh", "max"],
+          codexModelOptions: [{ id: "fable", model: "claude-fable-5-1", displayName: "Fable 5.1" }],
+        })}
+      />,
+    );
+    // The chip reads like desktop Claude Code's "Opus 5.5 Extra".
+    expect(screen.getByTestId("composer-agent-model-value")).toHaveTextContent("Fable 5.1");
+    expect(screen.getByTestId("composer-agent-effort-value")).toHaveTextContent("High");
+    await openSessionModels();
+    expect(screen.getByTestId("composer-agent-effort-trigger")).toHaveTextContent("Effort");
+    expect(screen.getByTestId("composer-agent-effort-current")).toHaveTextContent("High");
+    fireEvent.keyDown(screen.getByTestId("composer-agent-effort-trigger"), { key: "ArrowRight" });
+    const high = screen.getByTestId("composer-agent-effort-high");
+    expect(high).toHaveAttribute("aria-checked", "true");
+    expect(within(high).getByTestId("composer-agent-effort-tag")).toHaveTextContent("default");
+    expect(screen.queryByText("Claude default")).toBeNull();
+    // Claude Code's own word for xhigh.
+    expect(screen.getByTestId("composer-agent-effort-xhigh")).toHaveTextContent("Extra");
+    expect(screen.getByTestId("composer-agent-effort-xhigh")).not.toHaveTextContent("xHigh");
+  });
+
+  it("tags a settings-file level and lets a pinned pick win over it", async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(["conversations", "all"], {
+      pages: [
+        {
+          data: [
+            {
+              id: "conv_effort",
+              labels: { "ae.claude_effort_default": JSON.stringify({ "claude-opus-5-5": "high" }) },
+            },
+          ],
+        },
+      ],
+      pageParams: [null],
+    });
+    useChatStore.setState({
+      conversationId: "conv_effort",
+      llmModel: "opus",
+      sessionReasoningEffort: null,
+    });
+    const options = [{ id: "opus", model: "claude-opus-5-5", displayName: "Opus 5.5" }];
+    const { rerender } = render(
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <Composer
+            {...composerProps({
+              modelPickerKind: "claude",
+              showModels: true,
+              effortLevels: ["low", "medium", "high", "xhigh", "max"],
+              codexModelOptions: options,
+            })}
+          />
+        </TooltipProvider>
+      </QueryClientProvider>,
+    );
+    expect(screen.getByTestId("composer-agent-effort-value")).toHaveTextContent("High");
+    await openSessionModels();
+    fireEvent.keyDown(screen.getByTestId("composer-agent-effort-trigger"), { key: "ArrowRight" });
+    expect(
+      within(screen.getByTestId("composer-agent-effort-high")).getByTestId(
+        "composer-agent-effort-tag",
+      ),
+    ).toHaveTextContent("settings");
+
+    act(() => useChatStore.setState({ sessionReasoningEffort: "xhigh" }));
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <Composer
+            {...composerProps({
+              modelPickerKind: "claude",
+              showModels: true,
+              effortLevels: ["low", "medium", "high", "xhigh", "max"],
+              codexModelOptions: options,
+            })}
+          />
+        </TooltipProvider>
+      </QueryClientProvider>,
+    );
+    expect(screen.getByTestId("composer-agent-effort-value")).toHaveTextContent("Extra");
+    expect(screen.getByTestId("composer-agent-effort-xhigh")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.getByTestId("composer-agent-effort-high")).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+  });
+
+  it("picks a model row with its digit while the menu is open", async () => {
+    const realSetModel = useChatStore.getState().setModel;
+    const setModel = vi.fn().mockResolvedValue(undefined);
+    useChatStore.setState({ llmModel: "sonnet", setModel });
+    renderWithTooltips(
+      <Composer
+        {...composerProps({
+          showModels: true,
+          modelPickerKind: "claude",
+          codexModelOptions: CLAUDE_MODEL_OPTIONS,
+        })}
+      />,
+    );
+    await openSessionModels();
+    const models = screen.getByTestId("composer-agent-models");
+    const rows = within(models).getAllByRole("menuitemcheckbox");
+    // From the Effort row too, not only from a model row.
+    fireEvent.keyDown(screen.getByTestId("composer-agent-effort-trigger"), { key: "2" });
+    await waitFor(() =>
+      expect(setModel).toHaveBeenCalledWith(rows[1].getAttribute("data-model-id"), expect.anything()),
+    );
+    // The current model's own digit is not a pick either.
+    setModel.mockClear();
+    const current = rows.findIndex((row) => row.getAttribute("aria-checked") === "true");
+    fireEvent.keyDown(rows[0], { key: String(current + 1) });
+    expect(setModel).not.toHaveBeenCalled();
+    // A digit inside the Effort submenu (a portal) is not a model pick.
+    fireEvent.keyDown(screen.getByTestId("composer-agent-effort-trigger"), { key: "ArrowRight" });
+    fireEvent.keyDown(screen.getByTestId("composer-agent-effort-high"), { key: "3" });
+    expect(setModel).not.toHaveBeenCalled();
+    useChatStore.setState({ setModel: realSetModel });
   });
 
   it("reads 'Smart Routing' with no model/effort when routing is on", async () => {
@@ -5720,7 +5858,7 @@ describe("Composer config gear", () => {
       "aria-checked",
       "true",
     );
-    expect(screen.getByTestId("composer-agent-effort-xhigh")).toHaveTextContent("xHigh");
+    expect(screen.getByTestId("composer-agent-effort-xhigh")).toHaveTextContent("Extra");
     expect(screen.queryByText("Advanced settings…")).toBeNull();
   });
 
