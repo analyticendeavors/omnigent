@@ -145,7 +145,11 @@ export function AeMergedPrFold({
           />
           <span className="font-medium">{aeFoldLabel(prs)}</span>
         </button>
-        <span className="relative flex min-w-0 flex-wrap gap-1.5">
+        {/* One line on a phone too: the numbers scroll sideways, never wrap. */}
+        <span
+          className="relative flex min-w-0 gap-1.5 overflow-x-auto [scrollbar-width:none]"
+          data-testid="ae-pr-fold-chips"
+        >
           {prs.map((pr) => (
             <AePrLinkHoverCard key={pr.url} href={pr.url}>
               <a
@@ -153,7 +157,7 @@ export function AeMergedPrFold({
                 target="_blank"
                 rel="noreferrer"
                 data-testid="ae-pr-fold-chip"
-                className="rounded border border-border px-1.5 text-xs text-muted-foreground hover:text-foreground"
+                className="shrink-0 rounded border border-border px-1.5 text-xs whitespace-nowrap text-muted-foreground hover:text-foreground"
                 onClick={(event) => event.stopPropagation()}
               >
                 {foldRef(pr, multiRepo)}

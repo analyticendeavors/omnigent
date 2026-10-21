@@ -199,6 +199,11 @@ describe("AeInlinePrCards", () => {
       expect(chips.map((chip) => chip.tagName)).toEqual(["A", "A"]);
       expect(chips[0]).toHaveAttribute("href", url(173));
       expect(chips[0]).toHaveAttribute("target", "_blank");
+      // One line on a phone: the numbers scroll sideways rather than wrap.
+      const row = screen.getByTestId("ae-pr-fold-chips");
+      expect(row).not.toHaveClass("flex-wrap");
+      expect(row).toHaveClass("overflow-x-auto");
+      expect(chips[0]).toHaveClass("shrink-0", "whitespace-nowrap");
 
       fireEvent.click(chips[0]);
       expect(screen.getByTestId("ae-pr-fold-toggle")).toHaveAttribute("aria-expanded", "false");
