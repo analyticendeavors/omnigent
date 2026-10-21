@@ -170,7 +170,10 @@ describe("AeInlinePrCards", () => {
       vi.mocked(authenticatedFetch).mockImplementation(respond);
       renderText(`Done: ${url(167)}, ${url(161)}, ${url(169)}.`);
       const toggle = await screen.findByTestId("ae-pr-fold-toggle");
-      expect(toggle.textContent).toBe("2 merged, 1 closed#167#161#169omnigent-ae");
+      expect(toggle.textContent).toBe("2 merged, 1 closed");
+      expect(screen.getByTestId("ae-pr-fold").textContent).toBe(
+        "2 merged, 1 closed#167#161#169omnigent-ae",
+      );
       expect(screen.queryByTestId("ae-pr-inline")).toBeNull();
       expect(screen.queryByTestId("ae-pr-fold-line")).toBeNull();
 
@@ -185,6 +188,47 @@ describe("AeInlinePrCards", () => {
       fireEvent.click(within(lines[0]).getByRole("button"));
       const full = await within(lines[0]).findByTestId("ae-pr-inline");
       expect(within(full).getByTestId("ae-pr-merged").textContent).toBe("Merged");
+    });
+
+    it("links each number in the row, with the chat's preview, without opening the fold", async () => {
+      states.set(173, "merged").set(172, "merged");
+      vi.mocked(authenticatedFetch).mockImplementation(respond);
+      renderText(`Done: ${url(173)}, ${url(172)}.`);
+      await screen.findByTestId("ae-pr-fold-toggle");
+      const chips = screen.getAllByTestId("ae-pr-fold-chip");
+      expect(chips.map((chip) => chip.tagName)).toEqual(["A", "A"]);
+      expect(chips[0]).toHaveAttribute("href", url(173));
+      expect(chips[0]).toHaveAttribute("target", "_blank");
+
+      fireEvent.click(chips[0]);
+      expect(screen.getByTestId("ae-pr-fold-toggle")).toHaveAttribute("aria-expanded", "false");
+      expect(screen.queryByTestId("ae-pr-fold-line")).toBeNull();
+
+      fireEvent.focus(chips[0]);
+      const preview = await screen.findByTestId("ae-pr-hover");
+      expect(preview).toHaveAttribute("data-pr-state", "merged");
+      expect(preview).toHaveTextContent(`${REPO}#173`);
+      expect(preview).toHaveTextContent("PR 173");
+    });
+
+    it("gives each opened line a caret that turns down while its card is open", async () => {
+      states.set(167, "merged");
+      vi.mocked(authenticatedFetch).mockImplementation(respond);
+      renderText(`Done: ${url(167)}.`);
+      fireEvent.click(await screen.findByTestId("ae-pr-fold-toggle"));
+      const line = screen.getByTestId("ae-pr-fold-line");
+      const button = within(line).getByRole("button");
+      // Chevron-right, turned a quarter to point down (the header's caret does the same).
+      const caret = () => button.querySelector("svg")!;
+      expect(button).toHaveAttribute("aria-expanded", "false");
+      expect(caret().querySelector("path")).toHaveAttribute("d", "M9 6l6 6l-6 6");
+      expect(caret()).not.toHaveClass("rotate-90");
+      expect(caret()).toHaveClass("size-4", "text-muted-foreground");
+
+      fireEvent.click(button);
+      expect(button).toHaveAttribute("aria-expanded", "true");
+      expect(caret()).toHaveClass("rotate-90");
+      await within(line).findByTestId("ae-pr-inline");
     });
 
     it("keeps an open pull request's full card, with Merge, above the fold", async () => {
@@ -260,8 +304,8 @@ describe("AeInlinePrCards", () => {
         return json({ ...card(Number(number)), repo, state: "merged" });
       });
       renderText(`Done: ${url(12)} and ${url(12, "o/site")}.`);
-      const toggle = await screen.findByTestId("ae-pr-fold-toggle");
-      await vi.waitFor(() => expect(toggle.textContent).toBe("2 mergedomnigent-ae #12site #12"));
+      const fold = await screen.findByTestId("ae-pr-fold");
+      await vi.waitFor(() => expect(fold.textContent).toBe("2 mergedomnigent-ae #12site #12"));
     });
   });
 });

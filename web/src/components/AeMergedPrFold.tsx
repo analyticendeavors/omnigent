@@ -6,9 +6,12 @@
 //
 // 2026-10-20, Reid: a finished session ended on three large Merged cards that
 // repeated the TLDR's links and needed nothing from him (about 550 px).
+// Later that day: each number in the row is a link with the chat's pull
+// request preview on hover, and each opened line has a caret.
 
 import { useState } from "react";
 import { AePrCardView, MERGED_TEXT } from "@/components/AePrCards";
+import { AePrLinkHoverCard } from "@/components/AePrLinkHoverCard";
 import { AE_ICON_CHEVRON_RIGHT } from "@/lib/aeAgentsIcons";
 import { AE_ICON_EXTERNAL_LINK, AE_ICON_MERGE, AE_ICON_PR_CLOSED } from "@/lib/aePrIcons";
 import type { AePrCard } from "@/lib/aePrs";
@@ -71,6 +74,7 @@ function FoldedLine({
           aria-expanded={open}
           onClick={() => setOpen((value) => !value)}
         >
+          <Chevron open={open} />
           <AeTablerSvg
             node={merged ? AE_ICON_MERGE : AE_ICON_PR_CLOSED}
             className={cn("size-3.5 shrink-0", merged ? MERGED_TEXT : "text-destructive")}
@@ -123,35 +127,45 @@ export function AeMergedPrFold({
       data-testid="ae-pr-fold"
       className="mt-2 w-xl max-w-full rounded-lg border border-border bg-background"
     >
-      <button
-        type="button"
-        className="flex w-full min-w-0 items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-muted/50"
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-        data-testid="ae-pr-fold-toggle"
-      >
-        <Chevron open={open} />
-        <AeTablerSvg
-          node={anyMerged ? AE_ICON_MERGE : AE_ICON_PR_CLOSED}
-          className={cn("size-4 shrink-0", anyMerged ? MERGED_TEXT : "text-destructive")}
-        />
-        <span className="shrink-0 font-medium">{aeFoldLabel(prs)}</span>
-        <span className="flex min-w-0 flex-1 flex-wrap gap-1.5">
+      {/* The toggle's ::after covers the row, so a click anywhere but a number
+          opens the fold; the numbers sit above it as links of their own. */}
+      <div className="relative flex min-w-0 items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-muted/50">
+        <button
+          type="button"
+          className="flex shrink-0 items-center gap-2 text-left after:absolute after:inset-0 after:rounded-lg"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+          data-testid="ae-pr-fold-toggle"
+        >
+          <Chevron open={open} />
+          <AeTablerSvg
+            node={anyMerged ? AE_ICON_MERGE : AE_ICON_PR_CLOSED}
+            className={cn("size-4 shrink-0", anyMerged ? MERGED_TEXT : "text-destructive")}
+          />
+          <span className="font-medium">{aeFoldLabel(prs)}</span>
+        </button>
+        <span className="relative flex min-w-0 flex-wrap gap-1.5">
           {prs.map((pr) => (
-            <span
-              key={pr.url}
-              className="rounded border border-border px-1.5 text-xs text-muted-foreground"
-            >
-              {foldRef(pr, multiRepo)}
-            </span>
+            <AePrLinkHoverCard key={pr.url} href={pr.url}>
+              <a
+                href={pr.url}
+                target="_blank"
+                rel="noreferrer"
+                data-testid="ae-pr-fold-chip"
+                className="rounded border border-border px-1.5 text-xs text-muted-foreground hover:text-foreground"
+                onClick={(event) => event.stopPropagation()}
+              >
+                {foldRef(pr, multiRepo)}
+              </a>
+            </AePrLinkHoverCard>
           ))}
         </span>
         {!multiRepo && (
-          <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
+          <span className="ml-auto hidden shrink-0 text-xs text-muted-foreground sm:inline">
             {prs[0].repo.split("/").pop()}
           </span>
         )}
-      </button>
+      </div>
       {open && (
         <ul className="border-t border-border py-1">
           {prs.map((pr) => (
