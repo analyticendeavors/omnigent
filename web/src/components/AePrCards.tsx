@@ -719,7 +719,7 @@ export function AePrCardView({
         "@container/aepr flex flex-col gap-1.5 rounded-lg border border-border bg-background px-3 py-2",
         // A set width, not max-w only: the container ignores its content, so
         // the chat's w-fit bubble would shrink the card to the message text.
-        inline && "mt-2 w-xl max-w-full",
+        inline && "mt-2 w-full",
       )}
     >
       {/* One link for the whole header: the state, the title on up to two

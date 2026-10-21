@@ -125,7 +125,7 @@ export function AeMergedPrFold({
   return (
     <div
       data-testid="ae-pr-fold"
-      className="mt-2 w-xl max-w-full rounded-lg border border-border bg-background"
+      className="mt-2 w-full rounded-lg border border-border bg-background"
     >
       {/* The toggle's ::after covers the row, so a click anywhere but a number
           opens the fold; the numbers sit above it as links of their own. */}

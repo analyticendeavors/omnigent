@@ -1515,7 +1515,7 @@ html[data-electron-mac] .breadcrumb-folder {
 }
 
 .is-assistant {
-  --chat-prose-width: 80ch;
+  --chat-prose-width: 100%;
 }
 
 @container chat-column (min-width: 64rem) {
