@@ -768,6 +768,28 @@ async def test_seed_replays_bracketed_paste_mode() -> None:
         await _kill_tmux(sock)
 
 
+@pytest.mark.skipif(
+    not _HAS_TMUX or _HAS_TMUX_BRACKET_PASTE_FLAG,
+    reason="[ae] the inference runs only on tmux < 3.7",
+)
+@pytest.mark.asyncio
+async def test_ae_seed_infers_bracketed_paste_at_a_bash_prompt_only() -> None:
+    """[ae] On tmux < 3.7 a bash prompt seeds ``?2004h``; bash inside ``read`` does not."""
+    from omnigent.terminals.control_bridge import _run_tmux_capture
+
+    sock, target = await _new_private_tmux("bash --norc --noprofile")
+    await asyncio.sleep(0.5)
+    try:
+        seed = await _run_tmux_capture(str(sock), target)
+        assert seed is not None and b"\x1b[?2004h" in seed
+        subprocess.run(["tmux", "-S", str(sock), "send-keys", "-t", target, "read -r v", "Enter"])
+        await asyncio.sleep(0.5)
+        seed = await _run_tmux_capture(str(sock), target)
+        assert seed is not None and b"\x1b[?2004h" not in seed
+    finally:
+        await _kill_tmux(sock)
+
+
 @pytest.mark.skipif(not _HAS_TMUX, reason="tmux not installed")
 @pytest.mark.asyncio
 async def test_seed_plain_shell_replays_no_modes() -> None:

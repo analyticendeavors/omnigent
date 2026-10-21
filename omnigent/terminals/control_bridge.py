@@ -53,6 +53,7 @@ from typing import Final
 from fastapi import WebSocket, WebSocketDisconnect
 
 from omnigent.inner.terminal_clipboard import MAX_CLIPBOARD_BYTES
+from omnigent.terminals._ae_bracket_paste import ae_infer_bracket_paste
 from omnigent.terminals.ws_common import (
     WS_CLOSE_INTERNAL_ERROR,
     WS_CLOSE_TERMINAL_DETACHED,
@@ -356,7 +357,7 @@ class _PaneMetadata:
     :param app_cursor_keys: DECCKM (application cursor keys) from
         ``#{keypad_cursor_flag}``.
     :param bracket_paste: DECSET 2004 (bracketed paste) from
-        ``#{bracket_paste_flag}``.
+        ``#{bracket_paste_flag}``, inferred by ``_ae_bracket_paste`` below tmux 3.7.
     """
 
     cursor_x: int
@@ -397,8 +398,8 @@ def _mode_restore_escapes(meta: _PaneMetadata | None) -> tuple[bytes, bytes]:
       claude) leaves the browser xterm unaware, so a multi-line paste is
       sent as raw newlines and readline executes each line on arrival
       instead of inserting the block. ``#{bracket_paste_flag}`` needs
-      tmux >= 3.7; older tmux expands it empty, degrading to no replay
-      (the pre-replay behavior).
+      tmux >= 3.7; older tmux expands it empty, and ``_ae_bracket_paste``
+      infers it for a shell at its prompt.
 
     Only enables are emitted: every attach starts a fresh xterm whose modes
     default off, so disables would be no-ops.
@@ -453,7 +454,7 @@ async def _capture_pane_metadata(
             "#{cursor_x},#{cursor_y},#{cursor_flag},#{alternate_on},"
             "#{mouse_standard_flag},#{mouse_button_flag},#{mouse_all_flag},"
             "#{mouse_sgr_flag},#{mouse_utf8_flag},#{keypad_cursor_flag},"
-            "#{bracket_paste_flag}",
+            "#{bracket_paste_flag},#{pane_tty},#{pane_current_command}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
@@ -463,15 +464,17 @@ async def _capture_pane_metadata(
     if proc.returncode != 0:
         return None
     try:
-        fields = [f.strip() for f in stdout.decode().strip().split(",")]
+        fields = [f.strip() for f in stdout.decode(errors="replace").strip().split(",", 12)]
         if len(fields) < 4:
             return None
         # A tmux without some mouse/DECCKM formats expands them to "" (the
         # field count holds), but pad regardless: a flags anomaly must cost
         # only the optional mode replay, never the mandatory cursor and
         # alt-screen state the rest of the seed depends on.
-        fields += ["0"] * (11 - len(fields))
-        x_str, y_str, flag_str, alt_str, std, btn, allm, sgr, utf8, ckm, bpaste = fields[:11]
+        fields += ["0"] * (13 - len(fields))
+        (x_str, y_str, flag_str, alt_str, std, btn, allm, sgr, utf8, ckm, bpaste, tty, cmd) = (
+            fields[:13]
+        )
         return _PaneMetadata(
             cursor_x=int(x_str),
             cursor_y=int(y_str),
@@ -483,7 +486,7 @@ async def _capture_pane_metadata(
             mouse_sgr=sgr == "1",
             mouse_utf8=utf8 == "1",
             app_cursor_keys=ckm == "1",
-            bracket_paste=bpaste == "1",
+            bracket_paste=ae_infer_bracket_paste(bpaste, tty, cmd, alt_str == "1"),
         )
     except (ValueError, UnicodeDecodeError):
         return None
