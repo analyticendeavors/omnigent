@@ -359,6 +359,34 @@ async def test_subagent_idle_waits_for_claude_completion(
         common._session_blocked_on_cache.pop(sid, None)
 
 
+@pytest.mark.parametrize(
+    ("wrapper", "status", "armed"),
+    [
+        pytest.param(_CLAUDE_SUBAGENT, "running", True, id="claude-running"),
+        pytest.param(_CLAUDE_SUBAGENT, "idle", False, id="claude-idle"),
+        pytest.param("codex-native-ui-subagent", "running", False, id="codex-running"),
+    ],
+)
+async def test_running_status_arms_claude_subagent_cap(
+    status_route: _StatusRoute, wrapper: str, status: str, armed: bool
+) -> None:
+    route = status_route
+    sid = route.child_id
+    route.store.set_labels(
+        sid, {"omnigent.wrapper": wrapper, "omnigent.claude_native.subagent_id": "agent-1"}
+    )
+    try:
+        # A child that dies before its first lull still gets the cap from this edge.
+        response = await route.client.post(
+            f"/v1/sessions/{sid}/events",
+            json={"type": "external_session_status", "data": {"status": status}},
+        )
+        assert response.status_code == 202, response.text
+        assert (sid in ae_subagent_liveness._stale_timers) is armed
+    finally:
+        ae_subagent_liveness.cancel_stale_timer(sid)
+
+
 async def test_subagent_idle_preserves_failed_status(status_route: _StatusRoute) -> None:
     route = status_route
     sid = route.child_id

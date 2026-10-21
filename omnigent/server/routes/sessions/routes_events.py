@@ -77,7 +77,10 @@ from omnigent.server._elicitation_registry import (
     _ParkedHarnessElicitation,
     _PreResolvedHarnessElicitation,
 )
-from omnigent.server.ae_subagent_liveness import hold_premature_lull_idle
+from omnigent.server.ae_subagent_liveness import (
+    hold_premature_lull_idle,
+    note_claude_subagent_status,
+)
 from omnigent.server.auth import (
     LEVEL_EDIT,
     LEVEL_OWNER,
@@ -2042,6 +2045,7 @@ def register_events_routes(
                 background_tasks=bg_tasks,
                 blocked_on=blocked_on,
             )
+            note_claude_subagent_status(conv, status, conversation_store)
             if (
                 conv.parent_conversation_id is not None
                 and status in {"idle", "failed"}

@@ -212,3 +212,156 @@ async def test_replayed_return_only_settles_an_empty_cache(db_uri: str, publishe
     finally:
         common._session_status_cache.pop(child_id, None)
         common._session_active_response_cache.pop(child_id, None)
+
+
+async def _wait_for_stale_check(child_id: str) -> None:
+    for _ in range(100):
+        if ae_subagent_liveness._stale_checks or child_id not in (
+            ae_subagent_liveness._stale_timers
+        ):
+            break
+        await asyncio.sleep(0.01)
+    await asyncio.gather(*ae_subagent_liveness._stale_checks)
+
+
+async def test_first_running_arms_cap_for_child_that_never_lulls(
+    db_uri: str, monkeypatch: pytest.MonkeyPatch, published: Mock
+) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    _, child_id = _claude_child(store)
+    conv = store.get_conversation(child_id)
+    assert conv is not None
+    common._session_status_cache[child_id] = "running"
+    try:
+        # The real cap: the first running edge arms it, a later one keeps that timer.
+        ae_subagent_liveness.note_claude_subagent_status(conv, "running", store)
+        timer = ae_subagent_liveness._stale_timers[child_id]
+        remaining = timer.when() - asyncio.get_running_loop().time()
+        assert abs(remaining - CLAUDE_SUBAGENT_STALE_AFTER_S) < 5
+        ae_subagent_liveness.note_claude_subagent_status(conv, "running", store)
+        assert ae_subagent_liveness._stale_timers[child_id] is timer
+        ae_subagent_liveness.cancel_stale_timer(child_id)
+        # The child dies before any lull; nothing but that timer can settle it.
+        monkeypatch.setattr(ae_subagent_liveness, "CLAUDE_SUBAGENT_STALE_AFTER_S", 0.01)
+        ae_subagent_liveness.note_claude_subagent_status(conv, "running", store)
+        await _wait_for_stale_check(child_id)
+        assert common._session_status_cache[child_id] == "idle"
+        assert _statuses(published, child_id) == ["idle"]
+    finally:
+        ae_subagent_liveness.cancel_stale_timer(child_id)
+        common._session_status_cache.pop(child_id, None)
+
+
+async def test_running_edge_arms_nothing_for_other_children(db_uri: str) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    parent = store.create_conversation()
+    plain = store.create_conversation(kind="sub_agent", parent_conversation_id=parent.id)
+    _, child_id = _claude_child(store)
+    claude = store.get_conversation(child_id)
+    assert claude is not None
+    try:
+        ae_subagent_liveness.note_claude_subagent_status(plain, "running", store)
+        ae_subagent_liveness.note_claude_subagent_status(claude, "idle", store)
+        assert plain.id not in ae_subagent_liveness._stale_timers
+        assert child_id not in ae_subagent_liveness._stale_timers
+    finally:
+        ae_subagent_liveness.cancel_stale_timer(plain.id)
+        ae_subagent_liveness.cancel_stale_timer(child_id)
+
+
+@pytest.mark.parametrize(
+    ("quiet_s", "completion", "settled"),
+    [
+        pytest.param(CLAUDE_SUBAGENT_STALE_AFTER_S + 1, None, True, id="quiet-past-cap"),
+        pytest.param(600, None, False, id="recent-rearmed"),
+        pytest.param(CLAUDE_SUBAGENT_STALE_AFTER_S + 1, "completed", False, id="returned"),
+    ],
+)
+async def test_startup_sweep_settles_children_a_restart_left_running(
+    db_uri: str, published: Mock, quiet_s: int, completion: str | None, settled: bool
+) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    parent_id, child_id = _claude_child(store)
+    other = store.create_conversation(kind="sub_agent", parent_conversation_id=parent_id)
+    if completion is not None:
+        store.append(parent_id, [_completion_marker("task", "agent-1", completion)])
+    # After a restart: no timers, an empty cache, and the rows still say running.
+    for session_id in (child_id, other.id):
+        store.set_session_live_status(session_id, "running")
+        common._session_status_cache.pop(session_id, None)
+        ae_subagent_liveness.cancel_stale_timer(session_id)
+    conv = store.get_conversation(child_id)
+    assert conv is not None and conv.live_status == "running"
+    try:
+        result = await ae_subagent_liveness.sweep_stale_claude_subagents(
+            store, now=conv.updated_at + quiet_s
+        )
+        assert result == (1 if settled else 0)
+        assert common._session_status_cache.get(child_id) == ("idle" if settled else None)
+        assert _statuses(published, child_id) == (["idle"] if settled else [])
+        timer = ae_subagent_liveness._stale_timers.get(child_id)
+        if quiet_s < CLAUDE_SUBAGENT_STALE_AFTER_S:
+            assert timer is not None
+            remaining = timer.when() - asyncio.get_running_loop().time()
+            assert abs(remaining - (CLAUDE_SUBAGENT_STALE_AFTER_S - quiet_s)) < 5
+        else:
+            assert timer is None
+        # A sub-agent that is not a Claude Code child is left to its own paths.
+        assert other.id not in ae_subagent_liveness._stale_timers
+        assert _statuses(published, other.id) == []
+    finally:
+        ae_subagent_liveness.cancel_stale_timer(child_id)
+        common._session_status_cache.pop(child_id, None)
+
+
+async def test_startup_sweep_failure_is_logged_not_raised(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = Mock(spec=SqlAlchemyConversationStore)
+    store._session = Mock(side_effect=RuntimeError("database is down"))
+    assert await ae_subagent_liveness.sweep_stale_claude_subagents(store) == 0
+    assert "Could not sweep stale Claude subagents" in caplog.text
+
+
+async def test_startup_sweep_only_arms_a_child_restored_since_startup(
+    db_uri: str, published: Mock
+) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    _, child_id = _claude_child(store)
+    store.set_session_live_status(child_id, "running")
+    ae_subagent_liveness.cancel_stale_timer(child_id)
+    conv = store.get_conversation(child_id)
+    assert conv is not None
+    # A reconnect republished running before the sweep reached this row.
+    common._session_status_cache[child_id] = "running"
+    try:
+        result = await ae_subagent_liveness.sweep_stale_claude_subagents(
+            store, now=conv.updated_at + CLAUDE_SUBAGENT_STALE_AFTER_S + 1
+        )
+        assert result == 0
+        assert common._session_status_cache[child_id] == "running"
+        assert _statuses(published, child_id) == []
+        assert child_id in ae_subagent_liveness._stale_timers
+    finally:
+        ae_subagent_liveness.cancel_stale_timer(child_id)
+        common._session_status_cache.pop(child_id, None)
+
+
+async def test_startup_sweep_warns_at_its_row_limit(
+    db_uri: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    parent = store.create_conversation()
+    for _ in range(2):
+        row = store.create_conversation(kind="sub_agent", parent_conversation_id=parent.id)
+        store.set_session_live_status(row.id, "running")
+    monkeypatch.setattr(ae_subagent_liveness, "_SWEEP_LIMIT", 2)
+    assert len(ae_subagent_liveness._running_sub_agent_ids(store)) == 2
+    assert "read only the first 2 running sub-agent rows" in caplog.text
+
+
+async def test_startup_sweep_warns_without_a_sql_store(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    assert await ae_subagent_liveness.sweep_stale_claude_subagents(Mock(spec=[])) == 0
+    assert "conversation store has no _session" in caplog.text

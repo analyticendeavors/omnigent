@@ -1720,6 +1720,9 @@ def create_app(
                 otel_publisher=server_metrics_otel,
             )
         )
+        from omnigent.server.ae_subagent_liveness import start_stale_sweep
+
+        start_stale_sweep(conversation_store)
         # Runner ``runner_last_seen`` is refreshed per-tunnel from each
         # runner tunnel's ping loop (``runner_tunnel._ping_loop``), inside
         # that handler's ``workspace_scope`` — not from a lifespan sweep,
