@@ -188,6 +188,21 @@ describe("AeActionDock", () => {
     expect(JSON.parse(String(init!.body))).toMatchObject({ sha: SHA, method: "squash" });
   });
 
+  it("a confirm opened from a list line lifts the list's height cap until Cancel", async () => {
+    serve({ 180: card(180) });
+    renderDock([`See ${url(180)}`], [question]);
+    fireEvent.click(await screen.findByTestId("ae-dock-badge"));
+    const list = screen.getByTestId("ae-dock-list");
+    expect(list.className).toContain("max-h-[120px]");
+    fireEvent.click(within(list).getByTestId("ae-dock-merge"));
+    expect(within(list).getByRole("group", { name: "Confirm merge" })).toBeTruthy();
+    expect(list.className).not.toContain("max-h-[120px]");
+    expect(list.className).not.toContain("overflow-y-auto");
+    fireEvent.click(within(list).getByRole("button", { name: "Cancel" }));
+    expect(within(list).queryByRole("group", { name: "Confirm merge" })).toBeNull();
+    expect(list.className).toContain("max-h-[120px]");
+  });
+
   it("Cancel closes the confirm without merging", async () => {
     serve({ 180: card(180) });
     renderDock([`Opened ${url(180)}`]);

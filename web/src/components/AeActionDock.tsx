@@ -248,6 +248,14 @@ function Dock({ sessionId }: { sessionId?: string }) {
     if (line) listRef.current.scrollTop = line.offsetTop;
     setScrollTo(null);
   }, [open, scrollTo]);
+  // A confirm opened from a list line shows whole: the list drops its height
+  // cap meanwhile, and the line scrolls into view so Confirm is reachable.
+  useLayoutEffect(() => {
+    if (!open || !confirming) return;
+    listRef.current
+      ?.querySelector<HTMLElement>('[data-testid="ae-dock-confirm"]')
+      ?.scrollIntoView?.({ block: "nearest" });
+  }, [open, confirming]);
 
   const summary = aeDockSummary(items);
   if (!summary) return null;
@@ -269,6 +277,7 @@ function Dock({ sessionId }: { sessionId?: string }) {
     />
   );
   const { lead } = summary;
+  const confirmOpen = items.some((item) => item.key === confirming);
   return (
     <div
       data-testid="ae-action-dock"
@@ -292,7 +301,10 @@ function Dock({ sessionId }: { sessionId?: string }) {
           </div>
           <ul
             ref={listRef}
-            className="relative max-h-[120px] overflow-y-auto overscroll-contain"
+            className={cn(
+              "relative",
+              !confirmOpen && "max-h-[120px] overflow-y-auto overscroll-contain",
+            )}
             data-testid="ae-dock-list"
           >
             {items.map((item) => (
