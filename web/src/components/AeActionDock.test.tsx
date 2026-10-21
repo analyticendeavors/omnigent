@@ -182,6 +182,17 @@ describe("AeActionDock", () => {
     );
   });
 
+  it("previews the pull request when its number is hovered or focused", async () => {
+    serve({ 180: card(180) });
+    renderDock([`Opened ${url(180)}`]);
+    const link = await screen.findByTestId("ae-dock-pr-link");
+    expect(link).toHaveAttribute("href", url(180));
+    expect(link).not.toHaveAttribute("title");
+    fireEvent.focus(link);
+    const preview = await screen.findByTestId("ae-pr-hover");
+    expect(within(preview).getByText("PR 180")).toBeTruthy();
+  });
+
   it("renders inside the workspace bar, the caret after the bar's right cluster", async () => {
     serve({ 180: card(180) });
     renderDock([`Opened ${url(180)}`], [question]);

@@ -9,6 +9,7 @@
 import { QueryClientContext, useIsMutating, useQueryClient } from "@tanstack/react-query";
 import { type RefObject, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ConfirmMerge, MERGED_TEXT } from "@/components/AePrCards";
+import { AePrLinkHoverCard } from "@/components/AePrLinkHoverCard";
 import { COMPOSER_CONTENT_INSET_CLASS } from "@/components/composer/ChatComposer";
 import { Button } from "@/components/ui/button";
 import { useAeActionDockItems, useAeQuestionsOnScreen } from "@/hooks/useAeActionDockItems";
@@ -116,15 +117,19 @@ function ItemBody({ item, now, expanded }: { item: AeDockItem; now: number; expa
       : aeDeployText(item, now);
   return (
     <>
-      <a
-        href={item.url}
-        target="_blank"
-        rel="noreferrer"
-        className="shrink-0 font-semibold hover:underline"
-        title={`Open ${item.repo} #${item.number} on GitHub`}
-      >
-        #{item.number}
-      </a>
+      {/* The chat links' preview on hover; no title, which would show over it. */}
+      <AePrLinkHoverCard href={item.url}>
+        <a
+          href={item.url}
+          target="_blank"
+          rel="noreferrer"
+          className="shrink-0 font-semibold hover:underline"
+          aria-label={`Open ${item.repo} #${item.number} on GitHub`}
+          data-testid="ae-dock-pr-link"
+        >
+          #{item.number}
+        </a>
+      </AePrLinkHoverCard>
       <span
         className={cn("min-w-0 truncate text-muted-foreground", !expanded && "hidden md:inline")}
         title={detail}
