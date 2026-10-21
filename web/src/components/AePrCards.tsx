@@ -165,7 +165,7 @@ function Chip({ tone, title, children }: { tone: Tone; title?: string; children:
 }
 
 /** GitHub's merged purple, the one upstream's GitHub panel gives its Merged badge. */
-const MERGED_TEXT = "text-purple-700 dark:text-purple-400";
+export const MERGED_TEXT = "text-purple-700 dark:text-purple-400";
 
 /** `unknown`: no card read yet (loading, or the read failed), so no state is claimed. */
 type PrState = "open" | "draft" | "merged" | "closed" | "unknown";
@@ -327,6 +327,9 @@ function ConfirmMerge({
       : (card.merge.default_method ?? methods[0]),
   );
   const merge = useMutation({
+    // Kept for the page's life: the chat's fold leaves a card merged here unfolded.
+    mutationKey: ["ae-pr-merge", card.repo, card.number],
+    gcTime: Infinity,
     mutationFn: () => mergeAePr(card, method, sessionId),
     onSuccess: (result) => {
       onMerged(result);

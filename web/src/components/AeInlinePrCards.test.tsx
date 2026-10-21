@@ -7,6 +7,7 @@ vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
 
 import { authenticatedFetch } from "@/lib/identity";
 import { type AePrCard, aePrUrlsIn } from "@/lib/aePrs";
+import { AE_PR_POLL_MS } from "./AePrCards";
 import { AeInlinePrCards } from "./AeInlinePrCards";
 
 const SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
@@ -151,5 +152,116 @@ describe("AeInlinePrCards", () => {
       "1 more open pull request in this session.",
     );
     expect(screen.queryByTestId("ae-pr-set-review")).toBeNull();
+  });
+
+  describe("merged and closed pull requests (2026-10-20)", () => {
+    const states = new Map<number, AePrCard["state"]>();
+    const respond = (input: unknown) => {
+      const number = Number(String(input).split("/").pop());
+      return json({ ...card(number), state: states.get(number) ?? "open" });
+    };
+
+    beforeEach(() => {
+      states.clear();
+    });
+
+    it("folds every merged and closed pull request into one row", async () => {
+      states.set(167, "merged").set(161, "merged").set(169, "closed");
+      vi.mocked(authenticatedFetch).mockImplementation(respond);
+      renderText(`Done: ${url(167)}, ${url(161)}, ${url(169)}.`);
+      const toggle = await screen.findByTestId("ae-pr-fold-toggle");
+      expect(toggle.textContent).toBe("2 merged, 1 closed#167#161#169omnigent-ae");
+      expect(screen.queryByTestId("ae-pr-inline")).toBeNull();
+      expect(screen.queryByTestId("ae-pr-fold-line")).toBeNull();
+
+      fireEvent.click(toggle);
+      const lines = screen.getAllByTestId("ae-pr-fold-line");
+      expect(lines.map((line) => line.textContent)).toEqual([
+        "PR 167#167Open on GitHub",
+        "PR 161#161Open on GitHub",
+        "PR 169#169Open on GitHub",
+      ]);
+
+      fireEvent.click(within(lines[0]).getByRole("button"));
+      const full = await within(lines[0]).findByTestId("ae-pr-inline");
+      expect(within(full).getByTestId("ae-pr-merged").textContent).toBe("Merged");
+    });
+
+    it("keeps an open pull request's full card, with Merge, above the fold", async () => {
+      states.set(167, "merged");
+      vi.mocked(authenticatedFetch).mockImplementation(respond);
+      renderText(`Open: ${url(171)}. Merged: ${url(167)}.`);
+      const inline = await screen.findByTestId("ae-pr-inline");
+      expect(inline.getAttribute("data-pr")).toBe(url(171));
+      expect(within(inline).getByRole("button", { name: "Merge" })).toBeTruthy();
+      expect((await screen.findByTestId("ae-pr-fold-toggle")).textContent).toContain("1 merged");
+    });
+
+    it("leaves a card merged from this view unfolded, with its merged note", async () => {
+      vi.mocked(authenticatedFetch).mockImplementation((input) => {
+        if (String(input).endsWith("/merge")) {
+          states.set(41, "merged");
+          return json({
+            merged: true,
+            repo: REPO,
+            number: 41,
+            method: "squash",
+            sha: "abcdef1234",
+            message: "Pull Request successfully merged",
+            session: { id: "s1", status: "working", offer_review: false },
+          });
+        }
+        return respond(input);
+      });
+      renderText(`Opened ${url(41)}`, [url(41)]);
+      fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
+      fireEvent.click(screen.getByRole("button", { name: "Squash into main" }));
+      expect((await screen.findByRole("status")).textContent).toContain("Merged (squashed)");
+      await vi.waitFor(() =>
+        expect(
+          vi
+            .mocked(authenticatedFetch)
+            .mock.calls.filter(([path]) => path === `/v1/ae/prs/${REPO}/41`).length,
+        ).toBeGreaterThan(1),
+      );
+      expect(screen.queryByTestId("ae-pr-fold")).toBeNull();
+      expect(screen.getByTestId("ae-pr-inline")).toBeTruthy();
+    });
+
+    describe("on the 30 s poll", () => {
+      beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
+      afterEach(() => vi.useRealTimers());
+
+      it("folds a pull request merged somewhere else while the card shows", async () => {
+        vi.mocked(authenticatedFetch).mockImplementation(respond);
+        renderText(`Opened ${url(41)}`);
+        await screen.findByTestId("ae-pr-inline");
+        states.set(41, "merged");
+        await vi.advanceTimersByTimeAsync(AE_PR_POLL_MS);
+        expect((await screen.findByTestId("ae-pr-fold-toggle")).textContent).toContain("1 merged");
+        expect(screen.queryByTestId("ae-pr-inline")).toBeNull();
+      });
+
+      it("unfolds a closed pull request that is reopened", async () => {
+        states.set(9, "closed");
+        vi.mocked(authenticatedFetch).mockImplementation(respond);
+        renderText(`Closed ${url(9)}`);
+        expect((await screen.findByTestId("ae-pr-fold-toggle")).textContent).toContain("1 closed");
+        states.delete(9);
+        await vi.advanceTimersByTimeAsync(AE_PR_POLL_MS);
+        expect(await screen.findByTestId("ae-pr-inline")).toBeTruthy();
+        expect(screen.queryByTestId("ae-pr-fold")).toBeNull();
+      });
+    });
+
+    it("names the repo beside each number when the fold spans two repos", async () => {
+      vi.mocked(authenticatedFetch).mockImplementation((input) => {
+        const [, repo, number] = /prs\/(.+)\/(\d+)$/.exec(String(input))!;
+        return json({ ...card(Number(number)), repo, state: "merged" });
+      });
+      renderText(`Done: ${url(12)} and ${url(12, "o/site")}.`);
+      const toggle = await screen.findByTestId("ae-pr-fold-toggle");
+      await vi.waitFor(() => expect(toggle.textContent).toBe("2 mergedomnigent-ae #12site #12"));
+    });
   });
 });
