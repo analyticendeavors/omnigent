@@ -7,7 +7,7 @@ vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
 
 import { authenticatedFetch } from "@/lib/identity";
 import { type AePrCard, aePrUrlsIn } from "@/lib/aePrs";
-import { AE_PR_POLL_MS } from "./AePrCards";
+import { AE_PR_POLL_MS, ConfirmMerge } from "./AePrCards";
 import { AeInlinePrCards } from "./AeInlinePrCards";
 
 const SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
@@ -36,7 +36,11 @@ function card(number: number): AePrCard {
 const json = (body: unknown, status = 200) =>
   Promise.resolve(new Response(JSON.stringify(body), { status }));
 
-function renderText(text: string, tracked?: string[]) {
+/**
+ * `dock` stands in for the action dock's confirm step, the one place left to
+ * merge from: it shares the card's merge mutation key.
+ */
+function renderText(text: string, tracked?: string[], dock?: AePrCard) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   if (tracked) {
     qc.setQueryData(["github-info", "s1"], {
@@ -48,7 +52,23 @@ function renderText(text: string, tracked?: string[]) {
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={["/c/s1"]}>
         <Routes>
-          <Route path="/c/:conversationId" element={<AeInlinePrCards text={text} />} />
+          <Route
+            path="/c/:conversationId"
+            element={
+              <>
+                <AeInlinePrCards text={text} />
+                {dock && (
+                  <ConfirmMerge
+                    card={dock}
+                    updateWaiting={false}
+                    sessionId="s1"
+                    onCancel={() => {}}
+                    onMerged={() => {}}
+                  />
+                )}
+              </>
+            }
+          />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -80,9 +100,9 @@ describe("AeInlinePrCards", () => {
     vi.mocked(authenticatedFetch).mockImplementation(() => json(card(41)));
     renderText(`PR: ${url(41)}. Builds on ${url(6935, "omnigent-ai/omnigent")}.`, [url(41)]);
     const inline = await screen.findByTestId("ae-pr-inline");
-    expect(within(inline).getByText("PR 41")).toBeTruthy();
-    // Compact: the repo and number only, no branch line (2026-10-14).
-    expect(within(inline).getByTestId("ae-pr-meta").textContent).toBe("omnigent-ae #41");
+    expect(within(inline).getByTestId("ae-pr-receipt").textContent).toBe(
+      "Open pull request#41 PR 41ready",
+    );
     expect(screen.getAllByTestId("ae-pr-inline")).toHaveLength(1);
     expect(authenticatedFetch).toHaveBeenCalledTimes(1);
     expect(authenticatedFetch).toHaveBeenCalledWith(`/v1/ae/prs/${REPO}/41`, { method: "GET" });
@@ -98,39 +118,112 @@ describe("AeInlinePrCards", () => {
     expect(container.textContent).toBe("");
   });
 
-  it("merges from the thread with this session named", async () => {
-    const calls: { path: string; init?: RequestInit }[] = [];
-    vi.mocked(authenticatedFetch).mockImplementation((input, init) => {
-      calls.push({ path: String(input), init: init as RequestInit });
-      if (String(input).endsWith("/merge")) {
-        return json({
-          merged: true,
-          repo: REPO,
-          number: 41,
-          method: "squash",
-          sha: "abcdef1234",
-          message: "Pull Request successfully merged",
-          session: { id: "s1", status: "working", offer_review: true },
-        });
-      }
-      return json(card(41));
+  describe("the receipt (2026-10-21)", () => {
+    it("is one row, collapsed, with the state, number, title and a status word", async () => {
+      vi.mocked(authenticatedFetch).mockImplementation(() => json(card(41)));
+      renderText(`Opened ${url(41)}`, [url(41)]);
+      const row = await screen.findByTestId("ae-pr-receipt");
+      expect(row.tagName).toBe("BUTTON");
+      expect(row).toHaveAttribute("aria-expanded", "false");
+      expect(row).toHaveAttribute("data-tone", "green");
+      expect(screen.getByTestId("ae-pr-receipt-word").textContent).toBe("ready");
+      expect(screen.getByTestId("ae-pr-state")).toHaveAttribute("data-pr-state", "open");
+      expect(screen.queryByTestId("ae-pr-receipt-body")).toBeNull();
+      expect(screen.queryByTestId("ae-pr-review-details")).toBeNull();
     });
-    renderText(`Opened ${url(41)}`, [url(41)]);
-    fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
-    fireEvent.click(screen.getByRole("button", { name: "Squash into main" }));
-    const done = await screen.findByRole("status");
-    expect(done.textContent).toContain("Merged (squashed) abcdef1");
-    expect(done.textContent).not.toContain("Pull Request successfully merged");
-    const merge = calls.find((call) => call.path.endsWith("/merge"))!;
-    expect(JSON.parse(String(merge.init?.body))).toEqual({
-      sha: SHA,
-      method: "squash",
-      session_id: "s1",
+
+    it("opens in place onto the detail, with no Merge anywhere", async () => {
+      vi.mocked(authenticatedFetch).mockImplementation(() =>
+        json({ ...card(41), update_branch: { allowed: true, reason: null } }),
+      );
+      renderText(`Opened ${url(41)}`, [url(41)]);
+      const row = await screen.findByTestId("ae-pr-receipt");
+      expect(screen.queryByRole("button", { name: /merge/i })).toBeNull();
+      fireEvent.click(row);
+      expect(row).toHaveAttribute("aria-expanded", "true");
+      const body = screen.getByTestId("ae-pr-receipt-body");
+      expect(within(body).getByTestId("ae-pr-ready").textContent).toContain("Ready to merge");
+      expect(within(body).getByRole("button", { name: "Update branch" })).toBeEnabled();
+      expect(within(body).getByTestId("ae-pr-review-details")).toBeTruthy();
+      expect(within(body).getByTestId("ae-pr-compliance")).toBeTruthy();
+      const foot = within(body).getByTestId("ae-pr-receipt-foot");
+      expect(foot.textContent).toBe("Merge from the action baromnigent-ae #41");
+      expect(within(foot).getByRole("link")).toHaveAttribute("href", url(41));
+      expect(screen.queryByRole("button", { name: /^merge/i })).toBeNull();
+      expect(screen.queryByRole("group", { name: "Confirm merge" })).toBeNull();
+      fireEvent.click(row);
+      expect(screen.queryByTestId("ae-pr-receipt-body")).toBeNull();
     });
-    expect((await screen.findByTestId("ae-pr-set-review")).textContent).toBe("Mark session done");
+
+    it("shows a merge from the action bar, with this session named and the done offer", async () => {
+      const calls: { path: string; init?: RequestInit }[] = [];
+      vi.mocked(authenticatedFetch).mockImplementation((input, init) => {
+        calls.push({ path: String(input), init: init as RequestInit });
+        if (String(input).endsWith("/merge")) {
+          return json({
+            merged: true,
+            repo: REPO,
+            number: 41,
+            method: "squash",
+            sha: "abcdef1234",
+            message: "Pull Request successfully merged",
+            session: { id: "s1", status: "working", offer_review: true },
+          });
+        }
+        if (String(input).endsWith("/deploy")) return json({ state: "waiting" });
+        return json(card(41));
+      });
+      renderText(`Opened ${url(41)}`, [url(41)], card(41));
+      await screen.findByTestId("ae-pr-receipt");
+      fireEvent.click(screen.getByRole("button", { name: "Squash into main" }));
+      await vi.waitFor(() =>
+        expect(screen.getByTestId("ae-pr-receipt-word").textContent).toBe("merged"),
+      );
+      expect(screen.getByTestId("ae-pr-receipt")).toHaveAttribute("data-tone", "purple");
+      // It opens on its own, so the note and its offer show.
+      expect(screen.getByTestId("ae-pr-receipt")).toHaveAttribute("aria-expanded", "true");
+      const done = await screen.findByRole("status");
+      expect(done.textContent).toContain("Merged (squashed) abcdef1");
+      expect(screen.getByTestId("ae-pr-receipt-foot").textContent).toBe("omnigent-ae #41");
+      const merge = calls.find((call) => call.path.endsWith("/merge"))!;
+      expect(JSON.parse(String(merge.init?.body))).toEqual({
+        sha: SHA,
+        method: "squash",
+        session_id: "s1",
+      });
+      expect((await screen.findByTestId("ae-pr-set-review")).textContent).toBe("Mark session done");
+    });
+
+    it("does not offer review while another tracked pull request is open (2026-09-25)", async () => {
+      vi.mocked(authenticatedFetch).mockImplementation((input) => {
+        if (String(input).endsWith("/merge")) {
+          return json({
+            merged: true,
+            repo: REPO,
+            number: 41,
+            method: "squash",
+            sha: "abcdef1234",
+            message: "Pull Request successfully merged",
+            session: { id: "s1", status: "working", offer_review: true },
+          });
+        }
+        if (String(input).endsWith("/deploy")) return json({ state: "waiting" });
+        return json(card(Number(String(input).split("/").pop())));
+      });
+      renderText(`Opened ${url(41)}`, [url(41), url(42)], card(41));
+      await screen.findByTestId("ae-pr-receipt");
+      fireEvent.click(screen.getByRole("button", { name: "Squash into main" }));
+      await vi.waitFor(() =>
+        expect(screen.getByTestId("ae-pr-receipt-word").textContent).toBe("merged"),
+      );
+      expect((await screen.findByTestId("ae-pr-more-open")).textContent).toBe(
+        "1 more open pull request in this session.",
+      );
+      expect(screen.queryByTestId("ae-pr-set-review")).toBeNull();
+    });
   });
 
-  it("does not offer review while another tracked pull request is open (2026-09-25)", async () => {
+  it("ignores a merge another session made of the same pull request", async () => {
     vi.mocked(authenticatedFetch).mockImplementation((input) => {
       if (String(input).endsWith("/merge")) {
         return json({
@@ -140,17 +233,25 @@ describe("AeInlinePrCards", () => {
           method: "squash",
           sha: "abcdef1234",
           message: "Pull Request successfully merged",
-          session: { id: "s1", status: "working", offer_review: true },
+          session: { id: "s2", status: "working", offer_review: true },
         });
       }
-      return json(card(Number(String(input).split("/").pop())));
+      return json(card(41));
     });
-    renderText(`Opened ${url(41)}`, [url(41), url(42)]);
-    fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
+    renderText(`Opened ${url(41)}`, [url(41)], card(41));
+    await screen.findByTestId("ae-pr-receipt");
     fireEvent.click(screen.getByRole("button", { name: "Squash into main" }));
-    expect((await screen.findByTestId("ae-pr-more-open")).textContent).toBe(
-      "1 more open pull request in this session.",
+    await vi.waitFor(() =>
+      expect(
+        vi.mocked(authenticatedFetch).mock.calls.some(([path]) => String(path).endsWith("/merge")),
+      ).toBe(true),
     );
+    // Let the merge settle before checking that the receipt ignored it.
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50);
+    });
+    expect(screen.getByTestId("ae-pr-receipt")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByTestId("ae-pr-receipt-word").textContent).toBe("ready");
     expect(screen.queryByTestId("ae-pr-set-review")).toBeNull();
   });
 
@@ -236,13 +337,14 @@ describe("AeInlinePrCards", () => {
       await within(line).findByTestId("ae-pr-inline");
     });
 
-    it("keeps an open pull request's full card, with Merge, above the fold", async () => {
+    it("keeps an open pull request's receipt, with no Merge, above the fold", async () => {
       states.set(167, "merged");
       vi.mocked(authenticatedFetch).mockImplementation(respond);
       renderText(`Open: ${url(171)}. Merged: ${url(167)}.`);
       const inline = await screen.findByTestId("ae-pr-inline");
       expect(inline.getAttribute("data-pr")).toBe(url(171));
-      expect(within(inline).getByRole("button", { name: "Merge" })).toBeTruthy();
+      expect(within(inline).getByTestId("ae-pr-receipt")).toBeTruthy();
+      expect(within(inline).queryByRole("button", { name: "Merge" })).toBeNull();
       expect((await screen.findByTestId("ae-pr-fold-toggle")).textContent).toContain("1 merged");
     });
 
@@ -262,8 +364,8 @@ describe("AeInlinePrCards", () => {
         }
         return respond(input);
       });
-      renderText(`Opened ${url(41)}`, [url(41)]);
-      fireEvent.click(await screen.findByRole("button", { name: "Merge" }));
+      renderText(`Opened ${url(41)}`, [url(41)], card(41));
+      await screen.findByTestId("ae-pr-receipt");
       fireEvent.click(screen.getByRole("button", { name: "Squash into main" }));
       expect((await screen.findByRole("status")).textContent).toContain("Merged (squashed)");
       await vi.waitFor(() =>

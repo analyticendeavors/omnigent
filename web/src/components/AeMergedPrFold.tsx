@@ -1,8 +1,8 @@
 // The merged and closed pull requests under one assistant message, folded into
 // a single row: "3 merged #167 #161 #169". Opening it lists one titled line per
-// pull request, and opening a line shows that pull request's full card (Review
+// pull request, and opening a line shows that pull request's detail (Review
 // details, AE compliance review). Open and draft pull requests never fold; they
-// keep the full card with Merge, the recommended method and the method choice.
+// keep their receipt (AePrCards.tsx), and the action dock owns Merge.
 //
 // 2026-10-20, Reid: a finished session ended on three large Merged cards that
 // repeated the TLDR's links and needed nothing from him (about 550 px).
@@ -102,7 +102,7 @@ function FoldedLine({
             number={pr.number}
             sessionId={sessionId}
             tracked={tracked}
-            variant="inline"
+            variant="fold"
           />
         </div>
       )}

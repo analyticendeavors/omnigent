@@ -1,7 +1,9 @@
-// A compact PR card under an assistant message that names a pull request the
-// session tracks: the same status line (Ready, or CI, conflicts and review
-// chips) and the same Merge as the GitHub panel's card, so a PR the agent just
-// opened can be merged where it was announced. omnigent-ae patch P12, 2026-09-25.
+// A PR receipt under an assistant message that names a pull request the
+// session tracks: one row with the state, number, title and a status word
+// (AePrCardView's "inline" variant), opening in place onto the checks, Update
+// branch and the review folds. It never carries Merge: the action dock owns
+// every live action, so the thread and the dock never show two Merge buttons
+// (2026-10-21). omnigent-ae patch P12, 2026-09-25.
 // Merged and closed ones fold into one row under the open cards (2026-10-20,
 // AeMergedPrFold.tsx), except one merged from a card on this page.
 

@@ -45,8 +45,20 @@
 // confirm step is a section of the card, not a box inside it: "Recommended"
 // leads the reason line instead of tagging the toggle, and the button names
 // the method and the base ("Squash into main"), the question line's job.
+//
+// 2026-10-21, Reid: the card under a chat message duplicated the action dock,
+// so two Merge buttons showed at once. It is now a one-line receipt (state,
+// number, title, a status word from lib/aePrReceipt.ts) that opens in place
+// onto the detail with no Merge; the dock owns every live action. The panel's
+// card keeps its Merge.
 
-import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useIsMutating,
+  useMutation,
+  useMutationState,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useEffect, useId, useMemo, useState } from "react";
 import remarkBreaks from "remark-breaks";
 import { defaultRemarkPlugins } from "streamdown";
@@ -54,6 +66,8 @@ import { MessageResponse } from "@/components/ai-elements/message";
 import { isPathologicalText, PlainTextFallback } from "@/components/blocks/ChatMarkdown";
 import { Button } from "@/components/ui/button";
 import { useAeMarkReady } from "@/hooks/useAeMarkReady";
+import { AE_ICON_CHEVRON_RIGHT } from "@/lib/aeAgentsIcons";
+import { aeHasDeployState, aePrDeployQuery } from "@/lib/aePrDeploy";
 import {
   AE_ICON_ALERT_CIRCLE,
   AE_ICON_CHECK,
@@ -86,6 +100,12 @@ import {
   parseAePrUrl,
   updateAePrBranch,
 } from "@/lib/aePrs";
+import {
+  type AePrReceipt,
+  type AeReceiptTone,
+  aePrReceipt,
+  aeReceiptHint,
+} from "@/lib/aePrReceipt";
 import { cn } from "@/lib/utils";
 import { aeMoreOpenText, useAeReviewOffer } from "@/lib/aeReviewOffer";
 import { AeTablerSvg } from "@/lib/aeTablerIcon";
@@ -599,10 +619,63 @@ function ComplianceReview({ card }: { card: AePrCard }) {
   );
 }
 
+/** The receipt's icon and word colors; `done` draws a solid purple icon and a quiet word. */
+const RECEIPT_ICON_CLASS: Record<AeReceiptTone, string> = {
+  gray: TONE_ICON_CLASS.muted,
+  amber: TONE_ICON_CLASS.wait,
+  red: TONE_ICON_CLASS.err,
+  blue: "text-blue-600 dark:text-blue-400",
+  green: TONE_ICON_CLASS.ok,
+  purple: MERGED_TEXT,
+  done: MERGED_TEXT,
+};
+
+const RECEIPT_WORD_CLASS: Record<AeReceiptTone, string> = {
+  ...RECEIPT_ICON_CLASS,
+  done: "text-muted-foreground",
+};
+
+/** A ring with an arrow (in play), a dashed ring (draft), or a solid circle with a check (done). */
+function ReceiptIcon({ receipt, label }: { receipt: AePrReceipt; label: string }) {
+  const filled = receipt.icon === "filled";
+  return (
+    <span className="flex shrink-0 items-center" title={label}>
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        data-icon={receipt.icon}
+        className={cn("size-4", RECEIPT_ICON_CLASS[receipt.tone])}
+      >
+        <circle
+          cx="8"
+          cy="8"
+          r="6.75"
+          fill={filled ? "currentColor" : "none"}
+          strokeDasharray={receipt.icon === "dashed" ? "2.4 2.1" : undefined}
+        />
+        {filled ? (
+          <path d="M5.2 8.2l1.9 1.9l3.7 -3.9" className="stroke-background" strokeWidth={1.75} />
+        ) : (
+          <path d="M8 11v-5.6M5.7 7.6l2.3 -2.3l2.3 2.3" />
+        )}
+      </svg>
+      <span className="sr-only">{label}</span>
+    </span>
+  );
+}
+
 /**
- * One pull request's card. `panel` is the GitHub panel's full card; `inline`
- * is the compact one under a chat message, which stays silent on an error or
- * a missing token (the panel already says so).
+ * One pull request's card. `panel` is the GitHub panel's full card with Merge.
+ * `inline` is the receipt under a chat message: one row (state, number, title,
+ * status word) that opens in place onto the card's detail, never with Merge,
+ * since the action dock owns it; it stays silent on an error or a missing token
+ * (the panel already says so). `fold` is that detail alone, for a line of the
+ * merged fold that already names the pull request.
  */
 export function AePrCardView({
   repo,
@@ -620,16 +693,28 @@ export function AePrCardView({
   /** The session's tracked pull requests, when the caller holds the list. */
   tracked?: readonly { url: string }[];
   first?: boolean;
-  variant?: "panel" | "inline";
+  variant?: "panel" | "inline" | "fold";
 }) {
-  const inline = variant === "inline";
+  const panel = variant === "panel";
+  const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [result, setResult] = useState<AeMergeResult | null>(null);
+  const [mergedByCard, setMergedByCard] = useState<AeMergeResult | null>(null);
   const [updateDelayed, setUpdateDelayed] = useState(false);
   const [updateMessage, setUpdateMessage] = useState("");
   const queryClient = useQueryClient();
   const queryKey = ["ae-pr", repo, number] as const;
   const updateKey = useMemo(() => ["ae-pr-branch-update", repo, number] as const, [repo, number]);
+  // A merge from the dock (or the panel) on this page: the receipt shows its
+  // note, which carries the after-merge offer, unless another session made it.
+  const mergedElsewhere = useMutationState({
+    filters: { mutationKey: ["ae-pr-merge", repo.toLowerCase(), number], status: "success" },
+    select: (mutation) => mutation.state.data as AeMergeResult,
+  }).filter((done) => !done.session || done.session.id === sessionId);
+  const result = panel ? mergedByCard : (mergedElsewhere.at(-1) ?? null);
+  // The receipt opens when a merge lands, so the note and its offer show.
+  useEffect(() => {
+    if (variant === "inline" && result) setOpen(true);
+  }, [variant, result]);
   // Inline and panel cards share the operation, including when one mounts mid-update.
   const { data: branchUpdate } = useQuery<{ sha: string; started: number } | null>({
     queryKey: updateKey,
@@ -646,6 +731,11 @@ export function AePrCardView({
       branchUpdate ? (Date.now() - branchUpdate.started < 60_000 ? 2_000 : false) : AE_PR_POLL_MS,
     retry: false,
   });
+  // The dock's deploy query: the receipt says "live" once the release runs the merge.
+  const merged = result !== null || query.data?.state === "merged";
+  const deploy = useQuery(
+    aePrDeployQuery(repo, number, variant === "inline" && merged && aeHasDeployState(repo)),
+  );
   const update = useMutation({
     mutationKey: updateKey,
     mutationFn: (card: AePrCard) => updateAePrBranch(card),
@@ -681,7 +771,7 @@ export function AePrCardView({
     );
     return () => window.clearTimeout(timeout);
   }, [branchUpdate]);
-  if (inline && !query.data && (query.isError || query.isPending)) return null;
+  if (!panel && !query.data && (query.isError || query.isPending)) return null;
   if (query.error instanceof AePrError && query.error.code === AE_PR_NOT_CONFIGURED) {
     // Said once for the list, not once per pull request.
     return first ? (
@@ -696,31 +786,234 @@ export function AePrCardView({
   // The panel's card names its branches too, on the repo's line: a line of
   // their own made a narrow panel card five rows tall.
   const branch =
-    !inline && card?.head_ref
+    panel && card?.head_ref
       ? `${card.head_ref}${card.base_ref ? ` → ${card.base_ref}` : ""}`
       : null;
-  return (
-    <article
-      data-testid={inline ? "ae-pr-inline" : "ae-pr-card"}
-      data-pr={url}
-      className={cn(
-        "@container/aepr flex flex-col gap-1.5 rounded-lg border border-border bg-background px-3 py-2",
+  const repoRef = `${repo.split("/").pop()} #${number}`;
+  const detail = (
+    <>
+      {query.isPending && (
+        <span className="flex items-center gap-1 text-sm text-muted-foreground">
+          <AeTablerSvg node={AE_ICON_LOADER} className="size-3.5 animate-spin" /> Reading GitHub…
+        </span>
+      )}
+      {query.isError && !card && (
+        <p role="alert" className="text-sm text-destructive">
+          {query.error.message}
+        </p>
+      )}
+      {card && (
+        <>
+          <div
+            className="flex flex-wrap items-center gap-x-2 gap-y-1"
+            data-testid="ae-pr-status-row"
+          >
+            {result ? (
+              <MergedNote result={result} sessionId={sessionId} tracked={tracked} />
+            ) : card.state === "merged" ? (
+              <p className={cn("text-sm font-medium", MERGED_TEXT)} data-testid="ae-pr-merged">
+                Merged
+              </p>
+            ) : card.state === "closed" ? (
+              <p className="text-sm text-muted-foreground" data-testid="ae-pr-closed">
+                Closed without merging
+              </p>
+            ) : (
+              <>
+                {aeReadyToMerge(card) ? <ReadyLine card={card} /> : <Chips card={card} />}
+                {!confirming && (
+                  <div className={ROW_PART}>
+                    {!card.merge.allowed && card.merge.reason && (
+                      <p
+                        className="text-sm text-amber-700 dark:text-amber-400"
+                        data-testid="ae-pr-why"
+                      >
+                        {card.merge.reason}
+                      </p>
+                    )}
+                    <div className="ml-auto flex flex-wrap items-center gap-2">
+                      {card.update_branch && (
+                        <Button
+                          variant="outline"
+                          className={TOUCH}
+                          disabled={
+                            updateDelayed
+                              ? query.isFetching
+                              : updateWaiting || !card.update_branch.allowed || !card.head_sha
+                          }
+                          title={
+                            card.update_branch.reason ??
+                            `Merge ${card.base_ref} into ${card.head_ref}`
+                          }
+                          onClick={() =>
+                            updateDelayed ? void query.refetch() : update.mutate(card)
+                          }
+                        >
+                          {updateDelayed
+                            ? "Check update"
+                            : updateWaiting
+                              ? "Updating branch..."
+                              : "Update branch"}
+                        </Button>
+                      )}
+                      {panel && (
+                        <Button
+                          className={cn(TOUCH, "ml-auto")}
+                          disabled={!card.merge.allowed || updateWaiting}
+                          title={
+                            card.merge.allowed
+                              ? `Merge #${number}`
+                              : (card.merge.reason ?? undefined)
+                          }
+                          onClick={() => setConfirming(true)}
+                        >
+                          <AeTablerSvg node={AE_ICON_MERGE} className="size-3.5" />
+                          Merge
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+          {(branchUpdate || updateMessage) && (
+            <p role="status" className="text-sm text-muted-foreground">
+              {updateDelayed
+                ? "GitHub has not confirmed a new revision yet. Check update to refresh."
+                : branchUpdate
+                  ? "Branch update requested. Waiting for GitHub..."
+                  : updateMessage}
+            </p>
+          )}
+          {update.isError && (
+            <p role="alert" className="text-sm text-destructive">
+              Branch update failed: {update.error.message}
+            </p>
+          )}
+          {branchUpdate && query.isError && (
+            <p role="alert" className="text-sm text-destructive">
+              Could not check the branch update: {query.error.message}
+            </p>
+          )}
+          <ReviewDetails card={card} />
+          <ComplianceReview card={card} />
+          {panel && !result && confirming && (
+            <ConfirmMerge
+              card={card}
+              updateWaiting={updateWaiting}
+              sessionId={sessionId}
+              onCancel={() => setConfirming(false)}
+              onMerged={(done) => {
+                setMergedByCard(done);
+                setConfirming(false);
+              }}
+            />
+          )}
+          {variant === "inline" && (
+            // Where to act, and the way out to GitHub.
+            <p
+              className="flex min-w-0 flex-wrap items-center gap-x-2 text-sm text-muted-foreground"
+              data-testid="ae-pr-receipt-foot"
+            >
+              {!result && aeReceiptHint(card) && <span>{aeReceiptHint(card)}</span>}
+              <a
+                href={url}
+                target="_blank"
+                rel="noreferrer"
+                className="ml-auto flex shrink-0 items-center gap-1 hover:text-foreground hover:underline"
+                title={`Open ${repo} #${number} on GitHub`}
+                data-testid="ae-pr-meta"
+              >
+                {repoRef}
+                <AeTablerSvg node={AE_ICON_EXTERNAL_LINK} className="size-3 shrink-0" />
+              </a>
+            </p>
+          )}
+        </>
+      )}
+    </>
+  );
+  if (variant === "fold") {
+    return (
+      <article
+        data-testid="ae-pr-inline"
+        data-pr={url}
+        className="@container/aepr flex flex-col gap-1.5 rounded-lg border border-border bg-background px-3 py-2"
+      >
+        {detail}
+      </article>
+    );
+  }
+  if (variant === "inline") {
+    if (!card) return null;
+    const receipt = aePrReceipt(card, {
+      deploy: deploy.data,
+      mergedHere: result !== null,
+    });
+    return (
+      <article
+        data-testid="ae-pr-inline"
+        data-pr={url}
         // A set width, not max-w only: the container ignores its content, so
         // the chat's w-fit bubble would shrink the card to the message text.
-        inline && "mt-2 w-full",
-      )}
+        className="@container/aepr mt-2 flex w-full flex-col rounded-lg border border-border bg-background"
+      >
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+          data-testid="ae-pr-receipt"
+          data-tone={receipt.tone}
+          className="flex min-w-0 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+        >
+          <span className="flex" data-testid="ae-pr-state" data-pr-state={shown}>
+            <ReceiptIcon receipt={receipt} label={state.label} />
+          </span>
+          <span
+            className={cn("min-w-0 flex-1 truncate", receipt.dim && "text-muted-foreground")}
+            title={card.title}
+          >
+            <span className="font-semibold">#{number}</span> {card.title}
+          </span>
+          <span
+            className={cn("shrink-0 whitespace-nowrap", RECEIPT_WORD_CLASS[receipt.tone])}
+            data-testid="ae-pr-receipt-word"
+          >
+            {receipt.word}
+          </span>
+          <AeTablerSvg
+            node={AE_ICON_CHEVRON_RIGHT}
+            className={cn(
+              "size-4 shrink-0 text-muted-foreground transition-transform",
+              open && "rotate-90",
+            )}
+          />
+        </button>
+        {open && (
+          <div
+            className="flex min-w-0 flex-col gap-1.5 border-t border-border px-3 py-2"
+            data-testid="ae-pr-receipt-body"
+          >
+            {detail}
+          </div>
+        )}
+      </article>
+    );
+  }
+  return (
+    <article
+      data-testid="ae-pr-card"
+      data-pr={url}
+      className="@container/aepr flex flex-col gap-1.5 rounded-lg border border-border bg-background px-3 py-2"
     >
       {/* One link for the whole header: the state, the title on up to two
-          lines, then the repo and number, beside the title on a wide inline
-          card and under it otherwise. */}
+          lines, then the repo and number under it. */}
       <a
         href={url}
         target="_blank"
         rel="noreferrer"
-        className={cn(
-          "group grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-x-2 text-ui",
-          inline && "@[30rem]/aepr:grid-cols-[auto_minmax(0,1fr)_auto]",
-        )}
+        className="group grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-x-2 text-ui"
       >
         <span
           className="flex h-[1lh] items-center"
@@ -735,18 +1028,12 @@ export function AePrCardView({
           {card?.title ?? url}
         </span>
         <span
-          className={cn(
-            "col-start-2 flex min-w-0 items-center",
-            inline &&
-              "@[30rem]/aepr:col-start-3 @[30rem]/aepr:row-start-1 @[30rem]/aepr:h-[1lh] @[30rem]/aepr:pl-2",
-          )}
+          className="col-start-2 flex min-w-0 items-center"
           title={repo}
           data-testid="ae-pr-meta"
         >
           <span className="flex min-w-0 items-center gap-1 text-sm whitespace-nowrap text-muted-foreground">
-            <span className="shrink-0">
-              {repo.split("/").pop()} #{number}
-            </span>
+            <span className="shrink-0">{repoRef}</span>
             {branch && (
               <>
                 <span aria-hidden="true">·</span>
@@ -758,126 +1045,7 @@ export function AePrCardView({
         </span>
       </a>
       {/* Everything under the header lines up with the title, not the icon. */}
-      <div className="flex min-w-0 flex-col gap-1.5 pl-6">
-        {query.isPending && (
-          <span className="flex items-center gap-1 text-sm text-muted-foreground">
-            <AeTablerSvg node={AE_ICON_LOADER} className="size-3.5 animate-spin" /> Reading GitHub…
-          </span>
-        )}
-        {query.isError && !card && (
-          <p role="alert" className="text-sm text-destructive">
-            {query.error.message}
-          </p>
-        )}
-        {card && (
-          <>
-            <div
-              className="flex flex-wrap items-center gap-x-2 gap-y-1"
-              data-testid="ae-pr-status-row"
-            >
-              {result ? (
-                <MergedNote result={result} sessionId={sessionId} tracked={tracked} />
-              ) : card.state === "merged" ? (
-                <p className={cn("text-sm font-medium", MERGED_TEXT)} data-testid="ae-pr-merged">
-                  Merged
-                </p>
-              ) : card.state === "closed" ? (
-                <p className="text-sm text-muted-foreground" data-testid="ae-pr-closed">
-                  Closed without merging
-                </p>
-              ) : (
-                <>
-                  {aeReadyToMerge(card) ? <ReadyLine card={card} /> : <Chips card={card} />}
-                  {!confirming && (
-                    <div className={ROW_PART}>
-                      {!card.merge.allowed && card.merge.reason && (
-                        <p
-                          className="text-sm text-amber-700 dark:text-amber-400"
-                          data-testid="ae-pr-why"
-                        >
-                          {card.merge.reason}
-                        </p>
-                      )}
-                      <div className="ml-auto flex flex-wrap items-center gap-2">
-                        {card.update_branch && (
-                          <Button
-                            variant="outline"
-                            className={TOUCH}
-                            disabled={
-                              updateDelayed
-                                ? query.isFetching
-                                : updateWaiting || !card.update_branch.allowed || !card.head_sha
-                            }
-                            title={
-                              card.update_branch.reason ??
-                              `Merge ${card.base_ref} into ${card.head_ref}`
-                            }
-                            onClick={() =>
-                              updateDelayed ? void query.refetch() : update.mutate(card)
-                            }
-                          >
-                            {updateDelayed
-                              ? "Check update"
-                              : updateWaiting
-                                ? "Updating branch..."
-                                : "Update branch"}
-                          </Button>
-                        )}
-                        <Button
-                          className={cn(TOUCH, "ml-auto")}
-                          disabled={!card.merge.allowed || updateWaiting}
-                          title={
-                            card.merge.allowed
-                              ? `Merge #${number}`
-                              : (card.merge.reason ?? undefined)
-                          }
-                          onClick={() => setConfirming(true)}
-                        >
-                          <AeTablerSvg node={AE_ICON_MERGE} className="size-3.5" />
-                          Merge
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-            {(branchUpdate || updateMessage) && (
-              <p role="status" className="text-sm text-muted-foreground">
-                {updateDelayed
-                  ? "GitHub has not confirmed a new revision yet. Check update to refresh."
-                  : branchUpdate
-                    ? "Branch update requested. Waiting for GitHub..."
-                    : updateMessage}
-              </p>
-            )}
-            {update.isError && (
-              <p role="alert" className="text-sm text-destructive">
-                Branch update failed: {update.error.message}
-              </p>
-            )}
-            {branchUpdate && query.isError && (
-              <p role="alert" className="text-sm text-destructive">
-                Could not check the branch update: {query.error.message}
-              </p>
-            )}
-            <ReviewDetails card={card} />
-            <ComplianceReview card={card} />
-            {!result && confirming && (
-              <ConfirmMerge
-                card={card}
-                updateWaiting={updateWaiting}
-                sessionId={sessionId}
-                onCancel={() => setConfirming(false)}
-                onMerged={(merged) => {
-                  setResult(merged);
-                  setConfirming(false);
-                }}
-              />
-            )}
-          </>
-        )}
-      </div>
+      <div className="flex min-w-0 flex-col gap-1.5 pl-6">{detail}</div>
     </article>
   );
 }

@@ -36,6 +36,8 @@ export interface AePrCard {
   head_ref: string | null;
   base_ref: string | null;
   head_sha: string | null;
+  /** GitHub's merge time (ISO), null until merged. */
+  merged_at?: string | null;
   update_branch?: { allowed: boolean; reason: string | null };
   ci: { state: AePrCiState; passing: number; failing: number; pending: number; total: number };
   mergeable: { state: AePrMergeableState; detail: string };

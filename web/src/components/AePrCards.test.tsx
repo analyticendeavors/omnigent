@@ -6,6 +6,7 @@ vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
 
 import { authenticatedFetch } from "@/lib/identity";
 import { type AePrCard, parseAePrUrl } from "@/lib/aePrs";
+import { aeReceiptClock } from "@/lib/aePrReceipt";
 import { AePrCards, AePrCardView } from "./AePrCards";
 
 const SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
@@ -822,6 +823,7 @@ describe("in-app review", () => {
     );
     const panel = await screen.findByTestId("ae-pr-card");
     const inline = await screen.findByTestId("ae-pr-inline");
+    fireEvent.click(within(inline).getByTestId("ae-pr-receipt"));
     fireEvent.click(within(panel).getByRole("button", { name: "Merge" }));
     expect(within(panel).getByRole("button", { name: "Squash into main" })).toBeEnabled();
     fireEvent.click(within(inline).getByRole("button", { name: "Update branch" }));
@@ -1063,5 +1065,92 @@ describe("in-app review", () => {
     renderCards([{ url: url(5) }]);
     fireEvent.click(await screen.findByText("AE compliance review"));
     expect((await screen.findByTestId("ae-pr-compliance-body")).textContent).toBe(body);
+  });
+});
+
+describe("the inline receipt (2026-10-21)", () => {
+  const MERGED_AT = "2026-10-21T03:35:00Z";
+
+  function renderReceipt(repo = REPO, number = 7) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <AePrCardView
+          repo={repo}
+          number={number}
+          url={`https://github.com/${repo}/pull/${number}`}
+          variant="inline"
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  it("reads merged with the time until the release runs it, then live", async () => {
+    let deploy = "waiting";
+    serve((path) =>
+      path.endsWith("/deploy")
+        ? json({ state: deploy, running: "ae-v0.18.0.59", merged_at: MERGED_AT })
+        : json(card(7, { state: "merged", merged_at: MERGED_AT })),
+    );
+    const view = renderReceipt();
+    await waitFor(() =>
+      expect(screen.getByTestId("ae-pr-receipt-word").textContent).toBe(
+        `merged ${aeReceiptClock(MERGED_AT)}`,
+      ),
+    );
+    expect(screen.getByTestId("ae-pr-receipt")).toHaveAttribute("data-tone", "purple");
+    view.unmount();
+    deploy = "live";
+    renderReceipt();
+    await waitFor(() => expect(screen.getByTestId("ae-pr-receipt-word").textContent).toBe("live"));
+    const row = screen.getByTestId("ae-pr-receipt");
+    expect(row).toHaveAttribute("data-tone", "done");
+    expect(row.querySelector("svg[data-icon]")).toHaveAttribute("data-icon", "filled");
+    expect(screen.getByTestId("ae-pr-receipt-word")).toHaveClass("text-muted-foreground");
+  });
+
+  it("ends at merged outside the release repo, without asking for a deploy", async () => {
+    const other = "analyticendeavors/agents-and-automation";
+    serve(() => json({ ...card(9, { state: "merged", merged_at: MERGED_AT }), repo: other }));
+    renderReceipt(other, 9);
+    await waitFor(() =>
+      expect(screen.getByTestId("ae-pr-receipt")).toHaveAttribute("data-tone", "done"),
+    );
+    expect(screen.getByTestId("ae-pr-receipt-word").textContent).toBe(
+      `merged ${aeReceiptClock(MERGED_AT)}`,
+    );
+    expect(
+      vi.mocked(authenticatedFetch).mock.calls.some(([path]) => String(path).endsWith("/deploy")),
+    ).toBe(false);
+  });
+
+  it("colors the icon and the word alike, and dims a closed title", async () => {
+    serve(() => json(card(7, { mergeable: { state: "conflicted", detail: "" } })));
+    const view = renderReceipt();
+    const word = await screen.findByTestId("ae-pr-receipt-word");
+    expect(word.textContent).toBe("conflicts");
+    const icon = screen.getByTestId("ae-pr-receipt").querySelector("svg[data-icon]")!;
+    expect(word).toHaveClass("text-destructive");
+    expect(icon).toHaveClass("text-destructive");
+    view.unmount();
+    serve(() => json(card(7, { state: "closed" })));
+    renderReceipt();
+    expect((await screen.findByTestId("ae-pr-receipt-word")).textContent).toBe("closed");
+    expect(screen.getByTitle("PR 7")).toHaveClass("text-muted-foreground");
+  });
+
+  it("draws a draft with a dashed ring and keeps its title bright", async () => {
+    serve(() => json(card(7, { draft: true, mergeable: { state: "draft", detail: "" } })));
+    renderReceipt();
+    expect((await screen.findByTestId("ae-pr-receipt-word")).textContent).toBe(
+      "draft · checks 6/6",
+    );
+    const row = screen.getByTestId("ae-pr-receipt");
+    expect(row.querySelector("svg[data-icon]")).toHaveAttribute("data-icon", "dashed");
+    expect(screen.getByTitle("PR 7")).not.toHaveClass("text-muted-foreground");
+    fireEvent.click(row);
+    expect(screen.getByTestId("ae-pr-receipt-foot").textContent).toBe(
+      "Mark ready from the action baromnigent-ae #7",
+    );
   });
 });
