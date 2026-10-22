@@ -385,6 +385,9 @@ describe("AeActionDock", () => {
     await waitFor(() =>
       expect(screen.getByTestId("ae-dock-lead").textContent).toContain("checks 11/12"),
     );
+    // No button names the state, so a phone keeps the word.
+    const word = screen.getByTestId("ae-dock-lead").querySelector("[data-ae-lead-text]");
+    expect(word).not.toHaveClass("hidden");
     expect(screen.queryByTestId("ae-dock-merge")).toBeNull();
     expect(screen.queryByTestId("ae-dock-update")).toBeNull();
     serve({ 180: card(180) });

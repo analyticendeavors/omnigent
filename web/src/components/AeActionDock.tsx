@@ -162,8 +162,12 @@ function ItemBody({ item, now, expanded }: { item: AeDockItem; now: number; expa
           #{item.number}
         </a>
       </AePrLinkHoverCard>
+      {/* A phone drops the detail beside a button that names the state; a waiting line has no such button. */}
       <span
-        className={cn("min-w-0 truncate text-muted-foreground", !expanded && "hidden md:inline")}
+        className={cn(
+          "min-w-0 truncate text-muted-foreground",
+          !expanded && item.kind !== "waiting" && "hidden md:inline",
+        )}
         title={detail}
         data-ae-lead-text=""
       >
