@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { refreshAeSlotLimit } from "@/lib/aeSlotLimit";
 import { authenticatedFetch } from "@/lib/identity";
 import { apiErrorFromResponse } from "@/lib/sessionsApi";
 
@@ -60,6 +61,7 @@ export function useAddDefaultPolicy() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: QUERY_KEY });
+      void refreshAeSlotLimit(queryClient);
     },
   });
 }
@@ -86,6 +88,7 @@ export function useUpdateDefaultPolicy() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: QUERY_KEY });
+      void refreshAeSlotLimit(queryClient);
     },
   });
 }
@@ -102,6 +105,7 @@ export function useDeleteDefaultPolicy() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: QUERY_KEY });
+      void refreshAeSlotLimit(queryClient);
     },
   });
 }

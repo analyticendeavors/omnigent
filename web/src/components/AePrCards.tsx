@@ -66,6 +66,7 @@ import { MessageResponse } from "@/components/ai-elements/message";
 import { isPathologicalText, PlainTextFallback } from "@/components/blocks/ChatMarkdown";
 import { Button } from "@/components/ui/button";
 import { useAeMarkReady } from "@/hooks/useAeMarkReady";
+import { useAeUpdateBranchMutation } from "@/hooks/useAeUpdateBranch";
 import { AE_ICON_CHEVRON_RIGHT } from "@/lib/aeAgentsIcons";
 import { aeHasDeployState, aePrDeployQuery } from "@/lib/aePrDeploy";
 import {
@@ -98,7 +99,6 @@ import {
   fetchAePrCompliance,
   mergeAePr,
   parseAePrUrl,
-  updateAePrBranch,
 } from "@/lib/aePrs";
 import {
   type AePrReceipt,
@@ -736,22 +736,7 @@ export function AePrCardView({
   const deploy = useQuery(
     aePrDeployQuery(repo, number, variant === "inline" && merged && aeHasDeployState(repo)),
   );
-  const update = useMutation({
-    mutationKey: updateKey,
-    mutationFn: (card: AePrCard) => updateAePrBranch(card),
-    onSuccess: async (accepted) => {
-      queryClient.setQueryData(updateKey, { sha: accepted.head_sha, started: Date.now() });
-      await queryClient.cancelQueries({ queryKey, exact: true });
-      await queryClient.invalidateQueries({ queryKey, exact: true });
-      await queryClient.invalidateQueries({ queryKey: ["ae-pr-compliance", repo, number] });
-    },
-    onError: async (error) => {
-      if (error instanceof AePrError && error.card) {
-        await queryClient.cancelQueries({ queryKey, exact: true });
-        queryClient.setQueryData(queryKey, error.card);
-      }
-    },
-  });
+  const update = useAeUpdateBranchMutation(repo, number);
   useEffect(() => {
     if (branchUpdate && query.data?.head_sha && query.data.head_sha !== branchUpdate.sha) {
       queryClient.setQueryData(updateKey, null);

@@ -195,7 +195,7 @@ describe("persistence", () => {
     expect(fresh.useAeSessionRailStore.getState().sessionOpenView).toBe("panel");
   });
 
-  it("loads a layout saved before the choice existed as the rail", async () => {
+  it("loads a layout saved before the choice existed as both, which is how it behaved", async () => {
     window.localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({ open: false, closedForPanel: false, order: ["usage"], folded: {} }),
@@ -203,12 +203,12 @@ describe("persistence", () => {
     vi.resetModules();
     const fresh = await import("./aeSessionRail");
     const state = fresh.useAeSessionRailStore.getState();
-    expect(state.sessionOpenView).toBe("rail");
+    expect(state.sessionOpenView).toBe("both");
     expect(state.order[0]).toBe("usage");
     expect(state.open).toBe(false);
   });
 
-  it("reads the old switch: off as the workspace panel, on as the rail", async () => {
+  it("reads the old switch: off as the workspace panel, on as both", async () => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ openInEverySession: false }));
     vi.resetModules();
     let fresh = await import("./aeSessionRail");
@@ -216,7 +216,7 @@ describe("persistence", () => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ openInEverySession: true }));
     vi.resetModules();
     fresh = await import("./aeSessionRail");
-    expect(fresh.useAeSessionRailStore.getState().sessionOpenView).toBe("rail");
+    expect(fresh.useAeSessionRailStore.getState().sessionOpenView).toBe("both");
     // A saved choice wins over the old switch; an unknown one falls back to it.
     window.localStorage.setItem(
       STORAGE_KEY,
@@ -232,6 +232,40 @@ describe("persistence", () => {
     vi.resetModules();
     fresh = await import("./aeSessionRail");
     expect(fresh.useAeSessionRailStore.getState().sessionOpenView).toBe("panel");
+  });
+
+  it("repairs a rail the first release of the choice saved from the old switch", async () => {
+    // That release read the switch as rail and saved it without openViewSettled.
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ sessionOpenView: "rail" }));
+    vi.resetModules();
+    let fresh = await import("./aeSessionRail");
+    expect(fresh.useAeSessionRailStore.getState().sessionOpenView).toBe("both");
+    // Its panel (from a switch that was off) was right and stays.
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ sessionOpenView: "panel" }));
+    vi.resetModules();
+    fresh = await import("./aeSessionRail");
+    expect(fresh.useAeSessionRailStore.getState().sessionOpenView).toBe("panel");
+    // A rail this release saved is a real choice.
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ sessionOpenView: "rail", openViewSettled: true }),
+    );
+    vi.resetModules();
+    fresh = await import("./aeSessionRail");
+    expect(fresh.useAeSessionRailStore.getState().sessionOpenView).toBe("rail");
+  });
+
+  it("keeps a fresh device on the rail across a save and a reload", async () => {
+    window.localStorage.removeItem(STORAGE_KEY);
+    vi.resetModules();
+    let fresh = await import("./aeSessionRail");
+    expect(fresh.useAeSessionRailStore.getState().sessionOpenView).toBe("rail");
+    fresh.useAeSessionRailStore.getState().setFolded("usage", true);
+    const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "{}");
+    expect(saved).toMatchObject({ sessionOpenView: "rail", openViewSettled: true });
+    vi.resetModules();
+    fresh = await import("./aeSessionRail");
+    expect(fresh.useAeSessionRailStore.getState().sessionOpenView).toBe("rail");
   });
 
   it("works with defaults when storage is blocked", async () => {

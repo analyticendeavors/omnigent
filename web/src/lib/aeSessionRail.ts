@@ -71,10 +71,23 @@ interface Persisted {
   sessionOpenView: AeSessionOpenView;
 }
 
-/** The choice saved, or the old "Open the session rail in every session" switch: off was `panel`, on or unset is `rail`. */
-function readSessionOpenView(saved: { sessionOpenView?: unknown; openInEverySession?: unknown }) {
-  if (isSessionOpenView(saved.sessionOpenView)) return saved.sessionOpenView;
-  return saved.openInEverySession === false ? "panel" : "rail";
+/**
+ * The choice saved, or the old "Open the session rail in every session" switch
+ * from a layout saved before the choice: off was `panel`; on or unset closed
+ * the panel only when the two did not fit, which is `both`. The first release
+ * of the choice read that switch as `rail` and saved it; a `rail` saved without
+ * `openViewSettled` is that misreading, so it loads as `both` too.
+ */
+function readSessionOpenView(saved: {
+  sessionOpenView?: unknown;
+  openInEverySession?: unknown;
+  openViewSettled?: unknown;
+}) {
+  if (isSessionOpenView(saved.sessionOpenView)) {
+    if (saved.sessionOpenView === "rail" && saved.openViewSettled !== true) return "both";
+    return saved.sessionOpenView;
+  }
+  return saved.openInEverySession === false ? "panel" : "both";
 }
 
 function isSectionId(value: unknown): value is AeRailSectionId {
@@ -103,7 +116,10 @@ function readPersisted(): Persisted {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return fallback;
-    const parsed = JSON.parse(raw) as Partial<Persisted> & { openInEverySession?: unknown };
+    const parsed = JSON.parse(raw) as Partial<Persisted> & {
+      openInEverySession?: unknown;
+      openViewSettled?: unknown;
+    };
     const folded: Partial<Record<AeRailSectionId, boolean>> = { ...fallback.folded };
     if (parsed.folded && typeof parsed.folded === "object") {
       for (const [id, value] of Object.entries(parsed.folded)) {
@@ -123,7 +139,8 @@ function readPersisted(): Persisted {
   }
 }
 
-function writePersisted(state: Persisted): void {
+/** `openViewSettled` marks a `sessionOpenView` this release wrote (see readSessionOpenView). */
+function writePersisted(state: Persisted & { openViewSettled: true }): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
@@ -281,6 +298,7 @@ useAeSessionRailStore.subscribe((state, previous) => {
       order: state.order,
       folded: state.folded,
       sessionOpenView: state.sessionOpenView,
+      openViewSettled: true,
     });
   }
 });

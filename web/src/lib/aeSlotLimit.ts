@@ -1,9 +1,9 @@
 // The slot limit the server enforces (omnigent-ae, 2026-09-24): `limit` from
-// `GET /v1/ae/capacity`, which reports `AE_SLOT_LIMIT` from omnigent-ae's
-// `config/server.env`. Reid asked for the cap to be one setting, so moving
-// from three slots to four is that one line and a container recreate; every
-// count in the UI (the sidebar's Dashboard row, the session chip, the Status
-// submenu) reads it from here. `AE_SLOT_LIMIT` in `aeLabels` is only the
+// `GET /v1/ae/capacity`, the server's effective limit (since 2026-10-22 the
+// lowest enabled slot cap policy's `limit` on Settings > Global Policies, else
+// `AE_SLOT_LIMIT` from omnigent-ae's `config/server.env`). Every count in the
+// UI (the sidebar's Dashboard row, the session chip, the Status submenu) reads
+// it from here. `AE_SLOT_LIMIT` in `aeLabels` is only the
 // fallback until the answer arrives, or when the route cannot answer.
 
 import { type QueryClient, useQuery } from "@tanstack/react-query";
@@ -12,8 +12,11 @@ import { authenticatedFetch } from "@/lib/identity";
 
 export const AE_SLOT_LIMIT_QUERY_KEY = ["ae", "slot-limit"] as const;
 
-/** The limit only moves when the server restarts; ask again every five minutes. */
-const STALE_MS = 5 * 60_000;
+/**
+ * A policy save can move the limit at any time: this tab asks again at once
+ * (refreshAeSlotLimit); another tab or device within a minute.
+ */
+const STALE_MS = 60_000;
 
 /** A whole number of one or more, else `null`. */
 export function parseAeSlotLimit(value: unknown): number | null {
@@ -35,6 +38,14 @@ export function rememberAeSlotLimit(queryClient: QueryClient, value: unknown): n
   const limit = parseAeSlotLimit(value);
   if (limit !== null) queryClient.setQueryData(AE_SLOT_LIMIT_QUERY_KEY, limit);
   return limit;
+}
+
+/**
+ * Ask for the limit again now: a global policy save may have changed the slot
+ * cap's `limit`, and the counts would otherwise wait out the five minutes.
+ */
+export function refreshAeSlotLimit(queryClient: QueryClient): Promise<void> {
+  return queryClient.invalidateQueries({ queryKey: AE_SLOT_LIMIT_QUERY_KEY });
 }
 
 /** The last limit the server gave, or the fallback. */

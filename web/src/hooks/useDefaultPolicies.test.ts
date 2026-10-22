@@ -103,6 +103,8 @@ describe("useAddDefaultPolicy", () => {
     expect(JSON.parse(init.body as string)).toEqual({ name: "p", type: "python", handler: "h" });
     // The new policy must show up in the list without a reload.
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["default-policies"] });
+    // The slot cap is a global policy: its limit moves every slot count at once.
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["ae", "slot-limit"] });
   });
 
   it("throws on non-2xx", async () => {
@@ -134,6 +136,8 @@ describe("useUpdateDefaultPolicy", () => {
     expect(init.method).toBe("PATCH");
     expect(JSON.parse(init.body as string)).toEqual({ enabled: false });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["default-policies"] });
+    // The slot cap is a global policy: its limit moves every slot count at once.
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["ae", "slot-limit"] });
   });
 
   it("throws on non-2xx", async () => {
@@ -162,6 +166,8 @@ describe("useDeleteDefaultPolicy", () => {
     expect(url).toBe("/v1/policies/p%201");
     expect(init.method).toBe("DELETE");
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["default-policies"] });
+    // The slot cap is a global policy: its limit moves every slot count at once.
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["ae", "slot-limit"] });
   });
 
   it("throws on non-2xx", async () => {
