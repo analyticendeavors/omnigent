@@ -31,8 +31,9 @@ import {
 import { AeMenuFold } from "./AeMenuFold";
 
 /**
- * A row as a drop target for its own list's order, in any Ordering (outside
- * Manual a drop switches to it): on for listed rows outside Pinned, Archived
+ * A row as a drop target for its list's order, in any Ordering (outside
+ * Manual a drop switches to it), also for a row dragged in from another list
+ * (`aeCrossMove`): on for listed rows outside Pinned, Archived
  * and selection. A pending save never
  * toggles it, since every toggle re-measures every target mid-drag. The
  * insertion line shows on the row under the pointer, never on the dragged one,
@@ -61,10 +62,11 @@ export function useAeOrderRow(
     },
     [setNodeRef],
   );
+  const crossSide = useAeSidebarStore((s) => (s.crossSide?.id === id ? s.crossSide.side : null));
   const draggedId = active ? String(active.id) : null;
   const side =
     enabled && isOver && draggedId !== null && draggedId !== id
-      ? aeInsertionSide(draggedId, id)
+      ? (aeInsertionSide(draggedId, id) ?? crossSide)
       : null;
   const rect = side ? nodeRef.current?.getBoundingClientRect() : undefined;
   // Same root as the DragOverlay (z-index 999), one layer above it. The accent

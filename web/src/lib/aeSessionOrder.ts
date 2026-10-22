@@ -94,7 +94,8 @@ function materialize(order: readonly string[], units: readonly (readonly AeOrder
  * order: the list as shown is derived from the order, so a move replayed on a
  * fresh order lands where it would have on that order. The moved id then sits
  * next to its new neighbour in the list, which changes no other list. Returns
- * `order` itself when the move changes nothing.
+ * `order` itself when the move changes nothing, unless `keep`: a row landing in
+ * another list is always ranked, or it would show there by recency.
  */
 export function aeMoveInOrder({
   order,
@@ -102,12 +103,14 @@ export function aeMoveInOrder({
   scopeIds,
   id,
   to,
+  keep = false,
 }: {
   order: readonly string[];
   units: readonly (readonly AeOrderRow[])[];
   scopeIds: readonly string[];
   id: string;
   to: AeMoveTo;
+  keep?: boolean;
 }): readonly string[] {
   const full = materialize(order, units);
   const members = new Set(scopeIds);
@@ -126,7 +129,7 @@ export function aeMoveInOrder({
     if ("before" in to) dest = target > from ? target - 1 : target;
     else dest = target < from ? target + 1 : target;
   }
-  if (dest === from || dest < 0 || dest >= shown.length) return order;
+  if ((dest === from && !keep) || dest < 0 || dest >= shown.length) return order;
 
   const moved = shown.filter((rowId) => rowId !== id);
   moved.splice(dest, 0, id);

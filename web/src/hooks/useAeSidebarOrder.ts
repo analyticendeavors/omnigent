@@ -89,6 +89,8 @@ export type AeOrderOp =
       scopeIds: readonly string[];
       /** Every loaded row, by ranking unit (see `aeMoveInOrder`). */
       units: readonly (readonly AeOrderRow[])[];
+      /** The row lands in another list: save its place even when the order looks unchanged. */
+      keep?: boolean;
     }
   | { kind: "set"; order: readonly string[] };
 
@@ -100,6 +102,7 @@ function applyOp(order: readonly string[], op: AeOrderOp): readonly string[] {
     scopeIds: op.scopeIds,
     id: op.id,
     to: op.to,
+    keep: op.keep,
   });
 }
 

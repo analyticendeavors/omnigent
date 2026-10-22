@@ -5,9 +5,16 @@
 // re-renders only the rows whose list changed. One session list mounts at a
 // time (the peek sidebar is the same instance), so the store is not keyed.
 // In any Ordering, a drop on a row of the same list or a Move item reorders;
-// outside Manual it first switches this device to Manual.
+// outside Manual it first switches this device to Manual. A drop on a row of
+// another list (another project folder, Sessions, or another Triage group)
+// first files the row there or sets its status, then places it the same way.
 
-import { type CollisionDetection, type Over, pointerWithin } from "@dnd-kit/core";
+import {
+  type CollisionDetection,
+  type DragMoveEvent,
+  type Over,
+  pointerWithin,
+} from "@dnd-kit/core";
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { create } from "zustand";
@@ -22,6 +29,7 @@ import {
   useAeSidebarOrder,
 } from "@/hooks/useAeSidebarOrder";
 import type { SidebarListQuery } from "@/hooks/useSidebarData";
+import type { AeStatus } from "@/lib/aeLabels";
 import {
   type AeMoveTo,
   type AeOrderRow,
@@ -30,6 +38,7 @@ import {
   aeMoveInOrder,
 } from "@/lib/aeSessionOrder";
 import {
+  AE_TRIAGE_STATUS,
   type AeTriageGroup,
   type AeTriageRow,
   aeSortByTriage,
@@ -37,6 +46,7 @@ import {
 } from "@/lib/aeTriage";
 import type { SessionFilter } from "@/lib/sessionFilterPreferences";
 import type { SidebarViewPreferences } from "@/lib/sidebarViewPreferences";
+import { aeCachedRow, applyAeStatus } from "./AeStatusMenu";
 import { type ActiveChatOverride, sortByUpdatedAtDesc } from "./sidebarNav";
 
 interface AeSidebarState {
@@ -48,8 +58,12 @@ interface AeSidebarState {
   order: readonly string[] | null;
   /** Status ordering sorts rows by their status icon. */
   statusSort: boolean;
+  /** Triage grouping is on. */
+  triage: boolean;
   /** Triage groups held while the pointer is in the list. */
   frozenTriage: Map<string, AeTriageGroup> | null;
+  /** During a drag, the row of another list under the pointer and the side the drop lands on. */
+  crossSide: { id: string; side: "before" | "after" } | null;
   /** Each list's row ids as shown, by list key (`sessions`, `shared`, `group:…`, `folder:…`). */
   lists: ReadonlyMap<string, readonly string[]>;
   /** Each listed row's list key. */
@@ -68,7 +82,9 @@ const IDLE: AeSidebarState = {
   manual: false,
   order: null,
   statusSort: false,
+  triage: false,
   frozenTriage: null,
+  crossSide: null,
   lists: new Map(),
   listOf: new Map(),
   units: null,
@@ -260,6 +276,7 @@ export function useAePublishSidebarScopes(
       manual,
       order: ae.order,
       statusSort: ae.statusSort,
+      triage: ae.triage,
       frozenTriage: ae.frozenTriage,
       lists,
       listOf,
@@ -290,17 +307,22 @@ export function useAeFolderOrder(): <T extends AeListRow>(rows: T[]) => T[] {
 }
 
 /**
- * Move a row within its list. Outside Manual, switch to Manual and make the
- * move on a fresh read of the saved order. False when the row is in no list
- * or the move changes nothing.
+ * Move a row within its list, or within `list` when it is landing in another
+ * one. Outside Manual, switch to Manual and make the move on a fresh read of
+ * the saved order. False when the row is in no list or the move changes nothing.
  */
-export function aeMoveRow(id: string, to: AeMoveTo): boolean {
+export function aeMoveRow(
+  id: string,
+  to: AeMoveTo,
+  list = useAeSidebarStore.getState().listOf.get(id),
+): boolean {
   const state = useAeSidebarStore.getState();
   const { move, units, queryClient, switchToManual } = state;
-  const list = state.listOf.get(id);
-  const scopeIds = list === undefined ? undefined : state.lists.get(list);
+  const ids = list === undefined ? undefined : state.lists.get(list);
+  const keep = list !== state.listOf.get(id);
+  const scopeIds = ids && !ids.includes(id) ? [...ids, id] : ids;
   if (!state.listed || !move || !units || !scopeIds) return false;
-  const op: AeOrderOp = { kind: "move", id, to, scopeIds, units: units() };
+  const op: AeOrderOp = { kind: "move", id, to, scopeIds, units: units(), ...(keep && { keep }) };
   if (state.manual) {
     if (waiting === 0) return move(op);
     later(() => {
@@ -310,7 +332,7 @@ export function aeMoveRow(id: string, to: AeMoveTo): boolean {
   }
   if (!switchToManual || !queryClient) return false;
   // A move that would not change the list as shown switches nothing.
-  if (aeMoveInOrder({ order: NO_ORDER, units: op.units, scopeIds, id, to }) === NO_ORDER) {
+  if (!keep && aeMoveInOrder({ order: NO_ORDER, units: op.units, scopeIds, id, to }) === NO_ORDER) {
     return false;
   }
   switchToManual();
@@ -352,33 +374,163 @@ export function aeInsertionSide(draggedId: string, targetId: string): "before" |
   return ids.indexOf(draggedId) < ids.indexOf(targetId) ? "after" : "before";
 }
 
+/** What a drop on a row of another list does before placing the row: file it, or set its status. */
+export type AeCrossMove =
+  | { kind: "project"; project: string }
+  | { kind: "status"; group: AeTriageGroup; status: AeStatus | null };
+
 /**
- * Upstream's `pointerWithin`, minus the row-order targets of every list but
- * the dragged row's own, so a drop on a row elsewhere falls through to the
- * folder, Pinned or Sessions target beneath it. A row in no list (pinned or
- * archived) sees none, so upstream's pin and filing drops stand.
+ * What dropping `draggedId` on `targetId` in another list does: into another
+ * project folder or Sessions (`project` "" unfiles it), or into another Triage
+ * group (its status, `null` for No status). `null` within one list, and for
+ * Shared, the other groupings and rows in no list.
+ */
+export function aeCrossMove(
+  state: Pick<AeSidebarState, "listOf" | "triage">,
+  draggedId: string,
+  targetId: string,
+): AeCrossMove | null {
+  const from = state.listOf.get(draggedId);
+  const to = state.listOf.get(targetId);
+  if (from === undefined || to === undefined || from === to) return null;
+  const projectOf = (key: string) =>
+    key === "sessions" ? "" : key.startsWith("folder:") ? key.slice("folder:".length) : null;
+  const project = projectOf(to);
+  if (project !== null && projectOf(from) !== null) return { kind: "project", project };
+  if (!state.triage || !from.startsWith("group:") || !to.startsWith("group:")) return null;
+  const group = to.slice("group:".length);
+  if (!Object.hasOwn(AE_TRIAGE_STATUS, group)) return null;
+  return {
+    kind: "status",
+    group: group as AeTriageGroup,
+    status: AE_TRIAGE_STATUS[group as AeTriageGroup],
+  };
+}
+
+/**
+ * Upstream's `pointerWithin`, minus the row-order targets a drop cannot use:
+ * those of other lists, except where `aeCrossMove` takes the row. A row in no
+ * list (pinned or archived) sees none, so upstream's pin and filing drops
+ * stand. A row target outranks the folder or Sessions target beneath it, so
+ * the drop lands where the insertion line shows.
  */
 export function aePointerWithin(args: Parameters<CollisionDetection>[0]) {
   const state = useAeSidebarStore.getState();
-  const list = state.listOf.get(String(args.active.id));
+  const draggedId = String(args.active.id);
+  const list = state.listOf.get(draggedId);
   const droppableContainers = args.droppableContainers.filter((container) => {
     const data = container.data.current;
     if (data?.type !== "ae-order") return true;
-    return list !== undefined && state.listOf.get(String(data.id)) === list;
+    if (list === undefined) return false;
+    const targetId = String(data.id);
+    return state.listOf.get(targetId) === list || aeCrossMove(state, draggedId, targetId) !== null;
   });
-  return pointerWithin({ ...args, droppableContainers });
+  const collisions = pointerWithin({ ...args, droppableContainers });
+  const isRow = (collision: { id: unknown }) => String(collision.id).startsWith("ae-order:");
+  return [...collisions.filter(isRow), ...collisions.filter((c) => !isRow(c))];
+}
+
+function pointerY({ activatorEvent, active, delta }: DragMoveEvent): number | null {
+  if (activatorEvent instanceof MouseEvent) return activatorEvent.clientY + delta.y;
+  if (typeof TouchEvent !== "undefined" && activatorEvent instanceof TouchEvent) {
+    const touch = activatorEvent.touches[0] ?? activatorEvent.changedTouches[0];
+    if (touch) return touch.clientY + delta.y;
+  }
+  const rect = active.rect.current.translated;
+  return rect ? rect.top + rect.height / 2 : null;
+}
+
+/**
+ * Track which half of another list's row the pointer is on, so the insertion
+ * line and the drop agree. Within one list the side comes from the drag's
+ * direction instead (`aeInsertionSide`).
+ */
+export function aeTrackDragMove(event: DragMoveEvent): void {
+  const state = useAeSidebarStore.getState();
+  const data = event.over?.data.current;
+  let next: AeSidebarState["crossSide"] = null;
+  if (event.over && data?.type === "ae-order") {
+    const targetId = String(data.id);
+    const y = pointerY(event);
+    if (y !== null && aeCrossMove(state, String(event.active.id), targetId)) {
+      const { top, height } = event.over.rect;
+      next = { id: targetId, side: y < top + height / 2 ? "before" : "after" };
+    }
+  }
+  const current = state.crossSide;
+  if (current?.id !== next?.id || current?.side !== next?.side) {
+    useAeSidebarStore.setState({ crossSide: next });
+  }
+}
+
+/** Clear the drag's insertion side; a cancelled drag calls it, a drop does through `aeHandleOrderDrop`. */
+export function aeEndDrag(): AeSidebarState["crossSide"] {
+  const { crossSide } = useAeSidebarStore.getState();
+  if (crossSide) useAeSidebarStore.setState({ crossSide: null });
+  return crossSide;
+}
+
+/**
+ * Set the status a drop into another Triage group means, then place the row,
+ * chained behind any move still waiting so moves apply in the order made. The
+ * new group is held under the pointer from the start, so the write's own
+ * render draws it there; a refused or unchanged status (Working at the slot
+ * limit, a row Blocked by an open question) puts the hold back.
+ */
+function aeDropIntoGroup(
+  draggedId: string,
+  move: Extract<AeCrossMove, { kind: "status" }>,
+  to: AeMoveTo,
+  list: string,
+): void {
+  later(async (current) => {
+    const { queryClient, frozenTriage } = useAeSidebarStore.getState();
+    if (!queryClient) return;
+    const row = aeCachedRow(queryClient, draggedId) ?? { id: draggedId, labels: {} };
+    const held = frozenTriage?.get(draggedId);
+    frozenTriage?.set(draggedId, move.group);
+    if (!(await applyAeStatus(queryClient, row, move.status))) {
+      if (held === undefined) frozenTriage?.delete(draggedId);
+      else frozenTriage?.set(draggedId, held);
+      return;
+    }
+    if (current()) aeMoveRow(draggedId, to, list);
+  });
 }
 
 /**
  * Handle a drop on a row-order target. True for every such target, the row
  * itself and a no-op included: upstream reads any target it does not know as
- * the Sessions list, which would take a filed session out of its folder.
+ * the Sessions list, which would take a filed session out of its folder. A
+ * row of another list files the dragged row there through `fileTo` (a
+ * project name, "" for Sessions) or sets its Triage status, then places it on
+ * the side the insertion line showed.
  */
-export function aeHandleOrderDrop(draggedId: string, over: Over | null): boolean {
+export function aeHandleOrderDrop(
+  draggedId: string,
+  over: Over | null,
+  fileTo: (project: string) => void = () => {},
+): boolean {
+  const crossSide = aeEndDrag();
   const data = over?.data.current;
   if (data?.type !== "ae-order") return false;
   const targetId = String(data.id);
-  const side = targetId === draggedId ? null : aeInsertionSide(draggedId, targetId);
-  if (side) aeMoveRow(draggedId, side === "after" ? { after: targetId } : { before: targetId });
+  if (targetId === draggedId) return true;
+  const state = useAeSidebarStore.getState();
+  const cross = aeCrossMove(state, draggedId, targetId);
+  const side = cross
+    ? crossSide?.id === targetId
+      ? crossSide.side
+      : "before"
+    : aeInsertionSide(draggedId, targetId);
+  if (!side) return true;
+  const to = side === "after" ? { after: targetId } : { before: targetId };
+  const list = state.listOf.get(targetId);
+  if (cross?.kind === "status" && list !== undefined) {
+    aeDropIntoGroup(draggedId, cross, to, list);
+    return true;
+  }
+  if (cross?.kind === "project") fileTo(cross.project);
+  aeMoveRow(draggedId, to, list);
   return true;
 }

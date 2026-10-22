@@ -79,12 +79,15 @@ async function describeFailure(res: Response): Promise<string> {
   return detail ? `${status}: ${detail}` : status;
 }
 
-/** Write `ae.status` through upstream's labels PATCH; throws with the server's answer. */
-export async function patchAeStatus(sessionId: string, status: AeStatus): Promise<void> {
+/**
+ * Write `ae.status` through upstream's labels PATCH (`null` clears it, which an
+ * empty value does there); throws with the server's answer.
+ */
+export async function patchAeStatus(sessionId: string, status: AeStatus | null): Promise<void> {
   const res = await authenticatedFetch(`/v1/sessions/${encodeURIComponent(sessionId)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ labels: { [AE_STATUS_KEY]: status } }),
+    body: JSON.stringify({ labels: { [AE_STATUS_KEY]: status ?? "" } }),
   });
   if (!res.ok) throw new Error(await describeFailure(res));
 }
@@ -114,6 +117,11 @@ function cachedRows(queryClient: QueryClient): Conversation[] {
     for (const page of data?.pages ?? []) rows.push(...page.data);
   }
   return rows;
+}
+
+/** A session list row from the cache, for a write that starts from a drag. */
+export function aeCachedRow(queryClient: QueryClient, id: string): Conversation | undefined {
+  return cachedRows(queryClient).find((row) => row.id === id);
 }
 
 /**
@@ -174,14 +182,15 @@ export function slotsFullMessage(room: Extract<AeSlotRoom, { ok: false }>): stri
 
 // ── the cache overlay ────────────────────────────────────────────────────
 
-function withStatus<T extends Row>(row: T, status: AeStatus): T {
-  return { ...row, labels: { ...(row.labels ?? {}), [AE_STATUS_KEY]: status } };
+function withStatus<T extends Row>(row: T, status: AeStatus | null): T {
+  const { [AE_STATUS_KEY]: _old, ...rest } = row.labels ?? {};
+  return { ...row, labels: status ? { ...rest, [AE_STATUS_KEY]: status } : rest };
 }
 
 function overlayPages(
   data: ConversationsInfiniteData | undefined,
   id: string,
-  status: AeStatus,
+  status: AeStatus | null,
 ): ConversationsInfiniteData | undefined {
   if (!data || !data.pages.some((page) => page.data.some((row) => row.id === id))) return data;
   return {
@@ -204,7 +213,7 @@ function overlayPages(
 export function overlayAeStatusIntoCaches(
   queryClient: QueryClient,
   id: string,
-  status: AeStatus,
+  status: AeStatus | null,
 ): void {
   for (const queryKey of [["conversations"], ["project-sessions"]]) {
     for (const [key, data] of queryClient.getQueriesData<ConversationsInfiniteData>({
@@ -239,12 +248,13 @@ export function overlayAeStatusIntoCaches(
  * Set a session's `ae.status` the way the menu does: nothing when it already
  * holds that value, the slot check before working, the PATCH, then the
  * overlay. Every failure is a toast that says what failed and what to do.
- * Returns whether the label was written.
+ * `null` clears the status (a drop into Triage's No status group). Returns
+ * whether the label was written.
  */
 export async function applyAeStatus(
   queryClient: QueryClient,
   conversation: Row,
-  status: AeStatus,
+  status: AeStatus | null,
 ): Promise<boolean> {
   if (aeStatusOf(conversation.labels) === status) return false;
   if (status === "working") {
@@ -259,7 +269,7 @@ export async function applyAeStatus(
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     showToast(
-      `Could not set the status to ${AE_STATUS_WORDS[status]}: ${reason}. ` +
+      `Could not set the status to ${status ? AE_STATUS_WORDS[status] : "No status"}: ${reason}. ` +
         `Reload the page and try again, or set it from the Parking Lot page.`,
     );
     return false;

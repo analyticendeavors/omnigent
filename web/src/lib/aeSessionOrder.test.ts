@@ -72,6 +72,22 @@ describe("aeMoveInOrder", () => {
   const move = (order: readonly string[], id: string, to: AeMoveTo, scopeIds = sessions) =>
     aeMoveInOrder({ order, units, scopeIds, id, to });
 
+  it("ranks a row landing in another list even where the order looks unchanged", () => {
+    // Materialized, f1 already sits right before s1; without `keep` nothing saves
+    // and the filed row would show in Sessions by recency.
+    const scopeIds = [...sessions, "f1"];
+    expect(move([], "f1", { before: "s1" }, scopeIds)).toEqual([]);
+    const kept = aeMoveInOrder({
+      order: [],
+      units,
+      scopeIds,
+      id: "f1",
+      to: { before: "s1" },
+      keep: true,
+    });
+    expect(kept.indexOf("f1")).toBe(kept.indexOf("s1") - 1);
+  });
+
   it("moves within the list from an empty order, ranking the loaded rows first", () => {
     const next = move([], "s3", "top");
     expect(shown(next)).toEqual(["s3", "s1", "s2", "s4"]);

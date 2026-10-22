@@ -242,8 +242,10 @@ import { AeArchivedGroup } from "@/shell/AeArchivedGroup";
 import { AE_BULK_LABEL_CLASS, AeBulkBarCount } from "@/shell/AeBulkBarCount";
 import { AeMoveMenu, aeTriageTitle, useAeOrderRow } from "@/shell/AeSidebarRowOrder";
 import {
+  aeEndDrag,
   aeHandleOrderDrop,
   aePointerWithin,
+  aeTrackDragMove,
   useAeFolderOrder,
   useAePublishSidebarScopes,
   useAeSidebarView,
@@ -2244,7 +2246,11 @@ function ConversationList({
       setActiveDrag(null);
       setOverPin(null);
       if (!dragged) return;
-      if (aeHandleOrderDrop(dragged.id, event.over)) return;
+      const fileTo = (project: string) => {
+        moveToProject.mutate({ id: dragged.id, project });
+        if (project) expandProject(project);
+      };
+      if (aeHandleOrderDrop(dragged.id, event.over, fileTo)) return;
       const target = (event.over?.data.current as SidebarDropTarget | undefined) ?? null;
       const action = resolveSidebarDrop(
         { id: dragged.id, project: dragged.project, isPinned: dragged.isPinned },
@@ -2662,12 +2668,15 @@ function ConversationList({
         measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
+        onDragMove={aeTrackDragMove}
         onDragOver={(event) => {
+          aeTrackDragMove(event);
           const over = event.over?.data.current;
           setOverProject(over?.type === "project-order" ? (over.name as string) : null);
           setOverPin(over?.type === "pin-order" ? (over.id as string) : null);
         }}
         onDragCancel={() => {
+          aeEndDrag();
           setActiveDrag(null);
           setOverPin(null);
           setDraggedProject(null);

@@ -3093,7 +3093,8 @@ def register_core_routes(
         # so without this an empty string would linger as a stored value.
         # The pinned key was rewritten to the caller's per-user key above, so
         # clear that one (not the canonical bare key) on an empty value.
-        for _clear_key in (PROJECT_LABEL_KEY, pinned_label_key(user_id)):
+        # omnigent-ae: `ae.status` too (empty = "No status", a sidebar drop).
+        for _clear_key in (PROJECT_LABEL_KEY, pinned_label_key(user_id), "ae.status"):
             if labels_to_set.get(_clear_key) == "":
                 labels_to_set = {k: v for k, v in labels_to_set.items() if k != _clear_key}
                 await asyncio.to_thread(conversation_store.delete_label, session_id, _clear_key)

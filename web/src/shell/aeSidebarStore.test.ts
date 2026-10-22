@@ -16,11 +16,14 @@ import { resolveSidebarDrop } from "./sidebarNav";
 import {
   AE_MANUAL_SWITCH_TOAST,
   aeCancelPendingMoves,
+  aeCrossMove,
+  aeEndDrag,
   aeHandleOrderDrop,
   aeInsertionSide,
   aeMoveRow,
   aePlaceOf,
   aePointerWithin,
+  aeTrackDragMove,
   useAeSidebarStore,
   useAeSidebarView,
 } from "./aeSidebarStore";
@@ -64,6 +67,9 @@ afterEach(() => {
     move: null,
     queryClient: null,
     switchToManual: null,
+    triage: false,
+    frozenTriage: null,
+    crossSide: null,
   });
   aeCancelPendingMoves();
   mocks.fetch.mockReset();
@@ -104,14 +110,155 @@ describe("aeHandleOrderDrop", () => {
     expect(move).toHaveBeenLastCalledWith(expect.objectContaining({ to: { after: "s2" } }));
   });
 
-  it("consumes the row itself, another list's row and a drop with no save path", () => {
+  it("consumes the row itself, a row it cannot move to and a drop with no save path", () => {
     const move = publish();
     expect(aeHandleOrderDrop("s1", orderTarget("s1"))).toBe(true);
-    expect(aeHandleOrderDrop("s1", orderTarget("f1"))).toBe(true);
+    useAeSidebarStore.setState({
+      lists: new Map([...LISTS, ["shared", ["x1"]]]),
+      listOf: new Map([...useAeSidebarStore.getState().listOf, ["x1", "shared"]]),
+    });
+    expect(aeHandleOrderDrop("s1", orderTarget("x1"))).toBe(true);
     expect(move).not.toHaveBeenCalled();
     useAeSidebarStore.setState({ move: null });
     expect(aeHandleOrderDrop("s1", orderTarget("s2"))).toBe(true);
     expect(aeMoveRow("s1", "down")).toBe(false);
+  });
+});
+
+describe("a drop on a row of another list", () => {
+  it("files the row into that folder or Sessions, then places it on the line's side", () => {
+    const move = publish();
+    const fileTo = vi.fn();
+    useAeSidebarStore.setState({ crossSide: { id: "f2", side: "after" } });
+    expect(aeHandleOrderDrop("s1", orderTarget("f2"), fileTo)).toBe(true);
+    expect(fileTo).toHaveBeenCalledExactlyOnceWith("Alpha");
+    expect(move).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: "s1", to: { after: "f2" }, scopeIds: ["f1", "f2", "s1"] }),
+    );
+    expect(useAeSidebarStore.getState().crossSide).toBeNull();
+
+    aeHandleOrderDrop("f1", orderTarget("s2"), fileTo);
+    expect(fileTo).toHaveBeenLastCalledWith("");
+    expect(move).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        id: "f1",
+        to: { before: "s2" },
+        scopeIds: ["s1", "s2", "s3", "f1"],
+      }),
+    );
+  });
+
+  it("reads which lists a row can move between", () => {
+    publish();
+    const state = useAeSidebarStore.getState();
+    expect(aeCrossMove(state, "s1", "s2")).toBeNull();
+    expect(aeCrossMove(state, "s1", "f1")).toEqual({ kind: "project", project: "Alpha" });
+    expect(aeCrossMove(state, "f1", "s1")).toEqual({ kind: "project", project: "" });
+    expect(aeCrossMove(state, "missing", "s1")).toBeNull();
+    const groups = new Map([
+      ["r1", "group:Review"],
+      ["n1", "group:No status"],
+      ["u1", "group:Today"],
+    ]);
+    expect(aeCrossMove({ listOf: groups, triage: true }, "r1", "n1")).toEqual({
+      kind: "status",
+      group: "No status",
+      status: null,
+    });
+    expect(aeCrossMove({ listOf: groups, triage: true }, "n1", "r1")).toMatchObject({
+      status: "review",
+    });
+    // The other groupings (by status activity, by date) group by what a drop cannot change.
+    expect(aeCrossMove({ listOf: groups, triage: false }, "r1", "n1")).toBeNull();
+    expect(aeCrossMove({ listOf: groups, triage: true }, "r1", "u1")).toBeNull();
+  });
+
+  it("sets the Triage group's status, holds the row there, then places it", async () => {
+    const [R, W] = ["a", "b"].map((ch) => ch.repeat(32));
+    const move = vi.fn(() => true);
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(["conversations", "x"], {
+      pages: [{ data: [{ id: R, labels: { "ae.status": "review" } }] }],
+      pageParams: [null],
+    });
+    const frozen = new Map();
+    useAeSidebarStore.setState({
+      listed: true,
+      manual: true,
+      order: [],
+      triage: true,
+      frozenTriage: frozen,
+      lists: new Map([
+        ["group:Review", [R]],
+        ["group:Parked", [W]],
+      ]),
+      listOf: new Map([
+        [R, "group:Review"],
+        [W, "group:Parked"],
+      ]),
+      units: () => [[{ id: R }, { id: W }]],
+      move,
+      queryClient,
+    });
+    mocks.fetch.mockResolvedValue(new Response("{}", { status: 200 }));
+    expect(aeHandleOrderDrop(R, orderTarget(W))).toBe(true);
+    await vi.waitFor(() => expect(move).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(String(mocks.fetch.mock.calls[0][1].body))).toEqual({
+      labels: { "ae.status": "parked" },
+    });
+    expect(frozen.get(R)).toBe("Parked");
+    expect(move).toHaveBeenCalledWith(
+      expect.objectContaining({ id: R, to: { before: W }, scopeIds: [W, R] }),
+    );
+  });
+
+  it("leaves the row in place when the status is refused", async () => {
+    const [R, W] = ["a", "b"].map((ch) => ch.repeat(32));
+    const move = vi.fn(() => true);
+    useAeSidebarStore.setState({
+      listed: true,
+      manual: true,
+      triage: true,
+      lists: new Map([
+        ["group:Review", [R]],
+        ["group:Parked", [W]],
+      ]),
+      listOf: new Map([
+        [R, "group:Review"],
+        [W, "group:Parked"],
+      ]),
+      units: () => [[{ id: R }, { id: W }]],
+      move,
+      queryClient: new QueryClient(),
+    });
+    mocks.fetch.mockResolvedValue(new Response("{}", { status: 500 }));
+    aeHandleOrderDrop(R, orderTarget(W));
+    await vi.waitFor(() => expect(mocks.toast).toHaveBeenCalledTimes(1));
+    expect(move).not.toHaveBeenCalled();
+  });
+
+  it("tracks the pointer's half of the row under it, for another list only", () => {
+    publish();
+    const event = (activeId: string, overId: string, y: number) =>
+      ({
+        active: { id: activeId, rect: { current: { translated: null } } },
+        over: {
+          id: `ae-order:${overId}`,
+          rect: { top: 100, height: 30 },
+          data: { current: { type: "ae-order", id: overId } },
+        },
+        activatorEvent: new MouseEvent("mousedown", { clientY: 0 }),
+        delta: { x: 0, y },
+      }) as unknown as Parameters<typeof aeTrackDragMove>[0];
+    aeTrackDragMove(event("s1", "f1", 110));
+    expect(useAeSidebarStore.getState().crossSide).toEqual({ id: "f1", side: "before" });
+    aeTrackDragMove(event("s1", "f1", 120));
+    expect(useAeSidebarStore.getState().crossSide).toEqual({ id: "f1", side: "after" });
+    aeTrackDragMove(event("s1", "s2", 120));
+    expect(useAeSidebarStore.getState().crossSide).toBeNull();
+    aeTrackDragMove(event("s1", "f1", 120));
+    expect(aeEndDrag()).toEqual({ id: "f1", side: "after" });
+    expect(useAeSidebarStore.getState().crossSide).toBeNull();
   });
 });
 
@@ -143,16 +290,28 @@ describe("aePointerWithin", () => {
     return aePointerWithin(args).map((collision) => String(collision.id));
   }
 
-  it("keeps only the dragged row's own list among the row-order targets", () => {
+  it("keeps the row targets a drop can use, rows first", () => {
     publish();
-    expect(collide("s1").sort()).toEqual(["ae-order:s2", "project:Alpha"]);
-    expect(collide("f1").sort()).toEqual(["ae-order:f2", "project:Alpha"]);
+    expect(collide("s1")).toEqual(["ae-order:s2", "ae-order:f2", "project:Alpha"]);
+    expect(collide("f1")).toEqual(["ae-order:s2", "ae-order:f2", "project:Alpha"]);
   });
 
-  it("keeps the own list's targets outside Manual too", () => {
+  it("drops another list's targets a row cannot move to", () => {
+    publish();
+    useAeSidebarStore.setState({
+      listOf: new Map([
+        ["s1", "shared"],
+        ["s2", "sessions"],
+        ["f2", "folder:Alpha"],
+      ]),
+    });
+    expect(collide("s1")).toEqual(["project:Alpha"]);
+  });
+
+  it("keeps the targets outside Manual too", () => {
     publish();
     useAeSidebarStore.setState({ manual: false });
-    expect(collide("s1").sort()).toEqual(["ae-order:s2", "project:Alpha"]);
+    expect(collide("s1")).toEqual(["ae-order:s2", "ae-order:f2", "project:Alpha"]);
   });
 
   it("drops every row-order target for a row in no list (pinned, archived)", () => {
@@ -210,6 +369,27 @@ describe("a move outside Manual", () => {
     expect(move).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(move).toHaveBeenCalledTimes(1));
     expect(move).toHaveBeenCalledWith(expect.objectContaining({ id: C, to: { before: A } }));
+  });
+
+  it("switches and saves a drop into another list even where the order looks unchanged", async () => {
+    const { move, switchToManual } = publishUpdated();
+    const F = "f".repeat(32);
+    useAeSidebarStore.setState({
+      lists: new Map([
+        ["sessions", [A, B, C]],
+        ["folder:Alpha", [F]],
+      ]),
+      listOf: new Map([...[A, B, C].map((id) => [id, "sessions"] as const), [F, "folder:Alpha"]]),
+      units: () => [[{ id: F }], [{ id: A }, { id: B }, { id: C }]],
+    });
+    mocks.fetch.mockResolvedValue(json({ order: [], revision: 0 }));
+    useAeSidebarStore.setState({ crossSide: { id: C, side: "after" } });
+    expect(aeHandleOrderDrop(F, orderTarget(C), () => {})).toBe(true);
+    expect(switchToManual).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(move).toHaveBeenCalledTimes(1));
+    expect(move).toHaveBeenCalledWith(
+      expect.objectContaining({ id: F, to: { after: C }, keep: true }),
+    );
   });
 
   it("switches nothing for a move that changes nothing", () => {

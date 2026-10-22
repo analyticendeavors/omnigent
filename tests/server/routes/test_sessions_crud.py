@@ -592,6 +592,28 @@ async def test_patch_session_empty_project_removes_label(
     assert "omni_project" not in conv.labels
 
 
+async def test_patch_session_empty_ae_status_removes_label(
+    client: httpx.AsyncClient,
+    session_id: str,
+    db_uri: str,
+) -> None:
+    """omnigent-ae: an empty ``ae.status`` removes the label (Triage's No status)."""
+    conv_store = SqlAlchemyConversationStore(db_uri)
+    conv_store.set_labels(session_id, {"ae.status": "review", "ae.next": "x"})
+
+    resp = await client.patch(
+        f"/v1/sessions/{session_id}",
+        json={"labels": {"ae.status": ""}},
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 200
+
+    conv = conv_store.get_conversation(session_id)
+    assert conv is not None
+    assert "ae.status" not in conv.labels
+    assert conv.labels.get("ae.next") == "x"
+
+
 # ── Pinned session label (omnigent.pinned) ───────────────────────────
 
 

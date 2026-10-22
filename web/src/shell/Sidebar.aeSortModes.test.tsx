@@ -487,7 +487,7 @@ describe("Manual ordering", () => {
     await waitFor(() => expect(sidebarCalls("PUT")).toHaveLength(1));
   });
 
-  it("does nothing when a row drops on a row in another Triage group", async () => {
+  it("leaves a row in its Triage group when the status write fails", async () => {
     stubRowRects();
     setView("triage", "manual");
     serve([
@@ -496,11 +496,10 @@ describe("Manual ordering", () => {
     ]);
     renderSidebar();
     await waitFor(() => expect(useAeSidebarStore.getState().listOf.size).toBe(2));
-    const insertion = await drag("r", "w");
-    expect(insertion).toBeNull();
-    await new Promise((resolve) => {
-      setTimeout(resolve, 20);
-    });
+    // The mocked server answers the status PATCH with 404.
+    expect(await drag("r", "w")).not.toBeNull();
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalled());
+    expect(String(mocks.toast.mock.calls.at(-1)?.[0])).toContain("Could not set the status");
     expect(sidebarCalls("PUT")).toHaveLength(0);
     expect(mocks.moveToProject).not.toHaveBeenCalled();
   });
@@ -605,7 +604,7 @@ describe("drag and Move in any Ordering", () => {
     expect(ordering()).toBe("updated");
   });
 
-  it("still unfiles a filed row dropped on a Sessions row", async () => {
+  it("unfiles a filed row dropped on a Sessions row and places it at the line", async () => {
     stubRowRects();
     mocks.projects = ["Alpha"];
     const filed = [row("f1", 3, { labels: { omni_project: "Alpha" } })];
@@ -614,26 +613,34 @@ describe("drag and Move in any Ordering", () => {
     serve([...filed, row("a", 2), row("b", 1)]);
     renderSidebar();
     await waitFor(() => expect(useAeSidebarStore.getState().listOf.size).toBe(3));
-    await drag("f1", "b");
+    // The pointer sits on the lower half of "b", so the row lands below it.
+    expect(await drag("f1", "b")).not.toBeNull();
     expect(mocks.moveToProject).toHaveBeenCalledWith({ id: sid("f1"), project: "" });
-    expect(sidebarCalls("PUT")).toHaveLength(0);
+    await waitFor(() => expect(sidebarCalls("PUT")).toHaveLength(1));
+    expect(lastPut().order).toEqual(["a", "b", "f1"]);
+    expect(ordering()).toBe("manual");
   });
 
-  it("does nothing across Triage groups outside Manual either", async () => {
+  it("moves a row across Triage groups: sets the status, then places it at the line", async () => {
     stubRowRects();
-    setView("triage", "updated");
+    setView("triage", "manual");
+    const base = mocks.fetch.getMockImplementation()!;
+    mocks.fetch.mockImplementation(async (url: string, init?: RequestInit) =>
+      url.startsWith("/v1/sessions/") ? json({}) : base(url, init),
+    );
     serve([
       row("w", 2, { labels: { "ae.status": "working" } }),
       row("r", 1, { labels: { "ae.status": "review" } }),
     ]);
     renderSidebar();
     await waitFor(() => expect(useAeSidebarStore.getState().listOf.size).toBe(2));
-    expect(await drag("r", "w")).toBeNull();
-    await new Promise((resolve) => {
-      setTimeout(resolve, 20);
+    expect(await drag("w", "r")).not.toBeNull();
+    await waitFor(() => expect(sidebarCalls("PUT")).toHaveLength(1));
+    const patch = mocks.fetch.mock.calls.find(([url]) => url === `/v1/sessions/${sid("w")}`);
+    expect(JSON.parse(String((patch![1] as RequestInit).body))).toEqual({
+      labels: { "ae.status": "review" },
     });
-    expect(sidebarCalls("PUT")).toHaveLength(0);
-    expect(ordering()).toBe("updated");
+    expect(lastPut().order).toEqual(["r", "w"]);
   });
 });
 
