@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isAeDatabricksLinkUrl, isAeFabricAdminLinkUrl, isAeGithubLinkUrl } from "./aeExternalUrls";
+import {
+  isAeAzureCostLinkUrl,
+  isAeDatabricksLinkUrl,
+  isAeFabricAdminLinkUrl,
+  isAeGithubLinkUrl,
+} from "./aeExternalUrls";
 
 describe("isAeGithubLinkUrl", () => {
   it.each([
@@ -164,5 +169,30 @@ describe("isAeDatabricksLinkUrl", () => {
     ["a trailing newline", `${HOST}\n`],
   ])("rejects %s", (_name, url) => {
     expect(isAeDatabricksLinkUrl(url)).toBe(false);
+  });
+});
+
+describe("isAeAzureCostLinkUrl", () => {
+  const COST = "https://portal.azure.com/#view/Microsoft_Azure_CostManagement/Menu/~/costanalysis";
+
+  it("admits the cost analysis page", () => {
+    expect(isAeAzureCostLinkUrl(COST)).toBe(true);
+  });
+
+  it.each([
+    ["not a string", 42],
+    ["http", COST.replace("https:", "http:")],
+    ["another host", COST.replace("portal.azure.com", "portal.azure.com.evil.example")],
+    ["a lookalike host", COST.replace("portal.azure.com", "portal-azure.com")],
+    ["userinfo", COST.replace("https://", "https://evil.example@")],
+    ["a port", COST.replace("azure.com", "azure.com:8443")],
+    ["a query", COST.replace("/#", "/?x=1#")],
+    ["another blade", COST.replace("costanalysis", "overview")],
+    ["a scope appended", `${COST}/scope/%2Fsubscriptions%2F0`],
+    ["a trailing space", `${COST} `],
+    ["a trailing newline", `${COST}\n`],
+    ["an upper case host", COST.replace("portal.azure.com", "PORTAL.AZURE.COM")],
+  ])("rejects %s", (_name, url) => {
+    expect(isAeAzureCostLinkUrl(url)).toBe(false);
   });
 });

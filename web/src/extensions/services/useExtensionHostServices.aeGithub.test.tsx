@@ -167,3 +167,28 @@ describe("navigation.openExternal and Databricks links", () => {
     expect(open).not.toHaveBeenCalled();
   });
 });
+
+describe("navigation.openExternal and the Azure cost link", () => {
+  let open: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    open = vi.spyOn(window, "open").mockReturnValue({ opener: window } as unknown as Window);
+  });
+
+  afterEach(() => {
+    open.mockRestore();
+  });
+
+  it("opens the cost analysis page", async () => {
+    const url = "https://portal.azure.com/#view/Microsoft_Azure_CostManagement/Menu/~/costanalysis";
+    await expect(openExternal()?.({ url }, signal())).resolves.toBeNull();
+    expect(open).toHaveBeenCalledWith(url, "_blank");
+  });
+
+  it("still refuses another Azure portal page", async () => {
+    await expect(
+      openExternal()?.({ url: "https://portal.azure.com/#home" }, signal()),
+    ).rejects.toMatchObject({ code: "PermissionDenied" });
+    expect(open).not.toHaveBeenCalled();
+  });
+});

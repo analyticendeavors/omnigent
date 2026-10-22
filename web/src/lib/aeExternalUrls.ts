@@ -116,6 +116,19 @@ export function isAeDatabricksLinkUrl(url: unknown): url is string {
   }
 }
 
+// Azure cost link (omnigent-ae patch, 2026-10-22). The Admin Center's Azure
+// spend card offers "Open Cost Management" for the full cost analysis in the
+// Azure portal, which the allowlists above refused. Exactly one URL is
+// admitted, compared as a whole string: it names no subscription, so the link
+// reveals nothing and the portal asks the signed-in user which scope to show.
+const AZURE_COST_LINK =
+  "https://portal.azure.com/#view/Microsoft_Azure_CostManagement/Menu/~/costanalysis";
+
+/** True for the Azure portal's cost analysis page, `AZURE_COST_LINK`, and nothing else. */
+export function isAeAzureCostLinkUrl(url: unknown): url is string {
+  return url === AZURE_COST_LINK;
+}
+
 /** The error code `navigation.openExternal` rejects with when no tab opened. */
 export const AE_POPUP_BLOCKED = "PopupBlocked";
 
