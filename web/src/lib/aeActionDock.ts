@@ -6,13 +6,19 @@ import { type AeLimitGate, aeLimitGateShort } from "@/lib/aeLimitGate";
 import { type AePrDeploy, aeHasDeployState } from "@/lib/aePrDeploy";
 import { type AePrCard, aeCiText, aeReadyToMerge } from "@/lib/aePrs";
 
-export type AeDockKind = "question" | "limit" | "merge" | "deploy";
+export type AeDockKind = "question" | "limit" | "merge" | "draft" | "deploy";
 
 /**
  * Urgency: a question blocks the agent, a usage limit is about to, a merge
- * waits on a click, a deploy only on time.
+ * waits on a click, a draft on a click before review, a deploy only on time.
  */
-export const AE_DOCK_KINDS: readonly AeDockKind[] = ["question", "limit", "merge", "deploy"];
+export const AE_DOCK_KINDS: readonly AeDockKind[] = [
+  "question",
+  "limit",
+  "merge",
+  "draft",
+  "deploy",
+];
 
 /** A deploy item that went live stays this long, then clears. */
 export const AE_DOCK_LIVE_MS = 60_000;
@@ -39,6 +45,15 @@ export interface AeDockMerge extends ItemBase {
   card: AePrCard;
 }
 
+/** An open draft pull request, waiting to be marked ready for review. */
+export interface AeDockDraft extends ItemBase {
+  kind: "draft";
+  url: string;
+  repo: string;
+  number: number;
+  card: AePrCard;
+}
+
 export interface AeDockDeploy extends ItemBase {
   kind: "deploy";
   url: string;
@@ -57,7 +72,7 @@ export interface AeDockLimit extends ItemBase {
   canSwitchAccount: boolean;
 }
 
-export type AeDockItem = AeDockQuestion | AeDockLimit | AeDockMerge | AeDockDeploy;
+export type AeDockItem = AeDockQuestion | AeDockLimit | AeDockMerge | AeDockDraft | AeDockDeploy;
 
 /** "owner/repo#123", a pull request item's anchor. */
 export function aeDockPrAnchor(repo: string, number: number): string {
@@ -106,9 +121,20 @@ export interface AeDockPr {
 export function aeDockMerges(prs: readonly AeDockPr[]): AeDockMerge[] {
   const items: AeDockMerge[] = [];
   prs.forEach((pr, order) => {
-    if (!pr.card || !aeReadyToMerge(pr.card)) return;
+    if (!pr.card || pr.card.draft || !aeReadyToMerge(pr.card)) return;
     const anchor = aeDockPrAnchor(pr.repo, pr.number);
     items.push({ kind: "merge", key: `merge:${anchor}`, anchor, order, ...pr, card: pr.card });
+  });
+  return items;
+}
+
+/** The transcript's open draft pull requests, first mentioned first. */
+export function aeDockDrafts(prs: readonly AeDockPr[]): AeDockDraft[] {
+  const items: AeDockDraft[] = [];
+  prs.forEach((pr, order) => {
+    if (pr.card?.state !== "open" || !pr.card.draft) return;
+    const anchor = aeDockPrAnchor(pr.repo, pr.number);
+    items.push({ kind: "draft", key: `draft:${anchor}`, anchor, order, ...pr, card: pr.card });
   });
   return items;
 }
@@ -221,7 +247,7 @@ export function aeDockSummary(
   return { lead, more, badges, total: items.length };
 }
 
-/** "Question waiting", "2 questions", "#180 ready", "#179 deploy 10:50 PM", "2 deploying". */
+/** "Question waiting", "2 questions", "#180 ready", "#181 draft", "#179 deploy 10:50 PM", "2 deploying". */
 export function aeDockBadgeLabel(
   items: readonly AeDockItem[],
   clock: (iso: string) => string = aeClock,
@@ -235,6 +261,8 @@ export function aeDockBadgeLabel(
       return aeLimitGateShort(first.gate);
     case "merge":
       return many ? `${items.length} to merge` : `#${first.number} ready`;
+    case "draft":
+      return many ? `${items.length} drafts` : `#${first.number} draft`;
     case "deploy": {
       if (many) {
         const live = items.every((item) => item.kind === "deploy" && item.deploy.state === "live");
@@ -298,6 +326,11 @@ export function aeDeployText(
 /** The merge line's detail: "ready to merge · 5/5 checks". */
 export function aeMergeText(item: AeDockMerge): string {
   return `ready to merge · ${aeCiText(item.card.ci)}`;
+}
+
+/** The draft line's detail: "draft · 5/5 checks". */
+export function aeDraftText(item: AeDockDraft): string {
+  return `draft · ${aeCiText(item.card.ci)}`;
 }
 
 /** The dock's header and accessible name: "3 waiting". */

@@ -9,11 +9,13 @@ import {
   aeDockArrange,
   aeDockBadgeLabel,
   aeDockDeploys,
+  aeDockDrafts,
   aeDockMerges,
   aeDockPrAnchor,
   aeDockQuestions,
   aeDockQuestionText,
   aeDockSummary,
+  aeDraftText,
   aeHolderName,
 } from "@/lib/aeActionDock";
 import type { AePrDeploy } from "@/lib/aePrDeploy";
@@ -104,6 +106,42 @@ describe("merges", () => {
     ]);
     expect(items.map((item) => item.number)).toEqual([1]);
     expect(items[0]!.anchor).toBe(`${REPO}#1`);
+  });
+});
+
+describe("drafts", () => {
+  const draft = { draft: true, mergeable: { state: "draft", detail: "" } } as const;
+
+  it("takes open drafts whatever their checks, never ready, closed or unfetched ones", () => {
+    const items = aeDockDrafts([
+      pr(1),
+      pr(2, draft),
+      pr(3, { ...draft, ci: { state: "failing", passing: 4, failing: 1, pending: 0, total: 5 } }),
+      { url: "u", repo: REPO, number: 4 },
+      pr(5, { ...draft, state: "closed" }),
+    ]);
+    expect(items.map((item) => item.number)).toEqual([2, 3]);
+    expect(aeDockMerges([pr(6, { draft: true })])).toEqual([]);
+    expect(items[0]!.key).toBe(`draft:${anchor(2)}`);
+    expect(aeDraftText(items[0]!)).toBe("draft · 5/5 checks");
+  });
+
+  it("ranks after merges and before deploys, with its own badge", () => {
+    const drafts = aeDockDrafts([pr(182, draft), pr(183, draft)]);
+    const arranged = aeDockArrange([...sample(), ...drafts], new Set());
+    expect(arranged.map((item) => item.key).slice(2)).toEqual([
+      `merge:${anchor(180)}`,
+      `merge:${anchor(181)}`,
+      `draft:${anchor(182)}`,
+      `draft:${anchor(183)}`,
+      `deploy:${anchor(179)}`,
+    ]);
+    expect(aeDockSummary(arranged, clock)!.badges).toContainEqual({
+      kind: "draft",
+      count: 2,
+      label: "2 drafts",
+    });
+    expect(aeDockBadgeLabel(drafts.slice(0, 1))).toBe("#182 draft");
   });
 });
 

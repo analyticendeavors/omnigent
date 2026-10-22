@@ -109,6 +109,7 @@ function serve(cards: Record<number, AePrCard>) {
           session: null,
         });
       }
+      if (match?.[2] === "/ready" && init?.method === "POST") return json(card(n));
       if (match?.[2] === "/deploy") {
         return json({
           state: "waiting",
@@ -355,6 +356,43 @@ describe("AeActionDock", () => {
     expect(JSON.parse(String(init!.body))).toMatchObject({ sha: SHA, method: "squash" });
   });
 
+  it("a draft shows with Mark ready, which turns it into the Merge line", async () => {
+    serve({
+      180: card(180, {
+        draft: true,
+        mergeable: { state: "draft", detail: "" },
+        merge: { ...card(180).merge, allowed: false },
+      }),
+    });
+    renderDock([`Opened ${url(180)}`]);
+    const ready = await screen.findByTestId("ae-dock-ready");
+    expect(screen.getByTestId("ae-dock-lead").textContent).toContain("draft · 5/5 checks");
+    expect(screen.queryByTestId("ae-dock-merge")).toBeNull();
+    await act(async () => {
+      fireEvent.click(ready);
+    });
+    const posts = vi
+      .mocked(authenticatedFetch)
+      .mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(posts.map(([path]) => path)).toEqual([`/v1/ae/prs/${REPO}/180/ready`]);
+    await screen.findByTestId("ae-dock-merge");
+    expect(screen.queryByTestId("ae-dock-ready")).toBeNull();
+  });
+
+  it("a failed Mark ready says so on the button", async () => {
+    serve({ 180: card(180, { draft: true, mergeable: { state: "draft", detail: "" } }) });
+    renderDock([`Opened ${url(180)}`]);
+    const ready = await screen.findByTestId("ae-dock-ready");
+    vi.mocked(authenticatedFetch).mockImplementationOnce(() =>
+      json({ error: { message: "head moved" } }, 409),
+    );
+    await act(async () => {
+      fireEvent.click(ready);
+    });
+    await waitFor(() => expect(ready.textContent).toBe("Failed, retry"));
+    expect(ready.getAttribute("aria-label")).toContain("Could not mark #180 ready");
+  });
+
   it("a confirm opened from a list line gives the list half the screen until Cancel", async () => {
     serve({ 180: card(180) });
     renderDock([`See ${url(180)}`], [question]);
@@ -430,9 +468,7 @@ describe("AeActionDock", () => {
       predicate: (q) => q.queryKey[0] === "ae-pr" && q.queryKey[2] === 180,
     });
     act(() => qc.setQueryData(query.queryKey, card(180, { state: "merged" })));
-    await waitFor(() =>
-      expect(screen.queryByRole("group", { name: "Confirm merge" })).toBeNull(),
-    );
+    await waitFor(() => expect(screen.queryByRole("group", { name: "Confirm merge" })).toBeNull());
     expect(screen.queryByTestId("ae-dock-tray")).toBeNull();
     expect(screen.getByTestId("ae-dock-lead").textContent).toContain("#181");
   });

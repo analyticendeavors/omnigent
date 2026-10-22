@@ -13,12 +13,15 @@ import { AePrLinkHoverCard } from "@/components/AePrLinkHoverCard";
 import { COMPOSER_CONTENT_INSET_CLASS } from "@/components/composer/ChatComposer";
 import { Button } from "@/components/ui/button";
 import { useAeActionDockItems, useAeQuestionsOnScreen } from "@/hooks/useAeActionDockItems";
+import { useAeMarkReady } from "@/hooks/useAeMarkReady";
 import {
+  type AeDockDraft,
   type AeDockItem,
   type AeDockKind,
   aeDeployText,
   aeDockCountText,
   aeDockSummary,
+  aeDraftText,
   aeMergeText,
 } from "@/lib/aeActionDock";
 import {
@@ -33,7 +36,7 @@ import {
   AE_ICON_X,
 } from "@/lib/aeActionDockIcons";
 import { AE_ICON_CHEVRON_DOWN } from "@/lib/aeAgentsIcons";
-import { AE_ICON_CHECK, AE_ICON_MERGE, AE_ICON_PR_OPEN } from "@/lib/aePrIcons";
+import { AE_ICON_CHECK, AE_ICON_MERGE, AE_ICON_PR_DRAFT, AE_ICON_PR_OPEN } from "@/lib/aePrIcons";
 import { aeLimitGateShort, aeLimitGateText } from "@/lib/aeLimitGate";
 import { AE_ADMIN_CENTER_PATH } from "@/lib/aePrDeploy";
 import { aeCiText } from "@/lib/aePrs";
@@ -51,6 +54,7 @@ const KIND_STYLE: Record<AeDockKind, { icon: AeTablerIconNode; tone: string; tin
   question: { icon: AE_ICON_HELP_CIRCLE, tone: AMBER, tint: "bg-amber-500/15" },
   limit: { icon: AE_ICON_GAUGE, tone: RED, tint: "bg-red-500/15" },
   merge: { icon: AE_ICON_PR_OPEN, tone: GREEN, tint: "bg-emerald-500/15" },
+  draft: { icon: AE_ICON_PR_DRAFT, tone: "text-muted-foreground", tint: "bg-muted" },
   deploy: { icon: AE_ICON_ROCKET, tone: MERGED_TEXT, tint: "bg-purple-500/15" },
 };
 
@@ -110,11 +114,13 @@ function ItemBody({ item, now, expanded }: { item: AeDockItem; now: number; expa
     );
   }
   const detail =
-    item.kind === "merge"
-      ? expanded
-        ? `${item.card.title} · ${aeCiText(item.card.ci)}`
-        : aeMergeText(item)
-      : aeDeployText(item, now);
+    item.kind === "deploy"
+      ? aeDeployText(item, now)
+      : expanded
+        ? `${item.card.title} · ${item.kind === "draft" ? "draft · " : ""}${aeCiText(item.card.ci)}`
+        : item.kind === "merge"
+          ? aeMergeText(item)
+          : aeDraftText(item);
   return (
     <>
       {/* The chat links' preview on hover; no title, which would show over it. */}
@@ -291,6 +297,8 @@ function ItemActions({
           Merge
         </Button>
       );
+    case "draft":
+      return <MarkReadyButton item={item} />;
     case "deploy":
       return (
         <>
@@ -305,6 +313,28 @@ function ItemActions({
         </>
       );
   }
+}
+
+/** The card's "Mark ready for review"; marking ready never merges, so no confirm step. */
+function MarkReadyButton({ item }: { item: AeDockDraft }) {
+  const ready = useAeMarkReady(item.card);
+  const failed = ready.isError
+    ? `Could not mark #${item.number} ready: ${ready.error.message}`
+    : null;
+  return (
+    <Button
+      variant="outline"
+      className={cn(ACTION, failed && RED)}
+      disabled={ready.busy || !item.card.head_sha}
+      onClick={() => ready.mutate()}
+      title={failed ?? `Mark #${item.number} ready for review`}
+      aria-label={failed ?? `Mark #${item.number} ready for review`}
+      data-testid="ae-dock-ready"
+    >
+      {/* A phone shows no title, so a failure changes the label too. */}
+      {ready.busy ? "Marking…" : failed ? "Failed, retry" : "Mark ready"}
+    </Button>
+  );
 }
 
 /** The PR card's own confirm step (method choice, then Confirm), inside the dock. */

@@ -53,6 +53,7 @@ import { defaultRemarkPlugins } from "streamdown";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { isPathologicalText, PlainTextFallback } from "@/components/blocks/ChatMarkdown";
 import { Button } from "@/components/ui/button";
+import { useAeMarkReady } from "@/hooks/useAeMarkReady";
 import {
   AE_ICON_ALERT_CIRCLE,
   AE_ICON_CHECK,
@@ -82,7 +83,6 @@ import {
   fetchAePrCard,
   fetchAePrCompliance,
   mergeAePr,
-  markAePrReady,
   parseAePrUrl,
   updateAePrBranch,
 } from "@/lib/aePrs";
@@ -462,21 +462,7 @@ function AePrBody({ body }: { body: string | null | undefined }) {
 function ReviewDetails({ card }: { card: AePrCard }) {
   // The markdown pipeline runs only once Review details is opened.
   const [open, setOpen] = useState(false);
-  const queryClient = useQueryClient();
-  const queryKey = ["ae-pr", card.repo, card.number] as const;
-  const ready = useMutation({
-    mutationFn: () => markAePrReady(card),
-    onSuccess: async (fresh) => {
-      await queryClient.cancelQueries({ queryKey, exact: true });
-      queryClient.setQueryData(queryKey, fresh);
-    },
-    onError: async (error) => {
-      if (error instanceof AePrError && error.card) {
-        await queryClient.cancelQueries({ queryKey, exact: true });
-        queryClient.setQueryData(queryKey, error.card);
-      }
-    },
-  });
+  const ready = useAeMarkReady(card);
   return (
     <details
       className="min-w-0 text-sm"
@@ -504,10 +490,10 @@ function ReviewDetails({ card }: { card: AePrCard }) {
             </p>
             <Button
               className={cn(TOUCH, "self-start")}
-              disabled={ready.isPending || !card.head_sha}
+              disabled={ready.busy || !card.head_sha}
               onClick={() => ready.mutate()}
             >
-              {ready.isPending ? "Marking ready…" : "Mark ready for review"}
+              {ready.busy ? "Marking ready…" : "Mark ready for review"}
             </Button>
           </>
         )}
