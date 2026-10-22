@@ -66,6 +66,7 @@ import {
   ConversationScopeContext,
   useScopedConversationId,
 } from "@/components/chat/conversationScope";
+import { AeApprovalPreview, aeFoldsApprovalPreview } from "./AeApprovalPreview";
 import { AskUserQuestionForm, type AskUserQuestionAnswers } from "./AskUserQuestionForm";
 import { ElicitationMessage } from "./ElicitationMessage";
 import {
@@ -744,9 +745,7 @@ export function ApprovalCard({
           <>
             <ElicitationMessage message={message} />
             {formattedPreview && (
-              <pre className="max-h-64 overflow-y-auto rounded bg-muted px-2 py-1 font-mono text-sm whitespace-pre-wrap break-words">
-                {formattedPreview}
-              </pre>
+              <AeApprovalPreview text={formattedPreview} fold={aeFoldsApprovalPreview(phase)} />
             )}
             {isExternalUrl ? (
               <div className="flex flex-wrap gap-2 pt-1">
