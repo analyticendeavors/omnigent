@@ -46,6 +46,14 @@ const props = {
   commands: { "/help": "Show help" },
 };
 
+describe("menu surface", () => {
+  it("blurs what is behind it, since the dark popover colour is only 80% opaque", () => {
+    const { container } = render(<SlashCommandMenu {...props} />);
+    const menu = container.firstElementChild;
+    expect(menu).toHaveClass("bg-popover", "backdrop-blur-xl", "backdrop-saturate-150");
+  });
+});
+
 describe("skill discovery state", () => {
   it("keeps Commands usable while the Skills section loads", () => {
     const onSelect = vi.fn();
