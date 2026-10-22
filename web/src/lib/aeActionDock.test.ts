@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  AE_BRANCH_UPDATE_MS,
   AE_DOCK_LIVE_MS,
   type AeDockItem,
   type AeDockPr,
   aeAgo,
+  aeBranchUpdatePending,
   aeDeployText,
   aeDeployTrack,
   aeDockArrange,
@@ -15,8 +17,10 @@ import {
   aeDockQuestions,
   aeDockQuestionText,
   aeDockSummary,
+  aeDockWaiting,
   aeDraftText,
   aeHolderName,
+  aeWaitingText,
 } from "@/lib/aeActionDock";
 import type { AePrDeploy } from "@/lib/aePrDeploy";
 import type { AePrCard } from "@/lib/aePrs";
@@ -142,6 +146,82 @@ describe("drafts", () => {
       label: "2 drafts",
     });
     expect(aeDockBadgeLabel(drafts.slice(0, 1))).toBe("#182 draft");
+  });
+});
+
+describe("waiting", () => {
+  const running = {
+    ci: { state: "pending", passing: 11, failing: 0, pending: 1, total: 12 },
+  } as const;
+  const merge = card(0).merge;
+
+  it("takes every other open pull request with its receipt's word and tone", () => {
+    const items = aeDockWaiting([
+      pr(1),
+      pr(2, running),
+      pr(3, {
+        mergeable: { state: "conflicted", detail: "" },
+        merge: { ...merge, allowed: false },
+      }),
+      pr(4, { ci: { state: "failing", passing: 4, failing: 1, pending: 0, total: 5 } }),
+      pr(5, {
+        mergeable: { state: "behind", detail: "" },
+        update_branch: { allowed: true, reason: null },
+        merge: { ...merge, allowed: false },
+      }),
+      pr(6, { mergeable: { state: "blocked", detail: "" }, merge: { ...merge, allowed: false } }),
+      pr(7, { draft: true, mergeable: { state: "draft", detail: "" } }),
+      pr(8, { state: "closed" }),
+      pr(9, { state: "merged" }),
+      { url: "u", repo: REPO, number: 10 },
+    ]);
+    expect(items.map((item) => [item.number, aeWaitingText(item), item.receipt.tone])).toEqual([
+      [2, "checks 11/12", "amber"],
+      [3, "conflicts", "red"],
+      [4, "1 check failed", "red"],
+      [5, "behind main", "blue"],
+      [6, "blocked", "amber"],
+    ]);
+    expect(items[0]!.key).toBe(`waiting:${anchor(2)}`);
+  });
+
+  it("never overlaps merges or drafts, so a pull request shows once", () => {
+    const prs = [
+      pr(1),
+      pr(2, running),
+      pr(3, { draft: true, mergeable: { state: "draft", detail: "" } }),
+    ];
+    const keys = [...aeDockMerges(prs), ...aeDockDrafts(prs), ...aeDockWaiting(prs)].map(
+      (item) => item.anchor,
+    );
+    expect(keys).toEqual([anchor(1), anchor(3), anchor(2)]);
+  });
+
+  it("ranks after drafts and before deploys, with its own badge", () => {
+    const waiting = aeDockWaiting([pr(228, running), pr(229, running)]);
+    const arranged = aeDockArrange([...sample(), ...waiting], new Set());
+    expect(arranged.map((item) => item.key).slice(-3)).toEqual([
+      `waiting:${anchor(228)}`,
+      `waiting:${anchor(229)}`,
+      `deploy:${anchor(179)}`,
+    ]);
+    expect(aeDockSummary(arranged, clock)!.badges).toContainEqual({
+      kind: "waiting",
+      count: 2,
+      label: "2 not ready",
+    });
+    expect(aeDockBadgeLabel(waiting.slice(0, 1))).toBe("#228 checks 11/12");
+  });
+});
+
+describe("branch update", () => {
+  it("counts as running only while the head is unmoved and inside the window", () => {
+    const entry = { sha: "abc", started: NOW };
+    expect(aeBranchUpdatePending(entry, "abc", NOW + 1_000)).toBe(true);
+    expect(aeBranchUpdatePending(entry, "def", NOW + 1_000)).toBe(false);
+    expect(aeBranchUpdatePending(entry, "abc", NOW + AE_BRANCH_UPDATE_MS)).toBe(false);
+    expect(aeBranchUpdatePending(null, "abc", NOW)).toBe(false);
+    expect(aeBranchUpdatePending(undefined, "abc", NOW)).toBe(false);
   });
 });
 

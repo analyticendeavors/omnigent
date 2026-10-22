@@ -164,9 +164,7 @@ afterEach(() => {
 
 describe("AeActionDock", () => {
   it("draws nothing when nothing waits", async () => {
-    serve({
-      7: card(7, { ci: { state: "failing", passing: 1, failing: 1, pending: 0, total: 2 } }),
-    });
+    serve({ 7: card(7, { state: "closed" }) });
     const { container } = renderDock([`Opened ${url(7)}`]);
     await waitFor(() => expect(authenticatedFetch).toHaveBeenCalled());
     expect(container.querySelector("[data-testid=ae-action-dock]")).toBeNull();
@@ -377,6 +375,58 @@ describe("AeActionDock", () => {
     expect(posts.map(([path]) => path)).toEqual([`/v1/ae/prs/${REPO}/180/ready`]);
     await screen.findByTestId("ae-dock-merge");
     expect(screen.queryByTestId("ae-dock-ready")).toBeNull();
+  });
+
+  it("an open pull request still running checks shows its state, then turns into Merge", async () => {
+    serve({
+      180: card(180, { ci: { state: "pending", passing: 11, failing: 0, pending: 1, total: 12 } }),
+    });
+    const { qc } = renderDock([`Opened ${url(180)}`]);
+    await waitFor(() =>
+      expect(screen.getByTestId("ae-dock-lead").textContent).toContain("checks 11/12"),
+    );
+    expect(screen.queryByTestId("ae-dock-merge")).toBeNull();
+    expect(screen.queryByTestId("ae-dock-update")).toBeNull();
+    serve({ 180: card(180) });
+    await act(async () => {
+      await qc.invalidateQueries({ queryKey: ["ae-pr", REPO, 180] });
+    });
+    await screen.findByTestId("ae-dock-merge");
+  });
+
+  it("a pull request behind main offers Update branch, which posts the head it saw", async () => {
+    serve({
+      180: card(180, {
+        mergeable: { state: "behind", detail: "" },
+        update_branch: { allowed: true, reason: null },
+        merge: { ...card(180).merge, allowed: false },
+      }),
+    });
+    renderDock([`Opened ${url(180)}`]);
+    const update = await screen.findByTestId("ae-dock-update");
+    expect(screen.getByTestId("ae-dock-lead").textContent).toContain("behind main");
+    vi.mocked(authenticatedFetch).mockImplementationOnce(() =>
+      json({ accepted: true, message: "", head_sha: SHA }),
+    );
+    await act(async () => {
+      fireEvent.click(update);
+    });
+    const posts = vi
+      .mocked(authenticatedFetch)
+      .mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(posts.map(([path]) => path)).toEqual([`/v1/ae/prs/${REPO}/180/update-branch`]);
+    expect(JSON.parse(String(posts[0]![1]!.body))).toEqual({ sha: SHA });
+    await waitFor(() => expect(update.textContent).toBe("Updating…"));
+    expect(update).toBeDisabled();
+  });
+
+  it("an update entry left from an older head does not hold the dock's Confirm", async () => {
+    serve({ 180: card(180) });
+    const { qc } = renderDock([`Opened ${url(180)}`]);
+    qc.setQueryData(["ae-pr-branch-update", REPO, 180], { sha: "old-head", started: Date.now() });
+    fireEvent.click(await screen.findByTestId("ae-dock-merge"));
+    const confirm = await screen.findByTestId("ae-dock-confirm");
+    expect(within(confirm).getByRole("button", { name: "Squash into main" })).not.toBeDisabled();
   });
 
   it("a failed Mark ready says so on the button", async () => {

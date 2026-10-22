@@ -1,5 +1,5 @@
 // The action dock: what waits on the user in this chat (a question, a pull
-// request ready to merge, a merge on its way to the box), inside the composer's
+// request ready to merge or still open, a merge on its way to the box), inside the composer's
 // workspace bar, and an account near its usage limit. The most urgent item sits after the folder and PR chips with
 // its button, a badge per other kind sits before the bar's right cluster, and
 // the caret opens a list as a tray above the bar (designs E1 and D3b). A question
@@ -14,15 +14,20 @@ import { COMPOSER_CONTENT_INSET_CLASS } from "@/components/composer/ChatComposer
 import { Button } from "@/components/ui/button";
 import { useAeActionDockItems, useAeQuestionsOnScreen } from "@/hooks/useAeActionDockItems";
 import { useAeMarkReady } from "@/hooks/useAeMarkReady";
+import { useAeUpdateBranch } from "@/hooks/useAeUpdateBranch";
 import {
+  type AeBranchUpdate,
   type AeDockDraft,
   type AeDockItem,
   type AeDockKind,
+  type AeDockWaiting,
+  aeBranchUpdatePending,
   aeDeployText,
   aeDockCountText,
   aeDockSummary,
   aeDraftText,
   aeMergeText,
+  aeWaitingText,
 } from "@/lib/aeActionDock";
 import {
   AE_ICON_ARROW_DOWN,
@@ -39,6 +44,7 @@ import { AE_ICON_CHEVRON_DOWN } from "@/lib/aeAgentsIcons";
 import { AE_ICON_CHECK, AE_ICON_MERGE, AE_ICON_PR_DRAFT, AE_ICON_PR_OPEN } from "@/lib/aePrIcons";
 import { aeLimitGateShort, aeLimitGateText } from "@/lib/aeLimitGate";
 import { AE_ADMIN_CENTER_PATH } from "@/lib/aePrDeploy";
+import type { AeReceiptTone } from "@/lib/aePrReceipt";
 import { aeCiText } from "@/lib/aePrs";
 import { AeTablerSvg } from "@/lib/aeTablerIcon";
 import type { AeTablerIconNode } from "@/lib/aeTablerIconData";
@@ -49,12 +55,23 @@ import { useForkDialog } from "@/shell/ForkDialogContext";
 const GREEN = "text-emerald-600 dark:text-emerald-400";
 const AMBER = "text-amber-600 dark:text-amber-400";
 const RED = "text-red-600 dark:text-red-400";
+const BLUE = "text-blue-600 dark:text-blue-400";
+const MUTED = "text-muted-foreground";
+
+/** A waiting line's icon in its receipt's tone (only these four reach the dock). */
+const WAITING_TONE: Partial<Record<AeReceiptTone, string>> = {
+  amber: AMBER,
+  red: RED,
+  blue: BLUE,
+  gray: MUTED,
+};
 
 const KIND_STYLE: Record<AeDockKind, { icon: AeTablerIconNode; tone: string; tint: string }> = {
   question: { icon: AE_ICON_HELP_CIRCLE, tone: AMBER, tint: "bg-amber-500/15" },
   limit: { icon: AE_ICON_GAUGE, tone: RED, tint: "bg-red-500/15" },
   merge: { icon: AE_ICON_PR_OPEN, tone: GREEN, tint: "bg-emerald-500/15" },
-  draft: { icon: AE_ICON_PR_DRAFT, tone: "text-muted-foreground", tint: "bg-muted" },
+  draft: { icon: AE_ICON_PR_DRAFT, tone: MUTED, tint: "bg-muted" },
+  waiting: { icon: AE_ICON_PR_OPEN, tone: AMBER, tint: "bg-amber-500/15" },
   deploy: { icon: AE_ICON_ROCKET, tone: MERGED_TEXT, tint: "bg-purple-500/15" },
 };
 
@@ -77,10 +94,15 @@ function jumpTo(anchor: string) {
 function ItemIcon({ item }: { item: AeDockItem }) {
   const live = item.kind === "deploy" && item.deploy.state === "live";
   const style = KIND_STYLE[item.kind];
+  const tone = live
+    ? GREEN
+    : item.kind === "waiting"
+      ? (WAITING_TONE[item.receipt.tone] ?? style.tone)
+      : style.tone;
   return (
     <AeTablerSvg
       node={live ? AE_ICON_CHECK : style.icon}
-      className={cn("size-3.5 shrink-0", live ? GREEN : style.tone)}
+      className={cn("size-3.5 shrink-0", tone)}
     />
   );
 }
@@ -116,11 +138,15 @@ function ItemBody({ item, now, expanded }: { item: AeDockItem; now: number; expa
   const detail =
     item.kind === "deploy"
       ? aeDeployText(item, now)
-      : expanded
-        ? `${item.card.title} · ${item.kind === "draft" ? "draft · " : ""}${aeCiText(item.card.ci)}`
-        : item.kind === "merge"
-          ? aeMergeText(item)
-          : aeDraftText(item);
+      : item.kind === "waiting"
+        ? expanded
+          ? `${item.card.title} · ${aeWaitingText(item)}`
+          : aeWaitingText(item)
+        : expanded
+          ? `${item.card.title} · ${item.kind === "draft" ? "draft · " : ""}${aeCiText(item.card.ci)}`
+          : item.kind === "merge"
+            ? aeMergeText(item)
+            : aeDraftText(item);
   return (
     <>
       {/* The chat links' preview on hover; no title, which would show over it. */}
@@ -299,6 +325,9 @@ function ItemActions({
       );
     case "draft":
       return <MarkReadyButton item={item} />;
+    case "waiting":
+      // The one thing a waiting pull request can take from here; the rest waits on checks or people.
+      return item.card.update_branch?.allowed ? <UpdateBranchButton item={item} /> : null;
     case "deploy":
       return (
         <>
@@ -337,6 +366,28 @@ function MarkReadyButton({ item }: { item: AeDockDraft }) {
   );
 }
 
+/** The card's Update branch: merges the base into the head, so no confirm step either. */
+function UpdateBranchButton({ item }: { item: AeDockWaiting }) {
+  const update = useAeUpdateBranch(item.card);
+  const failed = update.isError
+    ? `Could not update #${item.number}: ${update.error.message}`
+    : null;
+  const label = failed ?? `Merge ${item.card.base_ref ?? "the base"} into #${item.number}'s branch`;
+  return (
+    <Button
+      variant="outline"
+      className={cn(ACTION, failed && RED)}
+      disabled={update.waiting || !item.card.head_sha}
+      onClick={() => update.mutate()}
+      title={label}
+      aria-label={label}
+      data-testid="ae-dock-update"
+    >
+      {update.waiting ? "Updating…" : failed ? "Failed, retry" : "Update branch"}
+    </Button>
+  );
+}
+
 /** The PR card's own confirm step (method choice, then Confirm), inside the dock. */
 function DockConfirm({
   item,
@@ -350,7 +401,14 @@ function DockConfirm({
   const queryClient = useQueryClient();
   const updateKey = ["ae-pr-branch-update", item.repo, item.number] as const;
   const updating = useIsMutating({ mutationKey: updateKey }) > 0;
-  const updateWaiting = updating || Boolean(queryClient.getQueryData(updateKey));
+  // A stale entry (head already moved, no card mounted to clear it) must not block Confirm.
+  const updateWaiting =
+    updating ||
+    aeBranchUpdatePending(
+      queryClient.getQueryData<AeBranchUpdate>(updateKey),
+      item.card.head_sha,
+      Date.now(),
+    );
   return (
     <div className="@container/aepr pb-2" data-testid="ae-dock-confirm">
       <ConfirmMerge

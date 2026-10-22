@@ -4,21 +4,42 @@
 
 import { type AeLimitGate, aeLimitGateShort } from "@/lib/aeLimitGate";
 import { type AePrDeploy, aeHasDeployState } from "@/lib/aePrDeploy";
+import { type AePrReceipt, aePrReceipt } from "@/lib/aePrReceipt";
 import { type AePrCard, aeCiText, aeReadyToMerge } from "@/lib/aePrs";
 
-export type AeDockKind = "question" | "limit" | "merge" | "draft" | "deploy";
+export type AeDockKind = "question" | "limit" | "merge" | "draft" | "waiting" | "deploy";
 
 /**
  * Urgency: a question blocks the agent, a usage limit is about to, a merge
- * waits on a click, a draft on a click before review, a deploy only on time.
+ * waits on a click, a draft on a click before review, an open pull request
+ * that is not ready on checks or a person, a deploy only on time.
  */
 export const AE_DOCK_KINDS: readonly AeDockKind[] = [
   "question",
   "limit",
   "merge",
   "draft",
+  "waiting",
   "deploy",
 ];
+
+/** An accepted Update branch counts as running this long while the head stays put. */
+export const AE_BRANCH_UPDATE_MS = 60_000;
+
+/** The `["ae-pr-branch-update", repo, number]` cache entry the card and the dock share. */
+export type AeBranchUpdate = { sha: string; started: number } | null | undefined;
+
+/**
+ * True while an accepted update has not yet moved the head. The card clears the
+ * entry when it sees the new head; with no card mounted, it can outlive the update.
+ */
+export function aeBranchUpdatePending(
+  entry: AeBranchUpdate,
+  headSha: string | null,
+  now: number,
+): boolean {
+  return Boolean(entry) && entry!.sha === headSha && now - entry!.started < AE_BRANCH_UPDATE_MS;
+}
 
 /** A deploy item that went live stays this long, then clears. */
 export const AE_DOCK_LIVE_MS = 60_000;
@@ -54,6 +75,17 @@ export interface AeDockDraft extends ItemBase {
   card: AePrCard;
 }
 
+/** An open pull request that is neither a draft nor ready: checks, conflicts, review, behind. */
+export interface AeDockWaiting extends ItemBase {
+  kind: "waiting";
+  url: string;
+  repo: string;
+  number: number;
+  card: AePrCard;
+  /** The thread receipt's word and tone, so the dock and the receipt agree. */
+  receipt: AePrReceipt;
+}
+
 export interface AeDockDeploy extends ItemBase {
   kind: "deploy";
   url: string;
@@ -72,7 +104,8 @@ export interface AeDockLimit extends ItemBase {
   canSwitchAccount: boolean;
 }
 
-export type AeDockItem = AeDockQuestion | AeDockLimit | AeDockMerge | AeDockDraft | AeDockDeploy;
+export type AeDockItem =
+  AeDockQuestion | AeDockLimit | AeDockMerge | AeDockDraft | AeDockWaiting | AeDockDeploy;
 
 /** "owner/repo#123", a pull request item's anchor. */
 export function aeDockPrAnchor(repo: string, number: number): string {
@@ -135,6 +168,26 @@ export function aeDockDrafts(prs: readonly AeDockPr[]): AeDockDraft[] {
     if (pr.card?.state !== "open" || !pr.card.draft) return;
     const anchor = aeDockPrAnchor(pr.repo, pr.number);
     items.push({ kind: "draft", key: `draft:${anchor}`, anchor, order, ...pr, card: pr.card });
+  });
+  return items;
+}
+
+/** The transcript's other open pull requests (not drafts, not ready), first mentioned first. */
+export function aeDockWaiting(prs: readonly AeDockPr[]): AeDockWaiting[] {
+  const items: AeDockWaiting[] = [];
+  prs.forEach((pr, order) => {
+    if (pr.card?.state !== "open" || pr.card.draft || aeReadyToMerge(pr.card)) return;
+    const anchor = aeDockPrAnchor(pr.repo, pr.number);
+    const receipt = aePrReceipt(pr.card);
+    items.push({
+      kind: "waiting",
+      key: `waiting:${anchor}`,
+      anchor,
+      order,
+      ...pr,
+      card: pr.card,
+      receipt,
+    });
   });
   return items;
 }
@@ -247,7 +300,10 @@ export function aeDockSummary(
   return { lead, more, badges, total: items.length };
 }
 
-/** "Question waiting", "2 questions", "#180 ready", "#181 draft", "#179 deploy 10:50 PM", "2 deploying". */
+/**
+ * "Question waiting", "2 questions", "#180 ready", "#181 draft", "#228 checks 11/12",
+ * "2 not ready", "#179 deploy 10:50 PM", "2 deploying".
+ */
 export function aeDockBadgeLabel(
   items: readonly AeDockItem[],
   clock: (iso: string) => string = aeClock,
@@ -263,6 +319,8 @@ export function aeDockBadgeLabel(
       return many ? `${items.length} to merge` : `#${first.number} ready`;
     case "draft":
       return many ? `${items.length} drafts` : `#${first.number} draft`;
+    case "waiting":
+      return many ? `${items.length} not ready` : `#${first.number} ${aeWaitingText(first)}`;
     case "deploy": {
       if (many) {
         const live = items.every((item) => item.kind === "deploy" && item.deploy.state === "live");
@@ -331,6 +389,13 @@ export function aeMergeText(item: AeDockMerge): string {
 /** The draft line's detail: "draft · 5/5 checks". */
 export function aeDraftText(item: AeDockDraft): string {
   return `draft · ${aeCiText(item.card.ci)}`;
+}
+
+/** The waiting line's detail, the receipt's word: "checks 11/12", "conflicts", "behind main". */
+export function aeWaitingText(item: AeDockWaiting): string {
+  // Blue is the receipt's "behind · update branch"; the dock's own button says the rest.
+  if (item.receipt.tone === "blue") return `behind ${item.card.base_ref ?? "base"}`;
+  return item.receipt.word;
 }
 
 /** The dock's header and accessible name: "3 waiting". */

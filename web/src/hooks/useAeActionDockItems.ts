@@ -3,7 +3,7 @@
 // agree; pending questions are the ones the transcript floats to the bottom,
 // published by Transcript.tsx. omnigent-ae, 2026-10-20.
 
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { AE_PR_POLL_MS } from "@/components/AePrCards";
 import { useAeLimitGate } from "@/hooks/useAeLimitGate";
@@ -15,9 +15,12 @@ import {
   type AeDockQuestionSource,
   AE_DOCK_LIVE_MS,
   aeDeployTrack,
+  type AeBranchUpdate,
+  aeBranchUpdatePending,
   aeDockArrange,
   aeDockDeploys,
   aeDockDrafts,
+  aeDockWaiting,
   aeDockMerges,
   aeDockPrAnchor,
   aeDockQuestions,
@@ -186,16 +189,35 @@ export function useAeActionDockItems(
     }
     return out;
   }, [joined, tracked]);
-  // The cards' own query. It polls only while no card in the feed polls it.
+  // The cards' own query. It polls only while no card in the feed polls it,
+  // fresh and every 2 s while an Update branch from the dock waits on the new head.
+  const queryClient = useQueryClient();
+  const updatePending = (repo: string, number: number, head: string | null) =>
+    aeBranchUpdatePending(
+      queryClient.getQueryData<AeBranchUpdate>(["ae-pr-branch-update", repo, number]),
+      head,
+      Date.now(),
+    );
   const cards = useQueries({
     queries: prs.map(({ repo, number }) => ({
       queryKey: ["ae-pr", repo, number] as const,
-      queryFn: () => fetchAePrCard(repo, number),
+      queryFn: () =>
+        fetchAePrCard(
+          repo,
+          number,
+          updatePending(
+            repo,
+            number,
+            queryClient.getQueryData<AePrCard>(["ae-pr", repo, number])?.head_sha ?? null,
+          ),
+        ),
       retry: false,
       refetchInterval: (query: { state: { data?: AePrCard }; getObserversCount: () => number }) =>
         (query.state.data && query.state.data.state !== "open") || query.getObserversCount() > 1
           ? false
-          : AE_PR_POLL_MS,
+          : updatePending(repo, number, query.state.data?.head_sha ?? null)
+            ? 2_000
+            : AE_PR_POLL_MS,
     })),
   });
   const withCards: AeDockPr[] = prs.map((pr, i) => ({ ...pr, card: cards[i]?.data }));
@@ -246,6 +268,7 @@ export function useAeActionDockItems(
       ...(limit.item ? [limit.item] : []),
       ...aeDockMerges(withCards),
       ...aeDockDrafts(withCards),
+      ...aeDockWaiting(withCards),
       ...aeDockDeploys(withCards, deploys, track, dismissedDeploys, now),
     ],
     questionsOnScreen,
