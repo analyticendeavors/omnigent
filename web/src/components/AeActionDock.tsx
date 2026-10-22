@@ -13,6 +13,7 @@ import { AePrLinkHoverCard } from "@/components/AePrLinkHoverCard";
 import { COMPOSER_CONTENT_INSET_CLASS } from "@/components/composer/ChatComposer";
 import { Button } from "@/components/ui/button";
 import { useAeActionDockItems, useAeQuestionsOnScreen } from "@/hooks/useAeActionDockItems";
+import { useAeDockLift } from "@/hooks/useAeDockLift";
 import { useAeMarkReady } from "@/hooks/useAeMarkReady";
 import { useAeUpdateBranch } from "@/hooks/useAeUpdateBranch";
 import {
@@ -519,6 +520,8 @@ function Dock({ sessionId, onSwitchModel }: { sessionId?: string; onSwitchModel?
   const [confirming, setConfirming] = useState<string | null>(null);
   const [scrollTo, setScrollTo] = useState<AeDockKind | null>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const [tray, setTray] = useState<HTMLDivElement | null>(null);
+  useAeDockLift(tray);
   const leadRef = useRef<HTMLDivElement>(null);
   const badgesRef = useRef<HTMLDivElement>(null);
   const [compact, setCompact] = useState(false);
@@ -684,6 +687,7 @@ function Dock({ sessionId, onSwitchModel }: { sessionId?: string; onSwitchModel?
             "composer-workspace-surface absolute -right-px bottom-full -left-px z-10 rounded-t-2xl border border-b-0 border-border pt-1",
             COMPOSER_CONTENT_INSET_CLASS,
           )}
+          ref={setTray}
           data-testid="ae-dock-tray"
         >
           <ul
