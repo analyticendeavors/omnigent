@@ -3,6 +3,7 @@ import {
   AE_RAIL_SECTIONS,
   aeRailIsPromotedSession,
   aeRailForgetRestoredSession,
+  aeRailOpensOnSwitch,
   aeRailRestoredPanelOpen,
   aeRailSkipsRestoredPanel,
   normalizeOrder,
@@ -26,7 +27,7 @@ beforeEach(() => {
     order: [...AE_RAIL_SECTIONS],
     folded: { connectors: true },
     focus: null,
-    openInEverySession: true,
+    sessionOpenView: "both",
   });
 });
 
@@ -173,19 +174,28 @@ describe("persistence", () => {
     });
   });
 
-  it("opens in every session by default, saves the choice and reads it back", async () => {
+  it("shows the rail by default, saves the choice and reads it back", async () => {
+    // The beforeEach saved its own choice; start from nothing saved.
+    window.localStorage.clear();
     vi.resetModules();
     let fresh = await import("./aeSessionRail");
-    expect(fresh.useAeSessionRailStore.getState().openInEverySession).toBe(true);
-    fresh.useAeSessionRailStore.getState().setOpenInEverySession(false);
-    const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "{}");
-    expect(saved.openInEverySession).toBe(false);
+    expect(fresh.useAeSessionRailStore.getState().sessionOpenView).toBe("rail");
+    fresh.useAeSessionRailStore.getState().setSessionOpenView("both");
+    let saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "{}");
+    expect(saved.sessionOpenView).toBe("both");
+    expect(saved).not.toHaveProperty("openInEverySession");
     vi.resetModules();
     fresh = await import("./aeSessionRail");
-    expect(fresh.useAeSessionRailStore.getState().openInEverySession).toBe(false);
+    expect(fresh.useAeSessionRailStore.getState().sessionOpenView).toBe("both");
+    fresh.useAeSessionRailStore.getState().setSessionOpenView("panel");
+    saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "{}");
+    expect(saved.sessionOpenView).toBe("panel");
+    vi.resetModules();
+    fresh = await import("./aeSessionRail");
+    expect(fresh.useAeSessionRailStore.getState().sessionOpenView).toBe("panel");
   });
 
-  it("loads a layout saved before the preference existed, with the preference on", async () => {
+  it("loads a layout saved before the choice existed as the rail", async () => {
     window.localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({ open: false, closedForPanel: false, order: ["usage"], folded: {} }),
@@ -193,9 +203,35 @@ describe("persistence", () => {
     vi.resetModules();
     const fresh = await import("./aeSessionRail");
     const state = fresh.useAeSessionRailStore.getState();
-    expect(state.openInEverySession).toBe(true);
+    expect(state.sessionOpenView).toBe("rail");
     expect(state.order[0]).toBe("usage");
     expect(state.open).toBe(false);
+  });
+
+  it("reads the old switch: off as the workspace panel, on as the rail", async () => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ openInEverySession: false }));
+    vi.resetModules();
+    let fresh = await import("./aeSessionRail");
+    expect(fresh.useAeSessionRailStore.getState().sessionOpenView).toBe("panel");
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ openInEverySession: true }));
+    vi.resetModules();
+    fresh = await import("./aeSessionRail");
+    expect(fresh.useAeSessionRailStore.getState().sessionOpenView).toBe("rail");
+    // A saved choice wins over the old switch; an unknown one falls back to it.
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ openInEverySession: false, sessionOpenView: "both" }),
+    );
+    vi.resetModules();
+    fresh = await import("./aeSessionRail");
+    expect(fresh.useAeSessionRailStore.getState().sessionOpenView).toBe("both");
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ openInEverySession: false, sessionOpenView: "split" }),
+    );
+    vi.resetModules();
+    fresh = await import("./aeSessionRail");
+    expect(fresh.useAeSessionRailStore.getState().sessionOpenView).toBe("panel");
   });
 
   it("works with defaults when storage is blocked", async () => {
@@ -210,7 +246,7 @@ describe("persistence", () => {
     const state = fresh.useAeSessionRailStore.getState();
     expect(state.open).toBe(false);
     expect(state.order).toEqual([...AE_RAIL_SECTIONS]);
-    expect(state.openInEverySession).toBe(true);
+    expect(state.sessionOpenView).toBe("rail");
     expect(() => state.setOpen(true)).not.toThrow();
     expect(setItem).toHaveBeenCalled();
     expect(fresh.useAeSessionRailStore.getState().open).toBe(true);
@@ -218,16 +254,34 @@ describe("persistence", () => {
 });
 
 describe("aeRailSkipsRestoredPanel", () => {
-  const base = { everySession: true, isMobile: false, urlSignal: false, viewport: 1280 };
+  const base = { view: "both" as const, isMobile: false, urlSignal: false, viewport: 1280 };
 
-  it("skips the panel only when the rail opens in every session on a desktop and they do not fit", () => {
+  it("both: skips the panel only on a desktop when they do not fit", () => {
     // 1280 - (320 + 488) - 304 leaves the chat 168 px.
     expect(aeRailSkipsRestoredPanel({ ...base, reserved: 808 })).toBe(true);
     // 1920 - 808 - 304 leaves it 808 px: both fit.
     expect(aeRailSkipsRestoredPanel({ ...base, viewport: 1920, reserved: 808 })).toBe(false);
-    expect(aeRailSkipsRestoredPanel({ ...base, everySession: false, reserved: 808 })).toBe(false);
     expect(aeRailSkipsRestoredPanel({ ...base, isMobile: true, reserved: 808 })).toBe(false);
     expect(aeRailSkipsRestoredPanel({ ...base, urlSignal: true, reserved: 808 })).toBe(false);
+  });
+
+  it("rail: skips the panel on a desktop even when both fit, unless a URL asks for it", () => {
+    const rail = { ...base, view: "rail" as const, viewport: 1920, reserved: 808 };
+    expect(aeRailSkipsRestoredPanel(rail)).toBe(true);
+    expect(aeRailSkipsRestoredPanel({ ...rail, urlSignal: true })).toBe(false);
+    expect(aeRailSkipsRestoredPanel({ ...rail, isMobile: true })).toBe(false);
+  });
+
+  it("panel: never skips the panel", () => {
+    expect(aeRailSkipsRestoredPanel({ ...base, view: "panel", reserved: 808 })).toBe(false);
+  });
+});
+
+describe("aeRailOpensOnSwitch", () => {
+  it("opens the rail on a switch for every choice but the workspace panel", () => {
+    expect(aeRailOpensOnSwitch("rail")).toBe(true);
+    expect(aeRailOpensOnSwitch("both")).toBe(true);
+    expect(aeRailOpensOnSwitch("panel")).toBe(false);
   });
 });
 
@@ -240,7 +294,7 @@ describe("aeRailRestoredPanelOpen", () => {
   beforeEach(() => {
     phone = false;
     aeRailForgetRestoredSession();
-    useAeSessionRailStore.setState({ openInEverySession: true });
+    useAeSessionRailStore.setState({ sessionOpenView: "both" });
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 1280 });
     window.matchMedia = ((query: string) => ({ ...matchMedia(query), matches: !phone })) as never;
   });
@@ -255,16 +309,39 @@ describe("aeRailRestoredPanelOpen", () => {
     expect({ ...window.localStorage }).toEqual(before);
   });
 
-  it("keeps the panel when it fits, when a URL asks for it, on a phone, or when the setting is off", () => {
+  it("both: keeps the panel when it fits, when a URL asks for it, on a phone, or under panel", () => {
     expect(
       aeRailRestoredPanelOpen("s-1", true, { ...desktop, sidebarWidth: 0, panelWidth: 240 }),
     ).toBe(true);
     expect(aeRailRestoredPanelOpen("s-1", true, { ...desktop, urlSignal: true })).toBe(true);
     phone = true;
     expect(aeRailRestoredPanelOpen("s-1", true, desktop)).toBe(true);
-    useAeSessionRailStore.setState({ openInEverySession: false });
+    useAeSessionRailStore.setState({ sessionOpenView: "panel" });
     expect(aeRailRestoredPanelOpen("s-1", true, desktop)).toBe(true);
     expect(aeRailRestoredPanelOpen("s-1", false, desktop)).toBe(false);
+  });
+
+  it("rail: starts the panel closed even when it fits, but a URL signal or a phone keeps it", () => {
+    useAeSessionRailStore.setState({ sessionOpenView: "rail" });
+    const fits = { ...desktop, sidebarWidth: 0, panelWidth: 240 };
+    expect(aeRailRestoredPanelOpen("s-1", true, fits)).toBe(false);
+    expect(aeRailRestoredPanelOpen("s-1", true, { ...fits, urlSignal: true })).toBe(true);
+    phone = true;
+    expect(aeRailRestoredPanelOpen("s-1", true, fits)).toBe(true);
+  });
+
+  it("rail: a new chat's temp id, which draws no rail, keeps a panel that fits", () => {
+    useAeSessionRailStore.setState({ sessionOpenView: "rail" });
+    const fits = { ...desktop, sidebarWidth: 0, panelWidth: 240 };
+    expect(aeRailRestoredPanelOpen("temp:new", true, fits)).toBe(true);
+    expect(aeRailRestoredPanelOpen("temp:new", true, desktop)).toBe(false);
+  });
+
+  it("rail: keeps a new chat's panel when its temp id becomes its server id", () => {
+    useAeSessionRailStore.setState({ sessionOpenView: "rail" });
+    aeRailRestoredPanelOpen("temp:abc", true, desktop);
+    aeRecordTempPromotion("temp:abc", "s-new");
+    expect(aeRailRestoredPanelOpen("s-new", true, desktop)).toBe(true);
   });
 
   it("measures a panel of unknown width at its minimum", () => {

@@ -1,7 +1,7 @@
-// Tests for Settings > Chat: the rail switch reads and writes the rail store,
+// Tests for Settings > Chat: the session open view cards read and write the rail store,
 // and /settings/chat routes to the section, with a nav item after Appearance.
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -31,7 +31,7 @@ function renderAt(path: string, node: React.ReactNode) {
 
 beforeEach(() => {
   window.localStorage.clear();
-  useAeSessionRailStore.setState({ openInEverySession: true });
+  useAeSessionRailStore.setState({ sessionOpenView: "rail" });
 });
 
 afterEach(() => {
@@ -39,24 +39,41 @@ afterEach(() => {
 });
 
 describe("AeChatSettingsSection", () => {
-  it("shows the switch on by default and writes the choice to the rail store and storage", () => {
+  it("offers three choices under one label, the session rail checked", () => {
     renderAt("/settings/chat", <AeChatSettingsSection />);
-    const toggle = screen.getByRole("switch", { name: "Open the session rail in every session" });
-    expect(toggle).toHaveAttribute("aria-checked", "true");
-    fireEvent.click(toggle);
-    expect(useAeSessionRailStore.getState().openInEverySession).toBe(false);
-    const saved = JSON.parse(window.localStorage.getItem("ae.sessionRail.v1") ?? "{}");
-    expect(saved.openInEverySession).toBe(false);
-    expect(toggle).toHaveAttribute("aria-checked", "false");
+    const group = screen.getByRole("radiogroup", { name: "When a session opens, show" });
+    const names = within(group)
+      .getAllByRole("radio")
+      .map((radio) => radio.textContent);
+    expect(names).toEqual(["Session rail", "Both when they fit", "Workspace panel"]);
+    expect(screen.getByRole("radio", { name: "Session rail" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
   });
 
-  it("follows the store when the preference changes elsewhere", () => {
+  it("writes each choice to the rail store and storage", () => {
     renderAt("/settings/chat", <AeChatSettingsSection />);
-    const toggle = screen.getByTestId("ae-open-rail-every-session");
-    expect(toggle).toHaveAttribute("aria-checked", "true");
-    fireEvent.click(toggle);
-    fireEvent.click(toggle);
-    expect(useAeSessionRailStore.getState().openInEverySession).toBe(true);
+    for (const [view, name] of [
+      ["both", "Both when they fit"],
+      ["panel", "Workspace panel"],
+      ["rail", "Session rail"],
+    ] as const) {
+      fireEvent.click(screen.getByTestId(`ae-session-open-view-${view}`));
+      expect(useAeSessionRailStore.getState().sessionOpenView).toBe(view);
+      const saved = JSON.parse(window.localStorage.getItem("ae.sessionRail.v1") ?? "{}");
+      expect(saved.sessionOpenView).toBe(view);
+      expect(screen.getByRole("radio", { name })).toHaveAttribute("aria-checked", "true");
+    }
+  });
+
+  it("follows the store when the choice changes elsewhere", () => {
+    renderAt("/settings/chat", <AeChatSettingsSection />);
+    act(() => useAeSessionRailStore.getState().setSessionOpenView("panel"));
+    expect(screen.getByTestId("ae-session-open-view-panel")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
   });
 
   it("is what /settings/chat renders", () => {

@@ -83,7 +83,7 @@ beforeEach(() => {
     order: [...AE_RAIL_SECTIONS],
     folded: {},
     focus: null,
-    openInEverySession: false,
+    sessionOpenView: "panel",
   });
   // The layout tests take the rail's instant path; the slide has its own tests.
   reduceMotion(true);
@@ -437,13 +437,22 @@ describe("AeSessionRail slide", () => {
   });
 });
 
-describe("AeSessionRail in every session", () => {
+describe("AeSessionRail when a session opens", () => {
   beforeEach(() => {
     aeRailForgetRestoredSession();
-    useAeSessionRailStore.setState({ openInEverySession: true });
+    useAeSessionRailStore.setState({ sessionOpenView: "both" });
   });
 
-  it("a session switch opens a closed rail", () => {
+  it("rail: a session switch opens a closed rail", () => {
+    useAeSessionRailStore.setState({ sessionOpenView: "rail", open: false });
+    const { rerender } = render(<AeSessionRail sessionId="s-1" />);
+    expect(useAeSessionRailStore.getState().open).toBe(true);
+    act(() => useAeSessionRailStore.getState().toggle());
+    rerender(<AeSessionRail sessionId="s-2" />);
+    expect(screen.getByTestId("ae-session-rail")).toBeInTheDocument();
+  });
+
+  it("both: a session switch opens a closed rail", () => {
     useAeSessionRailStore.setState({ open: false });
     const { rerender } = render(<AeSessionRail sessionId="s-1" />);
     expect(useAeSessionRailStore.getState().open).toBe(true);
@@ -535,8 +544,8 @@ describe("AeSessionRail in every session", () => {
     expect(useAeSessionRailStore.getState()).toMatchObject({ open: false, sheetOpen: false });
   });
 
-  it("off: a switch leaves a closed rail closed", () => {
-    useAeSessionRailStore.setState({ openInEverySession: false, open: false });
+  it("panel: a switch leaves a closed rail closed", () => {
+    useAeSessionRailStore.setState({ sessionOpenView: "panel", open: false });
     const { rerender } = render(<AeSessionRail sessionId="s-3" />);
     rerender(<AeSessionRail sessionId="s-4" />);
     expect(useAeSessionRailStore.getState().open).toBe(false);

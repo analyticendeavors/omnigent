@@ -144,9 +144,10 @@ Object.defineProperty(window, "matchMedia", {
 
 // omnigent-ae: the Tabler icon set is read from disk, never the global fetch.
 vi.mock("@/lib/aeTablerAssetFetch", () => import("@/lib/aeTablerAssetFetch.disk"));
-// omnigent-ae: "open the session rail in every session" starts off in tests;
-// tests of that behavior turn it on. Seeded in storage too, for reloaded modules.
+// omnigent-ae: a session opens on the workspace panel in tests (the rail's
+// "panel" choice, upstream's behavior); tests of the rail choices set them.
+// Seeded in storage too, for reloaded modules.
 beforeEach(() => {
-  localStorage.setItem("ae.sessionRail.v1", JSON.stringify({ openInEverySession: false }));
-  useAeSessionRailStore.setState({ openInEverySession: false });
+  localStorage.setItem("ae.sessionRail.v1", JSON.stringify({ sessionOpenView: "panel" }));
+  useAeSessionRailStore.setState({ sessionOpenView: "panel" });
 });

@@ -116,7 +116,7 @@ beforeEach(() => {
   writeWorkspacePanelDefault("open");
   writeSessionWorkspaceState("conv_ws", { open: true, rightRailTab: "files" });
   aeRailForgetRestoredSession();
-  useAeSessionRailStore.setState({ open: false, closedForPanel: false, openInEverySession: true });
+  useAeSessionRailStore.setState({ open: false, closedForPanel: false, sessionOpenView: "both" });
   vi.mocked(isMobileViewport).mockReturnValue(false);
   vi.mocked(useConversations).mockReset();
   vi.mocked(useConversations).mockReturnValue({
@@ -158,13 +158,13 @@ function AgentOpenProbe() {
   );
 }
 
-function renderShell() {
+function renderShell(path = "/c/conv_ws") {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
       <SidebarDataProvider>
         <TooltipProvider>
-          <MemoryRouter initialEntries={["/c/conv_ws"]}>
+          <MemoryRouter initialEntries={[path]}>
             <Routes>
               <Route element={<AppShell />}>
                 <Route path="c/:conversationId" element={<AgentOpenProbe />} />
@@ -180,7 +180,41 @@ function renderShell() {
 const railShown = () => screen.queryByTestId("ae-session-rail") !== null;
 const panelToggle = () => screen.getByRole("button", { name: /right panel$/ });
 
-describe("AppShell with the rail open in every session", () => {
+describe("AppShell when a session opens on a wide window", () => {
+  const innerWidth = window.innerWidth;
+
+  beforeEach(() => {
+    // Room for the sidebar, a restored panel and the rail beside a 480 px chat.
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 3000 });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: innerWidth });
+  });
+
+  it("rail: starts a restored-open panel closed although both fit, and saves nothing", () => {
+    useAeSessionRailStore.setState({ sessionOpenView: "rail" });
+    renderShell();
+    expect(panelToggle()).toHaveAccessibleName("Expand right panel");
+    expect(railShown()).toBe(true);
+    expect(readSessionWorkspaceState("conv_ws").open).toBe(true);
+  });
+
+  it("rail: a file link still opens the panel", () => {
+    useAeSessionRailStore.setState({ sessionOpenView: "rail" });
+    renderShell("/c/conv_ws?file=README.md");
+    expect(panelToggle()).toHaveAccessibleName("Collapse right panel");
+    expect(railShown()).toBe(true);
+  });
+
+  it("both: keeps the restored panel open beside the rail", () => {
+    renderShell();
+    expect(panelToggle()).toHaveAccessibleName("Collapse right panel");
+    expect(railShown()).toBe(true);
+  });
+});
+
+describe("AppShell with the rail and panel both shown when they fit", () => {
   it("starts a restored-open panel closed beside the rail and saves nothing", () => {
     renderShell();
     expect(panelToggle()).toHaveAccessibleName("Expand right panel");
@@ -216,8 +250,8 @@ describe("AppShell with the rail open in every session", () => {
     expect(railShown()).toBe(true);
   });
 
-  it("off: the restored panel opens and the rail stays closed, as before", () => {
-    useAeSessionRailStore.setState({ openInEverySession: false });
+  it("panel: the restored panel opens and the rail stays closed, as before", () => {
+    useAeSessionRailStore.setState({ sessionOpenView: "panel" });
     renderShell();
     expect(panelToggle()).toHaveAccessibleName("Collapse right panel");
     expect(railShown()).toBe(false);

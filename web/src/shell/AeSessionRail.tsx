@@ -50,6 +50,7 @@ import {
   type AeRailSectionId,
   aeRailFloats,
   aeRailIsPromotedSession,
+  aeRailOpensOnSwitch,
   aeRailReservedWidth,
   useAeSessionRailStore,
 } from "@/lib/aeSessionRail";
@@ -75,7 +76,7 @@ function useRailFloats(reservedWidth: number): boolean {
  * One pane at a time: when the open rail would float over an open panel, the one
  * opened last stays and the other closes. A rail closed this way reopens once no
  * panel needs the room (as it was, floating or not); one the user closed stays closed.
- * With "open in every session" on, a session switch (not a new chat's id swap) opens the rail.
+ * Unless Settings > Chat says "Workspace panel", a session switch (not a new chat's id swap) opens the rail.
  * Returns whether the rail last made way for a panel sliding open, not one already open
  * or snapped open by a session restore.
  */
@@ -91,7 +92,7 @@ function useOnePaneAtATime(
   const closedForPanel = useAeSessionRailStore((s) => s.closedForPanel);
   const setClosedForPanel = useAeSessionRailStore((s) => s.setClosedForPanel);
   const setOpen = useAeSessionRailStore((s) => s.setOpen);
-  const everySession = useAeSessionRailStore((s) => s.openInEverySession);
+  const opensOnSwitch = useAeSessionRailStore((s) => aeRailOpensOnSwitch(s.sessionOpenView));
   const [madeWayForOpening, setMadeWayForOpening] = useState(false);
   const seenSession = useRef<string | null>(null);
   const previous = useRef({ open, panelOpen });
@@ -102,9 +103,9 @@ function useOnePaneAtATime(
     const switched = seenSession.current !== sessionId;
     seenSession.current = sessionId;
     if (!active) return;
-    if (switched && everySession && !open && !aeRailIsPromotedSession(sessionId)) {
+    if (switched && opensOnSwitch && !open && !aeRailIsPromotedSession(sessionId)) {
       // The shell restores this session's panels after this commit, closed
-      // when they would not fit (`aeRailRestoredPanelOpen`).
+      // for the rail or when they would not fit (`aeRailRestoredPanelOpen`).
       setOpen(true);
       previous.current = { open: true, panelOpen };
       return;
@@ -129,7 +130,7 @@ function useOnePaneAtATime(
     panelAnimating,
     floating,
     closedForPanel,
-    everySession,
+    opensOnSwitch,
     sessionId,
     closePanels,
     setClosedForPanel,

@@ -1,11 +1,12 @@
 // The session rail (omnigent-ae, 2026-10-17): a right-hand column of folding
 // sections about the open session, reordered by drag (or the section menu on
-// a phone). Open state, order, folds and the open-in-every-session preference
+// a phone). Open state, order, folds and what a session shows when it opens
 // are per device; the phone sheet's open state is not saved.
 
 import { useSyncExternalStore } from "react";
 import { create } from "zustand";
 import { aeTempPromotedTo } from "@/lib/aeTempPromotions";
+import { isTempConvId } from "@/lib/tempConversationId";
 
 export const AE_RAIL_SECTIONS = [
   "triage",
@@ -46,14 +47,34 @@ export interface AeRailSectionProps {
 
 const STORAGE_KEY = "ae.sessionRail.v1";
 
+/**
+ * What a desktop session shows when it opens (Settings > Chat, 2026-10-22):
+ * `rail` opens the rail and starts a restored workspace panel closed, `both`
+ * keeps that panel when the two fit, `panel` leaves the rail alone and the
+ * panel as it was. A URL signal (file, agents, comment) opens the panel in all three.
+ */
+export type AeSessionOpenView = "rail" | "both" | "panel";
+
+export const AE_SESSION_OPEN_VIEWS: readonly AeSessionOpenView[] = ["rail", "both", "panel"];
+
+function isSessionOpenView(value: unknown): value is AeSessionOpenView {
+  return typeof value === "string" && (AE_SESSION_OPEN_VIEWS as readonly string[]).includes(value);
+}
+
 interface Persisted {
   open: boolean;
   /** The rail closed to make room for a panel, not by the user; it reopens once the room is back. */
   closedForPanel: boolean;
   order: AeRailSectionId[];
   folded: Partial<Record<AeRailSectionId, boolean>>;
-  /** Open the rail whenever a session opens (desktop only). */
-  openInEverySession: boolean;
+  /** What a session shows when it opens (desktop only). */
+  sessionOpenView: AeSessionOpenView;
+}
+
+/** The choice saved, or the old "Open the session rail in every session" switch: off was `panel`, on or unset is `rail`. */
+function readSessionOpenView(saved: { sessionOpenView?: unknown; openInEverySession?: unknown }) {
+  if (isSessionOpenView(saved.sessionOpenView)) return saved.sessionOpenView;
+  return saved.openInEverySession === false ? "panel" : "rail";
 }
 
 function isSectionId(value: unknown): value is AeRailSectionId {
@@ -77,12 +98,12 @@ function readPersisted(): Persisted {
     closedForPanel: false,
     order: [...AE_RAIL_SECTIONS],
     folded: defaultFolded(),
-    openInEverySession: true,
+    sessionOpenView: "rail",
   };
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return fallback;
-    const parsed = JSON.parse(raw) as Partial<Persisted>;
+    const parsed = JSON.parse(raw) as Partial<Persisted> & { openInEverySession?: unknown };
     const folded: Partial<Record<AeRailSectionId, boolean>> = { ...fallback.folded };
     if (parsed.folded && typeof parsed.folded === "object") {
       for (const [id, value] of Object.entries(parsed.folded)) {
@@ -95,8 +116,7 @@ function readPersisted(): Persisted {
       closedForPanel: parsed.closedForPanel === true && parsed.open !== true,
       order: normalizeOrder(parsed.order),
       folded,
-      // Absent or not false reads as on.
-      openInEverySession: parsed.openInEverySession !== false,
+      sessionOpenView: readSessionOpenView(parsed),
     };
   } catch {
     return fallback;
@@ -126,7 +146,7 @@ interface AeSessionRailState extends Persisted {
   /** Close the rail for a panel that needs the room (true), or reopen it once the room is back (false). */
   setClosedForPanel: (closed: boolean) => void;
   setSheetOpen: (open: boolean) => void;
-  setOpenInEverySession: (on: boolean) => void;
+  setSessionOpenView: (view: AeSessionOpenView) => void;
   setFolded: (id: AeRailSectionId, folded: boolean) => void;
   /** Move a section to an index in the current order (drag and drop). */
   moveTo: (id: AeRailSectionId, index: number) => void;
@@ -147,7 +167,7 @@ export const useAeSessionRailStore = create<AeSessionRailState>((set, get) => ({
   toggle: () => set({ open: !get().open, closedForPanel: false }),
   setClosedForPanel: (closed) => set({ open: !closed, closedForPanel: closed }),
   setSheetOpen: (sheetOpen) => set({ sheetOpen }),
-  setOpenInEverySession: (openInEverySession) => set({ openInEverySession }),
+  setSessionOpenView: (sessionOpenView) => set({ sessionOpenView }),
   setFolded: (id, folded) => set({ folded: { ...get().folded, [id]: folded } }),
   moveTo: (id, index) => {
     const order = get().order.filter((other) => other !== id);
@@ -194,16 +214,21 @@ export function aeRailReservedWidth(
   return sidebarWidth + workspace + pushPanelWidth;
 }
 
-/** True when a restored panel starts closed: setting on, desktop, no URL signal, no fit. */
+/** True when a session switch opens the rail on a desktop. */
+export function aeRailOpensOnSwitch(view: AeSessionOpenView): boolean {
+  return view !== "panel";
+}
+
+/** True when a restored panel starts closed: desktop, no URL signal, and `rail`, or `both` without the room. */
 export function aeRailSkipsRestoredPanel(opts: {
-  everySession: boolean;
+  view: AeSessionOpenView;
   isMobile: boolean;
   urlSignal: boolean;
   viewport: number;
   reserved: number;
 }): boolean {
-  if (!opts.everySession || opts.isMobile || opts.urlSignal) return false;
-  return aeRailFloats(opts.viewport, opts.reserved);
+  if (opts.view === "panel" || opts.isMobile || opts.urlSignal) return false;
+  return opts.view === "rail" || aeRailFloats(opts.viewport, opts.reserved);
 }
 
 // The session id the shell last restored panels for, temp ids included.
@@ -222,11 +247,13 @@ export function aeRailRestoredPanelOpen(
 ): boolean {
   const promoted = aeRailIsPromotedSession(conversationId);
   restoredSession = conversationId;
-  const everySession = useAeSessionRailStore.getState().openInEverySession;
-  if (!open || promoted || !everySession || typeof window === "undefined") return open;
+  const chosen = useAeSessionRailStore.getState().sessionOpenView;
+  // A new chat's temp id draws no rail, so `rail` there keeps a panel that fits.
+  const view = chosen === "rail" && isTempConvId(conversationId) ? "both" : chosen;
+  if (!open || promoted || view === "panel" || typeof window === "undefined") return open;
   const panel = opts.panelWidth || PANEL_MIN_WIDTH_PX;
   return !aeRailSkipsRestoredPanel({
-    everySession,
+    view,
     // The shell's phone breakpoint (Tailwind `md`).
     isMobile: !window.matchMedia?.("(min-width: 768px)").matches,
     urlSignal: opts.urlSignal ?? false,
@@ -246,14 +273,14 @@ useAeSessionRailStore.subscribe((state, previous) => {
     state.closedForPanel !== previous.closedForPanel ||
     state.order !== previous.order ||
     state.folded !== previous.folded ||
-    state.openInEverySession !== previous.openInEverySession
+    state.sessionOpenView !== previous.sessionOpenView
   ) {
     writePersisted({
       open: state.open,
       closedForPanel: state.closedForPanel,
       order: state.order,
       folded: state.folded,
-      openInEverySession: state.openInEverySession,
+      sessionOpenView: state.sessionOpenView,
     });
   }
 });
