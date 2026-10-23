@@ -8947,6 +8947,82 @@ async def test_text_whose_content_fakes_the_encoding_marker_is_gzipped(
 
 
 @pytest.mark.asyncio
+async def test_skip_gzip_sends_the_response_start_before_the_body() -> None:
+    """An opted-out response reaches the wire as start, then body.
+
+    Starlette 1.9 sends the start message at the start; a responder that only
+    flagged the exclusion on the first body message left the start buffered, so
+    the body arrived first and the server answered 500 for every binary read.
+    Driving the responder directly checks the order on any Starlette version.
+
+    :returns: None.
+    """
+    from omnigent.server.routes._gzip_route import SKIP_GZIP_STATE_KEY, _StateAwareGZipResponder
+
+    state: dict[str, object] = {}
+
+    async def app(scope: Any, receive: Any, send: Any) -> None:
+        state[SKIP_GZIP_STATE_KEY] = True
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"application/json")],
+            }
+        )
+        await send({"type": "http.response.body", "body": b"x" * 5000, "more_body": True})
+        await send({"type": "http.response.body", "body": b"y" * 10})
+
+    sent: list[str] = []
+
+    async def send(message: Any) -> None:
+        sent.append(message["type"])
+
+    responder = _StateAwareGZipResponder(app, 1024, 6, state)
+    scope = {"type": "http", "state": state, "headers": [(b"accept-encoding", b"gzip")]}
+    await responder(scope, None, send)  # type: ignore[arg-type]
+
+    assert sent == ["http.response.start", "http.response.body", "http.response.body"]
+
+
+@pytest.mark.asyncio
+async def test_skip_gzip_does_not_repeat_a_start_already_sent() -> None:
+    """A response Starlette already passes through keeps one start message.
+
+    A content type on Starlette's exclusion list is decided at the start
+    message, which Starlette 1.9 then sends at once; the opt-out must not send
+    the buffered start a second time.
+
+    :returns: None.
+    """
+    from omnigent.server.routes._gzip_route import SKIP_GZIP_STATE_KEY, _StateAwareGZipResponder
+
+    state: dict[str, object] = {}
+
+    async def app(scope: Any, receive: Any, send: Any) -> None:
+        state[SKIP_GZIP_STATE_KEY] = True
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"text/event-stream")],
+            }
+        )
+        await send({"type": "http.response.body", "body": b"data: x\n\n"})
+
+    sent: list[str] = []
+
+    async def send(message: Any) -> None:
+        sent.append(message["type"])
+
+    responder = _StateAwareGZipResponder(app, 1024, 6, state)
+    scope = {"type": "http", "state": state, "headers": [(b"accept-encoding", b"gzip")]}
+    await responder(scope, None, send)  # type: ignore[arg-type]
+
+    assert sent == ["http.response.start", "http.response.body"]
+
+
+@pytest.mark.asyncio
 async def test_directory_listing_is_gzipped(client: httpx.AsyncClient) -> None:
     """A directory listing large enough to clear the minimum size compresses.
 

@@ -128,14 +128,27 @@ class _StateAwareGZipResponder(GZipResponder):
         :param message: The outgoing ASGI message.
         :returns: None.
         """
+        already_passing_through = (
+            self.content_encoding_set
+            or getattr(self, "partial_response", False)
+            or self.content_type_is_excluded
+        )
         if (
             message["type"] == "http.response.body"
             and not self.started
+            and not already_passing_through
             and self._state.get(SKIP_GZIP_STATE_KEY)
         ):
-            # Starlette reads this flag on the first body message, then emits
-            # the start message it buffered — untouched.
+            # Starlette 1.3 read this flag on the first body message and then
+            # emitted the start message it had buffered. Starlette 1.9 decides at
+            # the start message instead, so the buffered start is never sent and
+            # the body reaches the client first (a 500 from the metrics
+            # middleware). Send the start here, which both versions accept.
             self.content_type_is_excluded = True
+            self.started = True
+            await self.send(self.initial_message)
+            await self.send(message)
+            return
         await super().send_with_compression(message)
 
 
