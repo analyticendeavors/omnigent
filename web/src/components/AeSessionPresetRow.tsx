@@ -2,7 +2,9 @@
 // Chips for "Lead picks" and each preset, a one-line summary of the chosen
 // preset's roles, and Customize, which opens the five role rows for this
 // session only. A customized table can be saved as a new preset. The dialog's
-// Save writes the choice into the session's ae.team label.
+// Save writes the choice into the session's ae.team label. The Helpers line
+// (2026-10-23) shows the preset's Helpers rule; Change overrides it for this
+// session only, the same way Customize does for the roles.
 
 import { WandSparklesIcon } from "lucide-react";
 import { useState } from "react";
@@ -11,12 +13,17 @@ import { showToast } from "@/components/ui/toast";
 import { useAeRoleModels } from "@/hooks/useAeRoleModels";
 import { useAeRoles, useAeRolesSave } from "@/hooks/useAeRoles";
 import {
+  AE_HELPERS_LABELS,
+  AE_HELPERS_OPTIONS,
   AE_PRESET_LIMIT,
   AE_PRESET_TITLE_MAX,
   AE_RESERVED_PRESET_ID,
   AE_ROLE_IDS,
   type AeRolePreset,
+  type AeHelpers,
+  type AeRoleRules,
   type AeRoleTable,
+  aeHelpersOf,
   aeNormalizeOrder,
   aeOneLine,
   aePresetId,
@@ -30,7 +37,7 @@ import {
   aeRolesForPick,
 } from "@/lib/aeSessionRoles";
 import { cn } from "@/lib/utils";
-import { AeRolePresetTile } from "@/pages/settings/AeRolesControls";
+import { AeRolePresetTile, AeSegmented } from "@/pages/settings/AeRolesControls";
 import { AeRoleRow } from "@/pages/settings/AeRolesEditor";
 
 const chipClass = (on: boolean) =>
@@ -52,6 +59,7 @@ export function AeSessionPresetRow({
   const save = useAeRolesSave();
   const { models } = useAeRoleModels();
   const [customizing, setCustomizing] = useState(!!value?.custom);
+  const [changingHelpers, setChangingHelpers] = useState(false);
   const [naming, setNaming] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   if (!state) return null;
@@ -67,15 +75,20 @@ export function AeSessionPresetRow({
     if (id === AE_RESERVED_PRESET_ID) setCustomizing(false);
     onChange(aeRolesForPick(id, state.default_preset));
   };
-  const setRoles = (roles: AeRoleTable) => {
+  const setRoles = (roles: AeRoleTable, rules?: AeRoleRules) => {
     if (!base || !shown) return;
-    const next = { roles, rules: shown.rules };
+    const next = { roles, rules: rules ?? shown.rules };
     onChange(
       aeSameRoles(next, base)
         ? aeRolesForPick(base.id, state.default_preset)
         : { preset: base.id, custom: next },
     );
   };
+  const setHelpers = (helpers: AeHelpers) => {
+    if (shown) setRoles(shown.roles, { ...shown.rules, helpers });
+  };
+  const helpers = shown ? aeHelpersOf(shown.rules) : null;
+  const helpersChanged = !!shown && !!base && helpers !== aeHelpersOf(base.rules);
   const saveAsPreset = async (title: string) => {
     if (!shown || !base || saving) return;
     if (state.presets.length >= AE_PRESET_LIMIT) {
@@ -177,6 +190,40 @@ export function AeSessionPresetRow({
           ? aeRoleSummary(shown.roles)
           : "The lead chooses a preset per task and says which in one line."}
       </p>
+      {shown && helpers && (
+        <div data-testid="ae-session-helpers" className="space-y-2 rounded-lg bg-muted/50 p-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0 text-xs">
+              <p className="font-medium">
+                Helpers: {AE_HELPERS_LABELS[helpers].label.toLowerCase()}
+              </p>
+              <p className="text-muted-foreground">
+                {helpersChanged ? "Changed for this session." : `From ${base?.title}.`} Native
+                subagents are always available.
+              </p>
+            </div>
+            <button
+              type="button"
+              aria-expanded={changingHelpers}
+              disabled={disabled}
+              onClick={() => setChangingHelpers((v) => !v)}
+              className="shrink-0 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40"
+            >
+              {changingHelpers ? "Done" : "Change"}
+            </button>
+          </div>
+          {(changingHelpers || customizing) && (
+            <AeSegmented
+              label="Helpers for this session"
+              value={helpers}
+              options={AE_HELPERS_OPTIONS}
+              onChange={setHelpers}
+              testId="ae-session-helpers-choice"
+              disabled={disabled || saving}
+            />
+          )}
+        </div>
+      )}
       {customizing && shown && (
         <div role="group" aria-label="Roles for this session" className="border-t pt-1">
           {AE_ROLE_IDS.map((role) => (

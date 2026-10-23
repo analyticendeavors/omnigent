@@ -29,6 +29,27 @@ export type AeRoleColor = (typeof AE_ROLE_COLORS)[number];
 export const AE_RAISE_MODES = ["off", "tell", "ask"] as const;
 export type AeRaiseMode = (typeof AE_RAISE_MODES)[number];
 
+/**
+ * Helpers rule (2026-10-23, when Auto / Solo / Team folded into presets): "any"
+ * lets the lead bring in other agents and sessions, "own" keeps work with the
+ * lead and its native subagents. Missing on presets saved before it: "any".
+ */
+export const AE_HELPERS = ["any", "own"] as const;
+export type AeHelpers = (typeof AE_HELPERS)[number];
+export const AE_HELPERS_LABELS: Record<AeHelpers, { label: string; hint: string }> = {
+  any: { label: "Any agent or session", hint: "The lead may bring in other agents" },
+  own: { label: "Own subagents only", hint: "No other agents or sessions" },
+};
+/** The Helpers choices as a segmented control takes them. */
+export const AE_HELPERS_OPTIONS = AE_HELPERS.map((value) => ({
+  value,
+  label: AE_HELPERS_LABELS[value].label,
+}));
+/** The Helpers rule of a preset or customization; absent reads as "any". */
+export function aeHelpersOf(rules: { helpers?: AeHelpers } | undefined): AeHelpers {
+  return rules?.helpers === "own" ? "own" : "any";
+}
+
 /** The per-session choice that lets the lead pick among presets; never a preset's id. */
 export const AE_RESERVED_PRESET_ID = "lead-picks";
 
@@ -69,6 +90,8 @@ export interface AeRoleRules {
   raise_or_lower: AeRaiseMode;
   lead_steps_down: boolean;
   auto_raises: number;
+  /** Absent on presets saved before the rule existed; read it with `aeHelpersOf`. */
+  helpers?: AeHelpers;
 }
 
 export interface AeRolePreset {
@@ -89,6 +112,8 @@ export interface AeRolesDoc {
   default_preset: string;
   apply_start_on: boolean;
   presets: AeRolePreset[];
+  /** Starter ids the read offered; a save sends them back so the server knows what this client saw. */
+  starters_seen?: string[];
 }
 
 /** What `GET` and `PUT /v1/ae/roles` answer. */
@@ -186,6 +211,8 @@ function parsePreset(value: unknown): AeRolePreset | null {
       raise_or_lower: raise_or_lower as AeRaiseMode,
       lead_steps_down,
       auto_raises: Math.max(0, Math.min(AE_AUTO_RAISES_MAX, Math.round(auto_raises))),
+      // Kept only when stored, so a preset saved before the rule round-trips unchanged.
+      ...(rules.helpers === "own" || rules.helpers === "any" ? { helpers: rules.helpers } : {}),
     },
   };
 }
@@ -199,7 +226,7 @@ function parsePresets(value: unknown): AeRolePreset[] | null {
 /** The server's roles state, or null when the body is not one. */
 export function aeParseRolesState(value: unknown): AeRolesState | null {
   if (!isObject(value)) return null;
-  const { revision, default_preset, apply_start_on, presets, starters } = value;
+  const { revision, default_preset, apply_start_on, presets, starters, starters_seen } = value;
   if (typeof revision !== "number" || !Number.isInteger(revision) || revision < 0) return null;
   if (typeof default_preset !== "string") return null;
   const list = parsePresets(presets);
@@ -210,6 +237,9 @@ export function aeParseRolesState(value: unknown): AeRolesState | null {
     apply_start_on: apply_start_on !== false,
     presets: list,
     starters: parsePresets(starters) ?? [],
+    ...(Array.isArray(starters_seen) && starters_seen.every((id) => typeof id === "string")
+      ? { starters_seen: starters_seen as string[] }
+      : {}),
   };
 }
 
@@ -220,6 +250,7 @@ export function aeRolesDoc(state: AeRolesDoc): AeRolesDoc {
     default_preset: state.default_preset,
     apply_start_on: state.apply_start_on,
     presets: state.presets,
+    ...(state.starters_seen ? { starters_seen: state.starters_seen } : {}),
   };
 }
 
@@ -322,7 +353,8 @@ export function aeSameRoles(
       JSON.stringify(AE_ROLE_IDS.map((r) => b.roles[r])) &&
     a.rules.raise_or_lower === b.rules.raise_or_lower &&
     a.rules.lead_steps_down === b.rules.lead_steps_down &&
-    a.rules.auto_raises === b.rules.auto_raises
+    a.rules.auto_raises === b.rules.auto_raises &&
+    aeHelpersOf(a.rules) === aeHelpersOf(b.rules)
   );
 }
 

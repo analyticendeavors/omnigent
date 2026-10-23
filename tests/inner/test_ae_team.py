@@ -100,3 +100,12 @@ def test_notice_is_transient_and_cannot_be_authored_by_clients() -> None:
     assert expanded[1] == {"role": "user", "content": content[:1]}
     with pytest.raises(ValueError, match="reserved"):
         MessageData(role="user", content=content)
+
+
+def test_team_label_whose_sessions_are_gone_reads_as_auto() -> None:
+    label = json.dumps({"version": 1, "mode": "team", "members": [{"sessionId": "gone"}]})
+    store = Mock()
+    store.get_conversation.return_value = None
+    notice = team_notice(conversation("parent", labels={TEAM_LABEL: label}), store)
+    assert notice["ae_team"] == {"mode": "auto", "members": []}
+    assert "Auto collaboration" in (render_team_notice(notice) or "")

@@ -166,7 +166,7 @@ def test_lead_picks_lists_the_users_presets(prefs: dict[str, Any]) -> None:
     assert "planner opus / claude-opus-5-5, high" in lines[1]
     assert "lead" not in lines[1].split("(", 1)[1]
     assert lines[-1] == "(2 more presets are not shown.)"
-    assert lines[1].endswith("; changes: tell after, steps down, 1 raise).")
+    assert lines[1].endswith("; changes: tell after, steps down, 1 raise, any agent or session).")
     assert len(lines) <= 10
 
 
@@ -175,7 +175,129 @@ def test_lead_picks_line_shows_each_presets_change_rules(prefs: dict[str, Any]) 
     labels = team_label(roles={"preset": "lead-picks"})
     lines = (render_roles(resolve_roles(conversation(labels), owner_store())) or "").splitlines()
     assert "changes: tell after, steps down, 1 raise" in lines[1]
-    assert "changes: no changes, no step down, 0 raises" in lines[2]
+    assert "changes: no changes, no step down, 0 raises, any agent or session" in lines[2]
+
+
+SOLO: dict[str, Any] = {
+    **copy.deepcopy(BALANCED),
+    "id": "solo",
+    "title": "Solo",
+    "rules": {**BALANCED["rules"], "helpers": "own"},
+}
+
+
+def team_store(*child_ids: str) -> Mock:
+    """A store whose direct children of ``conv`` are *child_ids*."""
+    store = owner_store()
+
+    def child(session_id: str) -> Conversation | None:
+        if session_id not in child_ids:
+            return None
+        return Conversation(
+            id=session_id,
+            root_conversation_id="conv",
+            parent_conversation_id="conv",
+            agent_id="codex",
+            created_at=0,
+            updated_at=0,
+        )
+
+    store.get_conversation.side_effect = child
+    return store
+
+
+def test_lead_picks_line_shows_own_subagents_only(prefs: dict[str, Any]) -> None:
+    prefs["presets"] = [BALANCED, SOLO]
+    labels = team_label(roles={"preset": "lead-picks"})
+    lines = (render_roles(resolve_roles(conversation(labels), owner_store())) or "").splitlines()
+    assert lines[2].endswith("1 raise, own subagents only).")
+
+
+def test_a_preset_with_own_helpers_tells_the_lead_solo(prefs: dict[str, Any]) -> None:
+    prefs["presets"] = [BALANCED, SOLO]
+    notice = team_notice(conversation(team_label(roles={"preset": "solo"})), owner_store())
+    assert notice["ae_team"] == {"mode": "solo", "members": []}
+    text = render_team_notice(notice) or ""
+    assert text.startswith(
+        'This session\'s preset ("Solo") keeps work in house: use this lead agent and its '
+        "native in-harness subagents when helpful."
+    )
+    assert "\n\nRoles preset: Solo." in text
+
+
+def test_own_helpers_win_over_added_sessions(prefs: dict[str, Any]) -> None:
+    prefs["presets"] = [BALANCED, SOLO]
+    labels = {
+        TEAM_LABEL: json.dumps(
+            {
+                "version": 1,
+                "mode": "team",
+                "members": [{"sessionId": "kid"}],
+                "roles": {"preset": "solo"},
+            }
+        )
+    }
+    notice = team_notice(conversation(labels), team_store("kid"))
+    assert notice["ae_team"] == {"mode": "solo", "members": []}
+
+
+def test_own_helpers_tell_solo_when_the_team_notice_is_unreadable() -> None:
+    own = {"preset": {"id": "solo", "title": "Solo", "rules": {"helpers": "own"}}}
+    assert ae_roles.effective_mode(None, own)["ae_team"] == {"mode": "solo", "members": []}
+    any_ = {"preset": {"id": "yolo", "title": "Yolo", "rules": {"helpers": "any"}}}
+    assert ae_roles.effective_mode(None, any_) == {}
+
+
+def test_added_sessions_tell_the_lead_team(prefs: dict[str, Any]) -> None:
+    labels = {
+        TEAM_LABEL: json.dumps({"version": 1, "mode": "team", "members": [{"sessionId": "kid"}]})
+    }
+    notice = team_notice(conversation(labels), team_store("kid"))
+    assert notice["ae_team"] == {
+        "mode": "team",
+        "members": [{"session_id": "kid", "agent_id": "codex"}],
+    }
+    text = render_team_notice(notice) or ""
+    assert text.startswith(
+        "The user added these child sessions to this chat. You are the lead and give the user "
+        "one integrated answer; hand work to these sessions first."
+    )
+    assert '"session_id": "kid"' in text
+
+
+def test_any_helpers_and_no_sessions_is_auto(prefs: dict[str, Any]) -> None:
+    notice = team_notice(conversation(team_label(roles={"preset": "yolo"})), owner_store())
+    assert notice["ae_team"] == {"mode": "auto", "members": []}
+
+
+def test_a_legacy_solo_label_reads_as_the_solo_preset(prefs: dict[str, Any]) -> None:
+    prefs["presets"] = [BALANCED, SOLO]
+    labels = {TEAM_LABEL: '{"version":1,"mode":"solo","members":[]}'}
+    notice = team_notice(conversation(labels), owner_store())
+    assert notice["ae_roles"]["preset"]["id"] == "solo"
+    assert notice["ae_team"]["mode"] == "solo"
+
+
+def test_a_legacy_solo_label_without_a_solo_preset_keeps_work_in_house(
+    prefs: dict[str, Any],
+) -> None:
+    labels = {TEAM_LABEL: '{"version":1,"mode":"solo","members":[]}'}
+    notice = team_notice(conversation(labels), owner_store())
+    assert notice["ae_roles"]["preset"]["id"] == "balanced"
+    assert notice["ae_roles"]["preset"]["rules"]["helpers"] == "own"
+    assert notice["ae_team"]["mode"] == "solo"
+    assert (render_team_notice(notice) or "").startswith(
+        'This session\'s preset ("Balanced") keeps work in house'
+    )
+
+
+def test_a_legacy_solo_label_with_a_preset_keeps_that_preset(prefs: dict[str, Any]) -> None:
+    prefs["presets"] = [BALANCED, SOLO, YOLO]
+    labels = {TEAM_LABEL: json.dumps({"version": 1, "mode": "solo", "roles": {"preset": "yolo"}})}
+    notice = team_notice(conversation(labels), owner_store())
+    assert notice["ae_roles"]["preset"]["id"] == "yolo"
+    assert notice["ae_roles"]["preset"]["rules"]["helpers"] == "own"
+    assert notice["ae_team"]["mode"] == "solo"
 
 
 @pytest.mark.parametrize(

@@ -223,6 +223,30 @@ describe("AeRolesSettingsSection", () => {
     ).toHaveAttribute("aria-checked", "true");
   });
 
+  it("saves the Helpers rule with the preset and tags in-house presets in the list", async () => {
+    const solo: AeRolePreset = {
+      ...BALANCED,
+      id: "solo",
+      title: "Solo",
+      rules: { ...BALANCED.rules, helpers: "own" },
+    };
+    serve(stateOf({ revision: 2, presets: [...STARTERS, solo] }));
+    renderSection();
+    await screen.findByRole("heading", { name: "Balanced" });
+    const helpers = editor().getByTestId("ae-rule-helpers");
+    expect(within(helpers).getByRole("radio", { name: "Any agent or session" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    fireEvent.click(within(helpers).getByRole("radio", { name: "Own subagents only" }));
+    fireEvent.click(editor().getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0].presets[1].rules).toEqual({ ...BALANCED.rules, helpers: "own" });
+    expect(puts()[0].presets[3]).toEqual(solo);
+    fireEvent.click(screen.getByRole("button", { name: "All presets" }));
+    expect(await screen.findAllByText("In house")).toHaveLength(2);
+  });
+
   it("reloads the server's state on a conflict, says so and keeps the edits", async () => {
     const current = stateOf({
       revision: 7,

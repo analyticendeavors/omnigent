@@ -16,6 +16,14 @@ the user's presets (``{"preset": id}``, optionally with a session-only
 ``custom`` roles and rules pair), ``lead-picks`` to let the lead choose, else the
 user's default. The user is the session owner, ``local`` when there is none.
 When the omnigent-ae package is not installed, the Balanced starter applies.
+
+Helpers (2026-10-23, when the composer's Auto / Solo / Team button folded into
+presets): every preset's rules carry ``helpers``, ``any`` or ``own``. The
+collaboration mode the lead is told follows from it in :func:`with_roles`:
+Solo when the preset keeps work in house (``own``), else Team when the label
+lists sessions, else Solo for a label still saved as mode ``solo``, else Auto.
+A label saved as Solo before presets had the rule reads as the ``solo`` preset
+when the user has one, else the default with ``helpers`` set to ``own``.
 """
 
 from __future__ import annotations
@@ -68,8 +76,15 @@ BALANCED: dict[str, Any] = {
         "builder": _fixed("sonnet", "medium"),
         "helper": _fixed("haiku", "low"),
     },
-    "rules": {"raise_or_lower": "tell", "lead_steps_down": True, "auto_raises": 1},
+    "rules": {
+        "raise_or_lower": "tell",
+        "lead_steps_down": True,
+        "auto_raises": 1,
+        "helpers": "any",
+    },
 }
+SOLO = "solo"
+OWN = "own"
 
 
 def _role_prefs() -> Any | None:
@@ -112,8 +127,8 @@ def _owner(conv: Conversation, store: ConversationStore) -> str:
     return LOCAL_USER
 
 
-def _label_override(conv: Conversation) -> dict[str, Any] | None:
-    """The ``roles`` field of a well-formed ``ae.team`` label, or ``None``."""
+def _label(conv: Conversation) -> dict[str, Any] | None:
+    """A well-formed ``ae.team`` label, or ``None``."""
     raw = conv.labels.get(TEAM_LABEL) if isinstance(conv.labels, dict) else None
     if not isinstance(raw, str) or not raw or len(raw) > _LABEL_MAX:
         return None
@@ -122,6 +137,20 @@ def _label_override(conv: Conversation) -> dict[str, Any] | None:
     except ValueError:
         return None
     if not isinstance(config, dict) or config.get("version") != 1:
+        return None
+    return config
+
+
+def _legacy_solo(conv: Conversation) -> bool:
+    """True for a label still saved as mode ``solo`` (written before the Helpers rule)."""
+    config = _label(conv)
+    return config is not None and config.get("mode") == SOLO
+
+
+def _label_override(conv: Conversation) -> dict[str, Any] | None:
+    """The ``roles`` field of a well-formed ``ae.team`` label, or ``None``."""
+    config = _label(conv)
+    if config is None:
         return None
     roles = config.get("roles")
     if not isinstance(roles, dict) or not isinstance(roles.get("preset"), str):
@@ -138,16 +167,43 @@ def _summary(preset: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def helpers_of(roles: object) -> str:
+    """``own`` when the resolved preset keeps work with the lead's own subagents, else ``any``."""
+    preset = roles.get("preset") if isinstance(roles, dict) else None
+    rules = preset.get("rules") if isinstance(preset, dict) else None
+    return OWN if isinstance(rules, dict) and rules.get("helpers") == OWN else "any"
+
+
+def _own_helpers(roles: dict[str, Any]) -> dict[str, Any]:
+    """*roles* with the resolved preset's Helpers rule set to ``own``."""
+    preset = roles.get("preset")
+    if not isinstance(preset, dict):
+        return roles
+    rules = preset.get("rules") if isinstance(preset.get("rules"), dict) else {}
+    return {**roles, "preset": {**preset, "rules": {**rules, "helpers": OWN}}}
+
+
 def resolve_roles(conv: Conversation, store: ConversationStore) -> dict[str, Any]:
     """The preset in force for *conv*'s next turn, as notice metadata.
+
+    A label still saved as mode ``solo`` keeps work in house: with no ``roles``
+    field it reads as the ``solo`` preset (the default when the user has none),
+    and the resolved preset's Helpers rule reads as ``own`` either way.
 
     :returns: ``{"preset": {...}, "custom": bool}``, or ``{"lead_picks": True,
         "presets": [...], "more": n}`` when the session lets the lead choose.
     """
+    roles = _resolve_roles(conv, store)
+    return _own_helpers(roles) if _legacy_solo(conv) else roles
+
+
+def _resolve_roles(conv: Conversation, store: ConversationStore) -> dict[str, Any]:
     default_id, presets = _load_prefs(_owner(conv, store))
     by_id = {p.get("id"): p for p in presets}
     override = _label_override(conv)
     chosen_id = override["preset"] if override else None
+    if chosen_id is None and _legacy_solo(conv) and SOLO in by_id:
+        chosen_id = SOLO
     if chosen_id == LEAD_PICKS:
         shown = presets[:LEAD_PICKS_SHOWN]
         return {
@@ -193,6 +249,8 @@ def with_roles(
     """*notice* (or a new one) with the resolved roles under ``ae_roles``; never raises.
 
     A child session is a helper, not a lead, so its notice is returned as is.
+    The ``ae_team`` mode becomes the one the preset and label call for (see
+    :func:`effective_mode`).
     """
     if _is_child(conv):
         return notice
@@ -201,7 +259,40 @@ def with_roles(
     except Exception:  # noqa: BLE001 (the notice must never break a message)
         _logger.warning("ae roles: could not resolve the preset; using Balanced", exc_info=True)
         roles = {"preset": _summary(BALANCED), "custom": False}
-    return {**(notice or {}), "ae_roles": roles}
+    return {**effective_mode(notice, roles), "ae_roles": roles}
+
+
+def effective_mode(notice: dict[str, object] | None, roles: object) -> dict[str, object]:
+    """*notice* with its ``ae_team`` mode set from the preset (a copy; never raises).
+
+    Solo when the preset's Helpers rule is ``own`` (its sessions, if any, wait
+    unused until another preset is picked); else Team when the label lists
+    sessions that still resolve; else Solo for a legacy mode ``solo`` label; else Auto.
+    """
+    team = notice.get("ae_team") if isinstance(notice, dict) else None
+    if not isinstance(team, dict):
+        if helpers_of(roles) == OWN:
+            # No readable team notice, but the preset keeps work in house.
+            return {**(notice or {}), "ae_team": {"mode": SOLO, "members": []}}
+        return dict(notice or {})
+    mode = team.get("mode")
+    if helpers_of(roles) == OWN:
+        mode = SOLO
+    elif mode == "team" and team.get("members"):
+        return dict(notice or {})
+    elif mode != SOLO:
+        mode = "auto"
+    return {**(notice or {}), "ae_team": {"mode": mode, "members": []}}
+
+
+def solo_opening(metadata: object) -> str:
+    """The Solo notice's first clause, naming the preset that keeps work in house."""
+    roles = metadata.get("ae_roles") if isinstance(metadata, dict) else None
+    preset = roles.get("preset") if isinstance(roles, dict) else None
+    title = _text(preset.get("title"), 40) if isinstance(preset, dict) else ""
+    if not title:
+        return "This session keeps work in house"
+    return f'This session\'s preset ("{title}") keeps work in house'
 
 
 def _text(value: object, limit: int) -> str:
@@ -234,7 +325,8 @@ def _rules_short(rules: object) -> str:
     raises = rules.get("auto_raises")
     raises = raises if isinstance(raises, int) and not isinstance(raises, bool) else 0
     down = "steps down" if rules.get("lead_steps_down") is True else "no step down"
-    return f"{change}, {down}, {raises} raise{'' if raises == 1 else 's'}"
+    helpers = "own subagents only" if rules.get("helpers") == OWN else "any agent or session"
+    return f"{change}, {down}, {raises} raise{'' if raises == 1 else 's'}, {helpers}"
 
 
 def _rules(rules: object) -> str:

@@ -117,27 +117,68 @@ const sessionWithTeam = (members: AeTeamMember[], overrides: Partial<AeTeam> = {
   ...session,
   labels: { [AE_TEAM_LABEL]: JSON.stringify({ version: 1, mode: "team", members, ...overrides }) },
 });
-function mount(props: Partial<Parameters<typeof AeTeamControl>[0]> = {}) {
+type ControlProps = Omit<Parameters<typeof AeTeamControl>[0], "open" | "onOpenChange">;
+// The dialog has no trigger of its own (the composer pill opens it); this stands in for the pill.
+function Harness(props: Partial<ControlProps>) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        Open picker
+      </button>
+      <AeTeamControl session={session} {...props} open={open} onOpenChange={setOpen} />
+    </>
+  );
+}
+function mount(props: Partial<ControlProps> = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const view = (next = {}) => (
     <QueryClientProvider client={client}>
-      <AeTeamControl session={session} {...props} {...next} />
+      <Harness {...props} {...next} />
     </QueryClientProvider>
   );
   const rendered = render(view());
   return {
     client,
-    rerender: (next: Partial<Parameters<typeof AeTeamControl>[0]> = {}) =>
-      rendered.rerender(view(next)),
+    rerender: (next: Partial<ControlProps> = {}) => rendered.rerender(view(next)),
   };
 }
 function openPicker() {
-  fireEvent.click(screen.getByRole("button", { name: /^(Collaboration:|Team:)/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Open picker" }));
 }
-function chooseTeam() {
-  openPicker();
-  fireEvent.click(screen.getByRole("button", { name: "Team" }));
-}
+const preset = (id: string, title: string, helpers?: "any" | "own") => ({
+  id,
+  title,
+  icon: "scale",
+  color: "teal" as const,
+  description: `${title} card`,
+  when_to_use: "",
+  pinned: false,
+  roles: {
+    lead: { mode: "session" as const },
+    planner: { mode: "fixed" as const, model: "test-model", effort: "high" as const },
+    reviewer: { mode: "auto" as const },
+    builder: { mode: "auto" as const },
+    helper: { mode: "auto" as const },
+  },
+  rules: {
+    raise_or_lower: "tell" as const,
+    lead_steps_down: true,
+    auto_raises: 1,
+    ...(helpers ? { helpers } : {}),
+  },
+});
+const ROLES = {
+  revision: 3,
+  default_preset: "balanced",
+  apply_start_on: true,
+  presets: [
+    preset("save-tokens", "Save tokens"),
+    preset("balanced", "Balanced"),
+    preset("yolo", "YOLO"),
+  ],
+  starters: [],
+};
 const saveButton = () => screen.getByRole("button", { name: "Save selection" });
 
 beforeEach(() => {
@@ -155,9 +196,12 @@ describe("composer team picker", () => {
     const client = new QueryClient();
     const invalidate = vi.spyOn(client, "invalidateQueries");
     mocks.session.mockReturnValue({ session: null, isLoading: true, error: null });
+    mocks.roles.mockReturnValue({ data: ROLES });
     const view = () => (
       <QueryClientProvider client={client}>
-        <SessionTeamControl sessionId="parent" />
+        <MemoryRouter>
+          <SessionTeamControl sessionId="parent" />
+        </MemoryRouter>
       </QueryClientProvider>
     );
     const rendered = render(view());
@@ -168,55 +212,43 @@ describe("composer team picker", () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["session", "parent"] });
     mocks.session.mockReturnValue({ session, isLoading: false, error: null });
     rendered.rerender(view());
-    openPicker();
+    // No team button any more: the preset pill's menu opens the dialog.
+    expect(screen.queryByRole("button", { name: /^(Collaboration:|Team:)/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Roles preset: Balanced" }));
+    fireEvent.click(screen.getByRole("button", { name: /Who works on this\?/ }));
     expect(screen.getByText("Lead / orchestrator")).toBeInTheDocument();
   });
 
-  it("defaults to Auto and explains native helpers in every mode without saving", () => {
+  it("shows the sessions list without mode tiles and saves nothing on opening", () => {
     mount();
-    expect(screen.getByRole("button", { name: "Collaboration: Auto" })).toHaveTextContent("Auto");
     openPicker();
-    expect(screen.getByRole("button", { name: "Auto Recommended" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-    expect(screen.getByText(/The lead chooses useful collaborators/)).toBeInTheDocument();
-    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Solo" }));
-    expect(screen.getByText(/The lead works with its native helpers/)).toBeInTheDocument();
-    expect(
-      screen.getByText("Native subagents remain available in every mode."),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Auto Recommended" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Solo" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Team" })).not.toBeInTheDocument();
+    expect(screen.getByText("Add sessions")).toBeInTheDocument();
+    expect(screen.getByText(`0 of ${AE_TEAM_LIMIT}`)).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Claude Code" })).not.toBeChecked();
+    expect(saveButton()).toBeEnabled();
     expect(saveAeTeam).not.toHaveBeenCalled();
   });
 
-  it("retains a draft across modes and discards it on cancel", () => {
+  it("discards a draft on cancel", () => {
     mount();
-    chooseTeam();
+    openPicker();
     fireEvent.click(screen.getByRole("checkbox", { name: "Claude Code" }));
     fireEvent.change(screen.getByRole("combobox", { name: "Model for Claude Code" }), {
       target: { value: "test-model" },
     });
-    for (const mode of ["Solo", "Auto Recommended"]) {
-      fireEvent.click(screen.getByRole("button", { name: mode }));
-      expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: "Team" }));
-      expect(screen.getByRole("checkbox", { name: "Claude Code" })).toBeChecked();
-      expect(screen.getByRole("combobox", { name: "Model for Claude Code" })).toHaveValue(
-        "test-model",
-      );
-    }
+    expect(screen.getByText(`1 of ${AE_TEAM_LIMIT}`)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(saveAeTeam).not.toHaveBeenCalled();
-    chooseTeam();
+    openPicker();
     expect(screen.getByRole("checkbox", { name: "Claude Code" })).not.toBeChecked();
-    expect(saveButton()).toBeDisabled();
   });
 
   it("shows native coding and custom agents first, with a different-provider recommendation", () => {
     mount();
-    chooseTeam();
+    openPicker();
     expect(
       screen.getAllByRole("checkbox").map((input) => input.getAttribute("aria-label")),
     ).toEqual(["Claude Code", "Codex", "Product reviewer"]);
@@ -224,7 +256,9 @@ describe("composer team picker", () => {
       "Recommended: different provider for independent review.",
     );
     expect(
-      screen.getByText("Each collaborator uses its configured account and its own context."),
+      screen.getByText(
+        "The lead hands work to these first. They keep their own context and account.",
+      ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/own account allowance|separate accounts/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: "Orchestrator" })).not.toBeInTheDocument();
@@ -233,14 +267,12 @@ describe("composer team picker", () => {
     fireEvent.click(disclosure);
     expect(screen.getByRole("checkbox", { name: "Orchestrator" })).toBeEnabled();
     fireEvent.click(screen.getByRole("checkbox", { name: "Orchestrator" }));
-    fireEvent.click(screen.getByRole("button", { name: "Solo" }));
-    fireEvent.click(screen.getByRole("button", { name: "Team" }));
     expect(screen.getByRole("checkbox", { name: "Orchestrator" })).toBeChecked();
   });
 
   it("keeps agents needing setup hidden until disclosed and then disabled", () => {
     mount();
-    chooseTeam();
+    openPicker();
     expect(screen.queryByRole("checkbox", { name: "Another agent" })).not.toBeInTheDocument();
     const disclosure = screen.getByRole("button", { name: /Show agents needing setup/ });
     expect(disclosure).toHaveAttribute("aria-expanded", "false");
@@ -256,8 +288,7 @@ describe("composer team picker", () => {
   it("saves both collaborators and their models without reordering on model edits", async () => {
     const { client } = mount();
     const invalidate = vi.spyOn(client, "invalidateQueries");
-    chooseTeam();
-    expect(saveButton()).toBeDisabled();
+    openPicker();
     fireEvent.click(screen.getByRole("checkbox", { name: "Codex" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Claude Code" }));
     fireEvent.change(screen.getByRole("combobox", { name: "Model for Codex" }), {
@@ -267,7 +298,7 @@ describe("composer team picker", () => {
     await waitFor(() =>
       expect(saveAeTeam).toHaveBeenCalledWith("parent", {
         version: 1,
-        mode: "team",
+        mode: expect.any(String),
         members: [memberFor(codex, { model: "test-model" }), memberFor(claude)],
       }),
     );
@@ -276,36 +307,12 @@ describe("composer team picker", () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: childSessionsQueryKey("parent") });
   });
 
-  it.each(["Auto Recommended", "Solo"])(
-    "saves %s without requiring ready collaborators",
-    async (mode) => {
-      mocks.agents.mockReturnValue({ data: [] });
-      mocks.hosts.mockReturnValue({ data: [] });
-      mount({ session: sessionWithTeam([memberFor(unavailable)], { routingBeforeTeam: "on" }) });
-      openPicker();
-      expect(saveButton()).toBeDisabled();
-      fireEvent.click(screen.getByRole("button", { name: mode }));
-      expect(saveButton()).toBeEnabled();
-      fireEvent.click(saveButton());
-      await waitFor(() =>
-        expect(saveAeTeam).toHaveBeenCalledWith(
-          "parent",
-          expect.objectContaining({
-            mode: mode === "Solo" ? "solo" : "auto",
-            routingBeforeTeam: "on",
-          }),
-        ),
-      );
-      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    },
-  );
-
   it("preserves custom aliases and independent model choices by agent id", async () => {
     const work = { ...codex, id: "work", name: "codex-work", builtin: false };
     const personal = { ...codex, id: "personal", name: "codex-personal", builtin: false };
     mocks.agents.mockReturnValue({ data: [codex, work, personal] });
     mount({ session: { ...session, agentId: work.id, agentName: work.name } });
-    chooseTeam();
+    openPicker();
     fireEvent.click(screen.getByRole("checkbox", { name: "codex-work" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "codex-personal" }));
     fireEvent.change(screen.getByRole("combobox", { name: "Model for codex-work" }), {
@@ -317,7 +324,7 @@ describe("composer team picker", () => {
     await waitFor(() =>
       expect(saveAeTeam).toHaveBeenCalledWith("parent", {
         version: 1,
-        mode: "team",
+        mode: expect.any(String),
         members: [
           memberFor(work, { displayName: "codex-work", model: "test-model" }),
           memberFor(personal, { displayName: "codex-personal" }),
@@ -355,7 +362,7 @@ describe("composer team picker", () => {
     await waitFor(() =>
       expect(saveAeTeam).toHaveBeenCalledWith("parent", {
         version: 1,
-        mode: "team",
+        mode: expect.any(String),
         members: [memberFor(claude)],
       }),
     );
@@ -416,7 +423,7 @@ describe("composer team picker", () => {
     await waitFor(() =>
       expect(saveAeTeam).toHaveBeenCalledWith("parent", {
         version: 1,
-        mode: "team",
+        mode: expect.any(String),
         members: [memberFor(claude)],
       }),
     );
@@ -426,7 +433,7 @@ describe("composer team picker", () => {
   it("keeps failed saves visible and retries with the same selection", async () => {
     vi.mocked(saveAeTeam).mockRejectedValueOnce(new Error("Host offline"));
     mount();
-    chooseTeam();
+    openPicker();
     fireEvent.click(screen.getByRole("checkbox", { name: "Claude Code" }));
     fireEvent.click(saveButton());
     expect(await screen.findByRole("alert")).toHaveTextContent("Host offline");
@@ -445,18 +452,17 @@ describe("composer team picker", () => {
       }),
     );
     mount();
-    chooseTeam();
+    openPicker();
     fireEvent.click(screen.getByRole("checkbox", { name: "Claude Code" }));
     fireEvent.click(saveButton());
     expect(saveButton()).toBeDisabled();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Solo" })).toBeDisabled();
     expect(screen.getByRole("checkbox", { name: "Claude Code" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Change lead" })).toBeDisabled();
     fireEvent.click(saveButton());
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     expect(screen.getByRole("dialog")).toBeInTheDocument();
-    expect(saveAeTeam).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(saveAeTeam).toHaveBeenCalledTimes(1));
     await act(async () => resolveSave(session));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
@@ -476,17 +482,18 @@ describe("composer team picker", () => {
 
   it("disables a read-only picker", () => {
     mount({ disabled: true });
-    expect(screen.getByRole("button", { name: "Collaboration: Auto" })).toBeDisabled();
     openPicker();
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(saveButton()).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "Claude Code" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Change lead" })).toBeDisabled();
   });
 
-  it("reports agent loading failures and keeps an empty Team unsavable", () => {
+  it("reports agent loading failures and still saves a chat with no sessions", () => {
     mocks.agents.mockReturnValue({ data: [], isError: true });
     mount();
-    chooseTeam();
+    openPicker();
     expect(screen.getByRole("alert")).toHaveTextContent("Could not load available agents.");
-    expect(saveButton()).toBeDisabled();
+    expect(saveButton()).toBeEnabled();
   });
 });
 
@@ -507,7 +514,7 @@ describe("team editor", () => {
       return <AeTeamEditor draft={draft} onChange={setDraft} agents={choices} host={host} />;
     }
     render(<Editor />);
-    expect(screen.getByText(`${AE_TEAM_LIMIT}/${AE_TEAM_LIMIT}`)).toBeInTheDocument();
+    expect(screen.getByText(`${AE_TEAM_LIMIT} of ${AE_TEAM_LIMIT}`)).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: `Custom ${AE_TEAM_LIMIT}` })).toBeDisabled();
     expect(screen.getByRole("combobox", { name: "Model for Custom 0" })).toBeEnabled();
     fireEvent.click(screen.getByRole("checkbox", { name: "Custom 0" }));
@@ -518,34 +525,6 @@ describe("team editor", () => {
 });
 
 describe("roles preset per session", () => {
-  const preset = (id: string, title: string) => ({
-    id,
-    title,
-    icon: "scale",
-    color: "teal" as const,
-    description: `${title} card`,
-    when_to_use: "",
-    pinned: false,
-    roles: {
-      lead: { mode: "session" as const },
-      planner: { mode: "fixed" as const, model: "test-model", effort: "high" as const },
-      reviewer: { mode: "auto" as const },
-      builder: { mode: "auto" as const },
-      helper: { mode: "auto" as const },
-    },
-    rules: { raise_or_lower: "tell" as const, lead_steps_down: true, auto_raises: 1 },
-  });
-  const ROLES = {
-    revision: 3,
-    default_preset: "balanced",
-    apply_start_on: true,
-    presets: [
-      preset("save-tokens", "Save tokens"),
-      preset("balanced", "Balanced"),
-      preset("yolo", "YOLO"),
-    ],
-    starters: [],
-  };
   beforeEach(() => {
     mocks.roles.mockReturnValue({ data: ROLES });
   });
@@ -584,10 +563,12 @@ describe("roles preset per session", () => {
     };
     mount({ session: withRoles });
     openPicker();
-    fireEvent.click(screen.getByRole("button", { name: "Solo" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Claude Code" }));
     fireEvent.click(saveButton());
     await waitFor(() => expect(saveAeTeam).toHaveBeenCalledTimes(1));
-    expect(vi.mocked(saveAeTeam).mock.calls[0][1]).toMatchObject({ mode: "solo" });
+    expect(vi.mocked(saveAeTeam).mock.calls[0][1]).toMatchObject({
+      members: [memberFor(claude)],
+    });
     expect(vi.mocked(saveAeTeam).mock.calls[0][1]).not.toHaveProperty("roles");
   });
 
@@ -662,5 +643,203 @@ describe("roles preset per session", () => {
     });
     screen.getByLabelText("Message").dispatchEvent(event);
     expect(event.defaultPrevented).toBe(false);
+  });
+  it("greys the sessions list on a preset that keeps work in house and saves no sessions", async () => {
+    mocks.roles.mockReturnValue({
+      data: { ...ROLES, presets: [...ROLES.presets, preset("solo", "Solo", "own")] },
+    });
+    const solo = sessionWithTeam([memberFor(claude)], { roles: { preset: "solo" } });
+    mount({ session: solo });
+    openPicker();
+    expect(
+      screen.getByText("Solo keeps work in this chat. Pick another preset to add sessions."),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("ae-team-sessions")).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("checkbox", { name: "Claude Code" })).toBeDisabled();
+    expect(saveButton()).toBeEnabled();
+    // Nothing changed: no child session, no routing change, no label write.
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(saveAeTeam).not.toHaveBeenCalled();
+    expect(mocks.updateSession).not.toHaveBeenCalled();
+  });
+
+  it("saves only the roles from a kept-in-house preset and keeps the stored sessions", async () => {
+    mocks.roles.mockReturnValue({
+      data: { ...ROLES, presets: [...ROLES.presets, preset("solo", "Solo", "own")] },
+    });
+    const stored = sessionWithTeam([memberFor(claude, { sessionId: "kid" })]);
+    mocks.getSessionSlim.mockResolvedValue(stored);
+    mocks.updateSession.mockResolvedValue(stored);
+    mount({ session: stored });
+    openPicker();
+    fireEvent.click(screen.getByRole("radio", { name: "Solo" }));
+    expect(screen.getByRole("checkbox", { name: "Claude Code" })).toBeDisabled();
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(mocks.updateSession).toHaveBeenCalledTimes(1));
+    expect(saveAeTeam).not.toHaveBeenCalled();
+    const patch = mocks.updateSession.mock.calls[0][1];
+    expect(patch).not.toHaveProperty("subagentRoutingOverride");
+    expect(JSON.parse(patch.labels[AE_TEAM_LABEL])).toMatchObject({
+      mode: "team",
+      members: [memberFor(claude, { sessionId: "kid" })],
+      roles: { preset: "solo" },
+    });
+  });
+
+  it("queues the dialog's save behind a menu change still saving", async () => {
+    const { aeLatestWins } = await import("@/lib/aeSessionRoles");
+    let finishMenuWrite!: () => void;
+    const menuWrite = aeLatestWins(
+      "parent",
+      () =>
+        new Promise<string>((resolve) => {
+          finishMenuWrite = () => resolve("done");
+        }),
+      { queue: true },
+    );
+    mount();
+    openPicker();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Claude Code" }));
+    fireEvent.click(saveButton());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(saveAeTeam).not.toHaveBeenCalled();
+    await act(async () => {
+      finishMenuWrite();
+      await menuWrite;
+    });
+    await waitFor(() => expect(saveAeTeam).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps a chat saved as Solo with Lead picks greyed, and saves nothing until the row changes", async () => {
+    const legacy = {
+      ...session,
+      labels: {
+        [AE_TEAM_LABEL]: JSON.stringify({
+          version: 1,
+          mode: "solo",
+          members: [],
+          roles: { preset: "lead-picks" },
+        }),
+      },
+    };
+    mount({ session: legacy });
+    openPicker();
+    expect(screen.getByTestId("ae-team-sessions")).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("checkbox", { name: "Claude Code" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("radio", { name: "YOLO" }));
+    expect(screen.getByTestId("ae-team-sessions")).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("does not write a frozen copy of the default for a Solo label when the dialog just opens", async () => {
+    const legacy = {
+      ...session,
+      labels: { [AE_TEAM_LABEL]: JSON.stringify({ version: 1, mode: "solo", members: [] }) },
+    };
+    mount({ session: legacy });
+    openPicker();
+    expect(screen.getByTestId("ae-team-sessions")).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(saveAeTeam).not.toHaveBeenCalled();
+    expect(mocks.updateSession).not.toHaveBeenCalled();
+  });
+
+  it("reads a chat saved as Solo as the Solo preset and writes the new shape on Save", async () => {
+    const actual = await vi.importActual<typeof AeTeamModule>("@/lib/aeTeam");
+    vi.mocked(saveAeTeam).mockImplementation(actual.saveAeTeam);
+    mocks.roles.mockReturnValue({
+      data: { ...ROLES, presets: [...ROLES.presets, preset("solo", "Solo", "own")] },
+    });
+    const legacy = {
+      ...session,
+      labels: { [AE_TEAM_LABEL]: JSON.stringify({ version: 1, mode: "solo", members: [] }) },
+    };
+    mocks.getSessionSlim.mockResolvedValue(legacy);
+    mocks.updateSession.mockResolvedValue(session);
+    mount({ session: legacy });
+    openPicker();
+    expect(screen.getByRole("radio", { name: "Solo" })).toBeChecked();
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(mocks.updateSession).toHaveBeenCalledTimes(1));
+    const label = JSON.parse(mocks.updateSession.mock.calls[0][1].labels[AE_TEAM_LABEL]);
+    expect(label).toMatchObject({
+      version: 1,
+      mode: "auto",
+      members: [],
+      roles: { preset: "solo" },
+    });
+  });
+});
+
+describe("composer preset pill states", () => {
+  function renderPill(props: { working?: boolean } = {}, current: Session = session) {
+    mocks.session.mockReturnValue({ session: current, isLoading: false, error: null });
+    const client = new QueryClient();
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <SessionTeamControl sessionId="parent" {...props} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("keeps a pill-shaped way into the dialog when presets fail to load, and retries them", () => {
+    const refetch = vi.fn();
+    mocks.roles.mockReturnValue({ data: undefined, isError: true, refetch });
+    renderPill();
+    const fallback = screen.getByTestId("ae-preset-pill-fallback");
+    expect(fallback).toHaveAccessibleName("Retry roles presets");
+    fireEvent.click(fallback);
+    expect(refetch).toHaveBeenCalledTimes(1);
+    // Change lead and the sessions list stay reachable.
+    expect(screen.getByRole("button", { name: "Change lead" })).toBeInTheDocument();
+    expect(screen.getByText("Add sessions")).toBeInTheDocument();
+  });
+
+  it("shows the same fallback while presets load, without a retry", () => {
+    const refetch = vi.fn();
+    mocks.roles.mockReturnValue({ data: undefined, isLoading: true, refetch });
+    renderPill();
+    fireEvent.click(screen.getByTestId("ae-preset-pill-fallback"));
+    expect(refetch).not.toHaveBeenCalled();
+    expect(screen.getByText("Lead / orchestrator")).toBeInTheDocument();
+  });
+
+  it("disables adding and removing sessions in the menu while a turn runs", () => {
+    mocks.roles.mockReturnValue({ data: ROLES });
+    renderPill({ working: true }, sessionWithTeam([memberFor(claude, { sessionId: "kid" })]));
+    fireEvent.click(screen.getByRole("button", { name: /^Roles preset: Balanced/ }));
+    expect(screen.getByRole("menuitemcheckbox", { name: "Claude Code" })).toBeDisabled();
+    expect(
+      screen.getByText("You can save collaboration changes after this turn finishes."),
+    ).toBeInTheDocument();
+    // Switching the preset only writes the label and stays available.
+    expect(screen.getAllByRole("menuitemradio", { name: /YOLO/ })[0]).toBeEnabled();
+  });
+
+  it("holds the dialog back while a menu change is still saving, then opens it", async () => {
+    mocks.roles.mockReturnValue({ data: ROLES });
+    const stored = sessionWithTeam([memberFor(claude, { sessionId: "kid" })]);
+    let release!: (value: Session) => void;
+    mocks.getSessionSlim.mockReturnValue(
+      new Promise<Session>((resolve) => {
+        release = resolve;
+      }),
+    );
+    vi.mocked(saveAeTeam).mockResolvedValue(session);
+    renderPill({}, stored);
+    fireEvent.click(screen.getByRole("button", { name: /^Roles preset: Balanced/ }));
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Claude Code" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Who works on this\?/ })).toBeDisabled(),
+    );
+    await act(async () => release(stored));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Who works on this\?/ })).toBeEnabled(),
+    );
   });
 });

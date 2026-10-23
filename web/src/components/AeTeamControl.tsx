@@ -22,6 +22,21 @@ import {
 } from "@/lib/aeTeam";
 import type { Session } from "@/lib/types";
 import { useForkDialog } from "@/shell/ForkDialogContext";
+import { useAeRoles } from "@/hooks/useAeRoles";
+import {
+  AE_SUPERSEDED,
+  aeLatestWins,
+  aeResolveSessionPreset,
+  saveAeSessionRoles,
+} from "@/lib/aeSessionRoles";
+import {
+  AE_SOLO_PRESET_ID,
+  AE_WORKING_HINT,
+  aeIsLegacySolo,
+  aeMigratedSessionRoles,
+  aeSessionsLocked,
+  aeSessionsLockedHint,
+} from "@/lib/aeTeamPresets";
 import { AeSessionPresetRow } from "./AeSessionPresetRow";
 import { AeSessionPresetPill } from "./composer/AeSessionPresetPill";
 import { Button } from "./ui/button";
@@ -131,7 +146,8 @@ export function AeTeamEditor({
   agents,
   host,
   lead,
-  disabled = false,
+  disabled: disabledProp = false,
+  lockedHint = null,
 }: {
   draft: AeTeam;
   onChange: (draft: AeTeam) => void;
@@ -139,7 +155,10 @@ export function AeTeamEditor({
   host: Host | null;
   lead?: AeTeamLead;
   disabled?: boolean;
+  /** Set when the preset keeps work in house: the list greys out with this line. */
+  lockedHint?: string | null;
 }) {
+  const disabled = disabledProp || !!lockedHint;
   const [showSetup, setShowSetup] = useState(false);
   const [showOther, setShowOther] = useState(false);
   const setupId = useId();
@@ -179,127 +198,100 @@ export function AeTeamEditor({
   };
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-2" role="group" aria-label="Collaboration mode">
-        {(["auto", "solo", "team"] as const).map((mode) => (
-          <button
-            key={mode}
-            type="button"
-            aria-label={mode === "auto" ? "Auto Recommended" : mode === "solo" ? "Solo" : "Team"}
-            aria-pressed={draft.mode === mode}
-            disabled={disabled}
-            onClick={() => onChange({ ...draft, mode })}
-            className={`min-w-0 rounded-xl border px-2 py-3 text-center disabled:opacity-50 ${draft.mode === mode ? "border-primary bg-primary/5" : "border-border"}`}
-          >
-            <span className="block text-sm font-medium">
-              {mode === "auto" ? "Auto" : mode === "solo" ? "Solo" : "Team"}
-            </span>
-            {mode === "auto" && (
-              <span className="block text-[10px] text-muted-foreground">Recommended</span>
-            )}
-          </button>
-        ))}
-      </div>
-      <div className="space-y-2 text-xs text-muted-foreground">
-        <p aria-live="polite">
-          {draft.mode === "auto"
-            ? "The lead chooses useful collaborators from your connected agents as needed."
-            : draft.mode === "solo"
-              ? "The lead works with its native helpers, without an added cross-agent team."
-              : "You choose collaborators. The lead assigns tasks and brings their results together."}
+      <div
+        className={`space-y-2 ${lockedHint ? "opacity-60" : ""}`}
+        data-testid="ae-team-sessions"
+        aria-disabled={disabled || undefined}
+      >
+        <p className="text-sm font-medium">
+          Add sessions{" "}
+          <span className="text-muted-foreground">
+            {draft.members.length} of {AE_TEAM_LIMIT}
+          </span>
         </p>
-        <p>Native subagents remain available in every mode.</p>
+        <p className="text-xs text-muted-foreground">
+          {lockedHint ??
+            "The lead hands work to these first. They keep their own context and account."}
+        </p>
+        {!options.some((option) => option.readiness.selectable) && (
+          <p className="text-sm text-muted-foreground">
+            No collaborators are ready on this host yet.
+          </p>
+        )}
+        {visible.map(renderChoice)}
+        {draft.members
+          .filter((m) => !agents.some((a) => a.id === m.agentId))
+          .map((member) => (
+            <div
+              key={member.agentId}
+              className="flex items-start justify-between gap-2 rounded-xl border p-3 text-sm"
+            >
+              <div className="min-w-0 space-y-1 break-words">
+                <p className="font-medium">
+                  {aeTeamAgentName({
+                    name: member.agentName,
+                    display_name: member.displayName,
+                    harness: null,
+                  })}
+                  {" · Unavailable"}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  This agent is no longer available. Remove it or choose another collaborator to
+                  save this team.
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                aria-label={`Remove ${member.displayName}`}
+                disabled={disabled}
+                onClick={() =>
+                  onChange({
+                    ...draft,
+                    members: draft.members.filter((m) => m.agentId !== member.agentId),
+                  })
+                }
+              >
+                Remove
+              </Button>
+            </div>
+          ))}
+        {otherConnected.length > 0 && (
+          <div className="space-y-2 pt-1">
+            <button
+              type="button"
+              aria-expanded={showOther}
+              aria-controls={otherId}
+              onClick={() => setShowOther((show) => !show)}
+              className="flex w-full items-center gap-2 py-2 text-left text-xs text-muted-foreground hover:text-foreground"
+            >
+              <ChevronDown className={`size-4 shrink-0 ${showOther ? "rotate-180" : ""}`} />
+              Other connected agents
+              <span>({otherConnected.length})</span>
+            </button>
+            <div id={otherId} hidden={!showOther} className="space-y-2">
+              {showOther && otherConnected.map(renderChoice)}
+            </div>
+          </div>
+        )}
+        {needingSetup.length > 0 && (
+          <div className="space-y-2 pt-1">
+            <button
+              type="button"
+              aria-expanded={showSetup}
+              aria-controls={setupId}
+              onClick={() => setShowSetup((show) => !show)}
+              className="flex w-full items-center gap-2 py-2 text-left text-xs text-muted-foreground hover:text-foreground"
+            >
+              <ChevronDown className={`size-4 shrink-0 ${showSetup ? "rotate-180" : ""}`} />
+              {showSetup ? "Hide agents needing setup" : "Show agents needing setup"}
+              <span>({needingSetup.length})</span>
+            </button>
+            <div id={setupId} hidden={!showSetup} className="space-y-2">
+              {showSetup && needingSetup.map(renderChoice)}
+            </div>
+          </div>
+        )}
       </div>
-      {draft.mode === "team" && (
-        <div className="space-y-2">
-          <p className="text-sm font-medium">
-            Collaborators{" "}
-            <span className="text-muted-foreground">
-              {draft.members.length}/{AE_TEAM_LIMIT}
-            </span>
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Each collaborator uses its configured account and its own context.
-          </p>
-          {!options.some((option) => option.readiness.selectable) && (
-            <p className="text-sm text-muted-foreground">
-              No collaborators are ready on this host yet.
-            </p>
-          )}
-          {visible.map(renderChoice)}
-          {draft.members
-            .filter((m) => !agents.some((a) => a.id === m.agentId))
-            .map((member) => (
-              <div
-                key={member.agentId}
-                className="flex items-start justify-between gap-2 rounded-xl border p-3 text-sm"
-              >
-                <div className="min-w-0 space-y-1 break-words">
-                  <p className="font-medium">
-                    {aeTeamAgentName({
-                      name: member.agentName,
-                      display_name: member.displayName,
-                      harness: null,
-                    })}
-                    {" · Unavailable"}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    This agent is no longer available. Remove it or choose another collaborator to
-                    save this team.
-                  </p>
-                </div>
-                <Button
-                  variant="ghost"
-                  aria-label={`Remove ${member.displayName}`}
-                  disabled={disabled}
-                  onClick={() =>
-                    onChange({
-                      ...draft,
-                      members: draft.members.filter((m) => m.agentId !== member.agentId),
-                    })
-                  }
-                >
-                  Remove
-                </Button>
-              </div>
-            ))}
-          {otherConnected.length > 0 && (
-            <div className="space-y-2 pt-1">
-              <button
-                type="button"
-                aria-expanded={showOther}
-                aria-controls={otherId}
-                onClick={() => setShowOther((show) => !show)}
-                className="flex w-full items-center gap-2 py-2 text-left text-xs text-muted-foreground hover:text-foreground"
-              >
-                <ChevronDown className={`size-4 shrink-0 ${showOther ? "rotate-180" : ""}`} />
-                Other connected agents
-                <span>({otherConnected.length})</span>
-              </button>
-              <div id={otherId} hidden={!showOther} className="space-y-2">
-                {showOther && otherConnected.map(renderChoice)}
-              </div>
-            </div>
-          )}
-          {needingSetup.length > 0 && (
-            <div className="space-y-2 pt-1">
-              <button
-                type="button"
-                aria-expanded={showSetup}
-                aria-controls={setupId}
-                onClick={() => setShowSetup((show) => !show)}
-                className="flex w-full items-center gap-2 py-2 text-left text-xs text-muted-foreground hover:text-foreground"
-              >
-                <ChevronDown className={`size-4 shrink-0 ${showSetup ? "rotate-180" : ""}`} />
-                {showSetup ? "Hide agents needing setup" : "Show agents needing setup"}
-                <span>({needingSetup.length})</span>
-              </button>
-              <div id={setupId} hidden={!showSetup} className="space-y-2">
-                {showSetup && needingSetup.map(renderChoice)}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }
@@ -316,11 +308,23 @@ export function SessionTeamControl({
 }) {
   const { session, error, isLoading } = useSession(sessionId);
   const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
   if (session) {
     return (
       <>
-        <AeTeamControl session={session} disabled={disabled} working={working} />
-        <AeSessionPresetPill sessionId={sessionId} disabled={disabled} />
+        <AeSessionPresetPill
+          sessionId={sessionId}
+          disabled={disabled}
+          working={working}
+          onOpenTeam={() => setOpen(true)}
+        />
+        <AeTeamControl
+          session={session}
+          disabled={disabled}
+          working={working}
+          open={open}
+          onOpenChange={setOpen}
+        />
       </>
     );
   }
@@ -338,23 +342,31 @@ export function SessionTeamControl({
       className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg px-2 text-xs text-muted-foreground hover:bg-accent disabled:opacity-50"
     >
       <UsersRound className="size-4" />
-      <span>{error ? "Retry team" : "Team…"}</span>
+      <span>{error ? "Retry" : "Roles…"}</span>
     </button>
   );
 }
 
-/** Composer-level collaboration preferences; opening the picker never starts work. */
+/**
+ * The "Who works on this?" dialog: lead, roles preset (with Helpers) and the
+ * chat's sessions. Opened from the composer's preset pill; opening it never
+ * starts work.
+ */
 export function AeTeamControl({
   session,
   disabled = false,
   working = false,
+  open,
+  onOpenChange,
 }: {
   session: Session;
   disabled?: boolean;
   working?: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
   const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
+  const { data: rolesState } = useAeRoles();
   // A new lead forks the session; in-place agent switching is not available.
   const forkDialog = useForkDialog();
   const [draft, setDraft] = useState<AeTeam>(() => readAeTeam(session.labels));
@@ -374,21 +386,39 @@ export function AeTeamControl({
   });
   const { data: hosts = [] } = useHosts({ enabled: open, includeSandbox: true });
   const host = hosts.find((h) => h.host_id === session.hostId) ?? null;
+  const choice = rolesState ? aeResolveSessionPreset(draft.roles ?? null, rolesState) : null;
+  // A label still saved as Solo stays locked until the user picks something else here.
+  const locked = aeSessionsLocked(choice, aeIsLegacySolo(session.labels) && !rolesTouched);
+  // Sessions kept while the preset keeps work in house are not checked for readiness.
   const invalid =
-    draft.mode === "team" &&
-    (!draft.members.length ||
-      draft.members.some((m) => {
-        const agent = agents.find((a) => a.id === m.agentId);
-        return !agent || !aeTeamReadiness(agent.harness, host).selectable;
-      }));
-  function changeOpen(next: boolean) {
-    if (saving) return;
-    if (next) {
-      setDraft(readAeTeam(session.labels));
-      setRolesTouched(false);
+    !locked &&
+    draft.members.some((m) => {
+      const agent = agents.find((a) => a.id === m.agentId);
+      return !agent || !aeTeamReadiness(agent.harness, host).selectable;
+    });
+  // Each opening starts from the saved label, a Solo-era label read the new way.
+  const [wasOpen, setWasOpen] = useState(false);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
+      const stored = readAeTeam(session.labels);
+      const migrated = rolesState
+        ? aeMigratedSessionRoles(session.labels, stored.roles ?? null, rolesState)
+        : (stored.roles ?? null);
+      const legacy = aeIsLegacySolo(session.labels) && !!rolesState;
+      // The migrated roles are for display; they are written only when the user
+      // changes the roles row, or when they are a plain reference to the Solo
+      // preset (no frozen copy of a preset is ever written just for opening).
+      setDraft(legacy ? { ...stored, roles: migrated } : stored);
+      setRolesTouched(
+        legacy && !stored.roles && migrated?.preset === AE_SOLO_PRESET_ID && !migrated.custom,
+      );
       setError(null);
     }
-    setOpen(next);
+  }
+  function changeOpen(next: boolean) {
+    if (saving) return;
+    onOpenChange(next);
   }
   async function save() {
     if (disabled || invalid || saving || working) return;
@@ -396,115 +426,108 @@ export function AeTeamControl({
     setError(null);
     try {
       const { roles: _staleRoles, ...withoutRoles } = draft;
-      const updated = await saveAeTeam(session.id, rolesTouched ? draft : withoutRoles);
-      queryClient.setQueryData(["session", session.id], updated);
+      // Through the same per-session line the pill's menu writes use, so a
+      // menu change still saving lands first and is never overwritten.
+      const updated = await aeLatestWins(
+        session.id,
+        async () => {
+          if (!locked) return saveAeTeam(session.id, rolesTouched ? draft : withoutRoles);
+          // Own subagents only: the stored sessions stay as they are (no child
+          // sessions, no routing change); only the roles choice can be saved.
+          return rolesTouched ? saveAeSessionRoles(session.id, draft.roles ?? null) : null;
+        },
+        { queue: true },
+      );
+      if (updated && updated !== AE_SUPERSEDED) {
+        queryClient.setQueryData(["session", session.id], updated);
+      }
       await queryClient.invalidateQueries({ queryKey: childSessionsQueryKey(session.id) });
-      setOpen(false);
+      onOpenChange(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save the team. Try again.");
     } finally {
       setSaving(false);
     }
   }
-  const team = saved.mode === "team";
-  const modeName = saved.mode === "auto" ? "Auto" : saved.mode === "solo" ? "Solo" : "Team";
   return (
-    <>
-      <button
-        type="button"
-        aria-label={
-          team ? `Team: ${saved.members.length} collaborators` : `Collaboration: ${modeName}`
-        }
-        title={
-          team ? saved.members.map((m) => m.displayName).join(", ") : "Choose Auto, Solo, or Team"
-        }
-        disabled={disabled}
-        onClick={() => changeOpen(true)}
-        className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg px-2 text-xs text-muted-foreground hover:bg-accent disabled:opacity-50"
+    <Dialog open={open} onOpenChange={changeOpen}>
+      <DialogContent
+        className="flex max-h-[85dvh] flex-col gap-4 sm:max-w-lg"
+        data-testid="ae-team-dialog"
       >
-        <UsersRound className="size-4" />
-        <span>{team ? `Team · ${saved.members.length}` : modeName}</span>
-      </button>
-      <Dialog open={open} onOpenChange={changeOpen}>
-        <DialogContent
-          className="flex max-h-[85dvh] flex-col gap-4 sm:max-w-lg"
-          data-testid="ae-team-dialog"
-        >
-          <DialogHeader>
-            <DialogTitle>Who works on this?</DialogTitle>
-            <DialogDescription>Choose how your lead works with collaborators.</DialogDescription>
-          </DialogHeader>
-          <div className="min-h-0 space-y-4 overflow-y-auto px-1 pb-1">
-            <div className="flex items-center justify-between gap-3 rounded-xl bg-muted/50 p-3">
-              <div className="min-w-0">
-                <p className="text-xs text-muted-foreground">Lead / orchestrator</p>
-                <p className="truncate text-sm font-medium">{aeTeamLeadName(session, agents)}</p>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="shrink-0"
-                disabled={saving || working || disabled || !forkDialog?.canFork}
-                title={forkDialog?.disabledReason}
-                onClick={() => {
-                  setOpen(false);
-                  forkDialog?.openForkDialog({ sourceSessionId: session.id });
-                }}
-              >
-                Change lead
-              </Button>
+        <DialogHeader>
+          <DialogTitle>Who works on this?</DialogTitle>
+          <DialogDescription>
+            Pick a preset, and any sessions the lead should hand work to.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="min-h-0 space-y-4 overflow-y-auto px-1 pb-1">
+          <div className="flex items-center justify-between gap-3 rounded-xl bg-muted/50 p-3">
+            <div className="min-w-0">
+              <p className="text-xs text-muted-foreground">Lead / orchestrator</p>
+              <p className="truncate text-sm font-medium">{aeTeamLeadName(session, agents)}</p>
             </div>
-            <AeSessionPresetRow
-              value={draft.roles ?? null}
-              onChange={(roles) => {
-                setRolesTouched(true);
-                setDraft((d) => ({ ...d, roles }));
-              }}
-              disabled={saving || disabled}
-            />
-            {working && (
-              <p className="text-xs text-muted-foreground">
-                You can save collaboration changes after this turn finishes.
-              </p>
-            )}
-            {isLoading && <p className="text-sm text-muted-foreground">Loading agents…</p>}
-            {isError && (
-              <p role="alert" className="text-sm text-destructive">
-                Could not load available agents. Close and reopen to retry.
-              </p>
-            )}
-            <AeTeamEditor
-              draft={draft}
-              onChange={setDraft}
-              agents={agents}
-              host={host}
-              lead={session}
-              disabled={saving || disabled}
-            />
-            <p className="text-xs text-muted-foreground">
-              Applies to your next message. Existing work can finish when you change modes.
-            </p>
-            {error && (
-              <p role="alert" className="text-sm text-destructive">
-                {error}
-              </p>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" disabled={saving} onClick={() => changeOpen(false)}>
-              Cancel
-            </Button>
             <Button
-              aria-label="Save selection"
-              loading={saving}
-              disabled={disabled || invalid || saving || working}
-              onClick={() => void save()}
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              disabled={saving || working || disabled || !forkDialog?.canFork}
+              title={forkDialog?.disabledReason}
+              onClick={() => {
+                onOpenChange(false);
+                forkDialog?.openForkDialog({ sourceSessionId: session.id });
+              }}
             >
-              Save selection
+              Change lead
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
+          </div>
+          <AeSessionPresetRow
+            value={draft.roles ?? null}
+            onChange={(roles) => {
+              setRolesTouched(true);
+              setDraft((d) => ({ ...d, roles }));
+            }}
+            disabled={saving || disabled}
+          />
+          {working && <p className="text-xs text-muted-foreground">{AE_WORKING_HINT}</p>}
+          {isLoading && <p className="text-sm text-muted-foreground">Loading agents…</p>}
+          {isError && (
+            <p role="alert" className="text-sm text-destructive">
+              Could not load available agents. Close and reopen to retry.
+            </p>
+          )}
+          <AeTeamEditor
+            draft={draft}
+            onChange={setDraft}
+            agents={agents}
+            host={host}
+            lead={session}
+            disabled={saving || disabled}
+            lockedHint={locked ? aeSessionsLockedHint(choice) : null}
+          />
+          <p className="text-xs text-muted-foreground">
+            Applies to your next message. Work already running can finish.
+          </p>
+          {error && (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" disabled={saving} onClick={() => changeOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            aria-label="Save selection"
+            loading={saving}
+            disabled={disabled || invalid || saving || working}
+            onClick={() => void save()}
+          >
+            Save selection
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

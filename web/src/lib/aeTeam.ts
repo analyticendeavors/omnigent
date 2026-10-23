@@ -1,5 +1,5 @@
 import { fetchChildSessions } from "@/hooks/useChildSessions";
-import { type AeSessionRoles, aeParseSessionRoles, aeRolesWire } from "./aeSessionRoles";
+import { type AeSessionRoles, aeParseSessionRoles, aeTeamLabelText } from "./aeSessionRoles";
 import { createSession, getSessionSlim, updateSession } from "./sessionsApi";
 
 export const AE_TEAM_LABEL = "ae.team";
@@ -29,9 +29,12 @@ export function readAeTeam(labels?: Record<string, string>): AeTeam {
   if (!raw || raw.length > 16_384) return automatic;
   try {
     const value = JSON.parse(raw) as Partial<AeTeam>;
-    if (value?.version !== 1 || !["auto", "solo", "team"].includes(value.mode ?? ""))
-      return automatic;
-    if (!Array.isArray(value.members) || value.members.length > AE_TEAM_LIMIT) return automatic;
+    if (value?.version !== 1) return automatic;
+    // A label this client cannot read as a team (unknown mode, bad members) still
+    // keeps a readable roles choice, so a writer never drops it.
+    const roleOnly = { ...automatic, ...aeParsedRoles(aeParseSessionRoles(value.roles)) };
+    if (!["auto", "solo", "team"].includes(value.mode ?? "")) return roleOnly;
+    if (!Array.isArray(value.members) || value.members.length > AE_TEAM_LIMIT) return roleOnly;
     const members = value.members.filter(
       (m): m is AeTeamMember =>
         !!m &&
@@ -62,27 +65,31 @@ function aeParsedRoles(roles: AeSessionRoles | null) {
   return roles ? { roles } : {};
 }
 
-function aeRolesField(roles: AeSessionRoles | null | undefined) {
-  return roles ? { roles: aeRolesWire(roles) } : {};
-}
-
 export function aeTeamMemberKey(member: AeTeamMember): string {
   return JSON.stringify([member.agentId, member.model]);
 }
 
-/** Save a collaboration preference, provisioning idle children only for Team.
+/** Save the chat's sessions and roles choice, provisioning idle children for new members.
+ * The mode is derived: "team" when the draft lists sessions, else "auto" (the
+ * preset's Helpers rule replaced Solo, 2026-10-23); a label still saved as Solo
+ * keeps that mode until a writer sets its roles. Every other label field is kept.
  * Retry reuses children by their durable label, including a partially saved team.
  * No prompts are sent here. The lead sees the roster on its next message.
  */
-export async function saveAeTeam(sessionId: string, draft: AeTeam) {
-  if (draft.mode === "team" && (!draft.members.length || draft.members.length > AE_TEAM_LIMIT)) {
-    throw new Error(`Choose between 1 and ${AE_TEAM_LIMIT} collaborators.`);
+export async function saveAeTeam(sessionId: string, input: AeTeam) {
+  if (input.members.length > AE_TEAM_LIMIT) {
+    throw new Error(`Choose up to ${AE_TEAM_LIMIT} sessions.`);
   }
   const parent = await getSessionSlim(sessionId);
   const saved = readAeTeam(parent.labels);
   const routing = parent.subagentRoutingOverride ?? null;
   // Every writer keeps the session's roles preset unless the draft sets it.
-  const roles = draft.roles === undefined ? saved.roles : draft.roles;
+  const roles = input.roles === undefined ? saved.roles : input.roles;
+  const keepSolo = input.roles === undefined && saved.mode === "solo";
+  const draft: AeTeam = {
+    ...input,
+    mode: input.members.length ? "team" : keepSolo ? "solo" : "auto",
+  };
   if (draft.mode !== "team") {
     return updateSession(sessionId, {
       // Restore only the override this picker owns; preserve later manual changes.
@@ -90,11 +97,10 @@ export async function saveAeTeam(sessionId: string, draft: AeTeam) {
         ? { subagentRoutingOverride: saved.routingBeforeTeam ?? null }
         : {}),
       labels: {
-        [AE_TEAM_LABEL]: JSON.stringify({
-          version: 1,
+        [AE_TEAM_LABEL]: aeTeamLabelText(parent.labels, {
           mode: draft.mode,
           members: [],
-          ...aeRolesField(roles),
+          roles,
         }),
       },
     });
@@ -104,7 +110,7 @@ export async function saveAeTeam(sessionId: string, draft: AeTeam) {
   // Manual model choices must not be replaced by the parent's spawn router.
   if (routing !== "off") await updateSession(sessionId, { subagentRoutingOverride: "off" });
   try {
-    return await persistAeTeam(sessionId, { ...draft, routingBeforeTeam, roles });
+    return await persistAeTeam(sessionId, { ...draft, routingBeforeTeam, roles }, parent.labels);
   } catch (error) {
     if (routing !== "off") {
       try {
@@ -119,7 +125,11 @@ export async function saveAeTeam(sessionId: string, draft: AeTeam) {
   }
 }
 
-async function persistAeTeam(sessionId: string, draft: AeTeam) {
+async function persistAeTeam(
+  sessionId: string,
+  draft: AeTeam,
+  labels: Record<string, string> | undefined,
+) {
   const members: AeTeamMember[] = [];
   if (draft.mode === "team") {
     const children = await fetchChildSessions(sessionId);
@@ -150,12 +160,11 @@ async function persistAeTeam(sessionId: string, draft: AeTeam) {
   return updateSession(sessionId, {
     ...(draft.mode === "team" ? { subagentRoutingOverride: "off" as const } : {}),
     labels: {
-      [AE_TEAM_LABEL]: JSON.stringify({
-        version: 1,
+      [AE_TEAM_LABEL]: aeTeamLabelText(labels, {
         mode: draft.mode,
         members,
-        routingBeforeTeam: draft.routingBeforeTeam,
-        ...aeRolesField(draft.roles),
+        routingBeforeTeam: draft.routingBeforeTeam ?? null,
+        roles: draft.roles,
       }),
     },
   });

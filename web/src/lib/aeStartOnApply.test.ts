@@ -49,7 +49,7 @@ const session = {
   id: "s1",
   labels: {
     "omnigent.wrapper": "claude-code-native-ui",
-    "ae.team": JSON.stringify({ version: 1, mode: "solo", members: [] }),
+    "ae.team": JSON.stringify({ version: 1, mode: "auto", members: [], future: 1 }),
   },
   modelOverride: "sonnet",
   reasoningEffort: "medium",
@@ -76,7 +76,13 @@ describe("aeApplyQueuedStartOn", () => {
     aeQueueStartOn("s1", { text: 'START ON: preset "YOLO"', models: MODELS });
     await aeApplyQueuedStartOn("s1", "s1", onSession);
     const label = JSON.parse(mocks.updateSession.mock.calls[0][1].labels["ae.team"]);
-    expect(label).toEqual({ version: 1, mode: "solo", members: [], roles: { preset: "yolo" } });
+    expect(label).toEqual({
+      version: 1,
+      mode: "auto",
+      members: [],
+      future: 1,
+      roles: { preset: "yolo" },
+    });
     expect(onSession).toHaveBeenCalledTimes(1);
     expect(mocks.toast).toHaveBeenCalledWith("Started on YOLO", expect.anything());
 
@@ -90,7 +96,33 @@ describe("aeApplyQueuedStartOn", () => {
     undoAction()();
     await vi.waitFor(() => expect(mocks.updateSession).toHaveBeenCalledTimes(2));
     const restored = JSON.parse(mocks.updateSession.mock.calls[1][1].labels["ae.team"]);
-    expect(restored).toEqual({ version: 1, mode: "solo", members: [] });
+    expect(restored).toEqual({ version: 1, mode: "auto", members: [], future: 1 });
+  });
+
+  it("Undo puts a legacy Solo label back exactly as it was", async () => {
+    const legacyText = JSON.stringify({ version: 1, mode: "solo", members: [] });
+    const legacy = { ...session, labels: { "ae.team": legacyText } } as unknown as Session;
+    mocks.getSessionSlim.mockResolvedValue(legacy);
+    aeQueueStartOn("s1", { text: 'START ON: preset "YOLO"', models: MODELS });
+    await aeApplyQueuedStartOn("s1", "s1", vi.fn());
+    const written = mocks.updateSession.mock.calls[0][1].labels["ae.team"];
+    expect(JSON.parse(written)).toMatchObject({ mode: "auto", roles: { preset: "yolo" } });
+    // Untouched since: the previous text comes back byte for byte.
+    mocks.getSessionSlim.mockResolvedValue({ ...session, labels: { "ae.team": written } });
+    undoAction()();
+    await vi.waitFor(() => expect(mocks.updateSession).toHaveBeenCalledTimes(2));
+    expect(mocks.updateSession.mock.calls[1][1].labels["ae.team"]).toBe(legacyText);
+    // Changed since (another field added): roles go back and the Solo mode stays.
+    mocks.updateSession.mockClear();
+    mocks.getSessionSlim.mockResolvedValue({
+      ...session,
+      labels: { "ae.team": JSON.stringify({ ...JSON.parse(written), extra: 2 }) },
+    });
+    undoAction()();
+    await vi.waitFor(() => expect(mocks.updateSession).toHaveBeenCalledTimes(1));
+    const merged = JSON.parse(mocks.updateSession.mock.calls[0][1].labels["ae.team"]);
+    expect(merged).toMatchObject({ mode: "solo", extra: 2 });
+    expect(merged).not.toHaveProperty("roles");
   });
 
   it("sets model and effort and Undo restores both", async () => {

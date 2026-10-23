@@ -13,6 +13,7 @@ import {
   aeTeamLabelWithRoles,
   AE_TEAM_LABEL_KEY,
   readAeSessionRoles,
+  readAeTeamLabelMode,
 } from "@/lib/aeSessionRoles";
 import { fetchAeRoles } from "@/hooks/useAeRoles";
 import { type AeStartOnTarget, aeParseStartOn } from "@/lib/aeStartOn";
@@ -67,6 +68,9 @@ type OnSession = (session: Session) => void;
 
 interface Before {
   roles: AeSessionRoles | null;
+  /** The label's mode and exact text before, so Undo can put a legacy Solo label back as it was. */
+  mode: string | null;
+  labelText: string | undefined;
   model: string | null;
   effort: string | null;
   /** Whether the effort was changed too (harnesses without effort control skip it). */
@@ -76,6 +80,7 @@ interface Before {
 /** What START ON left on the session, so Undo only touches what is still as it set it. */
 interface After {
   roles: AeSessionRoles | null;
+  labelText: string | undefined;
   model: string | null;
   effort: string | null;
 }
@@ -97,11 +102,18 @@ async function applyPlan(
   const session = await getSessionSlim(sessionId);
   const before: Before = {
     roles: readAeSessionRoles(session.labels),
+    mode: readAeTeamLabelMode(session.labels),
+    labelText: session.labels?.[AE_TEAM_LABEL_KEY],
     model: session.modelOverride ?? null,
     effort: session.reasoningEffort ?? null,
     effortSet: false,
   };
-  const after: After = { roles: before.roles, model: before.model, effort: before.effort };
+  const after: After = {
+    roles: before.roles,
+    labelText: before.labelText,
+    model: before.model,
+    effort: before.effort,
+  };
   let effortError: string | null = null;
   const { target } = plan;
   if (target.kind === "preset") {
@@ -111,6 +123,7 @@ async function applyPlan(
     });
     onSession(updated);
     after.roles = readAeSessionRoles(updated.labels);
+    after.labelText = updated.labels?.[AE_TEAM_LABEL_KEY];
     aeRememberPreset(target.presetId);
   } else {
     const updated = await updateSession(sessionId, { modelOverride: target.model });
@@ -142,11 +155,13 @@ async function undo(
     const kept: string[] = [];
     if (target.kind === "preset") {
       if (aeSameSessionRoles(readAeSessionRoles(now.labels), after.roles)) {
-        on(
-          await updateSession(sessionId, {
-            labels: { [AE_TEAM_LABEL_KEY]: aeTeamLabelWithRoles(now.labels, before.roles) },
-          }),
-        );
+        // Untouched since START ON: put the exact previous label back; else
+        // change only the roles, keeping a legacy Solo mode.
+        const text =
+          before.labelText !== undefined && now.labels?.[AE_TEAM_LABEL_KEY] === after.labelText
+            ? before.labelText
+            : aeTeamLabelWithRoles(now.labels, before.roles, before.mode);
+        on(await updateSession(sessionId, { labels: { [AE_TEAM_LABEL_KEY]: text } }));
         restored.push("the roles preset");
       } else {
         kept.push("the roles preset");

@@ -28,11 +28,12 @@ import {
   AE_PRESET_SEARCH_FROM,
   AE_PRESET_SHORTCUTS,
   type AeRolePreset,
+  aeHelpersOf,
   aeRowIconCount,
   aeRowOrder,
 } from "@/lib/aeRoles";
 import { cn } from "@/lib/utils";
-import { AeRolePresetTile } from "./AeRolesControls";
+import { AeInHouseTag, AeRolePresetTile } from "./AeRolesControls";
 
 const verticalOnly: Modifier = ({ transform }) => ({ ...transform, x: 0 });
 
@@ -266,6 +267,7 @@ function ListRow({
                 Default
               </span>
             )}
+            {aeHelpersOf(preset.rules) === "own" && <AeInHouseTag />}
           </span>
           {preset.description && (
             <span className="block truncate text-xs text-muted-foreground">

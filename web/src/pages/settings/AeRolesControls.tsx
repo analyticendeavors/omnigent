@@ -1,7 +1,7 @@
 // Small pieces Settings > Roles draws in several places: a preset's icon tile,
 // a segmented choice and a 0..n stepper.
 
-import { MinusIcon, PlusIcon } from "lucide-react";
+import { HomeIcon, MinusIcon, PlusIcon } from "lucide-react";
 import { AE_ROLE_COLOR_CLASSES, type AeRoleColor } from "@/lib/aeRoles";
 import { AeProjectIconGlyph, aeTablerValue } from "@/lib/aeTablerIcon";
 import { cn } from "@/lib/utils";
@@ -38,6 +38,19 @@ export function AeRolePresetTile({
       {dot && (
         <span className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-teal-400 ring-2 ring-background" />
       )}
+    </span>
+  );
+}
+
+/** The small tag on a preset whose Helpers rule keeps work in house ("Own subagents only"). */
+export function AeInHouseTag() {
+  return (
+    <span
+      title="Own subagents only: no other agents or sessions"
+      className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-muted px-1.5 text-[10px] font-semibold text-muted-foreground"
+    >
+      <HomeIcon className="size-2.5" aria-hidden="true" />
+      In house
     </span>
   );
 }

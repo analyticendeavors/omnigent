@@ -4,9 +4,10 @@
 // lib/aeSessionRoles.ts; this file binds them to the session and roles queries.
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { showToast } from "@/components/ui/toast";
 import { useAeRoles } from "@/hooks/useAeRoles";
+import { childSessionsQueryKey } from "@/hooks/useChildSessions";
 import { useSession } from "@/hooks/useSession";
 import {
   AE_SUPERSEDED,
@@ -19,6 +20,14 @@ import {
   saveAeSessionRoles,
 } from "@/lib/aeSessionRoles";
 import { aeStartOnLine } from "@/lib/aeStartOn";
+import { readAeTeam } from "@/lib/aeTeam";
+import {
+  aeIsLegacySolo,
+  aeMigratedSessionRoles,
+  aeSaveTeamMember,
+  aeSessionsLocked,
+} from "@/lib/aeTeamPresets";
+import type { AeTeamMember } from "@/lib/aeTeam";
 import { aeDropStartOn, aeQueueStartOn } from "@/lib/aeStartOnApply";
 import { aeChordFromEvent, aeSameChord, readAeSuggestionKeys } from "@/lib/aeSuggestionKeys";
 import { isTempConvId } from "@/lib/tempConversationId";
@@ -28,13 +37,22 @@ import { useChatStore } from "@/store/chatStore";
 export function useAeSessionPreset(sessionId: string | null | undefined) {
   const queryClient = useQueryClient();
   const { session } = useSession(sessionId);
-  const { data: state } = useAeRoles();
+  const rolesQuery = useAeRoles();
+  const state = rolesQuery.data;
   const labels = session?.labels;
-  const roles = useMemo(() => readAeSessionRoles(labels), [labels]);
+  // Session changes still saving: the dialog reads the label, so it waits for them.
+  const [pending, setPending] = useState(0);
+  // A label saved as Solo before presets had a Helpers rule reads the new way.
+  const roles = useMemo(() => {
+    const stored = readAeSessionRoles(labels);
+    return state ? aeMigratedSessionRoles(labels, stored, state) : stored;
+  }, [labels, state]);
+  const team = useMemo(() => readAeTeam(labels), [labels]);
   const choice = useMemo(
     () => (state ? aeResolveSessionPreset(roles, state) : null),
     [roles, state],
   );
+  const choiceLocked = aeSessionsLocked(choice, aeIsLegacySolo(labels));
   /**
    * Put the session on `id` (a preset id or "lead-picks"); resolves true once
    * saved. Picks for one session run one at a time and the latest wins: a pick
@@ -59,7 +77,46 @@ export function useAeSessionPreset(sessionId: string | null | undefined) {
     },
     [queryClient, sessionId, state],
   );
-  return { state, roles, choice, pick };
+  /**
+   * Add (`on`) or remove one session for this chat; resolves true once saved.
+   * Queued behind any pending pick for the session, never skipped.
+   */
+  const setMember = useCallback(
+    async (member: AeTeamMember, on: boolean): Promise<boolean> => {
+      if (!sessionId) return false;
+      setPending((n) => n + 1);
+      try {
+        const saved = await aeLatestWins(sessionId, () => aeSaveTeamMember(sessionId, member, on), {
+          queue: true,
+        });
+        if (saved === AE_SUPERSEDED) return false;
+        queryClient.setQueryData(["session", sessionId], saved);
+        void queryClient.invalidateQueries({ queryKey: childSessionsQueryKey(sessionId) });
+        return true;
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        showToast(`Could not change this chat's sessions: ${reason}`);
+        return false;
+      } finally {
+        setPending((n) => n - 1);
+      }
+    },
+    [queryClient, sessionId],
+  );
+  return {
+    state,
+    roles,
+    choice,
+    pick,
+    team,
+    setMember,
+    /** The sessions list is greyed out (Helpers "own", or a label still saved as Solo). */
+    locked: choiceLocked,
+    /** A session add or remove is still saving. */
+    pending: pending > 0,
+    /** The roles query, for a retry when it failed. */
+    rolesQuery,
+  };
 }
 
 /**

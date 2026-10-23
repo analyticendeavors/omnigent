@@ -143,7 +143,6 @@ export default { title: "Components/AeTeamControl", component: TeamDemo } satisf
 >;
 type Story = StoryObj<typeof TeamDemo>;
 export const Auto: Story = {};
-export const Solo: Story = { args: { initialDraft: { version: 1, mode: "solo", members: [] } } };
 export const MixedTeam: Story = { args: { initialDraft: mixedTeam } };
 export const CustomAgentAliases: Story = {
   args: {

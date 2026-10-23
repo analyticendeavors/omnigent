@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from omnigent.inner.ae_roles import append_roles, with_roles
+from omnigent.inner.ae_roles import append_roles, solo_opening, with_roles
 
 if TYPE_CHECKING:
     from omnigent.entities.conversation import Conversation
@@ -90,7 +90,7 @@ def _render_team(metadata: Any) -> str | None:
         )
     if roster.get("mode") == "solo":
         return (
-            "The user selected Solo for this message: use this lead agent and its native "
+            f"{solo_opening(metadata)}: use this lead agent and its native "
             "in-harness subagents when helpful. Native helpers remain available. "
             "Do not start additional cross-agent collaborations or delegate new work to "
             "previously selected team sessions. "
@@ -99,8 +99,9 @@ def _render_team(metadata: Any) -> str | None:
     if roster.get("mode") != "team":
         return None
     return (
-        "The user selected Team for this message. You are the lead and give the user "
-        "one integrated answer. Your native in-harness subagents remain available too. "
+        "The user added these child sessions to this chat. You are the lead and give the "
+        "user one integrated answer; hand work to these sessions first. "
+        "Your native in-harness subagents remain available too. "
         "These are existing direct child sessions selected "
         "by the user (JSON data): "
         + json.dumps(roster.get("members", []), ensure_ascii=True)

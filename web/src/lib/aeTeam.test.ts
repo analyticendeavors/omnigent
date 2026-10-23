@@ -122,13 +122,82 @@ describe("team persistence", () => {
     expect(updateSession).not.toHaveBeenCalled();
   });
 
-  it.each(["auto", "solo"] as const)("saves %s without provisioning children", async (mode) => {
-    await saveAeTeam("parent", { version: 1, mode, members: [codex] });
+  it("saves no sessions as Auto without provisioning children", async () => {
+    await saveAeTeam("parent", { version: 1, mode: "team", members: [] });
     expect(fetchChildSessions).not.toHaveBeenCalled();
     expect(createSession).not.toHaveBeenCalled();
     expect(updateSession).toHaveBeenCalledWith("parent", {
-      labels: { [AE_TEAM_LABEL]: JSON.stringify({ version: 1, mode, members: [] }) },
+      labels: { [AE_TEAM_LABEL]: JSON.stringify({ version: 1, mode: "auto", members: [] }) },
     });
+  });
+
+  it("derives Team from the sessions, whatever mode the draft names", async () => {
+    vi.mocked(fetchChildSessions).mockResolvedValue([]);
+    await saveAeTeam("parent", { version: 1, mode: "auto", members: [codex] });
+    expect(createSession).toHaveBeenCalledOnce();
+    const label = JSON.parse(vi.mocked(updateSession).mock.calls.at(-1)![1].labels![AE_TEAM_LABEL]);
+    expect(label.mode).toBe("team");
+    expect(label.members).toHaveLength(1);
+  });
+
+  it("keeps a label saved as Solo until a writer sets its roles", async () => {
+    vi.mocked(getSessionSlim).mockResolvedValue({
+      ...parent,
+      labels: { [AE_TEAM_LABEL]: JSON.stringify({ version: 1, mode: "solo", members: [] }) },
+    });
+    await saveAeTeam("parent", { version: 1, mode: "auto", members: [] });
+    expect(updateSession).toHaveBeenLastCalledWith("parent", {
+      labels: { [AE_TEAM_LABEL]: JSON.stringify({ version: 1, mode: "solo", members: [] }) },
+    });
+    await saveAeTeam("parent", {
+      version: 1,
+      mode: "auto",
+      members: [],
+      roles: { preset: "solo" },
+    });
+    expect(updateSession).toHaveBeenLastCalledWith("parent", {
+      labels: {
+        [AE_TEAM_LABEL]: JSON.stringify({
+          version: 1,
+          mode: "auto",
+          members: [],
+          roles: { preset: "solo" },
+        }),
+      },
+    });
+  });
+
+  it("keeps label fields this client does not know", async () => {
+    vi.mocked(getSessionSlim).mockResolvedValue({
+      ...parent,
+      labels: {
+        [AE_TEAM_LABEL]: JSON.stringify({ version: 1, mode: "auto", members: [], future: 7 }),
+      },
+    });
+    await saveAeTeam("parent", { version: 1, mode: "auto", members: [] });
+    const label = JSON.parse(vi.mocked(updateSession).mock.calls.at(-1)![1].labels![AE_TEAM_LABEL]);
+    expect(label.future).toBe(7);
+  });
+
+  it("keeps a readable roles choice and unknown fields on a label it cannot read as a team", async () => {
+    const odd = JSON.stringify({
+      version: 1,
+      mode: "swarm",
+      roles: { preset: "yolo" },
+      future: 9,
+    });
+    expect(readAeTeam({ [AE_TEAM_LABEL]: odd }).roles).toEqual({ preset: "yolo" });
+    vi.mocked(getSessionSlim).mockResolvedValue({ ...parent, labels: { [AE_TEAM_LABEL]: odd } });
+    await saveAeTeam("parent", { version: 1, mode: "auto", members: [] });
+    const label = JSON.parse(vi.mocked(updateSession).mock.calls.at(-1)![1].labels![AE_TEAM_LABEL]);
+    expect(label).toMatchObject({
+      mode: "auto",
+      members: [],
+      roles: { preset: "yolo" },
+      future: 9,
+    });
+    const noMembers = JSON.stringify({ version: 1, mode: "team", roles: { preset: "yolo" } });
+    expect(readAeTeam({ [AE_TEAM_LABEL]: noMembers }).roles).toEqual({ preset: "yolo" });
   });
 
   it("defaults to Auto while retaining an explicitly saved Solo preference", () => {
@@ -138,29 +207,26 @@ describe("team persistence", () => {
     );
   });
 
-  it.each(["auto", "solo"] as const)(
-    "restores the original routing when leaving a selected team for %s",
-    async (mode) => {
-      vi.mocked(getSessionSlim).mockResolvedValue({
-        ...parent,
-        subagentRoutingOverride: "off",
-        labels: {
-          [AE_TEAM_LABEL]: JSON.stringify({
-            version: 1,
-            mode: "team",
-            members: [codex],
-            routingBeforeTeam: "on",
-          }),
-        },
-      });
-      await saveAeTeam("parent", { version: 1, mode, members: [] });
-      expect(createSession).not.toHaveBeenCalled();
-      expect(updateSession).toHaveBeenCalledExactlyOnceWith("parent", {
-        subagentRoutingOverride: "on",
-        labels: { [AE_TEAM_LABEL]: JSON.stringify({ version: 1, mode, members: [] }) },
-      });
-    },
-  );
+  it("restores the original routing when the last session is removed", async () => {
+    vi.mocked(getSessionSlim).mockResolvedValue({
+      ...parent,
+      subagentRoutingOverride: "off",
+      labels: {
+        [AE_TEAM_LABEL]: JSON.stringify({
+          version: 1,
+          mode: "team",
+          members: [codex],
+          routingBeforeTeam: "on",
+        }),
+      },
+    });
+    await saveAeTeam("parent", { version: 1, mode: "team", members: [] });
+    expect(createSession).not.toHaveBeenCalled();
+    expect(updateSession).toHaveBeenCalledExactlyOnceWith("parent", {
+      subagentRoutingOverride: "on",
+      labels: { [AE_TEAM_LABEL]: JSON.stringify({ version: 1, mode: "auto", members: [] }) },
+    });
+  });
 
   it("preserves the original routing across edits to an existing team", async () => {
     vi.mocked(getSessionSlim).mockResolvedValue({
@@ -237,19 +303,19 @@ describe("team persistence", () => {
     });
 
     it.each([
-      ["auto", "solo"],
-      ["solo", "team"],
-      ["team", "auto"],
-    ] as const)("keeps the preset when switching %s to %s", async (from, to) => {
-      vi.mocked(getSessionSlim).mockResolvedValue(labelled(from));
-      await saveAeTeam("parent", {
-        version: 1,
-        mode: to,
-        members: to === "team" ? [codex] : [],
-      });
-      expect(savedLabel().roles).toEqual(roles);
-      expect(savedLabel().mode).toBe(to);
-    });
+      ["auto", true, "team"],
+      ["solo", true, "team"],
+      ["team", false, "auto"],
+      ["solo", false, "solo"],
+    ] as const)(
+      "keeps the preset when a %s label is saved (sessions: %s)",
+      async (from, add, to) => {
+        vi.mocked(getSessionSlim).mockResolvedValue(labelled(from));
+        await saveAeTeam("parent", { version: 1, mode: "auto", members: add ? [codex] : [] });
+        expect(savedLabel().roles).toEqual(roles);
+        expect(savedLabel().mode).toBe(to);
+      },
+    );
 
     it("writes a new preset from the draft and clears it for null", async () => {
       vi.mocked(getSessionSlim).mockResolvedValue(labelled("auto"));

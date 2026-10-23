@@ -84,6 +84,12 @@ function parseLabel(raw: string | undefined): Record<string, unknown> | null {
   }
 }
 
+/** The mode stored in the label ("auto", "solo", "team", or whatever an unknown writer set); null when none. */
+export function readAeTeamLabelMode(labels?: Record<string, string>): string | null {
+  const mode = parseLabel(labels?.[AE_TEAM_LABEL_KEY])?.mode;
+  return typeof mode === "string" ? mode : null;
+}
+
 /** The session's `roles` choice; null means "your default". */
 export function readAeSessionRoles(labels?: Record<string, string>): AeSessionRoles | null {
   return aeParseSessionRoles(parseLabel(labels?.[AE_TEAM_LABEL_KEY])?.roles);
@@ -92,11 +98,15 @@ export function readAeSessionRoles(labels?: Record<string, string>): AeSessionRo
 /**
  * The `ae.team` label text with `roles` set (or removed for null), every other
  * field kept. A missing or unreadable label starts as Auto with no members,
- * which is what the session already runs as.
+ * which is what the session already runs as. The mode is "team" only while the
+ * label lists sessions, else "auto": a label saved as Solo is replaced, since
+ * a chosen preset's Helpers rule now says whether work stays in house.
  */
 export function aeTeamLabelWithRoles(
   labels: Record<string, string> | undefined,
   roles: AeSessionRoles | null,
+  /** Set by Undo: the mode the label had before (a legacy "solo" comes back as it was). */
+  previousMode?: string | null,
 ): string {
   const base = parseLabel(labels?.[AE_TEAM_LABEL_KEY]) ?? {
     version: 1,
@@ -104,7 +114,43 @@ export function aeTeamLabelWithRoles(
     members: [],
   };
   const { roles: _old, ...rest } = base;
-  return JSON.stringify(roles ? { ...rest, roles: aeRolesWire(roles) } : rest);
+  const sessions = Array.isArray(rest.members) && rest.members.length > 0;
+  const mode =
+    rest.mode === "team" && sessions
+      ? "team"
+      : previousMode === "solo" && !sessions
+        ? "solo"
+        : "auto";
+  return JSON.stringify(roles ? { ...rest, mode, roles: aeRolesWire(roles) } : { ...rest, mode });
+}
+
+/**
+ * The `ae.team` label text a team writer saves: the fields it owns set, every
+ * other field of the stored label kept. `roles` null or undefined drops the
+ * field (the caller resolves "keep" before calling); `routingBeforeTeam`
+ * undefined drops it.
+ */
+export function aeTeamLabelText(
+  labels: Record<string, string> | undefined,
+  fields: {
+    mode: string;
+    members: unknown[];
+    routingBeforeTeam?: "on" | "off" | null;
+    roles: AeSessionRoles | null | undefined;
+  },
+): string {
+  const base = parseLabel(labels?.[AE_TEAM_LABEL_KEY]) ?? {};
+  const { roles: _roles, routingBeforeTeam: _routing, ...rest } = base;
+  return JSON.stringify({
+    ...rest,
+    version: 1,
+    mode: fields.mode,
+    members: fields.members,
+    ...(fields.routingBeforeTeam !== undefined
+      ? { routingBeforeTeam: fields.routingBeforeTeam }
+      : {}),
+    ...(fields.roles ? { roles: aeRolesWire(fields.roles) } : {}),
+  });
 }
 
 /** Write the session's `roles` choice on its freshest labels; resolves to the saved session. */
@@ -115,7 +161,7 @@ export async function saveAeSessionRoles(sessionId: string, roles: AeSessionRole
   });
 }
 
-const writeTails = new Map<string, { tail: Promise<unknown>; latest: number }>();
+const writeTails = new Map<string, { tail: Promise<unknown>; latest: number; pending: number }>();
 /** Returned by `aeLatestWins` for a write a later one replaced before it started. */
 export const AE_SUPERSEDED = Symbol("superseded");
 
@@ -123,21 +169,29 @@ export const AE_SUPERSEDED = Symbol("superseded");
  * Run `write` after every earlier write for `key` finished, one at a time. A
  * write still waiting when a later one is queued is skipped (resolves
  * AE_SUPERSEDED): the latest pick wins and the earlier one never lands.
+ * `queue: true` writes (adding or removing one session, each a change against
+ * the freshest label) wait their turn in the same line but are never skipped
+ * and never skip a pick.
  */
 export function aeLatestWins<T>(
   key: string,
   write: () => Promise<T>,
+  opts: { queue?: boolean } = {},
 ): Promise<T | typeof AE_SUPERSEDED> {
-  const entry = writeTails.get(key) ?? { tail: Promise.resolve(), latest: 0 };
-  const mine = ++entry.latest;
+  const entry = writeTails.get(key) ?? { tail: Promise.resolve(), latest: 0, pending: 0 };
+  const mine = opts.queue ? null : ++entry.latest;
+  entry.pending += 1;
   const run = entry.tail.then<T | typeof AE_SUPERSEDED>(() =>
-    entry.latest === mine ? write() : AE_SUPERSEDED,
+    mine === null || entry.latest === mine ? write() : AE_SUPERSEDED,
   );
   entry.tail = run.catch(() => undefined);
   writeTails.set(key, entry);
-  void entry.tail.then(() => {
-    if (writeTails.get(key) === entry && entry.latest === mine) writeTails.delete(key);
-  });
+  void run
+    .catch(() => undefined)
+    .then(() => {
+      entry.pending -= 1;
+      if (writeTails.get(key) === entry && entry.pending === 0) writeTails.delete(key);
+    });
   return run;
 }
 

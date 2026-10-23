@@ -156,6 +156,34 @@ describe("recent presets and write order", () => {
     expect(order).toEqual(["first", "third"]);
   });
 
+  it("never skips a queued session change and lets it not skip a pick", async () => {
+    const order: string[] = [];
+    let release: () => void = () => {};
+    const pick = aeLatestWins("q", async () => {
+      order.push("pick");
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    });
+    await vi.waitFor(() => expect(order).toEqual(["pick"]));
+    const add = aeLatestWins("q", async () => order.push("add"), { queue: true });
+    const remove = aeLatestWins("q", async () => order.push("remove"), { queue: true });
+    const later = aeLatestWins("q", async () => order.push("later"));
+    release();
+    await Promise.all([pick, add, remove, later]);
+    expect(order).toEqual(["pick", "add", "remove", "later"]);
+  });
+
+  it("writes Auto when a Team label has no sessions left, Team while it has some", () => {
+    const team = (members: unknown[]) => ({
+      "ae.team": JSON.stringify({ version: 1, mode: "team", members }),
+    });
+    expect(JSON.parse(aeTeamLabelWithRoles(team([]), { preset: "a" })).mode).toBe("auto");
+    expect(JSON.parse(aeTeamLabelWithRoles(team([{ x: 1 }]), null)).mode).toBe("team");
+    const solo = { "ae.team": JSON.stringify({ version: 1, mode: "solo", members: [] }) };
+    expect(JSON.parse(aeTeamLabelWithRoles(solo, { preset: "a" })).mode).toBe("auto");
+  });
+
   it("keeps going after a write fails", async () => {
     await expect(aeLatestWins("f", () => Promise.reject(new Error("no")))).rejects.toThrow("no");
     expect(await aeLatestWins("f", async () => "ok")).toBe("ok");

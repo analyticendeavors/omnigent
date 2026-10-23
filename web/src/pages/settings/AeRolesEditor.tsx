@@ -8,6 +8,7 @@ import type { AeRoleModelChoice } from "@/hooks/useAeRoleModels";
 import { aeClaudeCodeDefaultEffort, aeClaudeEffortLabel } from "@/lib/aeEffortDefault";
 import {
   AE_AUTO_RAISES_MAX,
+  AE_HELPERS_OPTIONS,
   AE_ROLE_EFFORTS,
   AE_ROLE_IDS,
   AE_ROLE_LABELS,
@@ -18,6 +19,7 @@ import {
   type AeRoleRules,
   type AeRoleSetting,
   type AeRoleTable,
+  aeHelpersOf,
   aeModelDotClass,
   aeModelLabel,
 } from "@/lib/aeRoles";
@@ -357,6 +359,16 @@ export function AeRolesEditor({
             min={0}
             max={AE_AUTO_RAISES_MAX}
             onChange={(auto_raises) => setRules({ auto_raises })}
+            disabled={saving}
+          />
+        </RuleRow>
+        <RuleRow title="Helpers" hint="Who the lead may hand work to besides its own subagents">
+          <AeSegmented
+            label="Helpers"
+            value={aeHelpersOf(draft.rules)}
+            options={AE_HELPERS_OPTIONS}
+            onChange={(helpers) => setRules({ helpers })}
+            testId="ae-rule-helpers"
             disabled={saving}
           />
         </RuleRow>
