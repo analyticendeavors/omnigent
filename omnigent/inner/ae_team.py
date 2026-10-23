@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from omnigent.inner.ae_roles import append_roles, with_roles
+
 if TYPE_CHECKING:
     from omnigent.entities.conversation import Conversation
     from omnigent.stores.conversation_store import ConversationStore
@@ -27,6 +29,11 @@ def codex_team_context(content: object) -> dict[str, object] | None:
 
 
 def team_notice(conv: Conversation, store: ConversationStore) -> dict[str, object] | None:
+    """The roster notice plus the role preset in force, in every mode."""
+    return with_roles(_team_notice(conv, store), conv, store)
+
+
+def _team_notice(conv: Conversation, store: ConversationStore) -> dict[str, object] | None:
     """Resolve roster ids against direct children; never trust a label as access control."""
     raw = conv.labels.get(TEAM_LABEL)
     if not raw:
@@ -61,6 +68,10 @@ def team_notice(conv: Conversation, store: ConversationStore) -> dict[str, objec
 
 def render_team_notice(metadata: Any) -> str | None:
     """Canonical wording shared by SDK and native framework-notice transports."""
+    return append_roles(_render_team(metadata), metadata)
+
+
+def _render_team(metadata: Any) -> str | None:
     if not isinstance(metadata, dict) or not isinstance(metadata.get("ae_team"), dict):
         return None
     roster = metadata["ae_team"]

@@ -40,22 +40,24 @@ def test_roster_only_resolves_existing_direct_children() -> None:
         "unrelated": conversation("unrelated"),
     }.get(id)
     notice = team_notice(parent, store)
-    assert notice == {
-        "ae_team": {"mode": "team", "members": [{"session_id": "child", "agent_id": "codex"}]}
+    assert notice["ae_team"] == {
+        "mode": "team",
+        "members": [{"session_id": "child", "agent_id": "codex"}],
     }
 
 
 @pytest.mark.parametrize("raw", ["null", "{", '{"version":2}', "x" * 20_000])
 def test_malformed_rosters_do_not_break_messages(raw: str) -> None:
     store = Mock()
-    assert team_notice(conversation("parent", labels={TEAM_LABEL: raw}), store) is None
+    notice = team_notice(conversation("parent", labels={TEAM_LABEL: raw}), store)
+    assert "ae_team" not in notice
     store.get_conversation.assert_not_called()
 
 
 def test_unset_preference_delivers_auto_without_resolving_children() -> None:
     store = Mock()
     notice = team_notice(conversation("parent"), store)
-    assert notice == {"ae_team": {"mode": "auto", "members": []}}
+    assert notice["ae_team"] == {"mode": "auto", "members": []}
     assert "Auto collaboration" in (render_team_notice(notice) or "")
     store.get_conversation.assert_not_called()
 
@@ -81,7 +83,7 @@ def test_auto_discards_old_roster_and_uses_available_agents_as_needed() -> None:
         ),
         store,
     )
-    assert notice == {"ae_team": {"mode": "auto", "members": []}}
+    assert notice["ae_team"] == {"mode": "auto", "members": []}
     text = render_team_notice(notice) or ""
     assert "configured, reachable agents" in text
     assert "native in-harness subagents" in text
