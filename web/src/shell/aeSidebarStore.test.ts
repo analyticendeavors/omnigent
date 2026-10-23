@@ -461,7 +461,7 @@ describe("useAeSidebarView", () => {
     const { result } = renderHook(
       () =>
         useAeSidebarView({
-          view: { grouping: "default", ordering: "updated", show: [] },
+          view: { grouping: "default", ordering: "updated", show: [], familyDots: true },
           orderFrozen: false,
           conversationsQuery: query,
           searchQuery,
@@ -493,7 +493,7 @@ describe("useAeSidebarView", () => {
       renderHook(
         () =>
           useAeSidebarView({
-            view: { grouping: "default", ordering, show: [] },
+            view: { grouping: "default", ordering, show: [], familyDots: true },
             orderFrozen: false,
             conversationsQuery: paged,
             searchQuery: "",

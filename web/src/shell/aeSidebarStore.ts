@@ -183,7 +183,9 @@ export function useAeSidebarView({
   const { data } = useAeSidebarOrder(manualOn);
   const order = manualOn ? (data?.order ?? NO_ORDER) : null;
   const switchToManual = useCallback(() => onViewChange({ ordering: "manual" }), [onViewChange]);
-  useAeLoadAllPages(conversationsQuery, listed && (manualOn || triage || statusSort));
+  // "By family" needs each lead loaded with its sessions (omnigent-ae, 2026-10-23).
+  const family = view.grouping === "family";
+  useAeLoadAllPages(conversationsQuery, listed && (manualOn || triage || statusSort || family));
   useEffect(() => {
     if (!manualOn) aeCancelPendingMoves();
   }, [manualOn]);

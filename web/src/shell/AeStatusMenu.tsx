@@ -21,6 +21,7 @@ import {
   aeStatusOf,
   isAeSlot,
 } from "@/lib/aeLabels";
+import { familySlotChain, familySlotKey } from "@/lib/aeFamily";
 import { readAeSlotLimit, rememberAeSlotLimit } from "@/lib/aeSlotLimit";
 import { authenticatedFetch } from "@/lib/identity";
 import type { ConversationsInfiniteData } from "@/lib/sessionListCache";
@@ -101,6 +102,8 @@ export type AeSlotRoom =
 interface CapacityRow {
   id: string;
   title?: string | null;
+  /** The family it counts against (`/v1/ae/capacity`, 2026-10-23). */
+  family?: string;
 }
 
 interface CapacityAnswer {
@@ -117,6 +120,19 @@ function cachedRows(queryClient: QueryClient): Conversation[] {
     for (const page of data?.pages ?? []) rows.push(...page.data);
   }
   return rows;
+}
+
+/**
+ * Whether `sessionId` joins a slot one of *held* already holds: its own family's
+ * top, or any session above it, since the server may key the family by a top
+ * the cache has not loaded.
+ */
+function ridesInHeldSlot(queryClient: QueryClient, sessionId: string, held: Set<string>): boolean {
+  const rows = cachedRows(queryClient);
+  const own = rows.find((row) => row.id === sessionId);
+  if (!own) return false;
+  const byId = new Map(rows.map((row) => [row.id, row] as const));
+  return [familySlotKey(own, byId), ...familySlotChain(own, byId)].some((id) => held.has(id));
 }
 
 /** A session list row from the cache, for a write that starts from a drag. */
@@ -138,7 +154,11 @@ export async function checkAeSlotRoom(
       const answer = (await res.json()) as CapacityAnswer;
       const working = (answer.working ?? []).filter((row) => row.id !== sessionId);
       const limit = rememberAeSlotLimit(queryClient, answer.limit) ?? readAeSlotLimit(queryClient);
-      const used = working.length;
+      // A family holds one slot (2026-10-23): joining one that works takes none.
+      const families = new Set(working.map((row) => row.family ?? row.id));
+      const held = new Set([...families, ...working.map((row) => row.id)]);
+      if (ridesInHeldSlot(queryClient, sessionId, held)) return { ok: true };
+      const used = families.size;
       if (used < limit) return { ok: true };
       return {
         ok: false,
@@ -159,10 +179,14 @@ export async function checkAeSlotRoom(
     if (isAeSlot(row)) working.push(row);
   }
   const limit = readAeSlotLimit(queryClient);
-  if (working.length < limit) return { ok: true };
+  const byId = new Map(cachedRows(queryClient).map((row) => [row.id, row] as const));
+  const families = new Set(working.map((row) => familySlotKey(row, byId)));
+  const held = new Set([...families, ...working.map((row) => row.id)]);
+  if (ridesInHeldSlot(queryClient, sessionId, held)) return { ok: true };
+  if (families.size < limit) return { ok: true };
   return {
     ok: false,
-    used: working.length,
+    used: families.size,
     limit,
     titles: working.map((row) => row.title || row.id),
     source: "sidebar",

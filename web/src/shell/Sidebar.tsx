@@ -251,6 +251,13 @@ import {
   useAeSidebarView,
 } from "@/shell/aeSidebarStore";
 import { AE_TRIAGE_GROUPS } from "@/lib/aeTriage";
+import {
+  AeFamilyContext,
+  type AeFamilyView,
+  aeFamilyGroups,
+  useAeFamilies,
+} from "@/lib/aeFamilyView";
+import { AeFamilyDot, AeFamilyFilterBar, AeFamilyTitle } from "@/shell/AeFamilyDot";
 import { PrimaryNavLink } from "@/shell/PrimaryNavLink";
 import { useViewerId } from "@/hooks/useViewerId";
 import { useExtensions } from "@/extensions/ExtensionProvider";
@@ -401,6 +408,7 @@ function SidebarRowDataProvider({
   viewerId,
   serverInfo,
   onActivate,
+  familyView,
   children,
 }: {
   projectNamesById: Map<string, string>;
@@ -411,6 +419,7 @@ function SidebarRowDataProvider({
   viewerId: string | null;
   serverInfo: ReturnType<typeof useServerInfo>;
   onActivate: (id: string, event: MouseEvent<HTMLAnchorElement>) => void;
+  familyView: AeFamilyView;
   children: ReactNode;
 }) {
   return (
@@ -422,7 +431,9 @@ function SidebarRowDataProvider({
               <ViewerIdContext.Provider value={viewerId}>
                 <ServerInfoContext.Provider value={serverInfo}>
                   <RowActivationContext.Provider value={onActivate}>
-                    {children}
+                    <AeFamilyContext.Provider value={familyView}>
+                      {children}
+                    </AeFamilyContext.Provider>
                   </RowActivationContext.Provider>
                 </ServerInfoContext.Provider>
               </ViewerIdContext.Provider>
@@ -1794,6 +1805,32 @@ function ConversationList({
     [conversationsQuery.data],
   );
 
+  // Session families (omnigent-ae): one dot color per family; a dot narrows the list to it.
+  const [familyFilter, setFamilyFilter] = useState<string | null>(null);
+  const familyRows = useMemo(
+    () =>
+      dedupeConversationsById([...allConversations, ...pinnedConversations]).filter(
+        (c) => c.archived !== true,
+      ),
+    [allConversations, pinnedConversations],
+  );
+  const families = useAeFamilies(
+    familyRows,
+    view.familyDots || view.grouping === "family" || familyFilter !== null,
+  );
+  // Another display (Shared, Archived) starts unfiltered.
+  useEffect(() => setFamilyFilter(null), [activeTab]);
+  // A family that left the list (archived, or down to one row) takes its filter along.
+  useEffect(() => {
+    if (familyFilter !== null && !families.byRoot.has(familyFilter)) setFamilyFilter(null);
+  }, [familyFilter, families]);
+  const familyView = useMemo(
+    () => ({ families, dots: view.familyDots, filter: familyFilter, onFilter: setFamilyFilter }),
+    [families, view.familyDots, familyFilter],
+  );
+  // Narrowed to a family, folders give way so its filed sessions list with the rest.
+  const foldersHidden = grouped || familyFilter !== null;
+
   // Project folders ({ id, name }) for grouping sessions — first-class id
   // and/or the legacy omni_project label, unioned server-side.
   const { data: projects = [] } = useProjects();
@@ -1917,7 +1954,10 @@ function ConversationList({
     // Merge the server pinned set in, so a pinned session outside the loaded
     // paginated window still renders. Dedupe by id: a pinned session is usually
     // also present in the paginated list, and merging both would render it twice.
-    const allWithPinned = dedupeConversationsById([...allConversations, ...pinnedConversations]);
+    const allWithPinned = dedupeConversationsById([
+      ...allConversations,
+      ...pinnedConversations,
+    ]).filter((c) => !familyFilter || families.byRow.get(c.id)?.family.root === familyFilter);
     const notArchived = allWithPinned.filter((c) => c.archived !== true);
     // The filter picks the slice; the Pinned / Projects / Sessions structure is
     // then built from it, so every filter reuses the same layout.
@@ -1959,7 +1999,7 @@ function ConversationList({
       name: string;
       icon?: string | null;
       conversations: Conversation[];
-    }[] = (grouped ? [] : projects).map(({ id, name, icon }) => {
+    }[] = (foldersHidden ? [] : projects).map(({ id, name, icon }) => {
       // Dual-read membership: a session belongs to this folder if it has
       // the first-class id OR the legacy omni_project label of this name,
       // and (filing being owner-only) the viewer owns it.
@@ -2011,7 +2051,26 @@ function ConversationList({
     const ordered = splitShared
       ? allOrdered.filter((c) => isOwnedByViewer(c, viewerId))
       : allOrdered;
-    if (!grouped) return { pinned, shared, sessions: ordered, projectGroups, groupTitles: null };
+    if (!grouped) {
+      return {
+        pinned,
+        shared,
+        sessions: ordered,
+        projectGroups,
+        groupTitles: null,
+        groupOrder: null,
+        familyByTitle: null,
+      };
+    }
+    if (view.grouping === "family") {
+      const { leadsFirst, ...groups } = aeFamilyGroups(ordered, families);
+      const sessions = groupConversations(
+        leadsFirst,
+        (c) => groups.groupTitles.get(c.id),
+        groups.groupOrder,
+      ).flatMap((g) => g.conversations);
+      return { pinned, shared, projectGroups, sessions, ...groups };
+    }
     // Buckets use render-time "now", so a day rollover shows on the next list update.
     const now = new Date();
     const groupTitles = new Map<string, string>(
@@ -2029,7 +2088,15 @@ function ConversationList({
     const sessions = groupConversations(ordered, (c) => groupTitles.get(c.id), groupOrder).flatMap(
       (g) => g.conversations,
     );
-    return { pinned, shared, sessions, projectGroups, groupTitles };
+    return {
+      pinned,
+      shared,
+      sessions,
+      projectGroups,
+      groupTitles,
+      groupOrder: null,
+      familyByTitle: null,
+    };
     // `unseenTick` / `draftIds` aren't read here: they version the stores status buckets read.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -2044,6 +2111,7 @@ function ConversationList({
     viewerId,
     groupingUi,
     grouped,
+    foldersHidden,
     groupOrder,
     view.grouping,
     view.ordering,
@@ -2051,6 +2119,8 @@ function ConversationList({
     draftIds,
     startingId,
     ae,
+    families,
+    familyFilter,
   ]);
 
   const config = useContext(SidebarConfigContext);
@@ -2081,8 +2151,9 @@ function ConversationList({
   const sessionGroups = useMemo(() => {
     const titles = loadedSections.groupTitles;
     if (!titles || sections.sessions.length === 0) return null;
-    return groupConversations(sections.sessions, (c) => titles.get(c.id), groupOrder);
-  }, [loadedSections.groupTitles, sections.sessions, groupOrder]);
+    const order = loadedSections.groupOrder ?? groupOrder;
+    return groupConversations(sections.sessions, (c) => titles.get(c.id), order);
+  }, [loadedSections.groupTitles, loadedSections.groupOrder, sections.sessions, groupOrder]);
 
   // Scope-active flags: which section owns the current selection UI (checkboxes
   // + bulk-action bar). Only one is true at a time unless the selection is unified.
@@ -2636,6 +2707,7 @@ function ConversationList({
       viewerId={viewerId}
       serverInfo={serverInfo}
       onActivate={activateRow}
+      familyView={familyView}
     >
       <DndContext
         sensors={sensors}
@@ -2694,6 +2766,7 @@ function ConversationList({
               onMouseEnter={() => setPointerInside(true)}
               onMouseLeave={() => setPointerInside(false)}
             >
+              <AeFamilyFilterBar />
               {/* Removing a filed session from its project means dropping it back
             onto the flat "Chats" list — so the Chats section itself is the
             ungroup target (wrapped below). This top strip is only a FALLBACK
@@ -2751,7 +2824,7 @@ function ConversationList({
                   {/* Projects: one collapsible folder per project, unaffected by the filter so
               "New project" stays reachable. With sidebar_grouping_ui on it holds the one
               filter menu; grouped views hide it and the first group takes its place. */}
-                  {!grouped && (
+                  {!foldersHidden && (
                     <SectionGroup
                       title="Projects"
                       collapsed={effectiveCollapsedSections.includes("Projects")}
@@ -2898,11 +2971,15 @@ function ConversationList({
                             <ConversationSection
                               key={group.title}
                               title={group.title}
-                              titleContent={aeTriageTitle(
-                                ae,
-                                group.title,
-                                loadedSections.groupTitles,
-                              )}
+                              titleContent={
+                                loadedSections.familyByTitle?.has(group.title) ? (
+                                  <AeFamilyTitle
+                                    family={loadedSections.familyByTitle.get(group.title)!}
+                                  />
+                                ) : (
+                                  aeTriageTitle(ae, group.title, loadedSections.groupTitles)
+                                )
+                              }
                               conversations={group.conversations}
                               footer={
                                 index === sessionGroups.length - 1 ? sessionStatus : undefined
@@ -2927,7 +3004,7 @@ function ConversationList({
                           afterHeader={sessionsBulkBar}
                           headerAction={sessionsHeaderActions}
                           persistentHeaderAction={
-                            groupingUi && !grouped ? undefined : sessionsFilterMenu
+                            groupingUi && !foldersHidden ? undefined : sessionsFilterMenu
                           }
                           {...sessionRowProps}
                         />
@@ -3293,6 +3370,7 @@ const GROUPING_LABELS: Record<SidebarGrouping, string> = {
   status: "Status",
   updated: "Updated",
   triage: "Triage",
+  family: "Family",
 };
 const ORDERING_LABELS: Record<SidebarOrdering, string> = {
   updated: "Updated",
@@ -3461,6 +3539,15 @@ function SessionFilterMenu({
                 {SHOW_LABELS[field]}
               </DropdownMenuCheckboxItem>
             ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuCheckboxItem
+              checked={view.familyDots}
+              data-testid="session-show-family-dots"
+              onSelect={(event) => event.preventDefault()}
+              onCheckedChange={(checked) => onViewChange({ familyDots: checked === true })}
+            >
+              Family dots
+            </DropdownMenuCheckboxItem>
           </FilterMenuSub>
         </DropdownMenuContent>
       )}
@@ -5068,6 +5155,7 @@ function ConversationRowImpl({
           markers render in the shared trailing indicator slot below. */}
       <div className="flex w-full items-center">
         <AeConversationStatusIcon conversation={conversation} className="mr-1.5" />
+        <AeFamilyDot conversationId={conversation.id} />
         <span
           className={cn(
             "relative min-w-0 truncate",

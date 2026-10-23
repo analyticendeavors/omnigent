@@ -15,7 +15,12 @@ describe("sidebarViewPreferences", () => {
   });
 
   it("round-trips a stored selection", () => {
-    const view = { grouping: "status", ordering: "status", show: ["updated", "branch"] } as const;
+    const view = {
+      grouping: "family",
+      ordering: "status",
+      show: ["updated", "branch"],
+      familyDots: false,
+    } as const;
     writeSidebarViewPreferences(view);
     expect(readSidebarViewPreferences()).toEqual(view);
   });
@@ -29,6 +34,7 @@ describe("sidebarViewPreferences", () => {
       grouping: "default",
       ordering: "updated",
       show: ["branch"],
+      familyDots: true,
     });
 
     localStorage.setItem("omnigent:sidebar-view", "{not json");

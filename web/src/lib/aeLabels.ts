@@ -10,6 +10,7 @@
 // or blank value as unset.
 
 import type { Conversation } from "@/hooks/useConversations";
+import { familySlotKey } from "@/lib/aeFamily";
 
 export const AE_NAMESPACE = "ae.";
 
@@ -157,16 +158,21 @@ export function pickAeLabels(labels: unknown): Record<string, string> {
   return picked;
 }
 
-/** Count the slots held across rows, each session counted once by id. */
+/**
+ * Count the slots held across rows, each session counted once by id and each
+ * session family once (a lead and the sessions it started hold one slot; see
+ * `lib/aeFamily.ts`).
+ */
 export function countAeSlots(
   conversations: Iterable<AeSlotRow & Pick<Conversation, "id">>,
 ): number {
-  const counted = new Set<string>();
-  let count = 0;
+  const rows = new Map<string, AeSlotRow & Pick<Conversation, "id">>();
   for (const conversation of conversations) {
-    if (counted.has(conversation.id)) continue;
-    counted.add(conversation.id);
-    if (isAeSlot(conversation)) count += 1;
+    if (!rows.has(conversation.id)) rows.set(conversation.id, conversation);
   }
-  return count;
+  const held = new Set<string>();
+  for (const row of rows.values()) {
+    if (isAeSlot(row)) held.add(familySlotKey(row, rows));
+  }
+  return held.size;
 }

@@ -2,7 +2,7 @@
 
 const STORAGE_KEY = "omnigent:sidebar-view";
 
-export type SidebarGrouping = "default" | "status" | "updated" | "triage";
+export type SidebarGrouping = "default" | "status" | "updated" | "triage" | "family";
 export type SidebarOrdering = "updated" | "status" | "manual";
 export type SidebarShowField = "updated" | "environment" | "repo" | "branch";
 
@@ -10,6 +10,8 @@ export interface SidebarViewPreferences {
   grouping: SidebarGrouping;
   ordering: SidebarOrdering;
   show: readonly SidebarShowField[];
+  /** Mark the rows of one session family with one colored dot (omnigent-ae). */
+  familyDots: boolean;
 }
 
 export const SIDEBAR_GROUPINGS: readonly SidebarGrouping[] = [
@@ -17,6 +19,7 @@ export const SIDEBAR_GROUPINGS: readonly SidebarGrouping[] = [
   "status",
   "updated",
   "triage",
+  "family",
 ];
 export const SIDEBAR_ORDERINGS: readonly SidebarOrdering[] = ["updated", "status", "manual"];
 export const SIDEBAR_SHOW_FIELDS: readonly SidebarShowField[] = [
@@ -30,6 +33,7 @@ export const DEFAULT_SIDEBAR_VIEW: SidebarViewPreferences = {
   grouping: "default",
   ordering: "updated",
   show: [],
+  familyDots: true,
 };
 
 function pick<T extends string>(allowed: readonly T[], value: unknown, fallback: T): T {
@@ -57,6 +61,8 @@ export function readSidebarViewPreferences(): SidebarViewPreferences {
     ordering: pick(SIDEBAR_ORDERINGS, stored.ordering, DEFAULT_SIDEBAR_VIEW.ordering),
     // Keep the menu's field order so equal selections compare equal.
     show: SIDEBAR_SHOW_FIELDS.filter((field) => show.includes(field)),
+    // On unless turned off, so entries saved before it existed show the dots.
+    familyDots: stored.familyDots !== false,
   };
 }
 

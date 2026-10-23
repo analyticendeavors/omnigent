@@ -314,6 +314,33 @@ describe("applyAeStatus", () => {
     expect(await checkAeSlotRoom(qc, "s1")).toEqual({ ok: true });
   });
 
+  it("lets a family member work in its family's slot, even with its top unloaded", async () => {
+    // Server: three families hold all three slots; "kid" works in the lead's.
+    const row = (id: string, family: string) => ({ id, title: id, family });
+    const answer = () =>
+      serve({
+        capacity: json(200, {
+          limit: 3,
+          working: [row("lead", "lead"), row("kid", "lead"), row("b", "b"), row("c", "c")],
+        }),
+      });
+    answer();
+    const qc = new QueryClient();
+    // The cache holds the grandchild and its parent "kid", not the lead.
+    qc.setQueryData(
+      ["conversations", "", false],
+      pages([
+        conv("g", { labels: { "ae.orch": "kid" } }),
+        conv("kid", { labels: { "ae.status": "working", "ae.orch": "lead" } }),
+        conv("solo"),
+      ]),
+    );
+    expect(await checkAeSlotRoom(qc, "g")).toEqual({ ok: true });
+    answer();
+    const refused = await checkAeSlotRoom(qc, "solo");
+    expect(refused).toMatchObject({ ok: false, used: 3, limit: 3, source: "server" });
+  });
+
   it("surfaces the server's refusal of the PATCH and leaves the cache alone", async () => {
     serve({ patch: json(403, { detail: "Only the owner can edit labels" }, "Forbidden") });
     const qc = new QueryClient();

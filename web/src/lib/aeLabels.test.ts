@@ -109,6 +109,23 @@ describe("slots", () => {
     ).toBe(2);
     expect(countAeSlots([working("a"), working("b"), working("c"), working("d")])).toBe(4);
   });
+
+  it("counts a session family once, as the server does", () => {
+    const child = (id: string, parent: string) => ({
+      id,
+      labels: { "ae.status": "working", "ae.orch": parent },
+    });
+    // A lead, two children and a grandchild hold one slot; a lead's id of `1` names none.
+    expect(
+      countAeSlots([working("lead"), child("k1", "lead"), child("k2", "lead"), child("g", "k1")]),
+    ).toBe(1);
+    // Children of a lead that is not listed still share its slot.
+    expect(countAeSlots([child("k1", "gone"), child("k2", "gone"), working("b")])).toBe(2);
+    expect(countAeSlots([child("x", "1"), child("y", "1")])).toBe(2);
+    // A fork is related in the sidebar but keeps its own slot.
+    const fork = { id: "f", labels: { "ae.status": "working", "omnigent.fork.source_id": "lead" } };
+    expect(countAeSlots([working("lead"), fork])).toBe(2);
+  });
 });
 
 describe("isAeDashboardPath", () => {
