@@ -32,11 +32,13 @@ import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { isElectronShell } from "@/lib/nativeBridge";
 import { cn } from "@/lib/utils";
 import { AeChatSettingsIcon } from "@/pages/settings/AeChatSettingsIcon";
+import { AeRolesSettingsIcon } from "@/pages/settings/AeRolesSettingsIcon";
 import { SIDEBAR_ROW } from "./sidebarStyles";
 
 export type SettingsSectionId =
   | "appearance"
   | "chat"
+  | "roles"
   | "harnesses"
   | "custom-agents"
   | "general"
@@ -56,6 +58,7 @@ export type SettingsSectionId =
 const SECTION_IDS: readonly SettingsSectionId[] = [
   "appearance",
   "chat",
+  "roles",
   "harnesses",
   "custom-agents",
   "general",
@@ -112,6 +115,7 @@ export function settingsNavGroups(
     { id: "general", label: "General", icon: SettingsIcon },
     { id: "appearance", label: "Appearance", icon: PaletteIcon },
     { id: "chat", label: "Chat", icon: AeChatSettingsIcon },
+    { id: "roles", label: "Roles", icon: AeRolesSettingsIcon },
     { id: "git", label: "Git", icon: GitBranchIcon },
     { id: "ai-accounts", label: "AI accounts", icon: UserCogIcon },
     { id: "shortcuts", label: "Keyboard shortcuts", icon: KeyboardIcon, hideOnMobile: true },
