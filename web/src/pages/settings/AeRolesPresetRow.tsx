@@ -1,5 +1,6 @@
 // Settings > Roles: the preset row. Collapsed, it shows the open preset by
-// name and the default and pinned presets as icons, then "+N" for the rest.
+// name, then the default, pinned and other presets as icons, as many as fit
+// the measured width, then "+N" for the rest.
 // "All presets" (or "+N") opens the list: Pinned, then Others, in the saved
 // order, sortable by their grips (a grip's Up and Down arrows move it too),
 // searchable past eight presets.
@@ -22,15 +23,70 @@ import {
   PlusIcon,
   SearchIcon,
 } from "lucide-react";
-import { type CSSProperties, useEffect, useRef, useState } from "react";
-import { AE_PRESET_SEARCH_FROM, AE_PRESET_SHORTCUTS, type AeRolePreset } from "@/lib/aeRoles";
+import { type CSSProperties, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  AE_PRESET_SEARCH_FROM,
+  AE_PRESET_SHORTCUTS,
+  type AeRolePreset,
+  aeRowIconCount,
+  aeRowOrder,
+} from "@/lib/aeRoles";
 import { cn } from "@/lib/utils";
 import { AeRolePresetTile } from "./AeRolesControls";
 
-/** Icons the collapsed row shows beside the open preset on a desktop window. */
-const ROW_ICONS = 6;
-
 const verticalOnly: Modifier = ({ transform }) => ({ ...transform, x: 0 });
+
+/** The new-preset button and the gap before it, in px. */
+const NEW_BUTTON_PX = 34;
+
+/** Longest the open chip grows, px (its max-w-[14rem]). */
+const OPEN_CHIP_MAX_PX = 224;
+
+/**
+ * The open chip's natural width: its shown width plus whatever its title lost
+ * to truncation, so a chip that shrank to fit does not make room for more icons.
+ */
+function openChipWidth(chip: HTMLElement | null): number {
+  if (!chip) return 0;
+  const title = chip.querySelector<HTMLElement>("span.truncate");
+  const cut = title ? Math.max(0, title.scrollWidth - title.clientWidth) : 0;
+  return Math.min(chip.offsetWidth + cut, OPEN_CHIP_MAX_PX);
+}
+
+/**
+ * The inner row's width and the open chip's, measured as the window resizes
+ * and again whenever the open preset or its title changes (`chipKey`).
+ */
+function useRowWidths(chipKey: string) {
+  const rowRef = useRef<HTMLDivElement>(null);
+  const openRef = useRef<HTMLButtonElement>(null);
+  const [widths, setWidths] = useState({ row: 0, open: 0 });
+  useLayoutEffect(() => {
+    const row = rowRef.current;
+    if (!row) return;
+    let rowWidth = Math.floor(row.clientWidth);
+    const measure = () =>
+      setWidths((old) => {
+        const next = { row: rowWidth, open: openChipWidth(openRef.current) + 6 };
+        return next.row === old.row && next.open === old.open ? old : next;
+      });
+    measure();
+    const rowObserver = new ResizeObserver((entries) => {
+      rowWidth = Math.floor(entries[0]?.contentRect.width ?? row.clientWidth);
+      measure();
+    });
+    rowObserver.observe(row);
+    // The open chip can shrink, so its own resize changes how many icons fit.
+    const chip = openRef.current;
+    const chipObserver = chip ? new ResizeObserver(() => measure()) : null;
+    if (chip) chipObserver?.observe(chip);
+    return () => {
+      rowObserver.disconnect();
+      chipObserver?.disconnect();
+    };
+  }, [chipKey]);
+  return { rowRef, openRef, widths };
+}
 
 export function AeRolesCollapsedRow({
   presets,
@@ -51,74 +107,57 @@ export function AeRolesCollapsedRow({
   onNew: () => void;
   canAdd: boolean;
 }) {
-  const icons = presets
-    .filter((p) => p.id !== openId && (p.id === defaultId || p.pinned))
-    .slice(0, ROW_ICONS);
-  const open = presets.find((p) => p.id === openId);
-  const hiddenDesktop = presets.length - icons.length - (open ? 1 : 0);
-  const hiddenPhone = presets.length - (open ? 1 : 0);
-  const shown = new Set([openId, ...icons.map((p) => p.id)]);
-  const row = presets.filter((p) => shown.has(p.id));
+  const ordered = aeRowOrder(presets, openId, defaultId);
+  const open = ordered[0]?.id === openId ? ordered[0] : undefined;
+  const { rowRef, openRef, widths } = useRowWidths(open ? `${open.id}\u0000${open.title}` : "");
+  const others = open ? ordered.slice(1) : ordered;
+  const fit = aeRowIconCount(widths.row, widths.open + NEW_BUTTON_PX, others.length);
+  const icons = others.slice(0, fit);
+  const hidden = others.length - icons.length;
   return (
     <div
       data-testid="ae-roles-row"
       className="flex min-w-0 items-center gap-1.5 rounded-xl border border-border bg-muted/30 p-1.5"
     >
-      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
-        {row.map((preset) =>
-          preset.id === openId ? (
-            <button
-              key={preset.id}
-              type="button"
-              aria-current="true"
-              aria-label={`${preset.title}${preset.id === defaultId ? ", your default" : ""}, open`}
-              onClick={() => onOpen(preset.id)}
-              className="flex min-w-0 items-center gap-2 rounded-lg border border-foreground/60 bg-background py-0.5 pr-2.5 pl-0.5 text-sm font-semibold"
-            >
-              <AeRolePresetTile
-                icon={preset.icon}
-                color={preset.color}
-                dot={preset.id === defaultId}
-              />
-              <span className="truncate">{preset.title}</span>
-            </button>
-          ) : (
-            <button
-              key={preset.id}
-              type="button"
-              aria-label={`${preset.title}${preset.id === defaultId ? ", your default" : ""}`}
-              title={preset.title}
-              onClick={() => onOpen(preset.id)}
-              className="rounded-lg max-sm:hidden"
-            >
-              <AeRolePresetTile
-                icon={preset.icon}
-                color={preset.color}
-                dot={preset.id === defaultId}
-              />
-            </button>
-          ),
-        )}
-        {hiddenDesktop > 0 && (
+      <div ref={rowRef} className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+        {open && (
           <button
+            ref={openRef}
             type="button"
-            aria-label={`${hiddenDesktop} more presets`}
-            aria-expanded={listOpen}
-            onClick={onToggleList}
-            className="h-7 shrink-0 rounded-lg bg-muted px-2 text-xs font-semibold max-sm:hidden"
+            aria-current="true"
+            aria-label={`${open.title}${open.id === defaultId ? ", your default" : ""}, open`}
+            onClick={() => onOpen(open.id)}
+            className="flex max-w-[14rem] min-w-0 shrink items-center gap-2 rounded-lg border border-foreground/60 bg-background py-0.5 pr-2.5 pl-0.5 text-sm font-semibold"
           >
-            +{hiddenDesktop}
+            <AeRolePresetTile icon={open.icon} color={open.color} dot={open.id === defaultId} />
+            <span className="truncate">{open.title}</span>
           </button>
         )}
-        {hiddenPhone > 0 && (
+        {icons.map((preset) => (
+          <button
+            key={preset.id}
+            type="button"
+            aria-label={`${preset.title}${preset.id === defaultId ? ", your default" : ""}`}
+            title={preset.title}
+            onClick={() => onOpen(preset.id)}
+            className="shrink-0 rounded-lg"
+          >
+            <AeRolePresetTile
+              icon={preset.icon}
+              color={preset.color}
+              dot={preset.id === defaultId}
+            />
+          </button>
+        ))}
+        {hidden > 0 && (
           <button
             type="button"
-            aria-label={`${hiddenPhone} more presets`}
+            aria-label={`${hidden} more presets`}
             aria-expanded={listOpen}
             onClick={onToggleList}
-            className="h-7 shrink-0 rounded-lg bg-muted px-2 text-xs font-semibold sm:hidden"
+            className="h-7 shrink-0 rounded-lg bg-muted px-2 text-xs font-semibold"
           >
-            +{hiddenPhone}
+            +{hidden}
           </button>
         )}
         <button

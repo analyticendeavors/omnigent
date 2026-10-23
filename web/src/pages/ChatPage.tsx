@@ -75,6 +75,7 @@ import { AePlanLimitsPopover } from "@/components/AePlanLimits";
 import { AeActionDock } from "@/components/AeActionDock";
 import { AeTokenDefrag } from "@/components/AeTokenDefrag";
 import { SessionTeamControl } from "@/components/AeTeamControl";
+import { aeNoteStartOn } from "@/hooks/useAeSessionPreset";
 import { AeClaudeAccountSubmenu } from "@/shell/AeClaudeAccountSubmenu";
 import { AeCompactSessionChoices } from "@/components/composer/AeCompactSessionChoices";
 import { agentDisplayLabel } from "@/components/AgentInfo";
@@ -3351,6 +3352,7 @@ function ComposerImpl(
     // server queues the message and delivers it to the running task
     // (or starts a fresh one once the current drains). Escape still
     // interrupts.
+    aeNoteStartOn(fullText, conversationId, codexModelOptions);
     if (trimmed) appendEntry(fullText, storedReplyDraft);
     const sendFiles = files.length > 0 ? files : undefined;
     if (draft.quotes.length > 0) {

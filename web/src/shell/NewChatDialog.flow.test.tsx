@@ -16,6 +16,7 @@ vi.mock("@/hooks/useSandboxModelOptions", async (importOriginal) => ({
   })),
 }));
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { aeTakeStartOn } from "@/lib/aeStartOnApply";
 import { useConversations as useTestConversations } from "@/hooks/useConversations";
 
 vi.mock("@/hooks/useSidebarData", () => ({ useLoadedConversations: () => useTestConversations() }));
@@ -603,6 +604,29 @@ describe("NewChatLandingScreen create flow", () => {
         project,
       ),
     );
+  });
+
+  it("queues a START ON line in the first prompt for the new session", async () => {
+    beginLocalConversationMock.mockReturnValue({
+      tempConvId: "temp:1234567890abcdef1234567890abcdef",
+      pendingMsgTempId: "pend_1",
+      createToken: "1234567890abcdef1234567890abcdef",
+    });
+    vi.mocked(authenticatedFetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ id: "conv_new" }),
+    } as unknown as Response);
+    renderLanding();
+    await waitForWorkspaceSeed();
+    typeMessage('inspect the repo\nSTART ON: preset "YOLO"');
+    fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
+    await waitFor(() => expect(hydrateLocalConversationMock).toHaveBeenCalledOnce());
+    // Not under another session's id, and exactly once.
+    expect(aeTakeStartOn("conv_other")).toBeNull();
+    expect(aeTakeStartOn("conv_new")).toMatchObject({
+      text: 'inspect the repo\nSTART ON: preset "YOLO"',
+    });
+    expect(aeTakeStartOn("conv_new")).toBeNull();
   });
 
   it("posts host_id, workspace and agent_id to /v1/sessions and navigates", async () => {

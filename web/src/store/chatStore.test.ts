@@ -15,6 +15,7 @@
 // Session metadata and item pages are shimmed through `seedSession`
 // helpers so tests can model capped snapshots and full transcripts.
 
+import { aeQueueStartOn, aeTakeStartOn } from "@/lib/aeStartOnApply";
 import type * as IdentityModule from "@/lib/identity";
 
 import { type InfiniteData, QueryClient } from "@tanstack/react-query";
@@ -3047,6 +3048,32 @@ describe("chatStore — send (first-send ordering)", () => {
     // Bubble still rolled back and status still settled.
     expect(state.pendingUserMessages).toEqual([]);
     expect(state.status).toBe("idle");
+  });
+
+  it("drops a queued START ON plan when its send ends before applying it", async () => {
+    useChatStore.setState({
+      conversationId: "conv_existing",
+      abortController: null,
+      status: "idle",
+      blocks: [],
+      pendingUserMessages: [],
+      failedSendDraft: null,
+    });
+    fetchMock.mockImplementation((input, init) => {
+      const url = String(input);
+      if (url.includes("/v1/sessions/conv_existing")) {
+        return mockResponse(
+          { error: { code: "boom", message: "bind failed" } },
+          { ok: false, status: 500 },
+        );
+      }
+      return defaultFetchHandler(input, init);
+    });
+    aeQueueStartOn("conv_existing", { text: "START ON: YOLO", models: [] });
+    await useChatStore.getState().send("START ON: YOLO", "agent_xyz", undefined, {
+      onError: () => {},
+    });
+    expect(aeTakeStartOn("conv_existing")).toBeNull();
   });
 
   it("settles optimistic pending state when an input policy denies the send", async () => {

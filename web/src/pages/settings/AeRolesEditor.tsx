@@ -4,6 +4,7 @@
 
 import { AlertTriangleIcon, CopyIcon, PencilIcon, Trash2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import type { AeRoleModelChoice } from "@/hooks/useAeRoleModels";
 import { aeClaudeCodeDefaultEffort, aeClaudeEffortLabel } from "@/lib/aeEffortDefault";
 import {
   AE_AUTO_RAISES_MAX,
@@ -24,11 +25,7 @@ import { comparableModelId } from "@/lib/codexNativeModels";
 import { cn } from "@/lib/utils";
 import { AeRolePresetTile, AeSegmented, AeStepper } from "./AeRolesControls";
 
-export interface AeRoleModelChoice {
-  /** The catalog id saved in the preset, e.g. `claude-opus-5-5`. */
-  value: string;
-  label: string;
-}
+export type { AeRoleModelChoice } from "@/hooks/useAeRoleModels";
 
 export interface AeRoleDraft {
   roles: AeRoleTable;
@@ -104,7 +101,7 @@ function EffortBar({
   );
 }
 
-function RoleRow({
+export function AeRoleRow({
   role,
   setting,
   models,
@@ -314,7 +311,7 @@ export function AeRolesEditor({
 
       <div role="group" aria-label="Roles">
         {AE_ROLE_IDS.map((role) => (
-          <RoleRow
+          <AeRoleRow
             key={role}
             role={role}
             setting={draft.roles[role]}

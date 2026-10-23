@@ -42,6 +42,7 @@
 //     stream, fetches the items snapshot, and merges into blocks
 //     deduping by item id.
 
+import { aeApplyQueuedStartOn, aeDropStartOn } from "@/lib/aeStartOnApply";
 import type { InfiniteData, QueryClient } from "@tanstack/react-query";
 import { create } from "zustand";
 import type {
@@ -2446,6 +2447,14 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       const sessionId = await ensureBoundSession(agentId, get, opts, submitConversationId, rekey);
       postedSessionId = sessionId;
       if (initialDraft && !(await waitForModelSelection(sessionId, tempId))) return;
+      // A START ON line in the first message sets the preset or model before the turn.
+      await aeApplyQueuedStartOn(submitConversationId, sessionId, (updated) => {
+        setterFor(sessionId)({
+          sessionModelOverride: updated.modelOverride ?? null,
+          sessionReasoningEffort: updated.reasoningEffort ?? null,
+        });
+        queryClient?.setQueryData(["session", sessionId], updated);
+      });
 
       if (compacts) {
         // Compact controls emit turn status edges, but no user
@@ -2677,6 +2686,9 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
         }
       }
     } finally {
+      // A START ON plan this send did not apply (it ended early) must not
+      // reach a later message.
+      aeDropStartOn(submitConversationId);
       inFlightSends.delete(stableId);
       // Release the next queued send regardless of success/failure so one
       // failed POST can't stall the chain forever.

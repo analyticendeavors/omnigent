@@ -1,6 +1,7 @@
 import { useLoadedConversations } from "@/hooks/useSidebarData";
 import { useComposerContext } from "@/hooks/useComposerContext";
 import { useSlashCompletion } from "@/hooks/useSlashCompletion";
+import { aeNoteStartOn } from "@/hooks/useAeSessionPreset";
 import {
   HarnessPicker,
   HarnessPickerEntry,
@@ -5927,6 +5928,9 @@ export function NewChatLandingScreen() {
         writeLandingDraft(null);
       }
 
+      // A START ON line in this first prompt is applied to the new session by
+      // the send, the same path the composer uses.
+      aeNoteStartOn(initialPrompt, data.id, pickerModelOptions, { isNewSession: true });
       // `localConv` is set only when a real agent id was resolved up front, so
       // it's safe to POST the first message with it.
       if (localConv !== null && effectiveAgentId !== null) {

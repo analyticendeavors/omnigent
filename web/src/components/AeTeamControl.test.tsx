@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { MemoryRouter } from "react-router-dom";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -21,6 +22,20 @@ const mocks = vi.hoisted(() => ({
   hosts: vi.fn(),
   models: vi.fn(),
   session: vi.fn(),
+  roles: vi.fn(),
+  saveRoles: vi.fn(),
+  getSessionSlim: vi.fn(),
+  updateSession: vi.fn(),
+}));
+vi.mock("@/hooks/useAeRoles", () => ({
+  AE_ROLES_QUERY_KEY: ["ae", "roles"],
+  useAeRoles: mocks.roles,
+  useAeRolesSave: () => mocks.saveRoles,
+}));
+vi.mock("@/lib/sessionsApi", async (original) => ({
+  ...(await original<object>()),
+  getSessionSlim: mocks.getSessionSlim,
+  updateSession: mocks.updateSession,
 }));
 vi.mock("@/hooks/useSession", () => ({ useSession: mocks.session }));
 vi.mock("@/lib/aeTeam", async (original) => ({
@@ -131,6 +146,7 @@ beforeEach(() => {
   mocks.hosts.mockReturnValue({ data: [host] });
   mocks.models.mockReturnValue({ data: [{ id: "test-model", displayName: "Available model" }] });
   vi.mocked(saveAeTeam).mockResolvedValue(session);
+  mocks.roles.mockReturnValue({ data: undefined });
 });
 afterEach(cleanup);
 
@@ -498,5 +514,153 @@ describe("team editor", () => {
     expect(screen.getByRole("checkbox", { name: `Custom ${AE_TEAM_LIMIT}` })).toBeEnabled();
     fireEvent.click(screen.getByRole("checkbox", { name: `Custom ${AE_TEAM_LIMIT}` }));
     expect(screen.getByRole("checkbox", { name: "Custom 0" })).toBeDisabled();
+  });
+});
+
+describe("roles preset per session", () => {
+  const preset = (id: string, title: string) => ({
+    id,
+    title,
+    icon: "scale",
+    color: "teal" as const,
+    description: `${title} card`,
+    when_to_use: "",
+    pinned: false,
+    roles: {
+      lead: { mode: "session" as const },
+      planner: { mode: "fixed" as const, model: "test-model", effort: "high" as const },
+      reviewer: { mode: "auto" as const },
+      builder: { mode: "auto" as const },
+      helper: { mode: "auto" as const },
+    },
+    rules: { raise_or_lower: "tell" as const, lead_steps_down: true, auto_raises: 1 },
+  });
+  const ROLES = {
+    revision: 3,
+    default_preset: "balanced",
+    apply_start_on: true,
+    presets: [
+      preset("save-tokens", "Save tokens"),
+      preset("balanced", "Balanced"),
+      preset("yolo", "YOLO"),
+    ],
+    starters: [],
+  };
+  beforeEach(() => {
+    mocks.roles.mockReturnValue({ data: ROLES });
+  });
+
+  it("saves the chosen preset into the label and writes nothing for the default", async () => {
+    mount();
+    openPicker();
+    fireEvent.click(screen.getByRole("radio", { name: "YOLO" }));
+    fireEvent.click(saveButton());
+    await waitFor(() =>
+      expect(saveAeTeam).toHaveBeenCalledWith(
+        "parent",
+        expect.objectContaining({ roles: { preset: "yolo" } }),
+      ),
+    );
+    vi.mocked(saveAeTeam).mockClear();
+    openPicker();
+    fireEvent.click(screen.getByRole("radio", { name: "Balanced" }));
+    fireEvent.click(saveButton());
+    await waitFor(() =>
+      expect(saveAeTeam).toHaveBeenCalledWith("parent", expect.objectContaining({ roles: null })),
+    );
+  });
+
+  it("leaves the label's roles alone unless the dialog changed the roles row", async () => {
+    const withRoles = {
+      ...session,
+      labels: {
+        [AE_TEAM_LABEL]: JSON.stringify({
+          version: 1,
+          mode: "auto",
+          members: [],
+          roles: { preset: "yolo" },
+        }),
+      },
+    };
+    mount({ session: withRoles });
+    openPicker();
+    fireEvent.click(screen.getByRole("button", { name: "Solo" }));
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(saveAeTeam).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(saveAeTeam).mock.calls[0][1]).toMatchObject({ mode: "solo" });
+    expect(vi.mocked(saveAeTeam).mock.calls[0][1]).not.toHaveProperty("roles");
+  });
+
+  it("customizes roles for this session and saves them as a new preset", async () => {
+    mocks.saveRoles.mockImplementation(async (doc: typeof ROLES) => ({
+      ok: true,
+      saved: { ...doc, revision: 4, starters: [] },
+    }));
+    mount();
+    openPicker();
+    fireEvent.click(screen.getByRole("button", { name: "Customize" }));
+    fireEvent.change(screen.getByLabelText("Planner model"), { target: { value: "__auto" } });
+    expect(screen.getByRole("radio", { name: "Balanced, edited" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save as preset" }));
+    expect(screen.getByLabelText("New preset name")).toHaveValue("Balanced edited");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(mocks.saveRoles).toHaveBeenCalled());
+    const doc = mocks.saveRoles.mock.calls[0][0] as typeof ROLES;
+    expect(doc.revision).toBe(3);
+    expect(doc.presets.at(-1)).toMatchObject({
+      id: "balanced-edited",
+      title: "Balanced edited",
+      roles: { planner: { mode: "auto" } },
+    });
+    fireEvent.click(saveButton());
+    await waitFor(() =>
+      expect(saveAeTeam).toHaveBeenCalledWith(
+        "parent",
+        expect.objectContaining({ roles: { preset: "balanced-edited" } }),
+      ),
+    );
+  });
+
+  it("switches from the composer pill and with Alt+digit in its composer only", async () => {
+    mocks.session.mockReturnValue({ session, isLoading: false, error: null });
+    mocks.getSessionSlim.mockResolvedValue(session);
+    mocks.updateSession.mockResolvedValue(session);
+    const client = new QueryClient();
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <div data-composer-card>
+            <textarea aria-label="Message" />
+            <SessionTeamControl sessionId="parent" />
+          </div>
+          <textarea aria-label="Elsewhere" />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Roles preset: Balanced" }));
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: /YOLO/ }));
+    await waitFor(() => expect(mocks.updateSession).toHaveBeenCalledTimes(1));
+    const label = () => JSON.parse(mocks.updateSession.mock.calls.at(-1)![1].labels[AE_TEAM_LABEL]);
+    expect(label()).toEqual({ version: 1, mode: "auto", members: [], roles: { preset: "yolo" } });
+
+    fireEvent.keyDown(screen.getByLabelText("Elsewhere"), { code: "Digit1", altKey: true });
+    fireEvent.keyDown(screen.getByLabelText("Message"), {
+      code: "Digit1",
+      ctrlKey: true,
+      altKey: true,
+    });
+    expect(mocks.updateSession).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(screen.getByLabelText("Message"), { code: "Digit1", altKey: true });
+    await waitFor(() => expect(mocks.updateSession).toHaveBeenCalledTimes(2));
+    expect(label().roles).toEqual({ preset: "save-tokens" });
+    // No preset at position 9: the key is left alone.
+    const event = new KeyboardEvent("keydown", {
+      code: "Digit9",
+      altKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    screen.getByLabelText("Message").dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
   });
 });

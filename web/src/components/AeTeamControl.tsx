@@ -22,6 +22,8 @@ import {
 } from "@/lib/aeTeam";
 import type { Session } from "@/lib/types";
 import { useForkDialog } from "@/shell/ForkDialogContext";
+import { AeSessionPresetRow } from "./AeSessionPresetRow";
+import { AeSessionPresetPill } from "./composer/AeSessionPresetPill";
 import { Button } from "./ui/button";
 import {
   Dialog,
@@ -314,7 +316,14 @@ export function SessionTeamControl({
 }) {
   const { session, error, isLoading } = useSession(sessionId);
   const queryClient = useQueryClient();
-  if (session) return <AeTeamControl session={session} disabled={disabled} working={working} />;
+  if (session) {
+    return (
+      <>
+        <AeTeamControl session={session} disabled={disabled} working={working} />
+        <AeSessionPresetPill sessionId={sessionId} disabled={disabled} />
+      </>
+    );
+  }
   return (
     <button
       type="button"
@@ -349,6 +358,9 @@ export function AeTeamControl({
   // A new lead forks the session; in-place agent switching is not available.
   const forkDialog = useForkDialog();
   const [draft, setDraft] = useState<AeTeam>(() => readAeTeam(session.labels));
+  // Roles go to saveAeTeam only when this dialog changed them, so a stale
+  // value from when it opened never overwrites a newer pick (pill, Alt digit).
+  const [rolesTouched, setRolesTouched] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const saved = readAeTeam(session.labels);
@@ -373,6 +385,7 @@ export function AeTeamControl({
     if (saving) return;
     if (next) {
       setDraft(readAeTeam(session.labels));
+      setRolesTouched(false);
       setError(null);
     }
     setOpen(next);
@@ -382,7 +395,8 @@ export function AeTeamControl({
     setSaving(true);
     setError(null);
     try {
-      const updated = await saveAeTeam(session.id, draft);
+      const { roles: _staleRoles, ...withoutRoles } = draft;
+      const updated = await saveAeTeam(session.id, rolesTouched ? draft : withoutRoles);
       queryClient.setQueryData(["session", session.id], updated);
       await queryClient.invalidateQueries({ queryKey: childSessionsQueryKey(session.id) });
       setOpen(false);
@@ -440,6 +454,14 @@ export function AeTeamControl({
                 Change lead
               </Button>
             </div>
+            <AeSessionPresetRow
+              value={draft.roles ?? null}
+              onChange={(roles) => {
+                setRolesTouched(true);
+                setDraft((d) => ({ ...d, roles }));
+              }}
+              disabled={saving || disabled}
+            />
             {working && (
               <p className="text-xs text-muted-foreground">
                 You can save collaboration changes after this turn finishes.

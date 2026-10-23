@@ -53,7 +53,7 @@ export const AE_ROLES_SETTINGS = {
 export const AE_PRESET_LIMIT = 30;
 /** The list view shows a search box past this many presets. */
 export const AE_PRESET_SEARCH_FROM = 8;
-/** Alt 1 to Alt 9 follow list order (the key binding is not wired yet). */
+/** Alt 1 to Alt 9 in the composer pick presets in list order. */
 export const AE_PRESET_SHORTCUTS = 9;
 export const AE_AUTO_RAISES_MAX = 3;
 export const AE_PRESET_TITLE_MAX = 40;
@@ -416,4 +416,44 @@ export function aeDropPreset<T extends AeRolesDoc>(doc: T, id: string, overId: s
   const repinned =
     moved.pinned === over.pinned ? doc : aeReplacePreset(doc, { ...moved, pinned: over.pinned });
   return aeNormalizeOrder(aeMovePreset(repinned, id, index));
+}
+
+// ---------------------------------------------------------------------------
+// Settings > Roles' collapsed row
+
+/** Width of one icon chip in the collapsed row plus the gap after it, in px. */
+export const AE_ROW_ICON_PX = 34;
+/** Width of the "+N" button plus its gap, in px. */
+export const AE_ROW_MORE_PX = 42;
+
+/**
+ * The collapsed row's order: the open preset, then the default, then pinned
+ * presets, then the rest in list order.
+ */
+export function aeRowOrder(
+  presets: readonly AeRolePreset[],
+  openId: string,
+  defaultId: string,
+): AeRolePreset[] {
+  const rank = (p: AeRolePreset) =>
+    p.id === openId ? 0 : p.id === defaultId ? 1 : p.pinned ? 2 : 3;
+  return presets
+    .map((p, i) => ({ p, i }))
+    .sort((a, b) => rank(a.p) - rank(b.p) || a.i - b.i)
+    .map(({ p }) => p);
+}
+
+/**
+ * How many icon chips fit beside the open preset in `width` px, where `fixed`
+ * is what the open chip and the new-preset button already take. Every icon
+ * shows when all fit; otherwise room is kept for "+N". A width of 0 (not
+ * measured yet) shows none.
+ */
+export function aeRowIconCount(width: number, fixed: number, icons: number): number {
+  if (width <= 0 || icons <= 0) return 0;
+  if (fixed + icons * AE_ROW_ICON_PX <= width) return icons;
+  return Math.max(
+    0,
+    Math.min(icons, Math.floor((width - fixed - AE_ROW_MORE_PX) / AE_ROW_ICON_PX)),
+  );
 }

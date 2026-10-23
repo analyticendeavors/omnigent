@@ -222,4 +222,61 @@ describe("team persistence", () => {
     ).rejects.toThrow("Unavailable");
     expect(updateSession).toHaveBeenLastCalledWith("parent", { subagentRoutingOverride: "on" });
   });
+
+  describe("roles preset", () => {
+    const roles = { preset: "yolo" };
+    const labelled = (mode: string) => ({
+      ...parent,
+      labels: { [AE_TEAM_LABEL]: JSON.stringify({ version: 1, mode, members: [], roles }) },
+    });
+    const savedLabel = () =>
+      JSON.parse(vi.mocked(updateSession).mock.calls.at(-1)![1].labels![AE_TEAM_LABEL]);
+
+    it("reads the preset with the roster", () => {
+      expect(readAeTeam(labelled("solo").labels).roles).toEqual(roles);
+    });
+
+    it.each([
+      ["auto", "solo"],
+      ["solo", "team"],
+      ["team", "auto"],
+    ] as const)("keeps the preset when switching %s to %s", async (from, to) => {
+      vi.mocked(getSessionSlim).mockResolvedValue(labelled(from));
+      await saveAeTeam("parent", {
+        version: 1,
+        mode: to,
+        members: to === "team" ? [codex] : [],
+      });
+      expect(savedLabel().roles).toEqual(roles);
+      expect(savedLabel().mode).toBe(to);
+    });
+
+    it("writes a new preset from the draft and clears it for null", async () => {
+      vi.mocked(getSessionSlim).mockResolvedValue(labelled("auto"));
+      await saveAeTeam("parent", { version: 1, mode: "auto", members: [], roles: { preset: "x" } });
+      expect(savedLabel().roles).toEqual({ preset: "x" });
+      await saveAeTeam("parent", { version: 1, mode: "auto", members: [], roles: null });
+      expect(savedLabel()).not.toHaveProperty("roles");
+    });
+
+    it.each(["auto", "team"] as const)(
+      "keeps a custom block this client cannot read as stored when saving %s",
+      async (mode) => {
+        const newer = { preset: "yolo", custom: { future: { shape: 2 } } };
+        vi.mocked(getSessionSlim).mockResolvedValue({
+          ...parent,
+          labels: {
+            [AE_TEAM_LABEL]: JSON.stringify({
+              version: 1,
+              mode: "solo",
+              members: [],
+              roles: newer,
+            }),
+          },
+        });
+        await saveAeTeam("parent", { version: 1, mode, members: mode === "team" ? [codex] : [] });
+        expect(savedLabel().roles).toEqual(newer);
+      },
+    );
+  });
 });

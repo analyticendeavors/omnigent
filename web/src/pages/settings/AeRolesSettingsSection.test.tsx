@@ -438,4 +438,112 @@ describe("AeRolesSettingsSection", () => {
     expect(puts()[0].presets.map((p) => p.id)).toEqual(["save-tokens", "yolo"]);
     expect(await screen.findByRole("heading", { name: "Save tokens" })).toBeInTheDocument();
   });
+
+  describe("collapsed row width", () => {
+    const original = globalThis.ResizeObserver;
+    const withWidth = (width: number) => {
+      globalThis.ResizeObserver = class {
+        cb: ResizeObserverCallback;
+        constructor(cb: ResizeObserverCallback) {
+          this.cb = cb;
+        }
+        observe() {
+          this.cb(
+            [{ contentRect: { width } } as ResizeObserverEntry],
+            this as unknown as ResizeObserver,
+          );
+        }
+        unobserve() {}
+        disconnect() {}
+      } as unknown as typeof ResizeObserver;
+    };
+    afterEach(() => {
+      globalThis.ResizeObserver = original;
+    });
+
+    it("shows every preset as an icon when the bar has room", async () => {
+      withWidth(900);
+      serve(stateOf());
+      renderSection();
+      const row = within(await screen.findByTestId("ae-roles-row"));
+      expect(row.getByRole("button", { name: "Save tokens" })).toBeInTheDocument();
+      expect(row.getByRole("button", { name: "YOLO" })).toBeInTheDocument();
+      expect(row.queryByRole("button", { name: /more presets/ })).not.toBeInTheDocument();
+    });
+
+    it("puts only the presets that do not fit behind +N", async () => {
+      withWidth(300);
+      const many = Array.from({ length: 9 }, (_, i) => ({
+        ...SAVE_TOKENS,
+        id: `p${i}`,
+        title: `Preset ${i}`,
+      }));
+      serve(stateOf({ presets: [...STARTERS, ...many] }));
+      renderSection();
+      const row = within(await screen.findByTestId("ae-roles-row"));
+      // 300 px less the open chip (0 in jsdom plus its gap) and the new button
+      // leaves room for 6 icons and "+N": 11 others, 6 shown, 5 hidden.
+      expect(row.getByRole("button", { name: "5 more presets" })).toHaveTextContent("+5");
+      expect(row.getByRole("button", { name: "Save tokens" })).toBeInTheDocument();
+    });
+  });
+
+  describe("collapsed row after switching presets", () => {
+    const original = globalThis.ResizeObserver;
+    const widthOf = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetWidth");
+    afterEach(() => {
+      globalThis.ResizeObserver = original;
+      if (widthOf) Object.defineProperty(HTMLElement.prototype, "offsetWidth", widthOf);
+    });
+
+    it("recounts the hidden presets when the open preset has a long title", async () => {
+      globalThis.ResizeObserver = class {
+        cb: ResizeObserverCallback;
+        constructor(cb: ResizeObserverCallback) {
+          this.cb = cb;
+        }
+        observe() {
+          this.cb(
+            [{ contentRect: { width: 400 } } as ResizeObserverEntry],
+            this as unknown as ResizeObserver,
+          );
+        }
+        unobserve() {}
+        disconnect() {}
+      } as unknown as typeof ResizeObserver;
+      // The open chip is as wide as its text; every other element measures 0.
+      Object.defineProperty(HTMLElement.prototype, "offsetWidth", {
+        configurable: true,
+        get(this: HTMLElement) {
+          return this.getAttribute("aria-current") === "true"
+            ? (this.textContent ?? "").length * 8
+            : 0;
+        },
+      });
+      const many = Array.from({ length: 9 }, (_, i) => ({
+        ...SAVE_TOKENS,
+        id: `p${i}`,
+        title: `P${i}`,
+      }));
+      const long = { ...SAVE_TOKENS, id: "long", title: "A preset with a rather long title" };
+      serve(stateOf({ presets: [long, ...STARTERS, ...many] }));
+      renderSection();
+      const row = within(await screen.findByTestId("ae-roles-row"));
+      const hiddenNow = () =>
+        Number(
+          /\+(\d+)/.exec(row.getByRole("button", { name: /more presets/ }).textContent ?? "")?.[1],
+        );
+      const before = hiddenNow();
+      fireEvent.click(row.getByRole("button", { name: "A preset with a rather long title" }));
+      await waitFor(() => expect(hiddenNow()).toBeGreaterThan(before));
+    });
+  });
+
+  it("saves the Apply START ON lines switch through the same PUT", async () => {
+    serve(stateOf());
+    renderSection();
+    fireEvent.click(await screen.findByRole("switch", { name: "Apply START ON lines" }));
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0].apply_start_on).toBe(false);
+  });
 });

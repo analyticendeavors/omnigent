@@ -5,7 +5,7 @@
 // the revision it was read at; when another device saved first, the server's
 // list replaces this one and a toast says so.
 
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -15,10 +15,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Switch } from "@/components/ui/switch";
 import { showToast } from "@/components/ui/toast";
 import { useAeRoles, useAeRolesSave } from "@/hooks/useAeRoles";
-import { useHostModelOptions, useHosts } from "@/hooks/useHosts";
-import { aeWithClaudeVersions } from "@/lib/aeClaudeModels";
+import { useAeRoleModels } from "@/hooks/useAeRoleModels";
 import {
   AE_PRESET_LIMIT,
   type AeRolePreset,
@@ -28,7 +28,6 @@ import {
   aeDropPreset,
   aeDuplicatePreset,
   aeIsTopTierEverywhere,
-  aeModelLabel,
   aeNormalizeOrder,
   aePresetId,
   aeReplacePreset,
@@ -36,12 +35,9 @@ import {
   aeSameRoles,
   aeSetPinned,
 } from "@/lib/aeRoles";
-import { type AeRoleDraft, type AeRoleModelChoice, AeRolesEditor } from "./AeRolesEditor";
+import { type AeRoleDraft, AeRolesEditor } from "./AeRolesEditor";
 import { type AePresetDetails, AeRolesPresetForm } from "./AeRolesPresetForm";
 import { AeRolesCollapsedRow, AeRolesPresetList } from "./AeRolesPresetRow";
-
-/** The Claude catalog the role table offers. */
-const CLAUDE_HARNESS = "claude-native";
 
 const CONFLICT = "Your roles changed on another device, so the saved presets were reloaded.";
 
@@ -49,39 +45,10 @@ function reasonOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** The host's Claude models, one row per catalog id, labeled "Opus 5.5". */
-function useRoleModels(): { models: AeRoleModelChoice[]; ids: string[]; note: string | null } {
-  const hostsQuery = useHosts();
-  const hosts = hostsQuery.data ?? [];
-  const hostsLoaded = hostsQuery.isSuccess === true;
-  const online = hosts.filter((h) => h.status === "online");
-  const host =
-    online.find((h) => h.configured_harnesses?.[CLAUDE_HARNESS] === true) ?? online[0] ?? null;
-  const catalog = useHostModelOptions(host?.host_id ?? null, CLAUDE_HARNESS, true, { poll: false });
-  return useMemo(() => {
-    const seen = new Set<string>();
-    const models: AeRoleModelChoice[] = [];
-    for (const row of aeWithClaudeVersions(catalog.data ?? [])) {
-      const value = (row.model ?? row.id).replace(/\[[^\]]*\]$/, "");
-      if (seen.has(value)) continue;
-      seen.add(value);
-      models.push({ value, label: aeModelLabel(value) });
-    }
-    const note = !hostsLoaded
-      ? null
-      : !host
-        ? "No host is online, so only the models already in this preset are listed."
-        : catalog.isError
-          ? "The model list is unavailable right now; the models already in this preset still save."
-          : null;
-    return { models, ids: models.map((m) => m.value), note };
-  }, [catalog.data, catalog.isError, host, hostsLoaded]);
-}
-
 export function AeRolesSettingsSection() {
   const query = useAeRoles();
   const save = useAeRolesSave();
-  const { models, ids: catalogIds, note } = useRoleModels();
+  const { models, ids: catalogIds, note } = useAeRoleModels();
   const [openPick, setOpenPick] = useState<string | null>(null);
   const [listOpen, setListOpen] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, AeRoleDraft>>({});
@@ -313,6 +280,26 @@ export function AeRolesSettingsSection() {
           onDelete={() => setConfirmDelete(true)}
         />
       </div>
+      <label className="flex items-start justify-between gap-4 rounded-xl border border-border p-4">
+        <span className="min-w-0">
+          <span className="block text-sm font-medium">Apply START ON lines</span>
+          <span className="block text-xs text-muted-foreground">
+            When a session&apos;s first message has a line starting &quot;START ON:&quot;, set its
+            preset, or its model and effort, before the first turn.
+          </span>
+        </span>
+        <Switch
+          aria-label="Apply START ON lines"
+          checked={state.apply_start_on}
+          disabled={busy}
+          onCheckedChange={(on) =>
+            void commit(
+              { ...state, apply_start_on: on },
+              on ? "START ON lines now apply." : "START ON lines are now ignored.",
+            )
+          }
+        />
+      </label>
       {!listOpen && missingStarters.length > 0 && (
         <p className="text-xs text-muted-foreground">
           Removed a starter?{" "}
