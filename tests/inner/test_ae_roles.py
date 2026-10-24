@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
 
@@ -488,3 +489,276 @@ def test_an_older_model_version_keeps_its_full_id() -> None:
     # Without the current ids a fixed id is shown as is.
     bare = render_roles({"preset": preset, "custom": False}) or ""
     assert "claude-sonnet-5-5[1m], medium" in bare
+
+
+# ── several reviewers ─────────────────────────────────────────────────────
+
+CODEX = {"mode": "agent", "agent": "ag_codex", "name": "Codex", "model": None, "effort": "medium"}
+SONNET_MEDIUM = {"mode": "fixed", "model": "claude-sonnet-5-5", "effort": "medium"}
+
+
+def _with_reviewers(*slots: dict[str, Any], **rules: Any) -> dict[str, Any]:
+    preset = copy.deepcopy(BALANCED)
+    preset["roles"]["reviewer"] = {"mode": "multi", "reviewers": list(slots)}
+    preset["rules"] = {**preset["rules"], **rules}
+    return preset
+
+
+def test_two_reviewers_render_as_drawn() -> None:
+    preset = _with_reviewers(SONNET_MEDIUM, CODEX)
+    lines = (render_roles({"preset": preset, "custom": False, "current": CURRENT}) or "").split(
+        "\n"
+    )
+    assert len(lines) == 9
+    assert lines[3] == (
+        "- Reviewers (final review of a build): 1. sonnet, medium (native subagent). "
+        "2. Codex agent (a fresh child session each review: sys_session_create with "
+        "agent_id ag_codex, reasoning_effort medium; its default model)."
+    )
+    assert lines[4].startswith(
+        "  These reviewers replace the /dual-review offer; run them when the work is done, "
+        "without asking. Give every reviewer the same diff and brief, run them at once, never "
+        "show one reviewer's findings to another."
+    )
+    assert lines[4].endswith("rank by severity, keep each reviewer's list under it.")
+    assert lines[5] == (
+        "  Fix checks and verifying one finding: reviewer 1 only. A reviewer that cannot "
+        "start: skip it, review with the rest and say so."
+    )
+    assert lines[6].startswith("- Builder")
+
+
+def test_three_reviewers_with_the_other_rules_stay_under_twelve_lines() -> None:
+    gemini = {
+        "mode": "agent",
+        "agent": "ag_gem",
+        "name": "Gemini CLI",
+        "model": "g-2",
+        "effort": None,
+    }
+    preset = _with_reviewers(
+        {"mode": "auto"}, CODEX, gemini, review_merge="separate", reviewer_unavailable="ask"
+    )
+    text = render_roles({"preset": preset, "custom": True, "current": CURRENT}) or ""
+    lines = text.split("\n")
+    assert len(lines) < 12
+    assert "1. your pick (native subagent). 2. Codex agent" in lines[3]
+    assert (
+        "3. Gemini CLI agent (a fresh child session each review: sys_session_create with "
+        "agent_id ag_gem, model g-2; its default effort)." in lines[3]
+    )
+    assert lines[4].endswith("show each reviewer's list first.")
+    assert lines[5].endswith("A reviewer that cannot start: ask the user before reviewing.")
+
+
+def test_a_fourth_reviewer_is_never_shown() -> None:
+    preset = _with_reviewers(SONNET_MEDIUM, CODEX, CODEX, {**CODEX, "name": "Fourth"})
+    text = render_roles({"preset": preset, "custom": False, "current": CURRENT}) or ""
+    assert "Fourth" not in text
+    assert "3. Codex agent" in text
+
+
+def test_one_reviewer_in_the_list_keeps_the_old_line() -> None:
+    preset = _with_reviewers(SONNET_MEDIUM)
+    text = render_roles({"preset": preset, "custom": False, "current": CURRENT}) or ""
+    assert "- Reviewer (reviews, verifying a finding, fix checks): sonnet, medium." in text
+    assert "dual-review" not in text
+
+
+def test_a_single_agent_reviewer_gets_one_line() -> None:
+    preset = _with_reviewers(CODEX)
+    text = render_roles({"preset": preset, "custom": False, "current": CURRENT}) or ""
+    assert (
+        "- Reviewer (reviews, verifying a finding, fix checks): Codex agent (a fresh child "
+        "session each review: sys_session_create with agent_id ag_codex, reasoning_effort "
+        "medium; its default model); a review never goes to an existing child session." in text
+    )
+    assert "dual-review" not in text
+
+
+def test_own_helpers_skip_agent_reviewers() -> None:
+    gemini = {**CODEX, "agent": "ag_gem", "name": "Gemini CLI"}
+    preset = _with_reviewers(SONNET_MEDIUM, CODEX, helpers="own")
+    text = render_roles({"preset": preset, "custom": False, "current": CURRENT}) or ""
+    assert (
+        "- Reviewer (reviews, verifying a finding, fix checks): sonnet, medium (Codex skipped: "
+        "this preset keeps work with your own subagents)." in text
+    )
+    assert "sys_session_create" not in text
+    preset = _with_reviewers(
+        SONNET_MEDIUM, {**SONNET_MEDIUM, "model": "claude-opus-5-5"}, gemini, helpers="own"
+    )
+    text = render_roles({"preset": preset, "custom": False, "current": CURRENT}) or ""
+    assert "1. sonnet, medium (native subagent). 2. opus, medium (native subagent)." in text
+    assert text.count("Gemini CLI skipped: this preset keeps work with your own subagents.") == 1
+    assert "sys_session_create" not in text
+
+
+def test_lead_picks_summarize_reviewers(prefs: dict[str, Any]) -> None:
+    prefs["presets"] = [
+        BALANCED,
+        _with_reviewers(SONNET_MEDIUM, CODEX) | {"id": "two", "title": "Two"},
+    ]
+    roles = resolve_roles(conversation(team_label(roles={"preset": "lead-picks"})), owner_store())
+    text = render_roles(roles) or ""
+    lines = text.split("\n")
+    assert "reviewer sonnet, medium;" in lines[1]
+    assert (
+        "reviewers sonnet, medium + Codex (fresh child session: sys_session_create "
+        "agent_id ag_codex, reasoning_effort medium);" in lines[2]
+    )
+    assert lines[-1].startswith("Reviewers named with an agent or with several: run all")
+    assert len(lines) < 12
+
+
+def test_lead_picks_without_several_reviewers_has_no_extra_line(prefs: dict[str, Any]) -> None:
+    roles = resolve_roles(conversation(team_label(roles={"preset": "lead-picks"})), owner_store())
+    assert "Reviewers named with" not in (render_roles(roles) or "")
+
+
+def test_eight_lead_picks_with_several_reviewers_stay_under_twelve_lines(
+    prefs: dict[str, Any],
+) -> None:
+    many = _with_reviewers(SONNET_MEDIUM, CODEX, CODEX)
+    prefs["presets"] = [many | {"id": f"p{i}", "title": f"P{i}"} for i in range(10)]
+    roles = resolve_roles(conversation(team_label(roles={"preset": "lead-picks"})), owner_store())
+    lines = (render_roles(roles) or "").split("\n")
+    assert len(lines) == 11
+    assert lines[-2] == "(2 more presets are not shown.)"
+
+
+def test_junk_reviewer_values_render_safely() -> None:
+    for junk in (
+        {"mode": "multi"},
+        {"mode": "multi", "reviewers": "x"},
+        {"mode": "multi", "reviewers": [3, {"mode": "agent"}]},
+    ):
+        preset = copy.deepcopy(BALANCED)
+        preset["roles"]["reviewer"] = junk
+        text = render_roles({"preset": preset, "custom": False, "current": CURRENT}) or ""
+        assert "- Reviewer (reviews, verifying a finding, fix checks): your pick." in text
+
+
+def test_real_balanced_starter_carries_codex(monkeypatch: pytest.MonkeyPatch) -> None:
+    role_prefs = pytest.importorskip("ae_omni_policies.role_prefs")
+    starter = next(p for p in role_prefs.starters() if p["id"] == "balanced")
+    text = render_roles({"preset": starter, "custom": False, "current": CURRENT}) or ""
+    assert f"agent_id {role_prefs.CODEX_AGENT_ID}" in text
+    assert len(text.split("\n")) == 9
+
+
+def test_the_notice_never_sends_a_review_to_an_existing_session() -> None:
+    preset = _with_reviewers(SONNET_MEDIUM, CODEX)
+    text = render_roles({"preset": preset, "custom": False, "current": CURRENT}) or ""
+    assert (
+        "Never hand a review to an existing child session, including one added to this chat: "
+        "this overrides reusing sessions or handing work to the team, for reviews only." in text
+    )
+
+
+def test_a_slot_without_effort_leaves_reasoning_effort_out() -> None:
+    preset = _with_reviewers(SONNET_MEDIUM, {**CODEX, "effort": None})
+    text = render_roles({"preset": preset, "custom": False, "current": CURRENT}) or ""
+    assert "sys_session_create with agent_id ag_codex; its default model and effort" in text
+    assert "reasoning_effort" not in text
+
+
+def test_lead_picks_carry_what_a_pick_needs_to_run(prefs: dict[str, Any]) -> None:
+    gemini = {"mode": "agent", "agent": "ag_gem", "name": "Gemini CLI", "model": "g-2"}
+    prefs["presets"] = [
+        _with_reviewers(
+            SONNET_MEDIUM,
+            CODEX,
+            gemini,
+            review_merge="separate",
+            reviewer_unavailable="ask",
+        )
+        | {"id": "three", "title": "Three"},
+        _with_reviewers(SONNET_MEDIUM, CODEX, helpers="own") | {"id": "own", "title": "Own"},
+        _with_reviewers(CODEX) | {"id": "one", "title": "One"},
+    ]
+    roles = resolve_roles(conversation(team_label(roles={"preset": "lead-picks"})), owner_store())
+    lines = (render_roles(roles) or "").split("\n")
+    assert (
+        "reviewers sonnet, medium + Codex (fresh child session: sys_session_create agent_id "
+        "ag_codex, reasoning_effort medium) + Gemini CLI (fresh child session: "
+        "sys_session_create agent_id ag_gem, model g-2); show each reviewer's list first; "
+        "ask first if one cannot start;" in lines[1]
+    )
+    assert "reviewer sonnet, medium; Codex skipped: this preset keeps work" in lines[2]
+    assert "sys_session_create" not in lines[2]
+    assert "reviewer Codex (fresh child session: sys_session_create agent_id ag_codex," in lines[3]
+    assert "never an existing one" in lines[-1]
+
+
+def test_eight_picks_with_agents_and_rules_still_fit(prefs: dict[str, Any]) -> None:
+    many = _with_reviewers(
+        SONNET_MEDIUM, CODEX, CODEX, review_merge="separate", reviewer_unavailable="ask"
+    )
+    prefs["presets"] = [many | {"id": f"p{i}", "title": f"P{i}"} for i in range(10)]
+    roles = resolve_roles(conversation(team_label(roles={"preset": "lead-picks"})), owner_store())
+    assert len((render_roles(roles) or "").split("\n")) == 11
+
+
+def _named_codex() -> dict[str, Any]:
+    return {**CODEX, "agent": "random-seeded-id", "agent_name": "codex-native-ui"}
+
+
+def test_an_agent_slot_resolves_its_live_id_by_name(
+    prefs: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prefs["presets"] = [
+        _with_reviewers(SONNET_MEDIUM, _named_codex()) | {"id": "balanced"},
+        _with_reviewers(_named_codex()) | {"id": "two", "title": "Two"},
+    ]
+    asked: list[str] = []
+
+    def lookup(name: str) -> str | None:
+        asked.append(name)
+        return "live_codex_id" if name == "codex-native-ui" else None
+
+    monkeypatch.setattr(ae_roles, "_agent_lookup", lambda store: lookup)
+    text = render_roles(resolve_roles(conversation(), owner_store())) or ""
+    assert "agent_id live_codex_id" in text
+    assert "random-seeded-id" not in text
+    assert asked == ["codex-native-ui"]
+    picks = render_roles(
+        resolve_roles(conversation(team_label(roles={"preset": "lead-picks"})), owner_store())
+    )
+    assert picks is not None
+    assert picks.count("agent_id live_codex_id") == 2
+
+
+def test_an_unknown_or_failing_name_keeps_the_stored_id(
+    prefs: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prefs["presets"] = [_with_reviewers(SONNET_MEDIUM, _named_codex()) | {"id": "balanced"}]
+    monkeypatch.setattr(ae_roles, "_agent_lookup", lambda store: lambda name: None)
+    assert "agent_id random-seeded-id" in (
+        render_roles(resolve_roles(conversation(), owner_store())) or ""
+    )
+
+    def broken(name: str) -> str | None:
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(ae_roles, "_agent_lookup", lambda store: broken)
+    assert "agent_id random-seeded-id" in (
+        render_roles(resolve_roles(conversation(), owner_store())) or ""
+    )
+    # A mock store has no agent table: the stored id stays.
+    monkeypatch.undo()
+    monkeypatch.setattr(ae_roles, "_load_prefs", lambda user: ("balanced", prefs["presets"]))
+    assert "agent_id random-seeded-id" in (
+        render_roles(resolve_roles(conversation(), owner_store())) or ""
+    )
+
+
+def test_the_shared_sanitizer_strips_line_separators() -> None:
+    from omnigent.inner import ae_reviewers, ae_text
+
+    assert ae_text.text("a\u2028b\x00c\x85d", 20) == "a b c d"
+    assert ae_text.text(None, 5) == ""
+    assert ae_roles.OWN is ae_reviewers.OWN is ae_text.OWN
+    source = Path(ae_text.__file__).read_text(encoding="utf-8")
+    assert not any(ord(ch) in (0x2028, 0x2029) for ch in source)
+    assert "\\u2028" in source

@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { ChevronDown, UsersRound } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAvailableAgents, type AvailableAgent } from "@/hooks/useAvailableAgents";
@@ -38,6 +38,12 @@ import {
   aeSessionsLockedHint,
 } from "@/lib/aeTeamPresets";
 import { aeAnnouncePresetLead, aeSwitchPresetLead } from "@/lib/aeLeadModelChat";
+import {
+  aeReviewerAgents,
+  aeReviewerMemberNote,
+  aeReviewerNumberOf,
+  aeReviewerNumbers,
+} from "@/lib/aeReviewers";
 import { AeSessionPresetRow } from "./AeSessionPresetRow";
 import { AeSessionPresetPill } from "./composer/AeSessionPresetPill";
 import { Button } from "./ui/button";
@@ -56,12 +62,14 @@ function MemberChoice({
   member,
   disabled,
   onChange,
+  reviewerNote = null,
 }: {
   option: AeTeamOption;
   host: Host | null;
   member: AeTeamMember | undefined;
   disabled: boolean;
   onChange: (member: AeTeamMember | null) => void;
+  reviewerNote?: string | null;
 }) {
   const { agent, name, readiness, recommendation } = option;
   const descriptionId = useId();
@@ -95,7 +103,8 @@ function MemberChoice({
         <span className="min-w-0 flex-1 break-words text-sm font-medium">{name}</span>
       </label>
       <div id={descriptionId} className="ml-7 space-y-1 text-xs text-muted-foreground">
-        {recommendation && <p className="mt-1 text-primary">{recommendation}</p>}
+        {reviewerNote && <p className="mt-1 text-primary">{reviewerNote}</p>}
+        {recommendation && !reviewerNote && <p className="mt-1 text-primary">{recommendation}</p>}
         {agent.description && <p className="mt-1 line-clamp-2 break-words">{agent.description}</p>}
         {readiness.explanation && (
           <p className="mt-1">
@@ -147,24 +156,30 @@ export function AeTeamEditor({
   agents,
   host,
   lead,
+  options: givenOptions,
   disabled: disabledProp = false,
   lockedHint = null,
+  reviewerNumbers,
 }: {
   draft: AeTeam;
   onChange: (draft: AeTeam) => void;
   agents: AvailableAgent[];
   host: Host | null;
   lead?: AeTeamLead;
+  /** The options for `agents`, when the caller already computed them for its own lists. */
+  options?: AeTeamOption[];
   disabled?: boolean;
   /** Set when the preset keeps work in house: the list greys out with this line. */
   lockedHint?: string | null;
+  /** Agent id to its reviewer number in the chosen preset, for the "Already Reviewer n" note. */
+  reviewerNumbers?: ReadonlyMap<string, number>;
 }) {
   const disabled = disabledProp || !!lockedHint;
   const [showSetup, setShowSetup] = useState(false);
   const [showOther, setShowOther] = useState(false);
   const setupId = useId();
   const otherId = useId();
-  const options = aeTeamOptions(agents, host, lead);
+  const options = givenOptions ?? aeTeamOptions(agents, host, lead);
   const visible = options.filter(
     ({ agent, readiness, primary }) =>
       (readiness.selectable && primary) || draft.members.some((m) => m.agentId === agent.id),
@@ -183,6 +198,7 @@ export function AeTeamEditor({
         option={option}
         host={host}
         member={member}
+        reviewerNote={aeReviewerMemberNote(aeReviewerNumberOf(reviewerNumbers, option.agent))}
         disabled={disabled || (!member && draft.members.length >= AE_TEAM_LIMIT)}
         onChange={(next) =>
           onChange({
@@ -379,17 +395,29 @@ export function AeTeamControl({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const saved = readAeTeam(session.labels);
+  const choice = rolesState ? aeResolveSessionPreset(draft.roles ?? null, rolesState) : null;
   const {
     data: agents = [],
     isLoading,
     isError,
   } = useAvailableAgents({
     enabled: open,
-    pinnedAgentIds: [session.agentId, ...saved.members.map((member) => member.agentId)],
+    pinnedAgentIds: [
+      session.agentId,
+      ...saved.members.map((member) => member.agentId),
+      // The agents the shown preset's reviewers name, so none reads "Not found" when deduped.
+      ...(choice?.kind === "preset"
+        ? aeReviewerAgents(choice.preset.roles.reviewer).map((r) => r.slot.agent)
+        : []),
+    ],
   });
-  const { data: hosts = [] } = useHosts({ enabled: open, includeSandbox: true });
+  const { data: hosts = [], isSuccess: hostsLoaded } = useHosts({
+    enabled: open,
+    includeSandbox: true,
+  });
   const host = hosts.find((h) => h.host_id === session.hostId) ?? null;
-  const choice = rolesState ? aeResolveSessionPreset(draft.roles ?? null, rolesState) : null;
+  // One options list for the reviewer rows and the sessions list below.
+  const options = useMemo(() => aeTeamOptions(agents, host, session), [agents, host, session]);
   // A label still saved as Solo stays locked until the user picks something else here.
   const locked = aeSessionsLocked(choice, aeIsLegacySolo(session.labels) && !rolesTouched);
   // Sessions kept while the preset keeps work in house are not checked for readiness.
@@ -504,6 +532,11 @@ export function AeTeamControl({
             </Button>
           </div>
           <AeSessionPresetRow
+            reviewerAgents={{
+              options,
+              host,
+              loaded: !isLoading && !isError && hostsLoaded,
+            }}
             value={draft.roles ?? null}
             onChange={(roles) => {
               setRolesTouched(true);
@@ -522,10 +555,12 @@ export function AeTeamControl({
             draft={draft}
             onChange={setDraft}
             agents={agents}
+            options={options}
             host={host}
             lead={session}
             disabled={saving || disabled}
             lockedHint={locked ? aeSessionsLockedHint(choice) : null}
+            reviewerNumbers={aeReviewerNumbers(choice)}
           />
           <p className="text-xs text-muted-foreground">
             Applies to your next message. Work already running can finish.

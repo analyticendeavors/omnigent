@@ -2,7 +2,13 @@
 // a segmented choice and a 0..n stepper.
 
 import { HomeIcon, MinusIcon, PlusIcon } from "lucide-react";
-import { AE_ROLE_COLOR_CLASSES, type AeRoleColor } from "@/lib/aeRoles";
+import { aeClaudeEffortLabel } from "@/lib/aeEffortDefault";
+import {
+  AE_ROLE_COLOR_CLASSES,
+  AE_ROLE_EFFORTS,
+  type AeRoleColor,
+  type AeRoleEffort,
+} from "@/lib/aeRoles";
 import { AeProjectIconGlyph, aeTablerValue } from "@/lib/aeTablerIcon";
 import { cn } from "@/lib/utils";
 
@@ -163,6 +169,62 @@ export function AeStepper({
       >
         <PlusIcon className="size-3" />
       </button>
+    </div>
+  );
+}
+
+/** Five effort bars, Low to Max, as a radio group. */
+export function AeEffortBar({
+  role,
+  effort,
+  onChange,
+  disabled,
+}: {
+  role: string;
+  effort: AeRoleEffort;
+  onChange: (effort: AeRoleEffort) => void;
+  disabled: boolean;
+}) {
+  const level = AE_ROLE_EFFORTS.indexOf(effort);
+  return (
+    <div className="flex items-center gap-2">
+      <div
+        role="radiogroup"
+        aria-label={`${role} effort`}
+        className="flex gap-0.5"
+        onKeyDown={(e) => {
+          const step =
+            e.key === "ArrowRight" || e.key === "ArrowUp"
+              ? 1
+              : e.key === "ArrowLeft" || e.key === "ArrowDown"
+                ? -1
+                : 0;
+          if (!step) return;
+          e.preventDefault();
+          if (disabled) return;
+          const next = Math.max(0, Math.min(AE_ROLE_EFFORTS.length - 1, level + step));
+          onChange(AE_ROLE_EFFORTS[next]);
+          e.currentTarget.querySelectorAll<HTMLButtonElement>("[role=radio]")[next]?.focus();
+        }}
+      >
+        {AE_ROLE_EFFORTS.map((value, i) => (
+          <button
+            key={value}
+            type="button"
+            role="radio"
+            aria-checked={value === effort}
+            disabled={disabled}
+            aria-label={aeClaudeEffortLabel(value) ?? value}
+            tabIndex={value === effort ? 0 : -1}
+            onClick={() => onChange(value)}
+            className={cn(
+              "h-4 w-2 rounded-[2px] focus-visible:outline-2 focus-visible:outline-ring",
+              i <= level ? "bg-teal-400" : "bg-muted-foreground/25 hover:bg-muted-foreground/40",
+            )}
+          />
+        ))}
+      </div>
+      <span className="w-10 text-xs text-muted-foreground">{aeClaudeEffortLabel(effort)}</span>
     </div>
   );
 }

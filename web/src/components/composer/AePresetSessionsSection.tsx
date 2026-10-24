@@ -11,6 +11,7 @@ import { useHosts } from "@/hooks/useHosts";
 import { useSession } from "@/hooks/useSession";
 import { AE_TEAM_LIMIT, type AeTeamMember } from "@/lib/aeTeam";
 import { AE_WORKING_HINT } from "@/lib/aeTeamPresets";
+import { aeReviewerMemberTag, aeReviewerNumberOf } from "@/lib/aeReviewers";
 import { aeTeamOptions } from "@/lib/aeTeamOptions";
 import { cn } from "@/lib/utils";
 
@@ -72,6 +73,7 @@ export function AePresetSessionsSection({
   pending = false,
   onToggle,
   onNewSession,
+  reviewerNumbers,
 }: {
   sessionId: string;
   members: AeTeamMember[];
@@ -86,6 +88,8 @@ export function AePresetSessionsSection({
   pending?: boolean;
   onToggle: (member: AeTeamMember, on: boolean) => void;
   onNewSession: () => void;
+  /** Agent id to its reviewer number in the chosen preset. */
+  reviewerNumbers?: ReadonlyMap<string, number>;
 }) {
   const { session } = useSession(sessionId);
   const { data: agents = [] } = useAvailableAgents({
@@ -134,7 +138,10 @@ export function AePresetSessionsSection({
           <SessionRow
             key={`offer-${option.agent.id}`}
             title={option.name}
-            detail={compact ? "New session" : "New session · agent default model"}
+            detail={
+              aeReviewerMemberTag(aeReviewerNumberOf(reviewerNumbers, option.agent)) ??
+              (compact ? "New session" : "New session · agent default model")
+            }
             checked={false}
             disabled={frozen || full}
             onToggle={() =>

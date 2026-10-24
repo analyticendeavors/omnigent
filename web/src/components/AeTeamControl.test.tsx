@@ -538,6 +538,45 @@ describe("roles preset per session", () => {
     mocks.roles.mockReturnValue({ data: ROLES });
   });
 
+  it("pins the reviewer agents a preset names and finds one by its registered name", () => {
+    // Stored under an id this install does not have; the live Codex row has another id.
+    const reviewerSlot = {
+      mode: "agent" as const,
+      agent: "seeded-elsewhere",
+      agent_name: codex.name,
+      name: "Codex",
+      model: null,
+      effort: null,
+    };
+    const withReviewers = {
+      ...preset("balanced", "Balanced"),
+      roles: {
+        ...preset("balanced", "Balanced").roles,
+        reviewer: {
+          mode: "multi" as const,
+          reviewers: [
+            { mode: "fixed" as const, model: "test-model", effort: "medium" as const },
+            reviewerSlot,
+          ],
+        },
+      },
+    };
+    mocks.roles.mockReturnValue({
+      data: { ...ROLES, presets: [withReviewers, ROLES.presets[0], ROLES.presets[2]] },
+    });
+    mount();
+    openPicker();
+    const last = mocks.agents.mock.calls.at(-1)?.[0] as { pinnedAgentIds: string[] };
+    expect(last.pinnedAgentIds).toContain("seeded-elsewhere");
+    expect(screen.queryByTestId("ae-reviewer-tag-2")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Already Reviewer 2 in this preset. A review always starts a fresh session, never this one.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Add it here only/)).not.toBeInTheDocument();
+  });
+
   it("saves the chosen preset into the label and writes nothing for the default", async () => {
     mount();
     openPicker();

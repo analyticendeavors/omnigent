@@ -13,12 +13,18 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useAePresetHotkey, useAeSessionPreset } from "@/hooks/useAeSessionPreset";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
-import { AE_PRESET_SHORTCUTS, AE_RESERVED_PRESET_ID, type AeRolePreset } from "@/lib/aeRoles";
+import {
+  AE_PRESET_SHORTCUTS,
+  AE_RESERVED_PRESET_ID,
+  type AeRolePreset,
+  aeRoleSummary,
+} from "@/lib/aeRoles";
 import { aeChoiceId, aeReadRecentPresets } from "@/lib/aeSessionRoles";
 import { useNavigate } from "@/lib/routing";
 import { cn } from "@/lib/utils";
 import { aeSessionsLockedHint } from "@/lib/aeTeamPresets";
 import { AeRolePresetTile } from "@/pages/settings/AeRolesControls";
+import { aeReviewerNumbers } from "@/lib/aeReviewers";
 import { AePresetSessionsSection } from "./AePresetSessionsSection";
 
 function Row({
@@ -41,6 +47,7 @@ function Row({
       type="button"
       role="menuitemradio"
       aria-checked={active}
+      title={aeRoleSummary(preset.roles)}
       onClick={onPick}
       className={cn(
         "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-muted",
@@ -297,6 +304,7 @@ export function AeSessionPresetPill({
             pending={pending}
             onToggle={(member, on) => void setMember(member, on)}
             onNewSession={openTeam}
+            reviewerNumbers={aeReviewerNumbers(choice)}
           />
         )}
       </div>

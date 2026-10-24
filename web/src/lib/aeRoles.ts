@@ -5,14 +5,31 @@
 // shapes, the parser for the server's answer and the pure edits Settings >
 // Roles makes before it saves the whole list.
 
-import { aeClaudeVersion, aeClaudeVersionLabel } from "@/lib/aeClaudeModels";
+import { aeClaudeVersion } from "@/lib/aeClaudeModels";
+import {
+  AE_ROLE_EFFORTS,
+  type AeRoleEffort,
+  type AeRoleSetting,
+  aeModelLabel,
+} from "@/lib/aeRoleBase";
+import {
+  type AeReviewerSetting,
+  type AeReviewerUnavailable,
+  type AeReviewMerge,
+  aeParseReviewerMulti,
+  aeReviewerList,
+  aeReviewerRowLabel,
+  aeReviewerSummary,
+  aeReviewerUnavailableOf,
+  aeReviewMergeOf,
+} from "@/lib/aeReviewers";
 import { comparableModelId } from "@/lib/codexNativeModels";
 
 export const AE_ROLE_IDS = ["lead", "planner", "reviewer", "builder", "helper"] as const;
 export type AeRoleId = (typeof AE_ROLE_IDS)[number];
 
-export const AE_ROLE_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
-export type AeRoleEffort = (typeof AE_ROLE_EFFORTS)[number];
+export { AE_ROLE_EFFORTS, aeModelLabel };
+export type { AeRoleEffort, AeRoleSetting };
 
 export const AE_ROLE_COLORS = [
   "green",
@@ -89,10 +106,10 @@ export const AE_PRESET_TITLE_MAX = 40;
 export const AE_PRESET_DESCRIPTION_MAX = 120;
 export const AE_PRESET_WHEN_MAX = 400;
 
-export type AeRoleSetting =
-  { mode: "auto" } | { mode: "session" } | { mode: "fixed"; model: string; effort: AeRoleEffort };
-
-export type AeRoleTable = Record<AeRoleId, AeRoleSetting>;
+/** The Reviewer role may hold one to three reviewers (aeReviewers.ts). */
+export type AeRoleTable = {
+  [K in AeRoleId]: K extends "reviewer" ? AeReviewerSetting : AeRoleSetting;
+};
 
 export interface AeRoleRules {
   raise_or_lower: AeRaiseMode;
@@ -100,6 +117,10 @@ export interface AeRoleRules {
   auto_raises: number;
   /** Absent on presets saved before the rule existed; read it with `aeHelpersOf`. */
   helpers?: AeHelpers;
+  /** With two or more reviewers; absent reads as "merged" (aeReviewMergeOf). */
+  review_merge?: AeReviewMerge;
+  /** With two or more reviewers; absent reads as "run_rest" (aeReviewerUnavailableOf). */
+  reviewer_unavailable?: AeReviewerUnavailable;
 }
 
 export interface AeRolePreset {
@@ -162,11 +183,6 @@ export function aeModelDotClass(model: string): string {
   return (family && FAMILY_DOTS[family]) || "bg-muted-foreground";
 }
 
-/** "claude-opus-5-5" -> "Opus 5.5"; an id it cannot read stays as is. */
-export function aeModelLabel(model: string): string {
-  return aeClaudeVersionLabel(model) ?? model;
-}
-
 // ---------------------------------------------------------------------------
 // Parsing the server's answer
 
@@ -199,6 +215,16 @@ function parsePreset(value: unknown): AeRolePreset | null {
   if (!isObject(roles) || !isObject(rules)) return null;
   const table = {} as AeRoleTable;
   for (const role of AE_ROLE_IDS) {
+    if (role === "reviewer") {
+      // Only the lead may use the session model (the server refuses it here), so a
+      // stored session reviewer is not a preset this client reads or rewrites as Auto.
+      const plain = parseSetting(roles.reviewer);
+      const setting =
+        plain?.mode === "session" ? null : (plain ?? aeParseReviewerMulti(roles.reviewer));
+      if (!setting) return null;
+      table.reviewer = setting;
+      continue;
+    }
     const setting = parseSetting(roles[role]);
     if (!setting) return null;
     table[role] = setting;
@@ -221,6 +247,12 @@ function parsePreset(value: unknown): AeRolePreset | null {
       auto_raises: Math.max(0, Math.min(AE_AUTO_RAISES_MAX, Math.round(auto_raises))),
       // Kept only when stored, so a preset saved before the rule round-trips unchanged.
       ...(rules.helpers === "own" || rules.helpers === "any" ? { helpers: rules.helpers } : {}),
+      ...(rules.review_merge === "merged" || rules.review_merge === "separate"
+        ? { review_merge: rules.review_merge }
+        : {}),
+      ...(rules.reviewer_unavailable === "run_rest" || rules.reviewer_unavailable === "ask"
+        ? { reviewer_unavailable: rules.reviewer_unavailable }
+        : {}),
     },
   };
 }
@@ -345,9 +377,16 @@ export function aeRestoreStarters<T extends AeRolesDoc>(
 }
 
 export function structuredCopy(preset: AeRolePreset): AeRolePreset {
+  const { reviewer } = preset.roles;
   return {
     ...preset,
-    roles: { ...preset.roles },
+    roles: {
+      ...preset.roles,
+      reviewer:
+        reviewer.mode === "multi"
+          ? { mode: "multi", reviewers: reviewer.reviewers.map((slot) => ({ ...slot })) }
+          : reviewer,
+    },
     rules: { ...preset.rules },
   };
 }
@@ -362,7 +401,9 @@ export function aeSameRoles(
     a.rules.raise_or_lower === b.rules.raise_or_lower &&
     a.rules.lead_steps_down === b.rules.lead_steps_down &&
     a.rules.auto_raises === b.rules.auto_raises &&
-    aeHelpersOf(a.rules) === aeHelpersOf(b.rules)
+    aeHelpersOf(a.rules) === aeHelpersOf(b.rules) &&
+    aeReviewMergeOf(a.rules) === aeReviewMergeOf(b.rules) &&
+    aeReviewerUnavailableOf(a.rules) === aeReviewerUnavailableOf(b.rules)
   );
 }
 
@@ -400,7 +441,10 @@ export function aeTopModel(models: readonly string[]): string | null {
  * the host's model ids; with none loaded, the preset's own models stand in.
  */
 export function aeIsTopTierEverywhere(roles: AeRoleTable, catalog: readonly string[]): boolean {
-  const settings = AE_ROLE_IDS.map((role) => roles[role]);
+  // Agent reviewers run on another provider's models, so only Claude slots count.
+  const settings = AE_ROLE_IDS.flatMap((role): (AeRoleSetting | { mode: "agent" })[] =>
+    role === "reviewer" ? aeReviewerList(roles.reviewer) : [roles[role]],
+  ).filter((s) => s.mode !== "agent");
   if (!settings.every((s) => s.mode === "fixed" && s.effort === "max")) return false;
   const models = settings.map((s) => (s.mode === "fixed" ? s.model : ""));
   const top = aeTopModel(catalog.length > 0 ? catalog : models);
@@ -413,6 +457,10 @@ export function aeIsTopTierEverywhere(roles: AeRoleTable, catalog: readonly stri
 export function aeRoleSummary(roles: AeRoleTable): string {
   const parts: string[] = [];
   for (const role of AE_ROLE_IDS) {
+    if (role === "reviewer") {
+      parts.push(`${aeReviewerRowLabel(roles.reviewer)} ${aeReviewerSummary(roles.reviewer)}`);
+      continue;
+    }
     const setting = roles[role];
     const value =
       setting.mode === "fixed"

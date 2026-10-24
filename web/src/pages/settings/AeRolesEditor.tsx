@@ -5,12 +5,11 @@
 import { AlertTriangleIcon, CopyIcon, PencilIcon, Trash2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { AeRoleModelChoice } from "@/hooks/useAeRoleModels";
-import { aeClaudeCodeDefaultEffort, aeClaudeEffortLabel } from "@/lib/aeEffortDefault";
+import { aeClaudeCodeDefaultEffort } from "@/lib/aeEffortDefault";
 import {
   AE_AUTO_RAISES_MAX,
   AE_COMING_LATER,
   AE_HELPERS_OPTIONS,
-  AE_ROLE_EFFORTS,
   AE_ROLE_IDS,
   AE_ROLE_LABELS,
   type AeRaiseMode,
@@ -26,7 +25,8 @@ import {
 } from "@/lib/aeRoles";
 import { comparableModelId } from "@/lib/codexNativeModels";
 import { cn } from "@/lib/utils";
-import { AeRolePresetTile, AeSegmented, AeStepper } from "./AeRolesControls";
+import { AeEffortBar, AeRolePresetTile, AeSegmented, AeStepper } from "./AeRolesControls";
+import { AeReviewerRows, AeReviewSettings } from "./AeReviewerRows";
 
 export type { AeRoleModelChoice } from "@/hooks/useAeRoleModels";
 
@@ -48,61 +48,6 @@ const ON_OFF = [
   { value: "off", label: "Off" },
   { value: "on", label: "On" },
 ] as const;
-
-function EffortBar({
-  role,
-  effort,
-  onChange,
-  disabled,
-}: {
-  role: string;
-  effort: AeRoleEffort;
-  onChange: (effort: AeRoleEffort) => void;
-  disabled: boolean;
-}) {
-  const level = AE_ROLE_EFFORTS.indexOf(effort);
-  return (
-    <div className="flex items-center gap-2">
-      <div
-        role="radiogroup"
-        aria-label={`${role} effort`}
-        className="flex gap-0.5"
-        onKeyDown={(e) => {
-          const step =
-            e.key === "ArrowRight" || e.key === "ArrowUp"
-              ? 1
-              : e.key === "ArrowLeft" || e.key === "ArrowDown"
-                ? -1
-                : 0;
-          if (!step) return;
-          e.preventDefault();
-          if (disabled) return;
-          const next = Math.max(0, Math.min(AE_ROLE_EFFORTS.length - 1, level + step));
-          onChange(AE_ROLE_EFFORTS[next]);
-          e.currentTarget.querySelectorAll<HTMLButtonElement>("[role=radio]")[next]?.focus();
-        }}
-      >
-        {AE_ROLE_EFFORTS.map((value, i) => (
-          <button
-            key={value}
-            type="button"
-            role="radio"
-            aria-checked={value === effort}
-            disabled={disabled}
-            aria-label={aeClaudeEffortLabel(value) ?? value}
-            tabIndex={value === effort ? 0 : -1}
-            onClick={() => onChange(value)}
-            className={cn(
-              "h-4 w-2 rounded-[2px] focus-visible:outline-2 focus-visible:outline-ring",
-              i <= level ? "bg-teal-400" : "bg-muted-foreground/25 hover:bg-muted-foreground/40",
-            )}
-          />
-        ))}
-      </div>
-      <span className="w-10 text-xs text-muted-foreground">{aeClaudeEffortLabel(effort)}</span>
-    </div>
-  );
-}
 
 export function AeRoleRow({
   role,
@@ -139,7 +84,7 @@ export function AeRoleRow({
   return (
     <div
       data-testid={`ae-role-row-${role}`}
-      className="grid grid-cols-[5.5rem_1fr] items-center gap-x-3 gap-y-2 border-t border-border py-2.5 sm:grid-cols-[7rem_minmax(0,14rem)_1fr]"
+      className="grid grid-cols-[5.5rem_1fr] items-center gap-x-3 gap-y-2 border-t border-border py-2.5 @lg/roles:grid-cols-[7rem_minmax(0,14rem)_1fr]"
     >
       <div className="min-w-0">
         <div className="text-sm font-semibold">{label}</div>
@@ -176,9 +121,9 @@ export function AeRoleRow({
           ))}
         </select>
       </label>
-      <div className="col-start-2 sm:col-start-3">
+      <div className="col-start-2 @lg/roles:col-start-3">
         {fixed ? (
-          <EffortBar
+          <AeEffortBar
             role={label}
             effort={fixed.effort}
             onChange={(effort) => onChange({ ...fixed, effort })}
@@ -265,7 +210,7 @@ export function AeRolesEditor({
   onDuplicate: () => void;
   onDelete: () => void;
 }) {
-  const setRole = (role: AeRoleId, setting: AeRoleSetting) =>
+  const setRole = (role: Exclude<AeRoleId, "reviewer">, setting: AeRoleSetting) =>
     onChange({ ...draft, roles: { ...draft.roles, [role]: setting } });
   const setRules = (rules: Partial<AeRoleRules>) =>
     onChange({ ...draft, rules: { ...draft.rules, ...rules } });
@@ -326,19 +271,35 @@ export function AeRolesEditor({
         </div>
       </div>
 
-      <div role="group" aria-label="Roles">
-        {AE_ROLE_IDS.map((role) => (
-          <AeRoleRow
-            key={role}
-            role={role}
-            setting={draft.roles[role]}
-            models={models}
-            onChange={(setting) => setRole(role, setting)}
-            disabled={saving}
-          />
-        ))}
+      <div role="group" aria-label="Roles" className="@container/roles">
+        {AE_ROLE_IDS.map((role) =>
+          role === "reviewer" ? (
+            <AeReviewerRows
+              key={role}
+              setting={draft.roles.reviewer}
+              models={models}
+              onChange={(reviewer) => onChange({ ...draft, roles: { ...draft.roles, reviewer } })}
+              disabled={saving}
+            />
+          ) : (
+            <AeRoleRow
+              key={role}
+              role={role}
+              setting={draft.roles[role]}
+              models={models}
+              onChange={(setting) => setRole(role, setting)}
+              disabled={saving}
+            />
+          ),
+        )}
       </div>
       {catalogNote && <p className="pt-1 text-xs text-muted-foreground">{catalogNote}</p>}
+      <AeReviewSettings
+        reviewer={draft.roles.reviewer}
+        rules={draft.rules}
+        onChange={setRules}
+        disabled={saving}
+      />
 
       <div className="mt-3 border-t border-border pt-3">
         <h3 className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">

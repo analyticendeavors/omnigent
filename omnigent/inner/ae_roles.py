@@ -36,16 +36,23 @@ Only a Claude lead hears about Claude's Agent tool and tier aliases. A role
 fixed to a model id shows the tier alias only when the id is the current one for
 that tier (``current``, from the omnigent-ae package), since a bare alias
 resolves to the newest version.
+
+Reviewers (2026-10-24): a preset may name up to three reviewers; their lines
+come from :mod:`omnigent.inner.ae_reviewers`.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import re
 from typing import TYPE_CHECKING, Any
 
+from omnigent.inner import ae_reviewers, ae_text
+from omnigent.inner.ae_text import OWN
+
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from omnigent.entities.conversation import Conversation
     from omnigent.stores.conversation_store import ConversationStore
 
@@ -61,7 +68,6 @@ _LABEL_MAX = 16_384
 FORK_SOURCE_LABEL = "omnigent.fork.source_id"
 _ONE_M = "[1m]"
 _ALIASES = ("fable", "opus", "sonnet", "haiku")
-_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]+")
 
 _ROLE_LABELS = {
     "lead": "Lead",
@@ -98,7 +104,6 @@ BALANCED: dict[str, Any] = {
     },
 }
 SOLO = "solo"
-OWN = "own"
 HELPER_KEY = "ae_helper"
 HELPER_NOTICE = (
     "You are a helper session started by a lead session. Do the task you were given and "
@@ -216,6 +221,7 @@ def resolve_roles(conv: Conversation, store: ConversationStore) -> dict[str, Any
     """
     roles = _resolve_roles(conv, store)
     roles = _own_helpers(roles) if _legacy_solo(conv) else roles
+    roles = ae_reviewers.resolve_agents(roles, _agent_lookup(store))
     return {**roles, "current": _current_ids()}
 
 
@@ -254,6 +260,36 @@ def _resolve_roles(conv: Conversation, store: ConversationStore) -> dict[str, An
             return {"preset": preset, "custom": False}
     fallback = by_id.get(default_id) or presets[0]
     return {"preset": _summary(fallback), "custom": False}
+
+
+def _agent_lookup(store: ConversationStore) -> Callable[[str], str | None]:
+    """A function that finds a registered agent's live id by name (``None`` when unknown).
+
+    A built-in agent seeded before the id scheme keeps a random id, so a reviewer slot
+    stores the agent's name too. Reads the agent row the way ``list_conversations``
+    resolves ``agent_name``; a store without a database answers ``None``.
+    """
+
+    def lookup(name: str) -> str | None:
+        sql_store: Any = store
+        if not callable(getattr(sql_store, "_session", None)):
+            return None
+        from sqlalchemy import select
+
+        from omnigent.db.db_models import SqlAgent, current_workspace_id
+        from omnigent.db.enum_codecs import encode_agent_kind
+
+        with sql_store._session("ae_agent_by_name") as session:
+            row = session.execute(
+                select(SqlAgent.id).where(
+                    SqlAgent.workspace_id == current_workspace_id(),
+                    SqlAgent.name == name,
+                    SqlAgent.kind == encode_agent_kind("server"),
+                )
+            ).scalar_one_or_none()
+        return str(row) if row else None
+
+    return lookup
 
 
 def _is_child(conv: Conversation) -> bool:
@@ -368,8 +404,7 @@ def solo_opening(metadata: object) -> str:
     return f'This session\'s preset ("{title}") keeps work in house'
 
 
-def _text(value: object, limit: int) -> str:
-    return _CONTROL.sub(" ", str(value or "")).strip()[:limit]
+_text = ae_text.text
 
 
 def _comparable(model: str) -> str:
@@ -504,7 +539,11 @@ def render_roles(roles: object) -> str | None:
         for preset in presets[:LEAD_PICKS_SHOWN]:
             setting = preset.get("roles") if isinstance(preset.get("roles"), dict) else {}
             parts = [
-                f"{role} {_model(setting.get(role), current)}"
+                ae_reviewers.reviewers_short(
+                    setting.get(role), preset.get("rules"), current, _model
+                )
+                if role == "reviewer"
+                else f"{role} {_model(setting.get(role), current)}"
                 for role in ROLES
                 if role != "lead"
                 or not isinstance(setting.get(role), dict)
@@ -518,6 +557,11 @@ def render_roles(roles: object) -> str | None:
         more = roles.get("more")
         if isinstance(more, int) and not isinstance(more, bool) and more > 0:
             lines.append(f"({more} more presets are not shown.)")
+        if any(
+            isinstance(p.get("roles"), dict) and ae_reviewers.explained(p["roles"].get("reviewer"))
+            for p in presets[:LEAD_PICKS_SHOWN]
+        ):
+            lines.append(ae_reviewers.MANY_PICKS)
         return "\n".join(lines)
     preset = roles.get("preset")
     if not isinstance(preset, dict):
@@ -532,6 +576,11 @@ def render_roles(roles: object) -> str | None:
     ]
     lines.append(_lead_line(setting.get("lead"), roles.get("lead_session"), current))
     for role in ROLES[1:]:
+        if role == "reviewer":
+            lines += ae_reviewers.reviewer_lines(
+                setting.get(role), preset.get("rules"), current, _model
+            )
+            continue
         lines.append(f"- {_ROLE_LABELS[role]}: {_model(setting.get(role), current)}.")
     lines.append(_rules(preset.get("rules")))
     return "\n".join(lines)

@@ -29,6 +29,7 @@ import {
   aePresetId,
   aeRoleSummary,
   aeSameRoles,
+  structuredCopy,
 } from "@/lib/aeRoles";
 import {
   type AeSessionRoles,
@@ -39,6 +40,9 @@ import {
 import { cn } from "@/lib/utils";
 import { AeRolePresetTile, AeSegmented } from "@/pages/settings/AeRolesControls";
 import { AeRoleRow } from "@/pages/settings/AeRolesEditor";
+import { AeReviewerRowsView, AeReviewSettings } from "@/pages/settings/AeReviewerRows";
+import type { AeReviewerAgents } from "@/hooks/useAeReviewerAgents";
+import { aeReviewsCard } from "@/lib/aeReviewers";
 
 const chipClass = (on: boolean) =>
   cn(
@@ -50,10 +54,13 @@ export function AeSessionPresetRow({
   value,
   onChange,
   disabled = false,
+  reviewerAgents,
 }: {
   value: AeSessionRoles | null;
   onChange: (roles: AeSessionRoles | null) => void;
   disabled?: boolean;
+  /** The agents and host the dialog already loaded, for reviewer slots and the Reviews card. */
+  reviewerAgents: AeReviewerAgents;
 }) {
   const { data: state } = useAeRoles();
   const save = useAeRolesSave();
@@ -88,6 +95,7 @@ export function AeSessionPresetRow({
     if (shown) setRoles(shown.roles, { ...shown.rules, helpers });
   };
   const helpers = shown ? aeHelpersOf(shown.rules) : null;
+  const reviews = shown ? aeReviewsCard(shown, base, reviewerAgents) : null;
   const helpersChanged = !!shown && !!base && helpers !== aeHelpersOf(base.rules);
   const saveAsPreset = async (title: string) => {
     if (!shown || !base || saving) return;
@@ -107,7 +115,7 @@ export function AeSessionPresetRow({
       description: "",
       when_to_use: "",
       pinned: false,
-      roles: { ...shown.roles },
+      roles: structuredCopy(shown).roles,
       rules: { ...shown.rules },
     };
     setSaving(true);
@@ -222,18 +230,70 @@ export function AeSessionPresetRow({
           )}
         </div>
       )}
+      {shown && reviews && (
+        <div
+          data-testid="ae-session-reviews"
+          className={cn(
+            "flex items-center justify-between gap-2 rounded-lg p-2",
+            reviews.warning ? "border border-amber-500/40 bg-amber-500/10" : "bg-muted/50",
+          )}
+        >
+          <div className="min-w-0 text-xs">
+            <p className="font-medium">{reviews.title}</p>
+            <p
+              className={
+                reviews.warning ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"
+              }
+            >
+              {reviews.text}
+            </p>
+          </div>
+          {!customizing && (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => setCustomizing(true)}
+              className="shrink-0 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40"
+            >
+              Change
+            </button>
+          )}
+        </div>
+      )}
       {customizing && shown && (
-        <div role="group" aria-label="Roles for this session" className="border-t pt-1">
-          {AE_ROLE_IDS.map((role) => (
-            <AeRoleRow
-              key={role}
-              role={role}
-              setting={shown.roles[role]}
-              models={models}
-              disabled={disabled || saving}
-              onChange={(setting) => setRoles({ ...shown.roles, [role]: setting })}
-            />
-          ))}
+        <div
+          role="group"
+          aria-label="Roles for this session"
+          className="@container/roles border-t pt-1"
+        >
+          {AE_ROLE_IDS.map((role) =>
+            role === "reviewer" ? (
+              <AeReviewerRowsView
+                key={role}
+                setting={shown.roles.reviewer}
+                models={models}
+                agents={reviewerAgents}
+                disabled={disabled || saving}
+                onChange={(reviewer) => setRoles({ ...shown.roles, reviewer })}
+              />
+            ) : (
+              <AeRoleRow
+                key={role}
+                role={role}
+                setting={shown.roles[role]}
+                models={models}
+                disabled={disabled || saving}
+                onChange={(setting) => setRoles({ ...shown.roles, [role]: setting })}
+              />
+            ),
+          )}
+          <AeReviewSettings
+            reviewer={shown.roles.reviewer}
+            rules={shown.rules}
+            onChange={(rules) => setRoles(shown.roles, { ...shown.rules, ...rules })}
+            disabled={disabled || saving}
+            title="Reviews in this chat"
+          />
           <p className="pt-1 text-xs text-muted-foreground">For this session only.</p>
         </div>
       )}
