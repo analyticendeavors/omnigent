@@ -1,6 +1,6 @@
 // Grouping > Family as tree rows (omnigent-ae, 2026-10-24): a "Families"
 // section first, each family's lead as the parent row with its sessions
-// indented under it on a line in the family's color, then "Not in a family"
+// indented under it on a line in the family's color, then "Standalone"
 // with every other session in the current sort. A lead's count pill folds its
 // family; the folds are remembered per device. The families themselves:
 // `aeFamily.ts`; the rows that draw this: `shell/AeFamilyTree.tsx`.
@@ -10,7 +10,7 @@ import type { Conversation } from "@/hooks/useConversations";
 import { AE_FORK_SOURCE_KEY, type AeFamilies, type AeFamily, aeOrchParent } from "@/lib/aeFamily";
 
 export const AE_FAMILIES_SECTION = "Families";
-export const AE_FAMILY_REST_SECTION = "Not in a family";
+export const AE_FAMILY_REST_SECTION = "Standalone";
 export const AE_FAMILY_SECTIONS = [AE_FAMILIES_SECTION, AE_FAMILY_REST_SECTION] as const;
 export const AE_FAMILIES_HINT =
   "No families yet. When a session starts another, both show here as a family.";

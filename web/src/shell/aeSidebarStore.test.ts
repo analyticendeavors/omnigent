@@ -527,7 +527,7 @@ describe("useAePublishSidebarScopes in the family tree", () => {
       ["a1", "Families"],
       ["ghost", "Families"],
       ["g1", "Families"],
-      ["plain", "Not in a family"],
+      ["plain", "Standalone"],
     ]);
     const family = (root: string) => ({ family: { root } });
     const aeTree = {
@@ -557,7 +557,7 @@ describe("useAePublishSidebarScopes in the family tree", () => {
     expect([...lists]).toEqual([
       ["family:a", ["a", "a1"]],
       ["family:ghost", ["g1"]],
-      ["group:Not in a family", ["plain"]],
+      ["group:Standalone", ["plain"]],
     ]);
     expect(listOf.has("ghost")).toBe(false);
     // A drop in another family has no list to land on, so nothing collides or snaps back.

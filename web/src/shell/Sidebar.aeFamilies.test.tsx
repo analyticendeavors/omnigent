@@ -4,7 +4,7 @@
 //      one colored dot; other rows carry none.
 //   2. A dot narrows the list to its family without opening the session.
 //   3. Grouping > Family lists "Families" (each lead with its sessions as a
-//      tree, foldable from the lead's pill) then "Not in a family".
+//      tree, foldable from the lead's pill) then "Standalone".
 //   4. Show > Family dots turns the dots off.
 
 import type * as IdentityModule from "@/lib/identity";
@@ -215,7 +215,7 @@ describe("Grouping > Family", () => {
   it("lists families first as tree rows, then every other session", () => {
     setView({ grouping: "family" });
     renderSidebar();
-    expect(sections()).toEqual(["Families1", "Not in a family2"]);
+    expect(sections()).toEqual(["Families1", "Standalone2"]);
     expect(rowNames()).toEqual([
       "Role routing build",
       "Escalation tool",
@@ -258,7 +258,7 @@ describe("Grouping > Family", () => {
     );
     setView({ grouping: "family" });
     renderSidebar();
-    expect(sections()).toEqual(["Families0", "Not in a family3"]);
+    expect(sections()).toEqual(["Families0", "Standalone3"]);
     expect(screen.getByTestId("ae-families-hint")).toBeTruthy();
   });
 
