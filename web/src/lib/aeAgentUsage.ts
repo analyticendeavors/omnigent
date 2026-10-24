@@ -104,6 +104,8 @@ export function aeCostByFamily(
 export interface AeSessionUsage {
   /** Null unless every model row reports tokens. */
   tokens: number | null;
+  /** The per-model rows the numbers come from (the spend setting reads them). */
+  byModel?: Record<string, ModelUsage> | null;
   byFamily: Partial<Record<AeModelFamily, number>>;
   costUsd: number | null;
   costByFamily: Partial<Record<AeModelFamily, number>>;
@@ -166,6 +168,7 @@ export function useAeSessionUsages(
     if (!data) return;
     out.set(sessions[index].id, {
       tokens: aeUsageTokens(data.usageByModel),
+      byModel: data.usageByModel,
       byFamily: aeTokensByFamily(data.usageByModel),
       costUsd: aeUsageCost(data.usageByModel),
       costByFamily: aeCostByFamily(data.usageByModel),

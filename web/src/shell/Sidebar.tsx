@@ -4899,6 +4899,7 @@ function ConversationRowImpl({
   const show = useContext(SidebarShowContext);
   const showUpdated = show.includes("updated") && !hasSessionIndicator;
   const hasTrailingIndicator = hasSessionIndicator || showSharedIndicator || showUpdated;
+  const familyReserve = AeTree.useAeFamilyMarkerReserve(conversation.id);
   const metaEnvironment = show.includes("environment") ? (
     <SessionEnvironmentLabel conversation={conversation} hostsById={hostsById} />
   ) : null;
@@ -5136,7 +5137,7 @@ function ConversationRowImpl({
                 : hasSessionIndicator && showSharedIndicator
                   ? "pr-14"
                   : hasTrailingIndicator
-                    ? "pr-8"
+                    ? (familyReserve ?? "pr-8")
                     : "pr-2"),
         // The narrowed reserve must track exactly when the trailing controls
         // appear and the state marker fades — both keyed on `:focus-visible`.

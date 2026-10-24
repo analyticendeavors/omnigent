@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChildSessionInfo } from "@/hooks/useChildSessions";
 import { useChatStore } from "@/store/chatStore";
 import { AeAgentMetaLine } from "./AeAgentMeta";
@@ -80,6 +80,11 @@ function child(id: string, extra: Partial<ChildSessionInfo> = {}): ChildSessionI
 afterEach(() => {
   cleanup();
   usageMock.mockReset();
+});
+
+// These cases cover cost mode; tokens is the default.
+beforeEach(() => {
+  window.localStorage.setItem("omnigent:ae-spend-display", "cost");
 });
 
 describe("Agents card usage", () => {
@@ -321,6 +326,48 @@ describe("Agents card usage", () => {
     const cost = await screen.findByTestId("subagent-cost");
     expect(cost.textContent).toBe("$0");
     expect(document.body.textContent).not.toContain("0 tokens");
+  });
+});
+
+describe("spend setting", () => {
+  function setup() {
+    usageMock.mockImplementation(async (id: string) =>
+      id === "conv_root"
+        ? usage("claude-sonnet-5-5", 300_000, 48_000)
+        : id === "b"
+          ? claudeUsage("claude-sonnet-5-5", 1)
+          : usage("claude-sonnet-5-5", 100_000, 16_000),
+    );
+    const live = { busy: true, current_task_status: "in_progress" };
+    renderCard([child("a", live), child("b", live)], true);
+  }
+
+  it("tokens mode shows token counts, no cost, and a plus on a total missing a session", async () => {
+    window.localStorage.setItem("omnigent:ae-spend-display", "tokens");
+    setup();
+    await screen.findByTestId("agents-total");
+    await waitFor(() =>
+      expect(screen.getAllByTestId("subagent-cost").map((n) => n.textContent)).toEqual([
+        "116k tok",
+      ]),
+    );
+    const total = screen.getByTestId("agents-total");
+    expect(total.textContent).not.toContain("$");
+    expect(total.textContent).toContain("348k+ tokens");
+    expect(screen.getByTestId("agents-total-cost").getAttribute("title")).toBe(
+      "1 session has no token count",
+    );
+  });
+
+  it("off mode shows no spend and no total", async () => {
+    window.localStorage.setItem("omnigent:ae-spend-display", "off");
+    setup();
+    await waitFor(() => expect(usageMock).toHaveBeenCalled());
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 50);
+    });
+    expect(screen.queryByTestId("subagent-cost")).toBeNull();
+    expect(screen.queryByTestId("agents-total")).toBeNull();
   });
 });
 

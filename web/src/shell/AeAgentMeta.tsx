@@ -5,6 +5,7 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import type { ChildSessionInfo } from "@/hooks/useChildSessions";
 import { aeRaiseMarks } from "@/lib/aeModelChange";
+import { aeSpendLabel, aeUsageSpentTokens, useAeSpendDisplay } from "@/lib/aeSpendDisplay";
 import { aeAgentRole, aeFormatCost, aeFormatTokens, aeRoleName } from "@/lib/aeAgentRole";
 import {
   AE_MODEL_FAMILIES,
@@ -102,15 +103,18 @@ export function AeAgentMetaLine({
   const native = useAeNativeInput(child);
   const role = aeAgentRole(child);
   const effort = usage?.effort ?? native?.effort ?? null;
-  const cost = usage?.costUsd ?? null;
-  const tokens = usage?.tokens != null && usage.tokens > 0 ? usage.tokens : null;
+  const mode = useAeSpendDisplay();
+  const own = usage && mode === "tokens" ? aeSpendLabel([usage], mode) : null;
+  const cost = mode === "cost" ? (usage?.costUsd ?? null) : null;
+  const tokens = mode === "cost" && usage?.tokens != null && usage.tokens > 0 ? usage.tokens : null;
   const model = withModel ? (child.model ?? child.routed_model ?? native?.model ?? null) : null;
   const nowModel = child.model ?? child.routed_model ?? native?.model ?? null;
   // The count is history; the arrow shows only while the helper still runs above where it started.
   const marks = aeRaiseMarks(child.labels, { model: nowModel, effort });
   const raised = marks.raised;
   const raisedTitle = marks.title;
-  if (!role && !model && !effort && cost === null && tokens === null && !raised) return null;
+  if (!role && !model && !effort && cost === null && tokens === null && !own && !raised)
+    return null;
   return (
     <p
       className={cn(
@@ -155,6 +159,17 @@ export function AeAgentMetaLine({
           cap reached
         </span>
       )}
+      {own && (
+        <span
+          className="ml-auto shrink-0 tabular-nums"
+          data-testid="subagent-cost"
+          title={own.title}
+        >
+          <span className="text-[10px] opacity-70" data-testid="subagent-tokens">
+            {own.text}
+          </span>
+        </span>
+      )}
       {(cost !== null || tokens !== null) && (
         <span className="ml-auto shrink-0 tabular-nums" data-testid="subagent-cost">
           {cost !== null && aeFormatCost(cost)}
@@ -184,11 +199,13 @@ export function AeAgentsTotal({
   as?: "li" | "div";
 }) {
   const usage = useContext(UsageContext);
+  const mode = useAeSpendDisplay();
   const lead = usage.get(rootSessionId);
-  if (!lead) return null;
+  if (!lead || mode === "off") return null;
   // Cost is the measure; tokens stand in only when the lead reports no cost.
-  const byCost = lead.costUsd !== null;
-  const measure = (u: AeSessionUsage) => (byCost ? (u.costUsd ?? 0) : (u.tokens ?? 0));
+  const byCost = mode === "cost" && lead.costUsd !== null;
+  const measure = (u: AeSessionUsage) =>
+    byCost ? (u.costUsd ?? 0) : mode === "tokens" ? (aeUsageSpentTokens(u) ?? 0) : (u.tokens ?? 0);
   const leadValue = measure(lead);
   const leadFamilies = byCost ? lead.costByFamily : lead.byFamily;
   const known = childIds.map((id) => usage.get(id)).filter((u): u is AeSessionUsage => !!u);
@@ -209,7 +226,11 @@ export function AeAgentsTotal({
       }
     }
   }
-  const fmt = (n: number) => (byCost ? aeFormatCost(n) : `${aeFormatTokens(n)} tokens`);
+  // Tokens mode: sessions without a count leave the total short, so it ends in "+".
+  const noCount =
+    mode === "tokens" ? [lead, ...known].filter((u) => aeUsageSpentTokens(u) === null) : [];
+  const plus = noCount.length > 0 ? "+" : "";
+  const fmt = (n: number) => (byCost ? aeFormatCost(n) : `${aeFormatTokens(n)}${plus} tokens`);
   // Tokens only when every model in the lead and the rows read reports them.
   const tokenTotal =
     byCost && lead.tokens !== null && known.every((u) => u.tokens !== null)
@@ -229,7 +250,13 @@ export function AeAgentsTotal({
         This chat and its agents:{" "}
         <b
           className="font-medium text-foreground tabular-nums"
-          title="Estimated at API rates"
+          title={
+            mode === "tokens"
+              ? noCount.length > 0
+                ? `${noCount.length} session${noCount.length === 1 ? " has" : "s have"} no token count`
+                : "New input plus output tokens"
+              : "Estimated at API rates"
+          }
           data-testid="agents-total-cost"
         >
           {fmt(total)}

@@ -39,7 +39,11 @@ function route(items: Record<string, unknown[]>, children: Record<string, unknow
 
 const NOW = Date.now();
 
-beforeEach(() => vi.mocked(authenticatedFetch).mockReset());
+beforeEach(() => {
+  vi.mocked(authenticatedFetch).mockReset();
+  // These cases cover cost mode; tokens is the default.
+  window.localStorage.setItem("omnigent:ae-spend-display", "cost");
+});
 afterEach(cleanup);
 
 describe("AeSessionHoverStatus", () => {
@@ -225,6 +229,29 @@ describe("AeSessionHoverStatus", () => {
         expect(line).toHaveTextContent("Opus 4.8 · medium · $1.64 · 116.4k tokens"),
       );
       expect(screen.getByTestId("ae-hover-started-by")).toHaveTextContent("Started by PR3 lead");
+    });
+
+    it.each([
+      ["tokens", "Opus 4.8 · medium · 116.4k tokens"],
+      ["off", "Opus 4.8 · medium"],
+    ])("shows the %s setting on the role line", async (mode, text) => {
+      window.localStorage.setItem("omnigent:ae-spend-display", mode);
+      answerUsage();
+      const view = familyView([row("kid", { "ae.orch": "lead", "ae.role": "builder" }, "Kid")]);
+      render(
+        <AeFamilyContext.Provider value={view}>
+          <AeSessionHoverStatus
+            sessionId="kid"
+            state={{ kind: "idle" } as never}
+            updatedAt={NOW}
+            labels={{ "ae.orch": "lead", "ae.role": "builder" }}
+          />
+        </AeFamilyContext.Provider>,
+      );
+      const line = screen.getByTestId("ae-hover-role-line");
+      await waitFor(() => expect(line).toHaveTextContent(text));
+      expect(line.textContent).not.toContain("$");
+      if (mode === "off") expect(line.textContent).not.toContain("tokens");
     });
 
     it.each([

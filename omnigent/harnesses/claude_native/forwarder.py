@@ -33,6 +33,7 @@ from omnigent.harnesses.claude_native.ae_prompt_suggest import (
     schedule_prompt_suggestion,
 )
 from omnigent.harnesses.claude_native.ae_subagent_model import report_subagent_model
+from omnigent.harnesses.claude_native.ae_transcript_tokens import TranscriptTokenTally
 from omnigent.harnesses.claude_native.bridge import (
     BRIDGE_ID_LABEL_KEY,
     OBSERVER_HOOK_STDERR_FILE,
@@ -800,6 +801,9 @@ class DeltaForwardState:
     byte_offset: int = 0
 
 
+_ZERO_TOKENS = (0, 0, 0)
+
+
 @dataclass
 class _ForwardDedupeState:
     """
@@ -861,6 +865,9 @@ class _ForwardDedupeState:
     # statusLine total ``S`` verbatim (matches /cost in the Claude TUI).
     # Kept to suppress duplicate posts when S hasn't advanced.
     posted_cost: float | None = None
+    # Session token totals tally and the last totals POSTed with the cost (omnigent-ae).
+    token_tally: TranscriptTokenTally = field(default_factory=TranscriptTokenTally)
+    posted_tokens: tuple[int, int, int] | None = None
     # Last POLICY/budget cost (USD) POSTed as ``policy_cost_usd`` —
     # ``max(S, forwarder transcript estimate)``, which reflects in-flight
     # sub-agent spend so the gate can block mid-turn. Separate baseline
@@ -3052,7 +3059,20 @@ async def _forward_session_cost(
     # lower transcript read (e.g. just after a rotation) and suppresses
     # steady-state churn. The two fields advance independently (policy_cost
     # moves mid-turn while display_cost/S is frozen).
-    payload: dict[str, float | str] = {}
+    payload: dict[str, float | int | str] = {}
+    # Tokens ride with the last statusLine cost so the server keeps that cost
+    # instead of pricing the tokens from the catalog; none before a first cost.
+    tokens = _ZERO_TOKENS
+    # Never post a cost below the one already posted (the server also clamps).
+    known = [c for c in (status_cost, dedupe.posted_cost) if c is not None]
+    cost_known = max(known) if known else None
+    if cost_known is not None:
+        tokens = await asyncio.to_thread(dedupe.token_tally.update, parent_transcript_path)
+        if tokens != (dedupe.posted_tokens or _ZERO_TOKENS):
+            payload["cumulative_input_tokens"] = tokens[0]
+            payload["cumulative_output_tokens"] = tokens[1]
+            payload["cumulative_cache_read_input_tokens"] = tokens[2]
+            payload["cumulative_cost_usd"] = cost_known
     if display_cost is not None and (
         dedupe.posted_cost is None or display_cost > dedupe.posted_cost
     ):
@@ -3100,7 +3120,9 @@ async def _forward_session_cost(
     dedupe.cost_retry_failures = 0
     dedupe.cost_retry_not_before = 0.0
     if "cumulative_cost_usd" in payload:
-        dedupe.posted_cost = display_cost
+        dedupe.posted_cost = max(payload["cumulative_cost_usd"], dedupe.posted_cost or 0.0)
+    if "cumulative_input_tokens" in payload:
+        dedupe.posted_tokens = tokens
     if "policy_cost_usd" in payload:
         dedupe.posted_policy_cost = policy_cost
 

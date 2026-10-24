@@ -11,12 +11,12 @@ import { useAeRoles } from "@/hooks/useAeRoles";
 import { aeAgentRole, aeFormatCost, aeFormatTokens, aeRoleName } from "@/lib/aeAgentRole";
 import {
   AE_MODEL_FAMILY_BG,
-  aeSpendOf,
   type AeSessionUsage,
   aeModelFamily,
   useAeSessionUsages,
 } from "@/lib/aeAgentUsage";
 import { aeOrchParent } from "@/lib/aeFamily";
+import { aeSpendLabel, useAeSpendDisplay } from "@/lib/aeSpendDisplay";
 import { AeFamilyContext } from "@/lib/aeFamilyView";
 import { fetchAeSessionPeek } from "@/lib/aeSessionPeek";
 import { aeDuration, aeScheduledTooltip, aeWaitingLabel } from "@/lib/aeSessionActivity";
@@ -124,15 +124,13 @@ function LeadLine({
   usage: ReadonlyMap<string, AeSessionUsage>;
 }) {
   const roles = useAeRoles();
-  const spend = aeSpendOf(usage.values());
+  const spend = aeSpendLabel(usage.values(), useAeSpendDisplay());
   const presetId = labels?.["ae.preset"];
   const title = roles.data?.presets.find((p) => p.id === presetId)?.title ?? null;
   const parts = [
     title,
     `leads ${count} session${count === 1 ? "" : "s"}`,
-    spend
-      ? `family ${spend.kind === "cost" ? aeFormatCost(spend.value) : `${aeFormatTokens(spend.value)} tokens`}`
-      : null,
+    spend ? `family ${spend.long}` : null,
   ].filter(Boolean);
   return (
     <p className="truncate text-xs text-muted-foreground" data-testid="ae-hover-lead-line">
@@ -152,6 +150,7 @@ function AeRoleLine({
   updatedAt: number;
 }) {
   const { families } = useContext(AeFamilyContext);
+  const mode = useAeSpendDisplay();
   const role = aeAgentRole({ labels });
   const familyRole = families.byRow.get(sessionId);
   const started = role !== null || aeOrchParent(labels) !== null;
@@ -168,11 +167,16 @@ function AeRoleLine({
   }
   if (!started) return null;
   const own = usage.get(sessionId);
+  const ownSpend = own ? aeSpendLabel([own], mode) : null;
   const detail = [
     own?.model ? agentModelLabel(own.model) : null,
     own?.effort,
-    own?.costUsd != null ? aeFormatCost(own.costUsd) : null,
-    own?.tokens != null && own.tokens > 0 ? `${aeFormatTokens(own.tokens)} tokens` : null,
+    ...(mode === "cost"
+      ? [
+          own?.costUsd != null ? aeFormatCost(own.costUsd) : null,
+          own?.tokens != null && own.tokens > 0 ? `${aeFormatTokens(own.tokens)} tokens` : null,
+        ]
+      : [ownSpend?.long]),
   ].filter(Boolean);
   return (
     <>

@@ -11,8 +11,9 @@ import {
   createContext,
   useContext,
 } from "react";
-import { aeAgentRole, aeFormatCost, aeFormatTokens, aeRoleName } from "@/lib/aeAgentRole";
-import { aeSpendOf, useAeSessionUsages } from "@/lib/aeAgentUsage";
+import { aeAgentRole, aeRoleName } from "@/lib/aeAgentRole";
+import { useAeSessionUsages } from "@/lib/aeAgentUsage";
+import { aeSpendLabel, useAeSpendDisplay } from "@/lib/aeSpendDisplay";
 import { aeRaiseMarks } from "@/lib/aeModelChange";
 import { AE_FAMILY_COLORS, type AeFamily, aeFamilyHint } from "@/lib/aeFamily";
 import {
@@ -121,6 +122,14 @@ function Lines({
 // Pinned draws as a plain row.
 const InFamilies = createContext(false);
 
+/** A family row's marker is a dot or spinner (16px at most), so its title keeps pr-7, not the pr-8 slot. */
+export function useAeFamilyMarkerReserve(conversationId: string): string | null {
+  const { tree } = useContext(AeFamilyContext);
+  const inFamilies = useContext(InFamilies);
+  const inTree = inFamilies && (tree?.leads.has(conversationId) || tree?.rows.has(conversationId));
+  return inTree ? "pr-7" : null;
+}
+
 /** A tree row's lines and indent, before its status icon; nothing outside the tree view. */
 export function AeFamilyTreeIndent({
   conversationId,
@@ -225,17 +234,21 @@ function TokenPill({ family }: { family: AeFamily }) {
     members.map((m) => ({ id: m.id, stamp: 0 })),
     { staleMs: PILL_MS, pollMs: PILL_MS, live: busy },
   );
-  const spend = aeSpendOf(usage.values());
+  const mode = useAeSpendDisplay();
+  const spend = aeSpendLabel(usage.values(), mode, family.members.length - members.length);
   if (!spend) return null;
-  const more = family.members.length > PILL_MEMBERS ? "+" : "";
-  const text = spend.kind === "cost" ? aeFormatCost(spend.value) : aeFormatTokens(spend.value);
+  const more = mode === "cost" && family.members.length > PILL_MEMBERS ? "+" : "";
   return (
     <span
       data-testid="ae-family-tokens"
-      title={`${text}${more} ${spend.kind === "cost" ? "estimated" : "tokens"} across this family`}
+      title={
+        mode === "cost"
+          ? `${spend.text}${more} ${spend.unit} across this family`
+          : `${spend.title} across this family`
+      }
       className="inline-flex h-[18px] shrink-0 items-center rounded-full bg-foreground/[0.06] px-1.5 text-[11.5px] tabular-nums text-muted-foreground"
     >
-      {text}
+      {spend.text}
       {more}
     </span>
   );

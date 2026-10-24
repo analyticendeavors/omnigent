@@ -10,6 +10,7 @@
 import type * as IdentityModule from "@/lib/identity";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { clearSessionDrafts, setSessionDraft } from "@/lib/sessionDrafts";
 
 vi.mock("@/hooks/useScopeCache", () => import("@/test/mockScopeCache"));
 
@@ -118,6 +119,8 @@ function dotOf(name: string): HTMLElement | null {
 
 beforeEach(() => {
   localStorage.clear();
+  // These cases cover cost mode; tokens is the default.
+  window.localStorage.setItem("omnigent:ae-spend-display", "cost");
   resetAeFamilyFoldsCache();
   resetAeFamilyClosedCache();
   mocks.archived.mockReset();
@@ -323,6 +326,57 @@ describe("Grouping > Family", () => {
       renderSidebar();
       await within(rowItem("Escalation tool")).findByTestId("ae-family-raise-line");
       expect(within(rowItem("Families PR")).queryByTestId("ae-family-raise-line")).toBeNull();
+    });
+  });
+
+  it("reserves pr-7 for a Family row's marker and keeps pr-8 elsewhere", () => {
+    // A draft puts a marker on the row, so it has a trailing indicator.
+    setSessionDraft(sid("Escalation tool"), { text: "x", files: [] });
+    setSessionDraft(sid("Fabric card speed"), { text: "x", files: [] });
+    const reserve = (name: string) =>
+      rowItem(name).querySelector<HTMLElement>(`a[href="/c/${sid(name)}"]`)!.className;
+    useConvMock.mockImplementation(() => conversationPage(ROWS));
+    setView({ grouping: "family" });
+    renderSidebar();
+    expect(reserve("Escalation tool")).toMatch(/(^|\s)pr-7(\s|$)/);
+    expect(reserve("Fabric card speed")).toMatch(/(^|\s)pr-8(\s|$)/);
+    clearSessionDrafts();
+  });
+
+  describe("spend setting", () => {
+    function tokenUsage() {
+      useConvMock.mockImplementation(() => conversationPage(ROWS));
+      mocks.fetch.mockImplementation((input: unknown) =>
+        Promise.resolve(
+          String(input).startsWith("/v1/sessions/")
+            ? new Response(
+                JSON.stringify({
+                  usage_by_model: {
+                    "gpt-5.5": { input_tokens: 90_000, output_tokens: 10_000, total_cost_usd: 2 },
+                  },
+                }),
+              )
+            : new Response("{}", { status: 404 }),
+        ),
+      );
+      setView({ grouping: "family" });
+    }
+
+    it("shows tokens on the family pill in tokens mode", async () => {
+      window.localStorage.setItem("omnigent:ae-spend-display", "tokens");
+      tokenUsage();
+      renderSidebar();
+      const pill = await within(rowItem("Role routing build")).findByTestId("ae-family-tokens");
+      expect(pill.textContent).toBe("400k tok");
+      expect(pill.getAttribute("title")).toContain("input (incl. cache writes) 360k");
+    });
+
+    it("shows no family pill when off", async () => {
+      window.localStorage.setItem("omnigent:ae-spend-display", "off");
+      tokenUsage();
+      renderSidebar();
+      await waitFor(() => expect(mocks.fetch).toHaveBeenCalled());
+      expect(within(rowItem("Role routing build")).queryByTestId("ae-family-tokens")).toBeNull();
     });
   });
 

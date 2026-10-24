@@ -697,3 +697,168 @@ async def test_forward_session_cost_tags_display_advance_with_model(
         estimate_box["value"] = 0.90
         await run()
         assert posted[-1] == {"policy_cost_usd": pytest.approx(0.90)}
+
+
+def _assistant(
+    request_id: str, inp: int, out: int, *, cc: int = 0, cr: int = 0, side: bool = False
+) -> str:
+    entry: dict[str, Any] = {
+        "type": "assistant",
+        "requestId": request_id,
+        "message": {
+            "role": "assistant",
+            "usage": {
+                "input_tokens": inp,
+                "output_tokens": out,
+                "cache_creation_input_tokens": cc,
+                "cache_read_input_tokens": cr,
+            },
+        },
+    }
+    if side:
+        entry["isSidechain"] = True
+    return json.dumps(entry) + "\n"
+
+
+@pytest.mark.asyncio
+async def test_forward_session_cost_posts_transcript_tokens_with_cost(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Tokens ride with the statusLine cost, are tallied once per request, grow
+    incrementally, include sub-agents, skip sidechains and never go down."""
+    bridge_dir = tmp_path / "bridge"
+    bridge_dir.mkdir()
+    parent = tmp_path / "sess.jsonl"
+    cost_box: dict[str, float | None] = {"value": None}
+    monkeypatch.setattr(
+        forwarder,
+        "read_claude_context_state",
+        lambda _bridge: {} if cost_box["value"] is None else {"total_cost_usd": cost_box["value"]},
+    )
+    parent.write_text(
+        _assistant("r1", 10, 5, cc=20, cr=70)
+        + _assistant("r1", 10, 6, cc=20, cr=70)  # same request: last record wins
+        + _assistant("rs", 999, 999, side=True)  # sidechain: skipped
+        + '{"type": "assistant", "requestId": "r2"',  # half-written line: waits
+        encoding="utf-8",
+    )
+    sub_dir = tmp_path / "sess" / "subagents"
+    sub_dir.mkdir(parents=True)
+    (sub_dir / "agent-a.jsonl").write_text(
+        _assistant("s1", 1, 2, cr=3, side=True), encoding="utf-8"
+    )
+    dedupe = forwarder._ForwardDedupeState()
+    posted: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if body.get("type") == "external_session_usage":
+            posted.append(body["data"])
+        return httpx.Response(200, json={})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://ap"
+    ) as client:
+
+        async def run() -> None:
+            await forwarder._forward_session_cost(
+                client=client,
+                session_id="conv_parent",
+                bridge_dir=bridge_dir,
+                parent_transcript_path=parent,
+                subagent_state=forwarder.SubagentForwardState(subagents={}),
+                dedupe=dedupe,
+                cost_cache={},
+            )
+
+        # No statusLine cost yet: no token post.
+        await run()
+        assert posted == []
+
+        cost_box["value"] = 0.5
+        await run()
+        assert posted == [
+            {
+                "cumulative_cost_usd": 0.5,
+                "policy_cost_usd": 0.5,
+                "cumulative_input_tokens": 100 + 4,
+                "cumulative_output_tokens": 6 + 2,
+                "cumulative_cache_read_input_tokens": 73,
+            }
+        ]
+        await run()
+        assert len(posted) == 1
+
+        # Cost unchanged, tokens grow: the post still carries the last cost.
+        with parent.open("a", encoding="utf-8") as handle:
+            handle.write(
+                ', "message": {"role": "assistant", '
+                '"usage": {"input_tokens": 7, "output_tokens": 1}}}\n'
+            )
+        await run()
+        assert posted[-1]["cumulative_cost_usd"] == 0.5
+        assert posted[-1]["cumulative_input_tokens"] == 111
+        assert posted[-1]["cumulative_output_tokens"] == 9
+
+        # A new transcript (resume) adds on top of the old totals.
+        parent2 = tmp_path / "sess2.jsonl"
+        parent2.write_text(_assistant("n1", 2, 3), encoding="utf-8")
+        parent = parent2
+        await run()
+        assert posted[-1]["cumulative_input_tokens"] == 113
+        assert posted[-1]["cumulative_output_tokens"] == 12
+
+
+@pytest.mark.asyncio
+async def test_token_post_failure_retries_and_cost_never_goes_down(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A failed token post leaves the baseline alone; cost never posts below posted_cost."""
+    bridge_dir = tmp_path / "bridge"
+    bridge_dir.mkdir()
+    parent = tmp_path / "sess.jsonl"
+    parent.write_text(_assistant("r1", 10, 5), encoding="utf-8")
+    cost_box = {"value": 0.5}
+    monkeypatch.setattr(
+        forwarder,
+        "read_claude_context_state",
+        lambda _bridge: {"total_cost_usd": cost_box["value"], "model": "claude-opus-4-8"},
+    )
+    monkeypatch.setattr(forwarder.time, "monotonic", lambda: 1000.0)
+    dedupe = forwarder._ForwardDedupeState()
+    dedupe.posted_cost = 0.5
+    posted: list[dict[str, Any]] = []
+    fail = {"on": True}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if fail["on"]:
+            return httpx.Response(503, request=request)
+        body = json.loads(request.content)
+        posted.append(body["data"])
+        return httpx.Response(200, json={}, request=request)
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://ap"
+    ) as client:
+
+        async def run() -> None:
+            await forwarder._forward_session_cost(
+                client=client,
+                session_id="conv_parent",
+                bridge_dir=bridge_dir,
+                parent_transcript_path=parent,
+                subagent_state=forwarder.SubagentForwardState(subagents={}),
+                dedupe=dedupe,
+                cost_cache={},
+            )
+
+        await run()
+        assert dedupe.posted_tokens is None
+        fail["on"] = False
+        dedupe.cost_retry_not_before = 0.0
+        cost_box["value"] = 0.2  # a lower statusLine reading
+        await run()
+        assert dedupe.posted_tokens == (10, 5, 0)
+        assert posted[-1]["cumulative_cost_usd"] == 0.5
+        assert posted[-1]["model"] == "claude-opus-4-8"
+        assert dedupe.posted_cost == 0.5
