@@ -15,6 +15,12 @@ import {
   isChildFinished,
   splitAgentSections,
 } from "@/shell/aeAgentsPaneModel";
+import {
+  AeAgentMetaLine,
+  AeAgentMetaProvider,
+  AeAgentsTotal,
+  useAeAgentMeta,
+} from "@/shell/AeAgentMeta";
 import { readAeAgentsClearedAt } from "@/shell/AeAgentsSections";
 import { childPrimaryLabel } from "@/shell/subagentLabel";
 import { activityDotClassName, childStatus } from "@/shell/subagentStatus";
@@ -137,6 +143,7 @@ function SubagentRow({
             {rowTime(child, nowMs)}
           </span>
         </span>
+        <AeAgentMetaLine child={child} withModel className="mt-0" />
         {note && (
           <span
             className={cn(
@@ -250,127 +257,140 @@ export function AeRailAgents({ sessionId }: AeRailSectionProps) {
     setFinishedOpen(!finishedOpen);
   };
   const summary = aeRailAgentsSummary(running, failed, finished);
+  const byId = new Map(children.map((c) => [c.id, c] as const));
+  const collaboratorIds = new Set(rows.map((r) => r.entry.key));
+  const shownRows = [
+    ...runningSubagents,
+    ...failedSubagents,
+    ...(finishedOpen ? finishedSubagents.slice(0, MAX_FINISHED) : []),
+    ...children.filter((c) => collaboratorIds.has(c.id)),
+  ];
+  const meta = useAeAgentMeta(sessionId, shownRows, running > 0);
   return (
     <AeRailSection id="agents" summary={summary}>
-      <div className="flex flex-col gap-2 text-sm" data-testid="ae-rail-agents">
-        {!empty && running === 0 && <AeRailMuted>Nothing running now.</AeRailMuted>}
-        {rows.map(({ entry, running: live }) => {
-          const pct = entry.reading ? (entry.reading.used / entry.reading.size) * 100 : null;
-          const detail = [who(entry), live ? null : "finished"].filter(Boolean).join(" · ");
-          return (
-            <div
-              key={entry.key}
-              className={cn("flex flex-col gap-1", !live && "opacity-70")}
-              data-testid="ae-rail-agent"
-              data-session={entry.key}
-              title={entry.unavailable ?? undefined}
-            >
-              <div className="flex items-baseline gap-2">
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate">{entry.name}</span>
-                  {detail && (
-                    <span className="block truncate text-xs text-muted-foreground">{detail}</span>
-                  )}
-                </span>
-                <span
-                  className={cn(
-                    "shrink-0 tabular-nums",
-                    pct === null ? "text-xs text-muted-foreground" : "font-semibold",
-                  )}
-                >
-                  {pct === null ? "No reading" : `${Math.round(pct)}%`}
-                </span>
+      <AeAgentMetaProvider meta={meta}>
+        <div className="flex flex-col gap-2 text-sm" data-testid="ae-rail-agents">
+          {!empty && running === 0 && <AeRailMuted>Nothing running now.</AeRailMuted>}
+          {rows.map(({ entry, running: live }) => {
+            const pct = entry.reading ? (entry.reading.used / entry.reading.size) * 100 : null;
+            const detail = [who(entry), live ? null : "finished"].filter(Boolean).join(" · ");
+            return (
+              <div
+                key={entry.key}
+                className={cn("flex flex-col gap-1", !live && "opacity-70")}
+                data-testid="ae-rail-agent"
+                data-session={entry.key}
+                title={entry.unavailable ?? undefined}
+              >
+                <div className="flex items-baseline gap-2">
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate">{entry.name}</span>
+                    {detail && (
+                      <span className="block truncate text-xs text-muted-foreground">{detail}</span>
+                    )}
+                    {byId.get(entry.key) && <AeAgentMetaLine child={byId.get(entry.key)!} />}
+                  </span>
+                  <span
+                    className={cn(
+                      "shrink-0 tabular-nums",
+                      pct === null ? "text-xs text-muted-foreground" : "font-semibold",
+                    )}
+                  >
+                    {pct === null ? "No reading" : `${Math.round(pct)}%`}
+                  </span>
+                </div>
+                <AeRailBar pct={pct ?? 0} />
               </div>
-              <AeRailBar pct={pct ?? 0} />
+            );
+          })}
+          {runningSubagents.length > 0 && (
+            <div className="flex flex-col">
+              {runningSubagents.map((child) => (
+                <SubagentRow
+                  key={child.id}
+                  child={child}
+                  step={steps[child.id]}
+                  nowMs={now}
+                  onOpen={openAgents}
+                />
+              ))}
             </div>
-          );
-        })}
-        {runningSubagents.length > 0 && (
-          <div className="flex flex-col">
-            {runningSubagents.map((child) => (
-              <SubagentRow
-                key={child.id}
-                child={child}
-                step={steps[child.id]}
-                nowMs={now}
-                onOpen={openAgents}
-              />
-            ))}
-          </div>
-        )}
-        {failed > 0 && (
-          <div
-            className="flex flex-col border-t border-border/60 pt-1"
-            data-testid="ae-rail-agents-failed"
-          >
-            <div className="flex min-h-7 items-center gap-1">
-              <AeRailIcon name="warning" className="size-3.5 text-destructive" />
-              <span className="flex-1">Failed</span>
-              <span className="text-xs tabular-nums text-muted-foreground">{failed}</span>
-            </div>
-            {failedSubagents.map((child) => (
-              <SubagentRow key={child.id} child={child} nowMs={now} onOpen={openAgents} />
-            ))}
-          </div>
-        )}
-        {finishedSubagents.length > 0 && (
-          <div className="flex flex-col border-t border-border/60 pt-1">
-            <button
-              type="button"
-              onClick={toggleFinished}
-              aria-expanded={finishedOpen}
-              data-testid="ae-rail-agents-finished-toggle"
-              className="-mx-1.5 flex min-h-7 w-[calc(100%+0.75rem)] items-center gap-1 rounded-md px-1.5 text-left hover:bg-muted"
+          )}
+          {failed > 0 && (
+            <div
+              className="flex flex-col border-t border-border/60 pt-1"
+              data-testid="ae-rail-agents-failed"
             >
-              <AeRailIcon
-                name={finishedOpen ? "chevronDown" : "chevronRight"}
-                className="size-3.5 text-muted-foreground"
-              />
-              <span className="flex-1">Finished</span>
-              <span className="text-xs tabular-nums text-muted-foreground">
-                {finishedSubagents.length}
-              </span>
-            </button>
-            {finishedOpen &&
-              finishedSubagents
-                .slice(0, MAX_FINISHED)
-                .map((child) => (
-                  <SubagentRow key={child.id} child={child} nowMs={now} onOpen={openAgents} />
-                ))}
-            {finishedOpen && finishedSubagents.length > MAX_FINISHED && (
-              <AeRailMuted>
-                {finishedSubagents.length - MAX_FINISHED} more in the Agents tab.
-              </AeRailMuted>
-            )}
-          </div>
-        )}
-        {subagentCount > 0 && openAgents && (
-          <AeRailRow
-            title="Open the Agents tab"
-            onClick={openAgents}
-            className="text-xs text-muted-foreground"
-            trailing={<AeRailIcon name="chevronRight" className="size-3.5" />}
-          >
-            Open the Agents tab
-          </AeRailRow>
-        )}
-        {hidden > 0 && (
-          <AeRailMuted>
-            {hidden} more {hidden === 1 ? "agent" : "agents"} not shown.
-          </AeRailMuted>
-        )}
-        {sessions.error && (
-          <AeRailMuted className="text-destructive">
-            Could not list this session's agents ({sessions.error}). The section retries within a
-            minute.
-          </AeRailMuted>
-        )}
-        {empty && !sessions.error && (
-          <AeRailMuted>
-            {sessions.loading ? "Loading agents…" : "No agents have run in this session."}
-          </AeRailMuted>
-        )}
-      </div>
+              <div className="flex min-h-7 items-center gap-1">
+                <AeRailIcon name="warning" className="size-3.5 text-destructive" />
+                <span className="flex-1">Failed</span>
+                <span className="text-xs tabular-nums text-muted-foreground">{failed}</span>
+              </div>
+              {failedSubagents.map((child) => (
+                <SubagentRow key={child.id} child={child} nowMs={now} onOpen={openAgents} />
+              ))}
+            </div>
+          )}
+          {finishedSubagents.length > 0 && (
+            <div className="flex flex-col border-t border-border/60 pt-1">
+              <button
+                type="button"
+                onClick={toggleFinished}
+                aria-expanded={finishedOpen}
+                data-testid="ae-rail-agents-finished-toggle"
+                className="-mx-1.5 flex min-h-7 w-[calc(100%+0.75rem)] items-center gap-1 rounded-md px-1.5 text-left hover:bg-muted"
+              >
+                <AeRailIcon
+                  name={finishedOpen ? "chevronDown" : "chevronRight"}
+                  className="size-3.5 text-muted-foreground"
+                />
+                <span className="flex-1">Finished</span>
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {finishedSubagents.length}
+                </span>
+              </button>
+              {finishedOpen &&
+                finishedSubagents
+                  .slice(0, MAX_FINISHED)
+                  .map((child) => (
+                    <SubagentRow key={child.id} child={child} nowMs={now} onOpen={openAgents} />
+                  ))}
+              {finishedOpen && finishedSubagents.length > MAX_FINISHED && (
+                <AeRailMuted>
+                  {finishedSubagents.length - MAX_FINISHED} more in the Agents tab.
+                </AeRailMuted>
+              )}
+            </div>
+          )}
+          {subagentCount > 0 && openAgents && (
+            <AeRailRow
+              title="Open the Agents tab"
+              onClick={openAgents}
+              className="text-xs text-muted-foreground"
+              trailing={<AeRailIcon name="chevronRight" className="size-3.5" />}
+            >
+              Open the Agents tab
+            </AeRailRow>
+          )}
+          {hidden > 0 && (
+            <AeRailMuted>
+              {hidden} more {hidden === 1 ? "agent" : "agents"} not shown.
+            </AeRailMuted>
+          )}
+          {sessions.error && (
+            <AeRailMuted className="text-destructive">
+              Could not list this session's agents ({sessions.error}). The section retries within a
+              minute.
+            </AeRailMuted>
+          )}
+          {empty && !sessions.error && (
+            <AeRailMuted>
+              {sessions.loading ? "Loading agents…" : "No agents have run in this session."}
+            </AeRailMuted>
+          )}
+          <AeAgentsTotal as="div" rootSessionId={sessionId} childIds={children.map((c) => c.id)} />
+        </div>
+      </AeAgentMetaProvider>
     </AeRailSection>
   );
 }

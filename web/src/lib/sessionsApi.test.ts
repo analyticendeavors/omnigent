@@ -1266,6 +1266,8 @@ describe("getSessionUsage", () => {
       mockJsonResponse({
         id: "conv with space",
         total_cost_usd: 3.5,
+        reasoning_effort: "high",
+        model_override: "claude-opus-4-8",
         usage_by_model: {
           "model-a": { input_tokens: 10, total_cost_usd: 1 },
           "model-b": { output_tokens: 20, total_cost_usd: 2.5 },
@@ -1284,6 +1286,8 @@ describe("getSessionUsage", () => {
     expect(usage).toEqual({
       id: "conv with space",
       totalCostUsd: 3.5,
+      reasoningEffort: "high",
+      model: "claude-opus-4-8",
       usageByModel: {
         "model-a": {
           inputTokens: 10,
@@ -1324,6 +1328,8 @@ describe("getSessionUsage", () => {
       expect(await getSessionUsage("conv_usage_projection")).toEqual({
         id: "conv_usage_projection",
         totalCostUsd: 3.5,
+        reasoningEffort: null,
+        model: null,
         usageByModel: null,
       });
       expect(getSessionHost("conv_usage_projection")).toBe("host_current");
@@ -1340,6 +1346,8 @@ describe("getSessionUsage", () => {
     expect(await getSessionUsage("conv_abc")).toEqual({
       id: "conv_abc",
       totalCostUsd: cost,
+      reasoningEffort: null,
+      model: null,
       usageByModel: null,
     });
   });

@@ -513,12 +513,19 @@ _TOOLS_OTHER = (
 )
 
 
+_SESSION_ROLE = "Pass `role` (and nothing else when the preset sets it) on every create_session."
+_SUBAGENT_ROLE = (
+    "Start every native subagent's description with its role (`Builder: fix the login test`)."
+)
+
+
 def _tools(roles: dict[str, Any]) -> str:
-    """The Agent tool sentence for a Claude (or unknown) lead, else the generic one."""
+    """The Agent tool sentence for the lead, plus how to name a role on each start."""
     session = roles.get("lead_session")
-    if isinstance(session, dict) and session.get("claude") is False:
-        return _TOOLS_OTHER
-    return _TOOLS
+    base = _TOOLS_OTHER if isinstance(session, dict) and session.get("claude") is False else _TOOLS
+    # Native subagents apply under "own" too; create_session does not.
+    named = [_SUBAGENT_ROLE] if helpers_of(roles) == OWN else [_SESSION_ROLE, _SUBAGENT_ROLE]
+    return " ".join([base, *named])
 
 
 def render_roles(roles: object) -> str | None:

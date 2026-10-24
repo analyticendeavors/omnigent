@@ -16,6 +16,7 @@ import {
   type AeRoleTable,
   aeParseRolesState,
 } from "@/lib/aeRoles";
+import { authenticatedFetch } from "@/lib/identity";
 import { getSessionSlim, updateSession } from "@/lib/sessionsApi";
 
 export const AE_TEAM_LABEL_KEY = "ae.team";
@@ -159,6 +160,19 @@ export async function saveAeSessionRoles(sessionId: string, roles: AeSessionRole
   return updateSession(sessionId, {
     labels: { [AE_TEAM_LABEL_KEY]: aeTeamLabelWithRoles(session.labels, roles) },
   });
+}
+
+/**
+ * Tell the server which preset a session now uses, for its preset log. Fire and
+ * forget: an older server has no route and answers 404, and a failure here never
+ * undoes the save.
+ */
+export function aeRecordPresetSwitch(sessionId: string, preset: string): void {
+  void authenticatedFetch(`/v1/ae/sessions/${encodeURIComponent(sessionId)}/preset`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ preset }),
+  }).catch(() => {});
 }
 
 const writeTails = new Map<string, { tail: Promise<unknown>; latest: number; pending: number }>();

@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
 
 import { authenticatedFetch } from "@/lib/identity";
+import { aeFamilies } from "@/lib/aeFamily";
+import { AeFamilyContext } from "@/lib/aeFamilyView";
 import { AeSessionHoverStatus } from "./AeSessionHoverStatus";
 
 function QueryWrapper({ children }: { children: ReactNode }) {
@@ -166,5 +168,91 @@ describe("AeSessionHoverStatus", () => {
       /^Paused; the hourly check-in wakes it/,
     );
     expect(authenticatedFetch).not.toHaveBeenCalled();
+  });
+
+  describe("third line", () => {
+    const usage = (model: string, input: number, output: number) => ({
+      id: "x",
+      reasoning_effort: "medium",
+      model_override: "claude-opus-4-8",
+      usage_by_model: { [model]: { input_tokens: input, output_tokens: output } },
+    });
+    const row = (id: string, labels: Record<string, string>, title: string) =>
+      ({ id, title, labels }) as never;
+    const familyView = (rows: never[]) => ({
+      families: aeFamilies(rows),
+      dots: true,
+      filter: null,
+      onFilter: () => {},
+    });
+    const answerUsage = () =>
+      vi.mocked(authenticatedFetch).mockImplementation((input) => {
+        const url = String(input);
+        const id = url.match(/^\/v1\/sessions\/([^/?]+)\?/)?.[1];
+        if (id) return json(usage("claude-sonnet-5-5", 100_000, 16_400));
+        return json({ object: "list", data: [], has_more: false });
+      });
+
+    it("shows a started session's role, model, effort, tokens and starter", async () => {
+      answerUsage();
+      const rows = [
+        row("lead", {}, "PR3 lead"),
+        row("kid", { "ae.orch": "lead", "ae.role": "builder" }, "Kid"),
+      ];
+      const view = familyView(rows);
+      render(
+        <AeFamilyContext.Provider value={view}>
+          <AeSessionHoverStatus
+            sessionId="kid"
+            state={{ kind: "idle" } as never}
+            updatedAt={NOW}
+            labels={{ "ae.orch": "lead", "ae.role": "builder" }}
+          />
+        </AeFamilyContext.Provider>,
+      );
+      const line = screen.getByTestId("ae-hover-role-line");
+      expect(line).toHaveTextContent("Builder");
+      await waitFor(() => expect(line).toHaveTextContent("Opus 4.8 · medium · 116.4k tokens"));
+      expect(screen.getByTestId("ae-hover-started-by")).toHaveTextContent("Started by PR3 lead");
+    });
+
+    it("shows a lead's session count and family total", async () => {
+      answerUsage();
+      const rows = [
+        row("lead", {}, "PR3 lead"),
+        row("a", { "ae.orch": "lead" }, "A"),
+        row("b", { "ae.orch": "lead" }, "B"),
+      ];
+      const view = familyView(rows);
+      render(
+        <AeFamilyContext.Provider value={view}>
+          <AeSessionHoverStatus
+            sessionId="lead"
+            state={{ kind: "idle" } as never}
+            updatedAt={NOW}
+            labels={{}}
+          />
+        </AeFamilyContext.Provider>,
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId("ae-hover-lead-line")).toHaveTextContent(
+          "leads 2 sessions · family 349.2k tokens",
+        ),
+      );
+    });
+
+    it("adds no line to a plain session", () => {
+      route({});
+      render(
+        <AeSessionHoverStatus
+          sessionId="solo"
+          state={{ kind: "idle" } as never}
+          updatedAt={NOW}
+          labels={{}}
+        />,
+      );
+      expect(screen.queryByTestId("ae-hover-role-line")).toBeNull();
+      expect(screen.queryByTestId("ae-hover-lead-line")).toBeNull();
+    });
   });
 });

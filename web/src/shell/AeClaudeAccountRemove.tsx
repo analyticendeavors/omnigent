@@ -53,8 +53,8 @@ export function AeClaudeAccountRemoveConfirm({
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-1">
       <span className="min-w-0 flex-1 text-xs">
-        Removes {label} and its token from {hostName}. Running chats keep their token until
-        they restart.{selected ? " New chats use the Default CLI account." : ""}
+        Removes {label} and its token from {hostName}. Running chats keep their token until they
+        restart.{selected ? " New chats use the Default CLI account." : ""}
       </span>
       <Button
         type="button"

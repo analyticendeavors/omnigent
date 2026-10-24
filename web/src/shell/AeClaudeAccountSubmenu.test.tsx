@@ -55,7 +55,10 @@ describe("AeClaudeAccountSubmenu", () => {
     expect(screen.getByTestId("composer-claude-account-value")).toHaveTextContent("AE Default");
     expect(screen.queryByTestId("composer-claude-account-default")).toBeNull();
 
-    expect(row).toHaveAttribute("title", "For new chats. This chat keeps the login it started with.");
+    expect(row).toHaveAttribute(
+      "title",
+      "For new chats. This chat keeps the login it started with.",
+    );
     openSubmenu();
     expect(screen.getByTestId("composer-claude-account-scope")).toHaveTextContent("For new chats");
     // The hint wraps under the rows instead of setting the submenu's width.
@@ -75,9 +78,7 @@ describe("AeClaudeAccountSubmenu", () => {
     expect(screen.getByTestId("composer-claude-account-shared:AE Backup")).toHaveTextContent(
       "Shared",
     );
-    expect(screen.getByTestId("composer-claude-account-AE Backup")).not.toHaveTextContent(
-      "Shared",
-    );
+    expect(screen.getByTestId("composer-claude-account-AE Backup")).not.toHaveTextContent("Shared");
   });
 
   it("selects a login through the host's own select write", () => {

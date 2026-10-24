@@ -3,7 +3,7 @@
 // Finished folded into one line with a count and a Clear button, a Task /
 // Model / Time header over each section, and the session's Plan below.
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { showToast } from "@/components/ui/toast";
 import type { ChildSessionInfo } from "@/hooks/useChildSessions";
 import { AeTablerSvg } from "@/lib/aeTablerIcon";
@@ -15,10 +15,18 @@ import {
   AE_ICON_STOP,
   AE_ICON_TRASH,
 } from "@/lib/aeAgentsIcons";
+import { AE_MODEL_FAMILY_BG, aeModelFamily } from "@/lib/aeAgentUsage";
+import { aeNativeModelLabel } from "@/lib/aeNativeAgentInput";
 import { interrupt } from "@/lib/sessionsApi";
 import { AE_RAIL_ICONS } from "@/components/aeRail/aeRailIcons";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chatStore";
+import {
+  AeAgentMetaProvider,
+  AeAgentsTotal,
+  useAeAgentMeta,
+  useAeNativeInput,
+} from "./AeAgentMeta";
 import { TodoPanel } from "./TodoPanel";
 import {
   agentModelLabel,
@@ -135,6 +143,11 @@ function AgentsSectionsForRoot({ rootSessionId, agents, renderRow }: AeAgentsSec
   const [finishedOpen, setFinishedOpen] = useState(() => readStorage(FINISHED_OPEN_KEY) === "1");
   const { running, failed, finished, clearedCount } = splitAgentSections(agents, clearedAt);
   const cutoff = clearCutoff([...failed, ...finished], clearedAt);
+  const shown = useMemo(
+    () => [...running, ...failed, ...(finishedOpen ? finished : [])],
+    [running, failed, finished, finishedOpen],
+  );
+  const meta = useAeAgentMeta(rootSessionId, shown, running.length > 0);
 
   if (agents.length === 0) return null;
 
@@ -168,7 +181,7 @@ function AgentsSectionsForRoot({ rootSessionId, agents, renderRow }: AeAgentsSec
   };
 
   return (
-    <>
+    <AeAgentMetaProvider meta={meta}>
       {running.length > 0 && (
         <li data-testid="agents-running-section">
           <SectionHeader>
@@ -182,7 +195,10 @@ function AgentsSectionsForRoot({ rootSessionId, agents, renderRow }: AeAgentsSec
       {failed.length > 0 && (
         <li data-testid="agents-failed-section" className="mt-1 border-t border-border/60">
           <SectionHeader>
-            <AeTablerSvg node={AE_RAIL_ICONS.warning} className="size-3.5 shrink-0 text-destructive" />
+            <AeTablerSvg
+              node={AE_RAIL_ICONS.warning}
+              className="size-3.5 shrink-0 text-destructive"
+            />
             <span>Failed</span>
             <span className="tabular-nums">{failed.length}</span>
             <span className="flex-1" />
@@ -228,7 +244,8 @@ function AgentsSectionsForRoot({ rootSessionId, agents, renderRow }: AeAgentsSec
       )}
       {finishedOpen && finished.length > 0 && <ColumnHeader withStop={false} />}
       {finishedOpen && finished.map(renderRow)}
-    </>
+      <AeAgentsTotal rootSessionId={rootSessionId} childIds={agents.map((a) => a.id)} />
+    </AeAgentMetaProvider>
   );
 }
 
@@ -252,7 +269,8 @@ export function AeAgentRowMeta({
   const finished = isChildFinished(child);
   const now = useNow(!finished);
   // The model the agent ran on, else the one routing picked; blank when neither is known.
-  const model = child.model ?? child.routed_model ?? null;
+  const native = useAeNativeInput(child);
+  const model = child.model ?? child.routed_model ?? native?.model ?? null;
   const routed = child.routed_model != null && model === child.routed_model;
   return (
     <>
@@ -262,7 +280,18 @@ export function AeAgentRowMeta({
         data-testid={model ? (routed ? "subagent-routed-model" : "subagent-model") : undefined}
         title={model ? (routed ? `Smart routing picked ${model}` : model) : undefined}
       >
-        {model ? agentModelLabel(model) : null}
+        {model ? (
+          <>
+            <span
+              aria-hidden="true"
+              className={cn(
+                "mr-1 inline-block size-1.5 rounded-full align-middle",
+                AE_MODEL_FAMILY_BG[aeModelFamily(model)],
+              )}
+            />
+            {native?.model === model ? aeNativeModelLabel(model) : agentModelLabel(model)}
+          </>
+        ) : null}
       </span>
       <span
         className={cn(TIME_COLUMN, "text-xs text-muted-foreground")}

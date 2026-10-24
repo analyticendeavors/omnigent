@@ -1,6 +1,7 @@
 import type * as UseChildSessionsModule from "@/hooks/useChildSessions";
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type ChildSessionInfo, useChildSessions } from "@/hooks/useChildSessions";
@@ -111,12 +112,16 @@ function defaultSession(): ReturnType<typeof useSession> {
 
 function renderPanel(opts: { conversationId?: string; rootSessionId?: string } = {}) {
   return render(
-    <MemoryRouter>
-      <SubagentsPanel
-        conversationId={opts.conversationId ?? "conv_root"}
-        rootSessionId={opts.rootSessionId ?? "conv_root"}
-      />
-    </MemoryRouter>,
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <MemoryRouter>
+        <SubagentsPanel
+          conversationId={opts.conversationId ?? "conv_root"}
+          rootSessionId={opts.rootSessionId ?? "conv_root"}
+        />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 

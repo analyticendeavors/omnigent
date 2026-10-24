@@ -11,7 +11,9 @@ import {
   createContext,
   useContext,
 } from "react";
-import { AE_FAMILY_COLORS, aeFamilyHint } from "@/lib/aeFamily";
+import { aeAgentRole, aeFormatTokens, aeRoleName } from "@/lib/aeAgentRole";
+import { useAeSessionUsages } from "@/lib/aeAgentUsage";
+import { AE_FAMILY_COLORS, type AeFamily, aeFamilyHint } from "@/lib/aeFamily";
 import { Link } from "@/lib/routing";
 import {
   AE_FAMILIES_HINT,
@@ -195,13 +197,61 @@ function FoldPill({ lead }: { lead: AeTreeLead }) {
   );
 }
 
-/** A listed lead's fold pill, after its title. */
+const PILL_MEMBERS = 25;
+const PILL_MS = 60_000;
+
+/**
+ * The family's token total. It reads usage itself, so a token change re-renders
+ * this pill and no row; the tree object stays the same.
+ */
+function TokenPill({ family }: { family: AeFamily }) {
+  const members = family.members.slice(0, PILL_MEMBERS);
+  // One read per member, kept a minute; it polls only while one of them works.
+  const busy = members.some((m) => m.turn_active === true || m.status === "running");
+  const usage = useAeSessionUsages(
+    members.map((m) => ({ id: m.id, stamp: 0 })),
+    { staleMs: PILL_MS, pollMs: PILL_MS, live: busy },
+  );
+  const total = [...usage.values()].reduce((sum, u) => sum + (u.tokens ?? 0), 0);
+  if (usage.size === 0 || total <= 0) return null;
+  const more = family.members.length > PILL_MEMBERS ? "+" : "";
+  return (
+    <span
+      data-testid="ae-family-tokens"
+      title={`${aeFormatTokens(total)}${more} tokens across this family`}
+      className="inline-flex h-[18px] shrink-0 items-center rounded-full bg-foreground/[0.06] px-1.5 text-[11.5px] tabular-nums text-muted-foreground"
+    >
+      {aeFormatTokens(total)}
+      {more}
+    </span>
+  );
+}
+
+/** A listed lead's token and fold pills, or a child's role chip, after its title. */
 export function AeFamilyFold({ conversationId }: { conversationId: string }) {
   const { tree } = useContext(AeFamilyContext);
   const inFamilies = useContext(InFamilies);
   const lead = inFamilies ? tree?.leads.get(conversationId) : undefined;
-  if (!lead || lead.standIn) return null;
-  return <FoldPill lead={lead} />;
+  if (!lead) {
+    const row = inFamilies ? tree?.rows.get(conversationId) : undefined;
+    const labels = row?.family.members.find((m) => m.id === conversationId)?.labels;
+    const role = row && row.depth > 0 ? aeAgentRole({ labels }) : null;
+    return role ? (
+      <span
+        data-testid="ae-family-role"
+        className="ml-auto shrink-0 rounded bg-foreground/[0.07] px-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+      >
+        {aeRoleName(role)}
+      </span>
+    ) : null;
+  }
+  if (lead.standIn) return null;
+  return (
+    <span className="ml-auto flex shrink-0 items-center gap-1">
+      <TokenPill family={lead.family} />
+      <FoldPill lead={lead} />
+    </span>
+  );
 }
 
 function StandIn({
@@ -249,7 +299,10 @@ function StandIn({
             Archived
           </span>
         )}
-        <FoldPill lead={lead} />
+        <span className="ml-auto flex shrink-0 items-center gap-1">
+          <TokenPill family={family} />
+          <FoldPill lead={lead} />
+        </span>
       </Link>
     </li>
   );

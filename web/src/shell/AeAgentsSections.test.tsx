@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChildSessionInfo } from "@/hooks/useChildSessions";
@@ -52,8 +53,10 @@ function sections(agents: ChildSessionInfo[], rootSessionId = "conv_root") {
   );
 }
 
+const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
 function renderSections(agents: ChildSessionInfo[]) {
-  return render(sections(agents));
+  return render(<QueryClientProvider client={client}>{sections(agents)}</QueryClientProvider>);
 }
 
 const rowIds = () => screen.queryAllByTestId("row").map((r) => r.textContent);
@@ -109,7 +112,11 @@ describe("AeAgentsSections", () => {
     expect(window.localStorage.getItem("ae.agentsPane.clearedAt.conv_root")).toBe("1100");
 
     // An agent that finishes after the clear shows up again.
-    rerender(sections([child({ id: "a" }), child({ id: "b", updated_at: 1200 })]));
+    rerender(
+      <QueryClientProvider client={client}>
+        {sections([child({ id: "a" }), child({ id: "b", updated_at: 1200 })])}
+      </QueryClientProvider>,
+    );
     expect(rowIds()).toEqual(["b"]);
 
     fireEvent.click(screen.getByTestId("agents-restore-cleared"));
@@ -120,13 +127,25 @@ describe("AeAgentsSections", () => {
   it("keeps each session's Clear to that session", () => {
     window.localStorage.setItem("ae.agentsPane.finishedOpen", "1");
     window.localStorage.setItem("ae.agentsPane.clearedAt.conv_one", "5000");
-    const { rerender } = render(sections([child({ id: "a" })], "conv_one"));
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        {sections([child({ id: "a" })], "conv_one")}
+      </QueryClientProvider>,
+    );
     expect(rowIds()).toEqual([]);
 
     // The pane stays mounted when the user opens another session.
-    rerender(sections([child({ id: "x" })], "conv_two"));
+    rerender(
+      <QueryClientProvider client={client}>
+        {sections([child({ id: "x" })], "conv_two")}
+      </QueryClientProvider>,
+    );
     expect(rowIds()).toEqual(["x"]);
-    rerender(sections([child({ id: "a" })], "conv_one"));
+    rerender(
+      <QueryClientProvider client={client}>
+        {sections([child({ id: "a" })], "conv_one")}
+      </QueryClientProvider>,
+    );
     expect(rowIds()).toEqual([]);
   });
 

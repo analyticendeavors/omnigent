@@ -4671,6 +4671,7 @@ function SessionTooltipContent({
         sessionId={conversation.id}
         state={state}
         updatedAt={conversation.updated_at * 1000}
+        labels={conversation.labels}
       />
       <SessionTooltipDetails conversation={conversation} />
       {hasError && <SessionErrorHint />}

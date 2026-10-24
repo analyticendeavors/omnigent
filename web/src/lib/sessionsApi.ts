@@ -1227,6 +1227,10 @@ export interface SessionUsageSnapshot {
   id: string;
   totalCostUsd: number | null;
   usageByModel: Record<string, ModelUsage> | null;
+  /** The session's reasoning effort, when it has one set. */
+  reasoningEffort: string | null;
+  /** The model the session runs on (its override, else its configured model), when known. */
+  model: string | null;
 }
 
 /** Read usage outside the shared metadata query; ignore unrelated snapshot fields. */
@@ -1245,13 +1249,23 @@ export async function getSessionUsage(
     { signal: options.signal },
   );
   const wire =
-    await readJsonOrThrow<Pick<SessionResponseWire, "id" | "total_cost_usd" | "usage_by_model">>(
-      res,
-    );
+    await readJsonOrThrow<
+      Pick<
+        SessionResponseWire,
+        | "id"
+        | "total_cost_usd"
+        | "usage_by_model"
+        | "reasoning_effort"
+        | "model_override"
+        | "llm_model"
+      >
+    >(res);
   return {
     id: wire.id,
     totalCostUsd: wire.total_cost_usd ?? null,
     usageByModel: usageByModelFromWire(wire.usage_by_model),
+    reasoningEffort: wire.reasoning_effort ?? null,
+    model: wire.model_override ?? wire.llm_model ?? null,
   };
 }
 

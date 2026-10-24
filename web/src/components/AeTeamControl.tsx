@@ -27,6 +27,8 @@ import {
   AE_SUPERSEDED,
   aeLatestWins,
   aeResolveSessionPreset,
+  aeChoiceId,
+  aeRecordPresetSwitch,
   saveAeSessionRoles,
 } from "@/lib/aeSessionRoles";
 import {
@@ -488,6 +490,10 @@ export function AeTeamControl({
         },
         { queue: true },
       );
+      const chosenId = aeChoiceId(choice);
+      if (done !== AE_SUPERSEDED && rolesTouched && chosenId && chosenId !== openedPresetId) {
+        aeRecordPresetSwitch(session.id, chosenId);
+      }
       if (done !== AE_SUPERSEDED && switchPreset && done.lead) {
         aeAnnouncePresetLead(queryClient, session.id, switchPreset.title, done.lead);
       }

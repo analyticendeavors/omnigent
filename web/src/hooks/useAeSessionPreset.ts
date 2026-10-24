@@ -13,6 +13,7 @@ import {
   AE_SUPERSEDED,
   aeLatestWins,
   aePresetDigit,
+  aeRecordPresetSwitch,
   aeRememberPreset,
   aeResolveSessionPreset,
   aeRolesForPick,
@@ -78,6 +79,7 @@ export function useAeSessionPreset(sessionId: string | null | undefined) {
         });
         if (done === AE_SUPERSEDED) return false;
         aeRememberPreset(id);
+        aeRecordPresetSwitch(sessionId, id);
         if (preset) aeAnnouncePresetLead(queryClient, sessionId, preset.title, done);
         return true;
       } catch (error) {

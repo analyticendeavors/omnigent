@@ -11,6 +11,7 @@ import {
   ScanSearchIcon,
   SearchIcon,
 } from "lucide-react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type ChildSessionInfo, useChildSessions } from "@/hooks/useChildSessions";
@@ -64,9 +65,13 @@ function renderPanel({
   initialEntries,
 }: RenderOptions & { initialEntries?: string[] } = {}) {
   return render(
-    <MemoryRouter initialEntries={initialEntries}>
-      <SubagentsPanel conversationId={conversationId} rootSessionId={rootSessionId} />
-    </MemoryRouter>,
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <MemoryRouter initialEntries={initialEntries}>
+        <SubagentsPanel conversationId={conversationId} rootSessionId={rootSessionId} />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 

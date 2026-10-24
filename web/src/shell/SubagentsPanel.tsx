@@ -60,6 +60,7 @@ import {
 } from "@/lib/nativeCodingAgents";
 import { childPrimaryLabel } from "./subagentLabel";
 import { childStatus, type AgentActivity, type AgentStatus } from "./subagentStatus";
+import { AeAgentMetaLine } from "./AeAgentMeta";
 import { AddAgentDialog } from "./AddAgentDialog";
 import {
   AeAgentLastLine,
@@ -632,6 +633,7 @@ function SubagentRow({
                 </span>
                 <AeAgentRowMeta child={child} status={null} />
               </div>
+              <AeAgentMetaLine child={child} />
               <AeAgentLastLine child={child} className="mt-0.5" />
             </div>
           </div>

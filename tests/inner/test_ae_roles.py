@@ -344,7 +344,7 @@ def test_balanced_wording_matches_the_contract(prefs: dict[str, Any]) -> None:
         "Roles preset: Balanced. Name a role for each helper you start and give a native "
         "subagent that role's model and effort. Native subagents (Claude's Agent tool) take "
         "a tier alias (opus, sonnet, haiku, fable) and an effort. For a separate session, "
-        "name its role in the brief.",
+        "name its role in the brief. " + ae_roles._SESSION_ROLE + " " + ae_roles._SUBAGENT_ROLE,
         "- Lead: you, on the session model.",
         "- Planner (design, architecture, unknown root cause): opus, high.",
         "- Reviewer (reviews, verifying a finding, fix checks): sonnet, medium.",
@@ -462,11 +462,31 @@ def test_only_a_claude_lead_hears_about_the_agent_tool(prefs: dict[str, Any]) ->
 
     codex = first_line(conversation(model_override="gpt-5.6-sol", reasoning_effort="high"))
     assert "Claude's Agent tool" not in codex and "tier alias" not in codex
-    assert codex.endswith(ae_roles._TOOLS_OTHER)
+    assert ae_roles._TOOLS_OTHER in codex
     claude = first_line(conversation(harness_override="claude-native"))
-    assert claude.endswith(ae_roles._TOOLS)
+    assert ae_roles._TOOLS in claude
     # Nothing on the row names a harness: the Claude wording stays, as before.
-    assert first_line(conversation()).endswith(ae_roles._TOOLS)
+    assert ae_roles._TOOLS in first_line(conversation())
+
+
+def test_the_lead_is_told_to_name_a_role_on_every_start(prefs: dict[str, Any]) -> None:
+    first = (
+        render_roles(team_notice(conversation(), owner_store()).get("ae_roles")) or ""
+    ).splitlines()
+    assert ae_roles._SESSION_ROLE in first[0] and ae_roles._SUBAGENT_ROLE in first[0]
+    picks = team_label(roles={"preset": "lead-picks"})
+    lines = render_roles(resolve_roles(conversation(picks), owner_store())) or ""
+    assert ae_roles._SESSION_ROLE in lines and ae_roles._SUBAGENT_ROLE in lines
+
+
+def test_own_helpers_hear_only_about_subagent_roles(prefs: dict[str, Any]) -> None:
+    prefs["presets"] = [BALANCED, SOLO]
+    labels = team_label(roles={"preset": SOLO["id"]})
+    first = (render_roles(resolve_roles(conversation(labels), owner_store())) or "").splitlines()[
+        0
+    ]
+    assert ae_roles._SUBAGENT_ROLE in first
+    assert ae_roles._SESSION_ROLE not in first
 
 
 def test_an_older_model_version_keeps_its_full_id() -> None:

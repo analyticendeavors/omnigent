@@ -3,14 +3,24 @@
 // question, agents or last reply fetched only while the card is open.
 
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { RunningDot } from "@/components/RunningDot";
 import { type ChildSessionInfo, fetchChildSessions } from "@/hooks/useChildSessions";
 import type { SessionState } from "@/hooks/useSessionState";
+import { useAeRoles } from "@/hooks/useAeRoles";
+import { aeAgentRole, aeFormatTokens, aeRoleName } from "@/lib/aeAgentRole";
+import {
+  AE_MODEL_FAMILY_BG,
+  type AeSessionUsage,
+  aeModelFamily,
+  useAeSessionUsages,
+} from "@/lib/aeAgentUsage";
+import { aeOrchParent } from "@/lib/aeFamily";
+import { AeFamilyContext } from "@/lib/aeFamilyView";
 import { fetchAeSessionPeek } from "@/lib/aeSessionPeek";
 import { aeDuration, aeScheduledTooltip, aeWaitingLabel } from "@/lib/aeSessionActivity";
 import { cn } from "@/lib/utils";
-import { isChildFinished } from "@/shell/aeAgentsPaneModel";
+import { agentModelLabel, isChildFinished } from "@/shell/aeAgentsPaneModel";
 import { childPrimaryLabel } from "@/shell/subagentLabel";
 import { AE_RAIL_TONE_TEXT } from "./aeRail/aeRailUi";
 import { useAeSubagentSteps } from "./aeRail/aeRailSubagentSteps";
@@ -103,21 +113,112 @@ function RunningAgents({ sessionId, updatedAt }: { sessionId: string; updatedAt:
   );
 }
 
+function LeadLine({
+  labels,
+  count,
+  usage,
+}: {
+  labels: Record<string, string> | undefined;
+  count: number;
+  usage: ReadonlyMap<string, AeSessionUsage>;
+}) {
+  const roles = useAeRoles();
+  const total = [...usage.values()].reduce((sum, u) => sum + (u.tokens ?? 0), 0);
+  const presetId = labels?.["ae.preset"];
+  const title = roles.data?.presets.find((p) => p.id === presetId)?.title ?? null;
+  const parts = [
+    title,
+    `leads ${count} session${count === 1 ? "" : "s"}`,
+    usage.size > 0 && total > 0 ? `family ${aeFormatTokens(total)} tokens` : null,
+  ].filter(Boolean);
+  return (
+    <p className="truncate text-xs text-muted-foreground" data-testid="ae-hover-lead-line">
+      {parts.join(" · ")}
+    </p>
+  );
+}
+
+/** Third line: a started session's role, model and use, or a lead's preset and family total. */
+function AeRoleLine({
+  sessionId,
+  labels,
+  updatedAt,
+}: {
+  sessionId: string;
+  labels: Record<string, string> | undefined;
+  updatedAt: number;
+}) {
+  const { families } = useContext(AeFamilyContext);
+  const role = aeAgentRole({ labels });
+  const familyRole = families.byRow.get(sessionId);
+  const started = role !== null || aeOrchParent(labels) !== null;
+  const lead =
+    familyRole?.isLead === true && familyRole.family.members.length > 1 ? familyRole.family : null;
+  // A lead's total is its family's sessions, each read once; a child shows its own use.
+  const ids = lead ? lead.members.map((m) => m.id) : started ? [sessionId] : [];
+  const usage = useAeSessionUsages(
+    ids.map((id) => ({ id, stamp: id === sessionId ? updatedAt : 0 })),
+    { enabled: ids.length > 0 },
+  );
+  if (lead) {
+    return <LeadLine labels={labels} count={lead.members.length - 1} usage={usage} />;
+  }
+  if (!started) return null;
+  const own = usage.get(sessionId);
+  const detail = [
+    own?.model ? agentModelLabel(own.model) : null,
+    own?.effort,
+    own?.tokens != null ? `${aeFormatTokens(own.tokens)} tokens` : null,
+  ].filter(Boolean);
+  return (
+    <>
+      <p
+        className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
+        data-testid="ae-hover-role-line"
+      >
+        {role && (
+          <span className="shrink-0 rounded bg-foreground/[0.07] px-1.5 text-[10px] font-medium uppercase tracking-wide">
+            {aeRoleName(role)}
+          </span>
+        )}
+        {own?.model && (
+          <span
+            aria-hidden="true"
+            className={cn(
+              "size-1.5 shrink-0 rounded-full",
+              AE_MODEL_FAMILY_BG[aeModelFamily(own.model)],
+            )}
+          />
+        )}
+        <span className="min-w-0 truncate">{detail.join(" · ")}</span>
+      </p>
+      {familyRole?.parentTitle && (
+        <p className="truncate text-xs text-muted-foreground" data-testid="ae-hover-started-by">
+          Started by {familyRole.parentTitle}
+        </p>
+      )}
+    </>
+  );
+}
+
 /**
  * The status block under a session's title in the sidebar hover card.
  *
  * :param sessionId: The hovered session.
  * :param state: The row's own state, the same one its icon shows.
  * :param updatedAt: Epoch ms of the session's last update; a new one re-reads at once.
+ * :param labels: The session's labels, for its role and preset.
  */
 export function AeSessionHoverStatus({
   sessionId,
   state,
   updatedAt,
+  labels,
 }: {
   sessionId: string;
   state: SessionState | null;
   updatedAt: number;
+  labels?: Record<string, string>;
 }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -205,6 +306,7 @@ export function AeSessionHoverStatus({
       data-kind={kind}
     >
       {body}
+      <AeRoleLine sessionId={sessionId} labels={labels} updatedAt={updatedAt} />
     </div>
   );
 }

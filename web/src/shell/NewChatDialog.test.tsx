@@ -3928,7 +3928,13 @@ describe("NewChatLandingScreen", () => {
         : {
             ...SUCCESS_QUERY_STATE,
             data: [
-              { id: "opus", model: "claude-opus-5-5", displayName: "Opus", isDefault: true, source },
+              {
+                id: "opus",
+                model: "claude-opus-5-5",
+                displayName: "Opus",
+                isDefault: true,
+                source,
+              },
               { id: "sonnet", model: "claude-sonnet-5-5", displayName: "Sonnet", source },
             ],
           },
