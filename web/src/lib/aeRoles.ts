@@ -40,6 +40,14 @@ export const AE_HELPERS_LABELS: Record<AeHelpers, { label: string; hint: string 
   any: { label: "Any agent or session", hint: "The lead may bring in other agents" },
   own: { label: "Own subagents only", hint: "No other agents or sessions" },
 };
+/**
+ * Tag on the model change rules (2026-10-24): nothing acts on them until the
+ * lead gets a tool to change models, so Settings says so.
+ */
+export const AE_COMING_LATER = {
+  label: "Coming later",
+  hint: "The lead does not change models on its own yet.",
+} as const;
 /** The Helpers choices as a segmented control takes them. */
 export const AE_HELPERS_OPTIONS = AE_HELPERS.map((value) => ({
   value,

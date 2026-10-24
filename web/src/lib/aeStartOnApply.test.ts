@@ -197,6 +197,60 @@ describe("aeApplyQueuedStartOn", () => {
     expect(mocks.updateSession.mock.calls[0][1]).toEqual({ modelOverride: "sonnet" });
   });
 
+  it("a preset with a fixed lead also switches model and effort, and Undo restores all", async () => {
+    let stored = session;
+    mocks.getSessionSlim.mockImplementation(async () => stored);
+    mocks.updateSession.mockImplementation(async (_id: string, patch: Partial<Session>) => {
+      const labels = { ...stored.labels, ...patch.labels };
+      stored = { ...stored, ...patch, labels } as Session;
+      return stored;
+    });
+    const yolo = preset("yolo", "YOLO");
+    yolo.roles.lead = { mode: "fixed", model: "claude-fable-5-1", effort: "max" } as never;
+    mocks.fetchAeRoles.mockResolvedValue({ ...ROLES, presets: [ROLES.presets[0], yolo] });
+    const models = [
+      ...MODELS,
+      { id: "fable", model: "claude-fable-5-1", displayName: "Fable 5.1" },
+    ];
+    aeQueueStartOn("s1", { text: "START ON: YOLO", models });
+    await aeApplyQueuedStartOn("s1", "s1", vi.fn());
+    expect(mocks.updateSession.mock.calls.slice(1)).toEqual([
+      ["s1", { modelOverride: "fable" }],
+      ["s1", { reasoningEffort: "max" }],
+    ]);
+    expect(mocks.toast).toHaveBeenCalledWith(
+      "Started on YOLO. Lead switched to Fable 5.1 max.",
+      expect.objectContaining({ action: expect.objectContaining({ label: "Undo" }) }),
+    );
+    undoAction()();
+    await vi.waitFor(() =>
+      expect(mocks.toast).toHaveBeenCalledWith(
+        "Put back the roles preset and the model and the effort.",
+      ),
+    );
+    expect(stored).toMatchObject({ modelOverride: "sonnet", reasoningEffort: "medium" });
+  });
+
+  it("a fixed lead the host does not offer keeps the preset and says so", async () => {
+    const yolo = preset("yolo", "YOLO");
+    yolo.roles.lead = { mode: "fixed", model: "claude-fable-5-1", effort: "max" } as never;
+    mocks.fetchAeRoles.mockResolvedValue({ ...ROLES, presets: [ROLES.presets[0], yolo] });
+    aeQueueStartOn("s1", { text: "START ON: YOLO", models: MODELS });
+    await aeApplyQueuedStartOn("s1", "s1", vi.fn());
+    expect(mocks.updateSession).toHaveBeenCalledTimes(1);
+    expect(mocks.toast).toHaveBeenCalledWith(
+      "Started on YOLO. This host does not offer Fable 5.1, so the model was not changed.",
+      expect.anything(),
+    );
+  });
+
+  it("a preset whose lead is the session model changes only the label", async () => {
+    aeQueueStartOn("s1", { text: "START ON: YOLO", models: MODELS });
+    await aeApplyQueuedStartOn("s1", "s1", vi.fn());
+    expect(mocks.updateSession).toHaveBeenCalledTimes(1);
+    expect(mocks.updateSession.mock.calls[0][1]).not.toHaveProperty("modelOverride");
+  });
+
   it("past the budget the send goes on, then the Started on toast and Undo follow", async () => {
     vi.useFakeTimers();
     try {

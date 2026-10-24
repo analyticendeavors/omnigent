@@ -133,7 +133,7 @@ describe("reading a label saved before the fold", () => {
         isDefault: false,
         edited: false,
       }),
-    ).toBe("Solo keeps work in this chat. Pick another preset to add sessions.");
+    ).toBe("Solo uses own subagents only. Pick another preset to add sessions.");
   });
 });
 

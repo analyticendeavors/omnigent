@@ -25,6 +25,11 @@ from fastapi import Response
 
 from omnigent.debug_logging import phase_scope
 from omnigent.errors import ElicitationDeclinedError, ErrorPhase
+from omnigent.inner.ae_notice_content import (
+    reads_framework_notices,
+    scope_framework_notices,
+    with_framework_notices,
+)
 from omnigent.inner.executor import (
     CompactionComplete,
     CompactionStarted,
@@ -239,7 +244,9 @@ class ExecutorAdapter(HarnessApp):
         instance. Installs stable tool/elicitation/policy bridges once on first use.
         """
         executor = self._ensure_executor()
-        messages = _translate_input_to_messages(request.input)
+        messages = _translate_input_to_messages(
+            request.input, keep_current_notices=reads_framework_notices(executor)
+        )
         # Stamp session_key on every message so the inner executor keys its client consistently,
         # matching the key used by enqueue_session_message (steering delivery depends on this).
         for message in messages:
@@ -1449,6 +1456,8 @@ def _extract_user_text(
 
 def _translate_input_to_messages(
     input_value: str | list[dict[str, Any]],
+    *,
+    keep_current_notices: bool = False,
 ) -> list[Message]:
     """Convert a CreateResponseRequest input to inner Message list.
 
@@ -1459,11 +1468,9 @@ def _translate_input_to_messages(
         return [{"role": "user", "content": input_value}]
 
     history_messages = _extract_role_keyed_messages(input_value)
-    if history_messages:
-        return history_messages
-
-    content = _normalize_message_content(input_value)
-    return [{"role": "user", "content": content}]
+    if not history_messages:
+        history_messages = [{"role": "user", "content": _normalize_message_content(input_value)}]
+    return scope_framework_notices(history_messages, keep_current=keep_current_notices)
 
 
 def _extract_role_keyed_messages(
@@ -1494,7 +1501,11 @@ _MULTIMODAL_BLOCK_TYPES: frozenset[str] = frozenset({"input_image", "input_file"
 def _normalize_message_content(
     content: Any,
 ) -> str | list[dict[str, Any]]:
-    """Normalize message content: plain string for text-only; full block list for multimodal."""
+    """Normalize message content: plain string for text-only; full block list for multimodal.
+
+    Text-only content that carries a framework notice keeps it (see
+    :mod:`omnigent.inner.ae_notice_content`).
+    """
     if content is None:
         return ""
     if isinstance(content, str):
@@ -1516,7 +1527,7 @@ def _normalize_message_content(
         text_value = block.get("text")
         if isinstance(text_value, str):
             parts.append(text_value)
-    return "\n".join(parts)
+    return with_framework_notices("\n".join(parts), content)
 
 
 def _serialize_args(args: dict[str, Any]) -> str:

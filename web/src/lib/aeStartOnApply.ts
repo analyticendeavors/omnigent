@@ -3,6 +3,7 @@
 // after the session exists and before the message is posted, so the first turn
 // already runs on it. A toast says "Started on X" with Undo, which puts back
 // the preset, model and effort the session had. Failures never block the send.
+// A preset with a fixed lead also switches the model and effort (2026-10-24).
 
 import { toast } from "sonner";
 import {
@@ -16,6 +17,15 @@ import {
   readAeTeamLabelMode,
 } from "@/lib/aeSessionRoles";
 import { fetchAeRoles } from "@/hooks/useAeRoles";
+import {
+  type AeFixedLead,
+  type AeLeadSwitch,
+  aeFixedLead,
+  aeLeadSentence,
+  aePatchLeadWriter,
+  aeSwitchLead,
+  aeUndoLead,
+} from "@/lib/aeLeadModel";
 import { type AeStartOnTarget, aeParseStartOn } from "@/lib/aeStartOn";
 import { supportsEffortControl } from "@/lib/sessionCapabilities";
 import { getSessionSlim, updateSession } from "@/lib/sessionsApi";
@@ -31,6 +41,9 @@ interface AeStartOnPlan {
   target: AeStartOnTarget;
   /** The user's default preset id, which a preset pick writes as "no field". */
   defaultId: string;
+  /** A picked preset's fixed lead, and the model options to resolve it against. */
+  lead: AeFixedLead | null;
+  models: readonly NativeModelOption[];
 }
 
 /** A queued plan older than this is dropped rather than applied to a later send. */
@@ -90,6 +103,9 @@ interface Applied {
   after: After;
   /** Set when the model landed but the effort PATCH failed. */
   effortError: string | null;
+  /** What a preset's fixed lead did to the model, or why it did nothing. */
+  lead: AeLeadSwitch | null;
+  leadError: string | null;
 }
 
 const reasonOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -115,6 +131,8 @@ async function applyPlan(
     effort: before.effort,
   };
   let effortError: string | null = null;
+  let lead: AeLeadSwitch | null = null;
+  let leadError: string | null = null;
   const { target } = plan;
   if (target.kind === "preset") {
     const roles = aeRolesForPick(target.presetId, plan.defaultId);
@@ -125,6 +143,14 @@ async function applyPlan(
     after.roles = readAeSessionRoles(updated.labels);
     after.labelText = updated.labels?.[AE_TEAM_LABEL_KEY];
     aeRememberPreset(target.presetId);
+    if (plan.lead) {
+      try {
+        const write = aePatchLeadWriter(sessionId, onSession);
+        lead = await aeSwitchLead(sessionId, plan.lead, plan.models, write);
+      } catch (error) {
+        leadError = reasonOf(error);
+      }
+    }
   } else {
     const updated = await updateSession(sessionId, { modelOverride: target.model });
     onSession(updated);
@@ -140,13 +166,13 @@ async function applyPlan(
       }
     }
   }
-  return { before, after, effortError };
+  return { before, after, effortError, lead, leadError };
 }
 
 async function undo(
   sessionId: string,
   target: AeStartOnTarget,
-  { before, after }: Applied,
+  { before, after, lead }: Applied,
   on: OnSession,
 ) {
   try {
@@ -165,6 +191,11 @@ async function undo(
         restored.push("the roles preset");
       } else {
         kept.push("the roles preset");
+      }
+      if (lead?.kind === "switched") {
+        const back = await aeUndoLead(sessionId, lead, aePatchLeadWriter(sessionId, on));
+        restored.push(...back.restored);
+        kept.push(...back.kept);
       }
     } else {
       if ((now.modelOverride ?? null) === after.model) {
@@ -198,10 +229,17 @@ function announce(sessionId: string, plan: AeStartOnPlan, applied: Applied, on: 
   const { target } = plan;
   const partial = target.kind === "model" && applied.effortError !== null && target.effort;
   const name = partial ? target.label.slice(0, -(target.effort!.length + 1)) : target.label;
+  const leadNote = applied.leadError
+    ? ` Could not switch the lead model: ${applied.leadError}.`
+    : applied.lead
+      ? ` ${aeLeadSentence(applied.lead) ?? ""}`.trimEnd()
+      : "";
   toast(
     partial
       ? `Started on ${name}; effort ${target.effort} was not applied (${applied.effortError}).`
-      : `Started on ${target.label}`,
+      : leadNote
+        ? `Started on ${target.label}.${leadNote}`
+        : `Started on ${target.label}`,
     {
       duration: 10_000,
       action: { label: "Undo", onClick: () => void undo(sessionId, target, applied, on) },
@@ -229,7 +267,14 @@ export async function aeApplyQueuedStartOn(
     if (!state.apply_start_on) return;
     const target = aeParseStartOn(queuedLine.text, state.presets, queuedLine.models);
     if (!target) return;
-    const plan: AeStartOnPlan = { target, defaultId: state.default_preset };
+    const preset =
+      target.kind === "preset" ? state.presets.find((p) => p.id === target.presetId) : undefined;
+    const plan: AeStartOnPlan = {
+      target,
+      defaultId: state.default_preset,
+      lead: aeFixedLead(preset),
+      models: queuedLine.models,
+    };
     held.plan = plan;
     announce(sessionId, plan, await applyPlan(sessionId, plan, onSession), onSession);
   };

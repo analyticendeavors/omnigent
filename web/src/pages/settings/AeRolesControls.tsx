@@ -50,7 +50,7 @@ export function AeInHouseTag() {
       className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-muted px-1.5 text-[10px] font-semibold text-muted-foreground"
     >
       <HomeIcon className="size-2.5" aria-hidden="true" />
-      In house
+      Own subagents only
     </span>
   );
 }

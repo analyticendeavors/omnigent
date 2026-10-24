@@ -95,7 +95,7 @@ const YOLO: AeRolePreset = {
   title: "YOLO",
   icon: "rocket",
   color: "red",
-  description: "Fable at max on every role, never asks",
+  description: "Fable at max on every role, no automatic model changes",
   when_to_use: "Hard problems.",
   pinned: false,
   roles: {
@@ -244,7 +244,9 @@ describe("AeRolesSettingsSection", () => {
     expect(puts()[0].presets[1].rules).toEqual({ ...BALANCED.rules, helpers: "own" });
     expect(puts()[0].presets[3]).toEqual(solo);
     fireEvent.click(screen.getByRole("button", { name: "All presets" }));
-    expect(await screen.findAllByText("In house")).toHaveLength(2);
+    expect(
+      await screen.findAllByTitle("Own subagents only: no other agents or sessions"),
+    ).toHaveLength(2);
   });
 
   it("reloads the server's state on a conflict, says so and keeps the edits", async () => {

@@ -194,9 +194,7 @@ export function AeSessionPresetRow({
         <div data-testid="ae-session-helpers" className="space-y-2 rounded-lg bg-muted/50 p-2">
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0 text-xs">
-              <p className="font-medium">
-                Helpers: {AE_HELPERS_LABELS[helpers].label.toLowerCase()}
-              </p>
+              <p className="font-medium">Helpers: {AE_HELPERS_LABELS[helpers].label}</p>
               <p className="text-muted-foreground">
                 {helpersChanged ? "Changed for this session." : `From ${base?.title}.`} Native
                 subagents are always available.

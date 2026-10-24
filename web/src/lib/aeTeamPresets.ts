@@ -90,7 +90,7 @@ export function aeChoiceHelpers(choice: AeSessionPresetChoice | null): AeHelpers
 /** The line shown where the sessions list is greyed out by an "Own subagents only" preset. */
 export function aeSessionsLockedHint(choice: AeSessionPresetChoice | null): string {
   const title = choice?.kind === "preset" ? choice.preset.title : "This preset";
-  return `${title} keeps work in this chat. Pick another preset to add sessions.`;
+  return `${title} uses own subagents only. Pick another preset to add sessions.`;
 }
 
 /** Whether a choice id is the reserved "Lead picks" one (for callers that only hold ids). */

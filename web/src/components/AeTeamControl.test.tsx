@@ -26,6 +26,11 @@ const mocks = vi.hoisted(() => ({
   saveRoles: vi.fn(),
   getSessionSlim: vi.fn(),
   updateSession: vi.fn(),
+  switchLead: vi.fn(),
+}));
+vi.mock("@/lib/aeLeadModelChat", async (original) => ({
+  ...(await original<object>()),
+  aeSwitchPresetLead: mocks.switchLead,
 }));
 vi.mock("@/hooks/useAeRoles", () => ({
   AE_ROLES_QUERY_KEY: ["ae", "roles"],
@@ -188,6 +193,7 @@ beforeEach(() => {
   mocks.models.mockReturnValue({ data: [{ id: "test-model", displayName: "Available model" }] });
   vi.mocked(saveAeTeam).mockResolvedValue(session);
   mocks.roles.mockReturnValue({ data: undefined });
+  mocks.switchLead.mockResolvedValue({ kind: "none" });
 });
 afterEach(cleanup);
 
@@ -572,6 +578,68 @@ describe("roles preset per session", () => {
     expect(vi.mocked(saveAeTeam).mock.calls[0][1]).not.toHaveProperty("roles");
   });
 
+  it("switches the lead model only when the dialog picks a different preset", async () => {
+    const onYolo = {
+      ...session,
+      labels: {
+        [AE_TEAM_LABEL]: JSON.stringify({
+          version: 1,
+          mode: "auto",
+          members: [],
+          roles: { preset: "yolo" },
+        }),
+      },
+    };
+    mount({ session: onYolo });
+    openPicker();
+    // A non-lead row edit on the same preset: the roles are saved, the model is left alone.
+    fireEvent.click(screen.getByRole("button", { name: "Customize" }));
+    fireEvent.change(screen.getByLabelText("Planner model"), { target: { value: "__auto" } });
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(saveAeTeam).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(mocks.switchLead).not.toHaveBeenCalled();
+    openPicker();
+    fireEvent.click(screen.getByRole("radio", { name: "Save tokens" }));
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(mocks.switchLead).toHaveBeenCalledTimes(1));
+    expect(mocks.switchLead.mock.calls[0][3]).toMatchObject({ id: "save-tokens" });
+  });
+
+  it("runs the dialog's label save and lead switch as one step before a later pick", async () => {
+    const { aeLatestWins } = await import("@/lib/aeSessionRoles");
+    const order: string[] = [];
+    let finishSwitch!: () => void;
+    vi.mocked(saveAeTeam).mockImplementation(async () => {
+      order.push("save");
+      return session;
+    });
+    mocks.switchLead.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          order.push("switch");
+          finishSwitch = () => resolve({ kind: "none" });
+        }),
+    );
+    mount();
+    openPicker();
+    fireEvent.click(screen.getByRole("radio", { name: "Save tokens" }));
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(order).toEqual(["save", "switch"]));
+    // A newer pick arriving while the switch runs waits for it; it is never run between
+    // the save and the switch, so the older model cannot land on top of it.
+    const newer = aeLatestWins("parent", async () => order.push("newer"));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(order).toEqual(["save", "switch"]);
+    await act(async () => {
+      finishSwitch();
+      await newer;
+    });
+    expect(order).toEqual(["save", "switch", "newer"]);
+  });
+
   it("customizes roles for this session and saves them as a new preset", async () => {
     mocks.saveRoles.mockImplementation(async (doc: typeof ROLES) => ({
       ok: true,
@@ -652,7 +720,7 @@ describe("roles preset per session", () => {
     mount({ session: solo });
     openPicker();
     expect(
-      screen.getByText("Solo keeps work in this chat. Pick another preset to add sessions."),
+      screen.getByText("Solo uses own subagents only. Pick another preset to add sessions."),
     ).toBeInTheDocument();
     expect(screen.getByTestId("ae-team-sessions")).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("checkbox", { name: "Claude Code" })).toBeDisabled();

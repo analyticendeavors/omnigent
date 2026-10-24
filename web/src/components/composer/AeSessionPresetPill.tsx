@@ -312,7 +312,7 @@ export function AeSessionPresetPill({
             <span className="block text-sm">Who works on this?</span>
             {!isMobile && (
               <span className="block truncate text-xs text-muted-foreground">
-                Customize roles, change lead, Helpers
+                Customize roles, change lead, Own subagents only or Any agent or session
               </span>
             )}
           </span>

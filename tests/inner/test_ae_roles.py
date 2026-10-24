@@ -36,6 +36,14 @@ YOLO: dict[str, Any] = {
 }
 
 
+CURRENT = {
+    "fable": "claude-fable-5-1",
+    "opus": "claude-opus-5-5",
+    "sonnet": "claude-sonnet-5-5",
+    "haiku": "claude-haiku-5-5",
+}
+
+
 def conversation(labels: dict[str, str] | None = None, **kwargs: Any) -> Conversation:
     return Conversation(
         id="conv",
@@ -82,6 +90,7 @@ def test_no_label_uses_the_owners_default(prefs: dict[str, Any]) -> None:
             "rules": YOLO["rules"],
         },
         "custom": False,
+        "current": ae_roles._current_ids(),
     }
 
 
@@ -163,7 +172,8 @@ def test_lead_picks_lists_the_users_presets(prefs: dict[str, Any]) -> None:
     assert len(lines) == 10
     assert lines[0].startswith("Roles preset: lead picks. Pick the preset")
     assert lines[1].startswith("- Preset 0: Most tasks:")
-    assert "planner opus / claude-opus-5-5, high" in lines[1]
+    assert "planner opus, high" in lines[1]
+    assert "claude-" not in text
     assert "lead" not in lines[1].split("(", 1)[1]
     assert lines[-1] == "(2 more presets are not shown.)"
     assert lines[1].endswith("; changes: tell after, steps down, 1 raise, any agent or session).")
@@ -307,12 +317,16 @@ def test_a_legacy_solo_label_with_a_preset_keeps_that_preset(prefs: dict[str, An
         {"labels": {"ae.orch": "sess_123"}},
     ],
 )
-def test_a_child_session_gets_no_roles_block(
+def test_a_child_session_gets_only_the_helper_line(
     prefs: dict[str, Any], kwargs: dict[str, Any]
 ) -> None:
+    labels = {TEAM_LABEL: json.dumps({"version": 1, "mode": "team", "members": []})}
+    kwargs = {**kwargs, "labels": {**kwargs.get("labels", {}), **labels}}
     notice = team_notice(conversation(**kwargs), owner_store())
-    assert notice is None or "ae_roles" not in notice
-    assert "Roles preset" not in (render_team_notice(notice) or "")
+    assert notice == {"ae_helper": True}
+    assert render_team_notice(notice) == ae_roles.HELPER_NOTICE
+    assert "lead session" in ae_roles.HELPER_NOTICE
+    assert "do not start other sessions" in ae_roles.HELPER_NOTICE
 
 
 @pytest.mark.parametrize("orch", ["1", "", " "])
@@ -326,16 +340,15 @@ def test_balanced_wording_matches_the_contract(prefs: dict[str, Any]) -> None:
     block = text.split("\n\n", 1)[1]
     assert text.startswith("Auto collaboration is enabled")
     assert block.splitlines() == [
-        "Roles preset: Balanced. Name a role for each helper you start and give it that "
-        "role's model and effort. The Agent tool takes tier aliases (opus, sonnet, haiku, "
-        "fable); sessions take catalog ids.",
+        "Roles preset: Balanced. Name a role for each helper you start and give a native "
+        "subagent that role's model and effort. Native subagents (Claude's Agent tool) take "
+        "a tier alias (opus, sonnet, haiku, fable) and an effort. For a separate session, "
+        "name its role in the brief.",
         "- Lead: you, on the session model.",
-        "- Planner (design, architecture, unknown root cause): opus / claude-opus-5-5, high.",
-        "- Reviewer (reviews, verifying a finding, fix checks): sonnet / claude-sonnet-5-5, "
-        "medium.",
-        "- Builder (code once the plan is pinned): sonnet / claude-sonnet-5-5, medium.",
-        "- Helper (polling, PR watching, screenshots, mechanical commits): haiku / "
-        "claude-haiku-5-5, low.",
+        "- Planner (design, architecture, unknown root cause): opus, high.",
+        "- Reviewer (reviews, verifying a finding, fix checks): sonnet, medium.",
+        "- Builder (code once the plan is pinned): sonnet, medium.",
+        "- Helper (polling, PR watching, screenshots, mechanical commits): haiku, low.",
         "Model changes: raise a stuck child or lower yourself: tell the user after. Step down "
         "for mechanical work: on. Automatic raises per child: 1; past that, ask first.",
     ]
@@ -351,14 +364,22 @@ def test_every_mode_carries_the_block(prefs: dict[str, Any], mode: str) -> None:
 def test_auto_roles_and_a_fixed_lead_render(prefs: dict[str, Any]) -> None:
     preset = copy.deepcopy(YOLO)
     preset["roles"]["builder"] = {"mode": "auto"}
-    text = render_roles({"preset": preset, "custom": True}) or ""
+    text = render_roles({"preset": preset, "custom": True, "current": CURRENT}) or ""
     lines = text.splitlines()
     assert lines[0].startswith("Roles preset: YOLO (customized for this session).")
-    assert lines[1] == "- Lead: you, on fable / claude-fable-5-1, max."
+    assert lines[1] == "- Lead: you, on fable, max."
     assert lines[4] == "- Builder (code once the plan is pinned): your pick."
     assert lines[-1].startswith("Model changes: do not raise a child or lower yourself")
-    assert "Step down for mechanical work: off. Automatic raises per child: 0" in lines[-1]
+    assert lines[-1].endswith("Step down for mechanical work: off. Automatic raises per child: 0.")
+    assert "past that" not in text
     assert len(lines) < 12
+
+
+def test_a_model_without_a_tier_alias_keeps_its_id() -> None:
+    preset = copy.deepcopy(BALANCED)
+    preset["roles"]["builder"] = {"mode": "fixed", "model": "gpt-5.5-codex", "effort": "high"}
+    text = render_roles({"preset": preset, "custom": False}) or ""
+    assert "- Builder (code once the plan is pinned): gpt-5.5-codex, high." in text
 
 
 def test_rendering_survives_junk_metadata() -> None:
@@ -402,3 +423,68 @@ def test_without_the_package_balanced_uses_tier_aliases(monkeypatch: pytest.Monk
     text = render_team_notice(team_notice(conversation(), owner_store())) or ""
     assert "- Planner (design, architecture, unknown root cause): opus, high." in text
     assert "- Helper (polling, PR watching, screenshots, mechanical commits): haiku, low." in text
+
+
+def test_a_fork_with_a_copied_orch_label_is_a_lead(prefs: dict[str, Any]) -> None:
+    """A fork copies ae.orch but is a top-level session; a fork with a parent is a child."""
+    labels = {"ae.orch": "sess_123", ae_roles.FORK_SOURCE_LABEL: "conv_src"}
+    notice = team_notice(conversation(labels), owner_store()) or {}
+    assert "ae_roles" in notice and "ae_helper" not in notice
+    child = team_notice(conversation(labels, parent_conversation_id="lead"), owner_store())
+    assert child == {"ae_helper": True}
+
+
+def _lead_line(conv: Conversation) -> str:
+    text = render_roles(team_notice(conv, owner_store()).get("ae_roles")) or ""
+    return next(line for line in text.splitlines() if line.startswith("- Lead:"))
+
+
+def test_the_lead_line_names_what_the_session_runs(
+    prefs: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ae_roles, "_current_ids", lambda: dict(CURRENT))
+    yolo = team_label(roles={"preset": "yolo"})
+    assert _lead_line(conversation(yolo)) == "- Lead: you, on fable, max."
+    on_opus = conversation(yolo, model_override="claude-opus-5-5", reasoning_effort="high")
+    assert _lead_line(on_opus) == "- Lead: you, on opus, high (the preset asks for fable, max)."
+    on_fable = conversation(yolo, model_override="claude-fable-5-1[1m]", reasoning_effort="max")
+    assert _lead_line(on_fable) == "- Lead: you, on fable, max."
+    balanced = conversation(model_override="claude-opus-5-5", reasoning_effort="high")
+    assert _lead_line(balanced) == "- Lead: you, on opus, high (the session model)."
+    assert _lead_line(conversation()) == "- Lead: you, on the session model."
+
+
+def test_only_a_claude_lead_hears_about_the_agent_tool(prefs: dict[str, Any]) -> None:
+    def first_line(conv: Conversation) -> str:
+        text = render_roles(team_notice(conv, owner_store()).get("ae_roles")) or ""
+        return text.splitlines()[0]
+
+    codex = first_line(conversation(model_override="gpt-5.6-sol", reasoning_effort="high"))
+    assert "Claude's Agent tool" not in codex and "tier alias" not in codex
+    assert codex.endswith(ae_roles._TOOLS_OTHER)
+    claude = first_line(conversation(harness_override="claude-native"))
+    assert claude.endswith(ae_roles._TOOLS)
+    # Nothing on the row names a harness: the Claude wording stays, as before.
+    assert first_line(conversation()).endswith(ae_roles._TOOLS)
+
+
+def test_an_older_model_version_keeps_its_full_id() -> None:
+    preset = copy.deepcopy(BALANCED)
+    preset["roles"]["planner"] = {"mode": "fixed", "model": "claude-opus-4-8", "effort": "high"}
+    preset["roles"]["reviewer"] = {
+        "mode": "fixed",
+        "model": "claude-sonnet-5-5[1m]",
+        "effort": "medium",
+    }
+    preset["roles"]["builder"] = {
+        "mode": "fixed",
+        "model": "system.ai.claude-fable-5-1",
+        "effort": "high",
+    }
+    text = render_roles({"preset": preset, "custom": False, "current": CURRENT}) or ""
+    assert "- Planner (design, architecture, unknown root cause): claude-opus-4-8, high." in text
+    assert "- Reviewer (reviews, verifying a finding, fix checks): sonnet, medium." in text
+    assert "- Builder (code once the plan is pinned): fable, high." in text
+    # Without the current ids a fixed id is shown as is.
+    bare = render_roles({"preset": preset, "custom": False}) or ""
+    assert "claude-sonnet-5-5[1m], medium" in bare

@@ -2844,3 +2844,144 @@ async def test_subprocess_tracking_uses_validated_session_without_telemetry(
     assert [pr.url for pr in SessionPrRegistry(conv_id).list()] == [
         "https://github.com/example/sdk/pull/42"
     ]
+
+
+_NOTICE_BLOCK = {
+    "type": "_omnigent_framework_notice",
+    "source_metadata": {"ae_team": {"mode": "auto", "members": []}},
+}
+
+
+def test_text_with_a_framework_notice_keeps_the_notice() -> None:
+    """A text-only message keeps its notice block; the visible text is unchanged."""
+    from omnigent.inner.native_attachments import framework_notices
+    from omnigent.runtime.harnesses._executor_adapter import (
+        _normalize_message_content,
+        _translate_input_to_messages,
+    )
+
+    content = [
+        {"type": "input_text", "text": "hi"},
+        {"type": "input_text", "text": "there"},
+        _NOTICE_BLOCK,
+    ]
+    normalized = _normalize_message_content(content)
+    assert normalized == [{"type": "input_text", "text": "hi\nthere"}, _NOTICE_BLOCK]
+    assert len(framework_notices(normalized)) == 1
+    messages = _translate_input_to_messages(
+        [{"type": "message", "role": "user", "content": content}], keep_current_notices=True
+    )
+    assert len(framework_notices(messages[0]["content"])) == 1
+
+
+def test_plain_text_without_a_notice_still_flattens() -> None:
+    """Text-only content without a notice normalizes to a plain string, as before."""
+    from omnigent.runtime.harnesses._executor_adapter import _normalize_message_content
+
+    assert _normalize_message_content([{"type": "input_text", "text": "hi"}]) == "hi"
+    assert _normalize_message_content([_NOTICE_BLOCK]) == ""
+
+
+def test_native_executors_keep_the_notice_out_of_visible_text(tmp_path: Path) -> None:
+    """Claude and Codex native executors send the text and read the notice separately."""
+    from omnigent.inner import claude_native_executor, codex_native_executor
+    from omnigent.runtime.harnesses._executor_adapter import _normalize_message_content
+
+    content = _normalize_message_content([{"type": "input_text", "text": "hi"}, _NOTICE_BLOCK])
+    messages = [{"role": "user", "content": content}]
+    assert claude_native_executor._latest_user_text(messages, tmp_path) == "hi"
+    notices = claude_native_executor._latest_framework_notices(messages)
+    assert len(notices) == 1 and notices[0].startswith("Auto collaboration is enabled")
+    items = codex_native_executor._content_to_input_items(content, tmp_path)
+    assert items == [{"type": "text", "text": "hi"}]
+    context = codex_native_executor.codex_team_context(content)
+    assert context is not None and "Auto collaboration" in str(context)
+
+
+def _turn(text: str, *, notice: bool = True) -> dict[str, Any]:
+    content: list[dict[str, Any]] = [{"type": "input_text", "text": text}]
+    if notice:
+        content.append(_NOTICE_BLOCK)
+    return {"type": "message", "role": "user", "content": content}
+
+
+def _reply(text: str) -> dict[str, Any]:
+    return {
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": text}],
+    }
+
+
+def test_other_executors_get_plain_text_with_no_notice() -> None:
+    """A non-native executor (Databricks here) still gets the plain text, as before."""
+    from omnigent.inner.databricks_executor import _convert_messages
+    from omnigent.runtime.harnesses._executor_adapter import _translate_input_to_messages
+
+    messages = _translate_input_to_messages([_turn("hi")])
+    assert messages == [{"role": "user", "content": "hi"}]
+    assert _convert_messages(messages, "") == [{"role": "user", "content": "hi"}]
+
+
+def test_replayed_history_drops_prior_notices() -> None:
+    """Prior turns lose their notice; only the current turn keeps exactly one."""
+    from omnigent.inner.native_attachments import framework_notices
+    from omnigent.runtime.harnesses._executor_adapter import _translate_input_to_messages
+
+    image = {"type": "input_image", "image_url": "data:image/png;base64,AA=="}
+    history = [
+        _turn("one"),
+        _reply("ok"),
+        {"type": "message", "role": "user", "content": [image, _NOTICE_BLOCK]},
+        _reply("seen"),
+        _turn("now"),
+    ]
+    native = _translate_input_to_messages(history, keep_current_notices=True)
+    assert native[0]["content"] == "one"
+    assert native[2]["content"] == [image]
+    assert sum(len(framework_notices(m["content"])) for m in native) == 1
+    assert native[4]["content"] == [{"type": "input_text", "text": "now"}, _NOTICE_BLOCK]
+    other = _translate_input_to_messages(history)
+    assert [m["content"] for m in other if m["role"] == "user"] == ["one", [image], "now"]
+    assert "_omnigent_framework_notice" not in json.dumps(other)
+
+
+def test_only_native_claude_and_codex_read_notices() -> None:
+    """The adapter keeps the current notice only for the executors that read it."""
+    from omnigent.inner.ae_notice_content import reads_framework_notices
+    from omnigent.inner.claude_native_executor import ClaudeNativeExecutor
+    from omnigent.inner.codex_native_executor import CodexNativeExecutor
+
+    assert reads_framework_notices(ClaudeNativeExecutor.__new__(ClaudeNativeExecutor))
+    assert reads_framework_notices(CodexNativeExecutor.__new__(CodexNativeExecutor))
+    assert not reads_framework_notices(_AcceptingInjectionExecutor())
+
+
+@pytest.mark.asyncio
+async def test_watch_injections_sends_plain_text_with_a_notice() -> None:
+    """Steering (non-native executors only) sends the plain text, never the notice."""
+    import asyncio as _aio
+
+    from omnigent.runtime.harnesses._executor_adapter import ExecutorAdapter
+    from omnigent.server.schemas import CreateResponseRequest
+
+    executor = _AcceptingInjectionExecutor()
+    adapter = ExecutorAdapter(executor_factory=lambda: executor, session_key="sk")
+    ctx = _OneInjectionCtx(
+        CreateResponseRequest(
+            model="m",
+            input=[{"type": "input_text", "text": "steer me"}, _NOTICE_BLOCK],
+            injection_id="inj_n",
+        )
+    )
+    task = _aio.create_task(adapter._watch_injections(ctx, executor))  # type: ignore[arg-type]
+    try:
+        for _ in range(200):
+            if ctx.emitted:
+                break
+            await _aio.sleep(0.01)
+    finally:
+        task.cancel()
+        with contextlib.suppress(_aio.CancelledError):
+            await task
+    assert executor.received == [("sk", "steer me")]

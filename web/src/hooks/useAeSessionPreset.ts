@@ -19,6 +19,8 @@ import {
   readAeSessionRoles,
   saveAeSessionRoles,
 } from "@/lib/aeSessionRoles";
+import { aeFixedLead } from "@/lib/aeLeadModel";
+import { aeAnnouncePresetLead, aeSwitchPresetLead } from "@/lib/aeLeadModelChat";
 import { aeStartOnLine } from "@/lib/aeStartOn";
 import { readAeTeam } from "@/lib/aeTeam";
 import {
@@ -56,18 +58,27 @@ export function useAeSessionPreset(sessionId: string | null | undefined) {
   /**
    * Put the session on `id` (a preset id or "lead-picks"); resolves true once
    * saved. Picks for one session run one at a time and the latest wins: a pick
-   * still waiting when a later one arrives never lands (resolves false).
+   * still waiting when a later one arrives never lands (resolves false). A
+   * preset with a fixed lead also switches the model, inside the same turn of
+   * the line, then says so in a toast with Undo.
    */
+  const hostId = session?.hostId;
   const pick = useCallback(
     async (id: string): Promise<boolean> => {
       if (!sessionId || !state) return false;
+      const preset = state.presets.find((p) => p.id === id);
       try {
-        const saved = await aeLatestWins(sessionId, () =>
-          saveAeSessionRoles(sessionId, aeRolesForPick(id, state.default_preset)),
-        );
-        if (saved === AE_SUPERSEDED) return false;
-        queryClient.setQueryData(["session", sessionId], saved);
+        const done = await aeLatestWins(sessionId, async () => {
+          const saved = await saveAeSessionRoles(
+            sessionId,
+            aeRolesForPick(id, state.default_preset),
+          );
+          queryClient.setQueryData(["session", sessionId], saved);
+          return aeSwitchPresetLead(queryClient, sessionId, hostId, preset);
+        });
+        if (done === AE_SUPERSEDED) return false;
         aeRememberPreset(id);
+        if (preset) aeAnnouncePresetLead(queryClient, sessionId, preset.title, done);
         return true;
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
@@ -75,7 +86,7 @@ export function useAeSessionPreset(sessionId: string | null | undefined) {
         return false;
       }
     },
-    [queryClient, sessionId, state],
+    [queryClient, sessionId, state, hostId],
   );
   /**
    * Add (`on`) or remove one session for this chat; resolves true once saved.
@@ -146,8 +157,12 @@ export function useAePresetHotkey(
         showToast(`Already on ${preset.title}.`, { duration: 2000 });
         return true;
       }
+      // A fixed-lead preset gets the "Lead switched" toast from the pick instead.
       void pick(preset.id).then(
-        (ok) => ok && showToast(`Roles preset: ${preset.title}`, { duration: 2000 }),
+        (ok) =>
+          ok &&
+          !aeFixedLead(preset) &&
+          showToast(`Roles preset: ${preset.title}`, { duration: 2000 }),
       );
       return true;
     },

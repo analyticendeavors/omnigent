@@ -109,3 +109,16 @@ def test_team_label_whose_sessions_are_gone_reads_as_auto() -> None:
     notice = team_notice(conversation("parent", labels={TEAM_LABEL: label}), store)
     assert notice["ae_team"] == {"mode": "auto", "members": []}
     assert "Auto collaboration" in (render_team_notice(notice) or "")
+
+
+def test_a_child_session_is_told_it_is_a_helper_not_the_lead() -> None:
+    child = conversation("child", parent_conversation_id="parent")
+    notice = team_notice(child, Mock())
+    text = render_team_notice(notice) or ""
+    assert text.startswith("You are a helper session started by a lead session.")
+    assert "You are the lead" not in text
+    assert "Roles preset" not in text
+    expanded = expand_framework_notices(
+        [{"role": "user", "content": [framework_notice_block(notice)]}]
+    )
+    assert expanded == [{"role": "system", "content": [{"type": "input_text", "text": text}]}]

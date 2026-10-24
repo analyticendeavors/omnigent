@@ -5,6 +5,7 @@ import json
 import httpx
 import pytest
 
+from omnigent.inner.ae_roles import HELPER_NOTICE
 from omnigent.inner.ae_team import TEAM_LABEL
 from omnigent.inner.native_attachments import framework_notices
 from omnigent.server.routes._sessions import orchestration
@@ -81,3 +82,33 @@ async def test_team_forward_preserves_authored_message(
         assert not items  # Native transcript forwarder remains the single writer.
     else:
         assert items[0].data.content == content
+
+
+async def test_native_child_session_gets_the_helper_notice(
+    client: httpx.AsyncClient, db_uri: str
+) -> None:
+    agent = await create_test_agent(client, name="team-helper")
+    created = await client.post("/v1/sessions", json={"agent_id": agent["id"]})
+    assert created.status_code == 201
+    store = SqlAlchemyConversationStore(db_uri)
+    child = store.create_conversation(
+        kind="sub_agent", parent_conversation_id=created.json()["id"], agent_id=agent["id"]
+    )
+    store.set_labels(child.id, {"omnigent.ui": "terminal", "omnigent.wrapper": "codex-native-ui"})
+    conv = store.get_conversation(child.id)
+    assert conv is not None
+    content = [{"type": "input_text", "text": "Check the build"}]
+    event = SessionEventInput(type="message", data={"role": "user", "content": content})
+    sent: list[dict] = []
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+        return httpx.Response(202, json={"queued": True})
+
+    async with httpx.AsyncClient(
+        base_url="http://runner.test", transport=httpx.MockTransport(capture)
+    ) as runner:
+        await orchestration._forward_native_terminal_message(
+            runner, child.id, conv, event, conversation_store=store
+        )
+    assert framework_notices(sent[-1]["content"]) == [HELPER_NOTICE]

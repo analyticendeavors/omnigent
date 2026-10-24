@@ -8,6 +8,7 @@ import type { AeRoleModelChoice } from "@/hooks/useAeRoleModels";
 import { aeClaudeCodeDefaultEffort, aeClaudeEffortLabel } from "@/lib/aeEffortDefault";
 import {
   AE_AUTO_RAISES_MAX,
+  AE_COMING_LATER,
   AE_HELPERS_OPTIONS,
   AE_ROLE_EFFORTS,
   AE_ROLE_IDS,
@@ -196,16 +197,30 @@ export function AeRoleRow({
 function RuleRow({
   title,
   hint,
+  later,
   children,
 }: {
   title: string;
   hint?: string;
+  /** Tags a rule nothing acts on yet with a muted "Coming later" note. */
+  later?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-2">
       <div className="min-w-0">
-        <div className="text-sm">{title}</div>
+        <div className="text-sm">
+          {title}
+          {later && (
+            <span
+              title={AE_COMING_LATER.hint}
+              data-testid="ae-rule-coming-later"
+              className="ml-1.5 text-[11px] text-muted-foreground"
+            >
+              {AE_COMING_LATER.label}
+            </span>
+          )}
+        </div>
         {hint && <div className="text-xs text-muted-foreground">{hint}</div>}
       </div>
       {children}
@@ -329,7 +344,11 @@ export function AeRolesEditor({
         <h3 className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
           Model changes in this preset
         </h3>
-        <RuleRow title="Raise a stuck child, or lower the lead" hint="Applies to both directions">
+        <RuleRow
+          title="Raise a stuck child, or lower the lead"
+          hint="Applies to both directions"
+          later
+        >
           <AeSegmented
             label="Raise a stuck child, or lower the lead"
             value={draft.rules.raise_or_lower}
@@ -342,6 +361,7 @@ export function AeRolesEditor({
         <RuleRow
           title="Lead steps down for mechanical work"
           hint="Watching CI, applying decided fixes: the Builder's model"
+          later
         >
           <AeSegmented
             label="Lead steps down for mechanical work"
@@ -352,7 +372,7 @@ export function AeRolesEditor({
             disabled={saving}
           />
         </RuleRow>
-        <RuleRow title="Automatic raises per child" hint="After this, every raise asks you">
+        <RuleRow title="Automatic raises per child" hint="After this, every raise asks you" later>
           <AeStepper
             label="Automatic raises per child"
             value={draft.rules.auto_raises}

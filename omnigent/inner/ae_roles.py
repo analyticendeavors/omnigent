@@ -24,6 +24,18 @@ Solo when the preset keeps work in house (``own``), else Team when the label
 lists sessions, else Solo for a label still saved as mode ``solo``, else Auto.
 A label saved as Solo before presets had the rule reads as the ``solo`` preset
 when the user has one, else the default with ``helpers`` set to ``own``.
+
+Child sessions (2026-10-24): a session started by a lead is a helper, so its
+whole notice is :data:`HELPER_NOTICE` (metadata ``{"ae_helper": True}``), never
+the lead's Auto or Team text. A fork copies ``ae.orch`` but is a top-level
+session the user drives, so it stays a lead.
+
+The lead line names what the session really runs (its own model and effort,
+under ``lead_session``), and says so when the preset asks for another model.
+Only a Claude lead hears about Claude's Agent tool and tier aliases. A role
+fixed to a model id shows the tier alias only when the id is the current one for
+that tier (``current``, from the omnigent-ae package), since a bare alias
+resolves to the newest version.
 """
 
 from __future__ import annotations
@@ -46,6 +58,8 @@ LOCAL_USER = "local"
 ROLES: tuple[str, ...] = ("lead", "planner", "reviewer", "builder", "helper")
 LEAD_PICKS_SHOWN = 8
 _LABEL_MAX = 16_384
+FORK_SOURCE_LABEL = "omnigent.fork.source_id"
+_ONE_M = "[1m]"
 _ALIASES = ("fable", "opus", "sonnet", "haiku")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]+")
 
@@ -85,6 +99,12 @@ BALANCED: dict[str, Any] = {
 }
 SOLO = "solo"
 OWN = "own"
+HELPER_KEY = "ae_helper"
+HELPER_NOTICE = (
+    "You are a helper session started by a lead session. Do the task you were given and "
+    "report back to it; do not start other sessions or bring in other agents. Use your own "
+    "native subagents only if the task needs them."
+)
 
 
 def _role_prefs() -> Any | None:
@@ -191,10 +211,12 @@ def resolve_roles(conv: Conversation, store: ConversationStore) -> dict[str, Any
     and the resolved preset's Helpers rule reads as ``own`` either way.
 
     :returns: ``{"preset": {...}, "custom": bool}``, or ``{"lead_picks": True,
-        "presets": [...], "more": n}`` when the session lets the lead choose.
+        "presets": [...], "more": n}`` when the session lets the lead choose; either
+        with ``current`` (the current catalog id per tier alias).
     """
     roles = _resolve_roles(conv, store)
-    return _own_helpers(roles) if _legacy_solo(conv) else roles
+    roles = _own_helpers(roles) if _legacy_solo(conv) else roles
+    return {**roles, "current": _current_ids()}
 
 
 def _resolve_roles(conv: Conversation, store: ConversationStore) -> dict[str, Any]:
@@ -235,10 +257,16 @@ def _resolve_roles(conv: Conversation, store: ConversationStore) -> dict[str, An
 
 
 def _is_child(conv: Conversation) -> bool:
-    """True for a session with a parent or an ``ae.orch`` label holding a session id."""
+    """True for a session with a parent or an ``ae.orch`` label holding a session id.
+
+    A fork (``omnigent.fork.source_id``, no parent) copies its source's labels
+    but is a top-level session, so it is never a child.
+    """
     if getattr(conv, "parent_conversation_id", None):
         return True
     labels = conv.labels if isinstance(conv.labels, dict) else {}
+    if labels.get(FORK_SOURCE_LABEL):
+        return False
     orch = labels.get(ORCH_LABEL)
     return isinstance(orch, str) and orch.strip() not in ("", "1")
 
@@ -248,18 +276,63 @@ def with_roles(
 ) -> dict[str, object]:
     """*notice* (or a new one) with the resolved roles under ``ae_roles``; never raises.
 
-    A child session is a helper, not a lead, so its notice is returned as is.
+    A child session is a helper, not a lead: its notice is replaced by the
+    helper marker that renders as :data:`HELPER_NOTICE`.
     The ``ae_team`` mode becomes the one the preset and label call for (see
     :func:`effective_mode`).
     """
     if _is_child(conv):
-        return notice
+        return {HELPER_KEY: True}
     try:
         roles = resolve_roles(conv, store)
     except Exception:  # noqa: BLE001 (the notice must never break a message)
         _logger.warning("ae roles: could not resolve the preset; using Balanced", exc_info=True)
         roles = {"preset": _summary(BALANCED), "custom": False}
+    roles = {**roles, "lead_session": _lead_session(conv)}
     return {**effective_mode(notice, roles), "ae_roles": roles}
+
+
+def _lead_session(conv: Conversation) -> dict[str, object]:
+    """What the session runs (its own model and effort, when set) and whether it is Claude.
+
+    ``claude`` is ``None`` when nothing on the row says which harness runs it.
+    """
+    model = getattr(conv, "model_override", None)
+    effort = getattr(conv, "reasoning_effort", None)
+    labels = conv.labels if isinstance(conv.labels, dict) else {}
+    hints = [
+        hint.lower()
+        for hint in (
+            getattr(conv, "harness_override", None),
+            labels.get("omnigent.wrapper"),
+            model,
+            getattr(conv, "reported_model", None),
+        )
+        if isinstance(hint, str) and hint.strip()
+    ]
+    agent = getattr(conv, "agent_id", None)
+    agent = agent.lower() if isinstance(agent, str) else ""
+    claude: bool | None = None
+    if any(word in hint for hint in hints for word in ("claude", *_ALIASES)):
+        claude = True
+    elif hints or "codex" in agent:
+        claude = False
+    elif "claude" in agent:
+        claude = True
+    return {
+        "model": model if isinstance(model, str) else None,
+        "effort": effort if isinstance(effort, str) else None,
+        "claude": claude,
+    }
+
+
+def _current_ids() -> dict[str, str]:
+    """The current catalog id per tier alias, from the omnigent-ae package (else none)."""
+    module = _role_prefs()
+    if module is None:
+        return {}
+    current = {alias: getattr(module, alias.upper(), None) for alias in _ALIASES}
+    return {alias: value for alias, value in current.items() if isinstance(value, str)}
 
 
 def effective_mode(notice: dict[str, object] | None, roles: object) -> dict[str, object]:
@@ -299,7 +372,33 @@ def _text(value: object, limit: int) -> str:
     return _CONTROL.sub(" ", str(value or "")).strip()[:limit]
 
 
-def _model(setting: object) -> str:
+def _comparable(model: str) -> str:
+    """*model* without the 1M context suffix, lower case."""
+    model = model.strip().lower()
+    return model[: -len(_ONE_M)] if model.endswith(_ONE_M) else model
+
+
+def _named(model: str, current: object) -> str:
+    """The tier alias when *model* is its tier's current id (or the alias), else *model*."""
+    plain = _comparable(model)
+    if plain in _ALIASES:
+        return plain
+    ids = current if isinstance(current, dict) else {}
+    for alias, value in ids.items():
+        target = _comparable(str(value))
+        if target and (
+            plain == target or (plain.endswith(target) and not plain[-len(target) - 1].isalnum())
+        ):
+            return str(alias)
+    return model
+
+
+def _with_effort(model: str, effort: str, current: object) -> str:
+    named = _named(model, current)
+    return f"{named}, {effort}" if effort else named
+
+
+def _model(setting: object, current: object = None) -> str:
     if not isinstance(setting, dict):
         return "your pick"
     mode = setting.get("mode")
@@ -307,11 +406,34 @@ def _model(setting: object) -> str:
         return "the session model"
     if mode != "fixed":
         return "your pick"
-    model = _text(setting.get("model"), 128)
-    effort = _text(setting.get("effort"), 16)
-    alias = next((a for a in _ALIASES if a in model.lower()), None)
-    named = f"{alias} / {model}" if alias and alias != model.lower() else model
-    return f"{named}, {effort}" if effort else named
+    # The tier alias is what a native subagent takes, but only the current version
+    # answers to it; an older version keeps its full id.
+    return _with_effort(
+        _text(setting.get("model"), 128), _text(setting.get("effort"), 16), current
+    )
+
+
+def _lead_line(lead: object, session: object, current: object) -> str:
+    """The lead line: what the session runs, and the preset's model when it differs."""
+    session = session if isinstance(session, dict) else {}
+    model = _text(session.get("model"), 128)
+    effort = _text(session.get("effort"), 16)
+    actual = _with_effort(model, effort, current) if model else ""
+    lead = lead if isinstance(lead, dict) else {}
+    if lead.get("mode") == "fixed":
+        asked = _model(lead, current)
+        wanted = _comparable(_text(lead.get("model"), 128))
+        same_model = bool(model) and _named(_comparable(model), current) == _named(wanted, current)
+        same_effort = not effort or effort == _text(lead.get("effort"), 16)
+        if not model or (same_model and same_effort):
+            return f"- Lead: you, on {asked}."
+        return f"- Lead: you, on {actual} (the preset asks for {asked})."
+    if lead.get("mode") == "auto":
+        now = f" (now {actual})" if actual else ""
+        return f"- Lead: you, on the model of your pick{now}."
+    if actual:
+        return f"- Lead: you, on {actual} (the session model)."
+    return "- Lead: you, on the session model."
 
 
 def _rules_short(rules: object) -> str:
@@ -339,34 +461,50 @@ def _rules(rules: object) -> str:
     down = "on" if rules.get("lead_steps_down") is True else "off"
     raises = rules.get("auto_raises")
     raises = raises if isinstance(raises, int) and not isinstance(raises, bool) else 0
+    past = "." if rules.get("raise_or_lower") == "off" else "; past that, ask first."
     return (
         f"{change} Step down for mechanical work: {down}. "
-        f"Automatic raises per child: {raises}; past that, ask first."
+        f"Automatic raises per child: {raises}{past}"
     )
 
 
 _TOOLS = (
-    "The Agent tool takes tier aliases (opus, sonnet, haiku, fable); sessions take catalog ids."
+    "Native subagents (Claude's Agent tool) take a tier alias (opus, sonnet, haiku, fable) "
+    "and an effort. For a separate session, name its role in the brief."
 )
+_TOOLS_OTHER = (
+    "Give a native subagent the role's model and effort where your harness supports it. "
+    "For a separate session, name its role in the brief."
+)
+
+
+def _tools(roles: dict[str, Any]) -> str:
+    """The Agent tool sentence for a Claude (or unknown) lead, else the generic one."""
+    session = roles.get("lead_session")
+    if isinstance(session, dict) and session.get("claude") is False:
+        return _TOOLS_OTHER
+    return _TOOLS
 
 
 def render_roles(roles: object) -> str | None:
     """The lead's roles block (under 12 lines) for ``ae_roles`` metadata, or ``None``."""
     if not isinstance(roles, dict):
         return None
+    current = roles.get("current")
+    tools = _tools(roles)
     if roles.get("lead_picks") is True:
         presets = [p for p in roles.get("presets") or [] if isinstance(p, dict)]
         if not presets:
             return None
         lines = [
             "Roles preset: lead picks. Pick the preset below that fits this task and say "
-            "which in one line, then name a role for each helper you start and give it "
-            f"that role's model and effort. {_TOOLS}"
+            "which in one line, then name a role for each helper you start and give a "
+            f"native subagent that role's model and effort. {tools}"
         ]
         for preset in presets[:LEAD_PICKS_SHOWN]:
             setting = preset.get("roles") if isinstance(preset.get("roles"), dict) else {}
             parts = [
-                f"{role} {_model(setting.get(role))}"
+                f"{role} {_model(setting.get(role), current)}"
                 for role in ROLES
                 if role != "lead"
                 or not isinstance(setting.get(role), dict)
@@ -389,24 +527,24 @@ def render_roles(roles: object) -> str | None:
         title += " (customized for this session)"
     setting = preset.get("roles") if isinstance(preset.get("roles"), dict) else {}
     lines = [
-        f"Roles preset: {title}. Name a role for each helper you start and give it that "
-        f"role's model and effort. {_TOOLS}"
+        f"Roles preset: {title}. Name a role for each helper you start and give a native "
+        f"subagent that role's model and effort. {tools}"
     ]
-    lead = setting.get("lead")
-    if isinstance(lead, dict) and lead.get("mode") == "fixed":
-        lines.append(f"- Lead: you, on {_model(lead)}.")
-    elif isinstance(lead, dict) and lead.get("mode") == "auto":
-        lines.append("- Lead: you, on the model of your pick.")
-    else:
-        lines.append("- Lead: you, on the session model.")
+    lines.append(_lead_line(setting.get("lead"), roles.get("lead_session"), current))
     for role in ROLES[1:]:
-        lines.append(f"- {_ROLE_LABELS[role]}: {_model(setting.get(role))}.")
+        lines.append(f"- {_ROLE_LABELS[role]}: {_model(setting.get(role), current)}.")
     lines.append(_rules(preset.get("rules")))
     return "\n".join(lines)
 
 
 def append_roles(text: str | None, metadata: Any) -> str | None:
-    """*text* with the roles block from *metadata* appended (either may be missing)."""
+    """*text* with the roles block from *metadata* appended (either may be missing).
+
+    A child session's metadata carries only the helper marker and reads as
+    :data:`HELPER_NOTICE` alone.
+    """
+    if isinstance(metadata, dict) and metadata.get(HELPER_KEY) is True:
+        return HELPER_NOTICE
     block = render_roles(metadata.get("ae_roles")) if isinstance(metadata, dict) else None
     if text and block:
         return f"{text}\n\n{block}"

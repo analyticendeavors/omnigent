@@ -37,6 +37,7 @@ import {
   aeSessionsLocked,
   aeSessionsLockedHint,
 } from "@/lib/aeTeamPresets";
+import { aeAnnouncePresetLead, aeSwitchPresetLead } from "@/lib/aeLeadModelChat";
 import { AeSessionPresetRow } from "./AeSessionPresetRow";
 import { AeSessionPresetPill } from "./composer/AeSessionPresetPill";
 import { Button } from "./ui/button";
@@ -373,6 +374,8 @@ export function AeTeamControl({
   // Roles go to saveAeTeam only when this dialog changed them, so a stale
   // value from when it opened never overwrites a newer pick (pill, Alt digit).
   const [rolesTouched, setRolesTouched] = useState(false);
+  // The preset in force when the dialog opened: only a different pick switches the lead model.
+  const [openedPresetId, setOpenedPresetId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const saved = readAeTeam(session.labels);
@@ -409,7 +412,10 @@ export function AeTeamControl({
       // The migrated roles are for display; they are written only when the user
       // changes the roles row, or when they are a plain reference to the Solo
       // preset (no frozen copy of a preset is ever written just for opening).
+      const opened = legacy ? migrated : (stored.roles ?? null);
       setDraft(legacy ? { ...stored, roles: migrated } : stored);
+      const openedChoice = rolesState ? aeResolveSessionPreset(opened, rolesState) : null;
+      setOpenedPresetId(openedChoice?.kind === "preset" ? openedChoice.preset.id : null);
       setRolesTouched(
         legacy && !stored.roles && migrated?.preset === AE_SOLO_PRESET_ID && !migrated.custom,
       );
@@ -428,18 +434,34 @@ export function AeTeamControl({
       const { roles: _staleRoles, ...withoutRoles } = draft;
       // Through the same per-session line the pill's menu writes use, so a
       // menu change still saving lands first and is never overwritten.
-      const updated = await aeLatestWins(
+      // A newly chosen preset with a fixed lead also switches the model; a Helpers
+      // toggle or a non-lead row edit on the same preset leaves the model alone.
+      const switchPreset =
+        rolesTouched && choice?.kind === "preset" && choice.preset.id !== openedPresetId
+          ? choice.preset
+          : null;
+      // The label save and the lead switch share one callback, so a later pick
+      // supersedes both and an older switch never overwrites a newer model.
+      const done = await aeLatestWins(
         session.id,
         async () => {
-          if (!locked) return saveAeTeam(session.id, rolesTouched ? draft : withoutRoles);
-          // Own subagents only: the stored sessions stay as they are (no child
-          // sessions, no routing change); only the roles choice can be saved.
-          return rolesTouched ? saveAeSessionRoles(session.id, draft.roles ?? null) : null;
+          const updated = locked
+            ? // Own subagents only: the stored sessions stay as they are (no child
+              // sessions, no routing change); only the roles choice can be saved.
+              rolesTouched
+              ? await saveAeSessionRoles(session.id, draft.roles ?? null)
+              : null
+            : await saveAeTeam(session.id, rolesTouched ? draft : withoutRoles);
+          if (updated) queryClient.setQueryData(["session", session.id], updated);
+          const lead = switchPreset
+            ? await aeSwitchPresetLead(queryClient, session.id, session.hostId, switchPreset)
+            : null;
+          return { lead };
         },
         { queue: true },
       );
-      if (updated && updated !== AE_SUPERSEDED) {
-        queryClient.setQueryData(["session", session.id], updated);
+      if (done !== AE_SUPERSEDED && switchPreset && done.lead) {
+        aeAnnouncePresetLead(queryClient, session.id, switchPreset.title, done.lead);
       }
       await queryClient.invalidateQueries({ queryKey: childSessionsQueryKey(session.id) });
       onOpenChange(false);
