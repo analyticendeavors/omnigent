@@ -18,6 +18,7 @@ import type { Session } from "@/lib/types";
 import { AeTeamControl, AeTeamEditor, SessionTeamControl } from "./AeTeamControl";
 
 const mocks = vi.hoisted(() => ({
+  mobile: vi.fn(() => false),
   agents: vi.fn(),
   hosts: vi.fn(),
   models: vi.fn(),
@@ -50,6 +51,7 @@ vi.mock("@/lib/aeTeam", async (original) => ({
 // Change lead opens AppShell's fork dialog; the control renders without AppShell here.
 const forkDialog = vi.hoisted(() => ({ canFork: true, openForkDialog: vi.fn() }));
 vi.mock("@/shell/ForkDialogContext", () => ({ useForkDialog: () => forkDialog }));
+vi.mock("@/hooks/useIsMobileViewport", () => ({ useIsMobileViewport: () => mocks.mobile() }));
 vi.mock("@/hooks/useAvailableAgents", () => ({ useAvailableAgents: mocks.agents }));
 vi.mock("@/hooks/useHosts", () => ({ useHosts: mocks.hosts, useHostModelOptions: mocks.models }));
 
@@ -188,6 +190,7 @@ const saveButton = () => screen.getByRole("button", { name: "Save selection" });
 
 beforeEach(() => {
   vi.resetAllMocks();
+  mocks.mobile.mockReturnValue(false);
   mocks.agents.mockReturnValue({ data: agents, isLoading: false, isError: false });
   mocks.hosts.mockReturnValue({ data: [host] });
   mocks.models.mockReturnValue({ data: [{ id: "test-model", displayName: "Available model" }] });
@@ -875,6 +878,31 @@ describe("composer preset pill states", () => {
     fireEvent.click(screen.getByTestId("ae-preset-pill-fallback"));
     expect(refetch).not.toHaveBeenCalled();
     expect(screen.getByText("Lead / orchestrator")).toBeInTheDocument();
+  });
+
+  it("opens the phone sheet on the list, not in the search box", async () => {
+    mocks.mobile.mockReturnValue(true);
+    mocks.roles.mockReturnValue({ data: ROLES });
+    renderPill();
+    fireEvent.click(screen.getByRole("button", { name: /Roles preset: / }));
+    const menu = await screen.findByTestId("ae-preset-menu");
+    const search = screen.getByRole("searchbox", { name: "Search presets" });
+    await waitFor(() => expect(menu).toContainElement(document.activeElement as HTMLElement));
+    expect(document.activeElement).toBe(menu);
+    expect(document.activeElement).not.toBe(search);
+    // A tap on the box still focuses it.
+    search.focus();
+    expect(document.activeElement).toBe(search);
+  });
+
+  it("leaves the desktop menu's focus behaviour alone", async () => {
+    mocks.roles.mockReturnValue({ data: ROLES });
+    renderPill();
+    fireEvent.click(screen.getByRole("button", { name: /Roles preset: / }));
+    const menu = await screen.findByTestId("ae-preset-menu");
+    const search = screen.getByRole("searchbox", { name: "Search presets" });
+    await waitFor(() => expect(menu).toContainElement(document.activeElement as HTMLElement));
+    expect(document.activeElement).toBe(search);
   });
 
   it("disables adding and removing sessions in the menu while a turn runs", () => {

@@ -329,6 +329,16 @@ export function AeSessionPresetPill({
           <DialogContent
             showCloseButton={false}
             data-testid="ae-preset-menu"
+            // Radix would focus the first field, the search box, and the phone
+            // keyboard would cover the list. Focus the sheet itself instead
+            // (it takes focus, tabIndex -1) so the focus trap and screen
+            // readers still work; the keyboard waits for a tap on the box.
+            onOpenAutoFocus={(event) => {
+              event.preventDefault();
+              if (event.currentTarget instanceof HTMLElement) {
+                event.currentTarget.focus({ preventScroll: true });
+              }
+            }}
             className="top-auto bottom-0 left-0 flex max-w-full translate-x-0 translate-y-0 flex-col gap-1 rounded-t-2xl rounded-b-none p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:max-w-full"
             style={{ top: "auto", maxHeight: "85dvh" }}
           >
