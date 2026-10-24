@@ -37,7 +37,7 @@ export interface AeStartOnQueued {
   models: readonly NativeModelOption[];
 }
 
-interface AeStartOnPlan {
+export interface AeStartOnPlan {
   target: AeStartOnTarget;
   /** The user's default preset id, which a preset pick writes as "no field". */
   defaultId: string;
@@ -110,7 +110,7 @@ interface Applied {
 
 const reasonOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-async function applyPlan(
+export async function aeApplyPlan(
   sessionId: string,
   plan: AeStartOnPlan,
   onSession: OnSession,
@@ -276,7 +276,7 @@ export async function aeApplyQueuedStartOn(
       models: queuedLine.models,
     };
     held.plan = plan;
-    announce(sessionId, plan, await applyPlan(sessionId, plan, onSession), onSession);
+    announce(sessionId, plan, await aeApplyPlan(sessionId, plan, onSession), onSession);
   };
   const running = work().catch((error: unknown) => {
     // Presets unreadable before anything was chosen: send as is, quietly.

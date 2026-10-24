@@ -101,7 +101,8 @@ export function AeSessionPresetPill({
   working = false,
   onOpenTeam,
 }: {
-  sessionId: string;
+  /** Null on the new-chat composer: the pick is held for the first send. */
+  sessionId: string | null;
   disabled?: boolean;
   /** A turn is running: sessions cannot be added or removed from the menu until it finishes. */
   working?: boolean;
@@ -322,7 +323,7 @@ export function AeSessionPresetPill({
         {words.length > 0 && shown.length === 0 && (
           <p className="px-2 py-2 text-xs text-muted-foreground">No preset matches.</p>
         )}
-        {onOpenTeam && words.length === 0 && (
+        {onOpenTeam && sessionId && words.length === 0 && (
           <AePresetSessionsSection
             sessionId={sessionId}
             members={team.members}

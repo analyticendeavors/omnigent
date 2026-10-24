@@ -1,5 +1,10 @@
 import type * as SandboxModelOptionsModule from "@/hooks/useSandboxModelOptions";
 
+// The preset pill reads /v1/ae/roles; keep that fetch out of these suites.
+vi.mock("@/hooks/useAeRoles", () => ({
+  useAeRoles: () => ({ data: undefined, isError: false, refetch: () => {} }),
+  fetchAeRoles: () => Promise.reject(new Error("not mocked")),
+}));
 vi.mock("@/hooks/useSandboxModelOptions", async (importOriginal) => ({
   ...(await importOriginal<typeof SandboxModelOptionsModule>()),
   useSandboxModelOptions: vi.fn(() => ({

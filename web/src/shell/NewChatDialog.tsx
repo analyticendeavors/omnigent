@@ -2,6 +2,8 @@ import { useLoadedConversations } from "@/hooks/useSidebarData";
 import { useComposerContext } from "@/hooks/useComposerContext";
 import { useSlashCompletion } from "@/hooks/useSlashCompletion";
 import { aeNoteStartOn } from "@/hooks/useAeSessionPreset";
+import { aeBindDraftPreset, aeSetDraftPick } from "@/lib/aeDraftPreset";
+import { AeSessionPresetPill } from "@/components/composer/AeSessionPresetPill";
 import {
   HarnessPicker,
   HarnessPickerEntry,
@@ -2627,6 +2629,8 @@ export function NewChatLandingScreen() {
   // Controlled so selecting an existing worktree can close the popover.
   const [worktreePopoverOpen, setWorktreePopoverOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  // A pick never carries to the next visit; creating a session binds it first.
+  useEffect(() => () => aeSetDraftPick(null), []);
   const [createError, setCreateError] = useState<string | null>(null);
   // "Connect a host" instructions modal, opened from the host dropdown.
   const [connectOpen, setConnectOpen] = useState(false);
@@ -5931,6 +5935,8 @@ export function NewChatLandingScreen() {
       // A START ON line in this first prompt is applied to the new session by
       // the send, the same path the composer uses.
       aeNoteStartOn(initialPrompt, data.id, pickerModelOptions, { isNewSession: true });
+      // The pill's pick belongs to this session from here on.
+      aeBindDraftPreset(data.id, pickerModelOptions);
       // `localConv` is set only when a real agent id was resolved up front, so
       // it's safe to POST the first message with it.
       if (localConv !== null && effectiveAgentId !== null) {
@@ -6983,6 +6989,7 @@ export function NewChatLandingScreen() {
                 ),
                 trailing: (
                   <>
+                    <AeSessionPresetPill sessionId={null} disabled={creating} />
                     <div className="flex min-w-0 items-center rounded-lg">
                       {/* One trigger combines the harness glyph with model / effort;
                     the selected entry's submenu owns run configuration. */}

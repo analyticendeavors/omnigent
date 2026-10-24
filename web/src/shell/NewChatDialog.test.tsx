@@ -1,6 +1,11 @@
 import { testAgent } from "@/test/agentFixtures";
 import type * as SandboxModelOptionsModule from "@/hooks/useSandboxModelOptions";
 
+// The preset pill reads /v1/ae/roles; keep that fetch out of these suites.
+vi.mock("@/hooks/useAeRoles", () => ({
+  useAeRoles: () => ({ data: undefined, isError: false, refetch: () => {} }),
+  fetchAeRoles: () => Promise.reject(new Error("not mocked")),
+}));
 vi.mock("@/hooks/useSandboxModelOptions", async (importOriginal) => ({
   ...(await importOriginal<typeof SandboxModelOptionsModule>()),
   useSandboxModelOptions: vi.fn(() => ({
@@ -3225,6 +3230,15 @@ describe("NewChatLandingScreen", () => {
     // "click New session in the sidebar" placeholder. If it regressed to
     // the placeholder, the composer input would be absent and this fails.
     expect(screen.getByTestId("new-chat-landing-input")).toBeTruthy();
+  });
+
+  it("shows the roles preset pill before any session exists", async () => {
+    renderLanding();
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("ae-preset-pill") ?? screen.queryByTestId("ae-preset-pill-fallback"),
+      ).toBeTruthy(),
+    );
   });
 
   it("does not replace a missing remembered host with the first cached host", async () => {

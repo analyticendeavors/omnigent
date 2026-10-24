@@ -42,7 +42,8 @@
 //     stream, fetches the items snapshot, and merges into blocks
 //     deduping by item id.
 
-import { aeApplyQueuedStartOn, aeDropStartOn } from "@/lib/aeStartOnApply";
+import { aeApplyNewChatStart } from "@/lib/aeDraftPresetApply";
+import { aeDropStartOn } from "@/lib/aeStartOnApply";
 import type { InfiniteData, QueryClient } from "@tanstack/react-query";
 import { create } from "zustand";
 import type {
@@ -2448,7 +2449,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       postedSessionId = sessionId;
       if (initialDraft && !(await waitForModelSelection(sessionId, tempId))) return;
       // A START ON line in the first message sets the preset or model before the turn.
-      await aeApplyQueuedStartOn(submitConversationId, sessionId, (updated) => {
+      await aeApplyNewChatStart(submitConversationId, sessionId, (updated) => {
         setterFor(sessionId)({
           sessionModelOverride: updated.modelOverride ?? null,
           sessionReasoningEffort: updated.reasoningEffort ?? null,

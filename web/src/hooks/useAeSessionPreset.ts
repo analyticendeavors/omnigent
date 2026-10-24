@@ -20,6 +20,7 @@ import {
   readAeSessionRoles,
   saveAeSessionRoles,
 } from "@/lib/aeSessionRoles";
+import { aeSetDraftPick, useAeDraftPick } from "@/lib/aeDraftPreset";
 import { aeFixedLead } from "@/lib/aeLeadModel";
 import { aeAnnouncePresetLead, aeSwitchPresetLead } from "@/lib/aeLeadModelChat";
 import { aeStartOnLine } from "@/lib/aeStartOn";
@@ -43,13 +44,17 @@ export function useAeSessionPreset(sessionId: string | null | undefined) {
   const rolesQuery = useAeRoles();
   const state = rolesQuery.data;
   const labels = session?.labels;
+  // No session yet (the new-chat composer): the pill holds the pick for the first send.
+  const draftPick = useAeDraftPick();
   // Session changes still saving: the dialog reads the label, so it waits for them.
   const [pending, setPending] = useState(0);
   // A label saved as Solo before presets had a Helpers rule reads the new way.
   const roles = useMemo(() => {
+    if (!sessionId)
+      return draftPick && state ? aeRolesForPick(draftPick, state.default_preset) : null;
     const stored = readAeSessionRoles(labels);
     return state ? aeMigratedSessionRoles(labels, stored, state) : stored;
-  }, [labels, state]);
+  }, [labels, state, sessionId, draftPick]);
   const team = useMemo(() => readAeTeam(labels), [labels]);
   const choice = useMemo(
     () => (state ? aeResolveSessionPreset(roles, state) : null),
@@ -66,7 +71,11 @@ export function useAeSessionPreset(sessionId: string | null | undefined) {
   const hostId = session?.hostId;
   const pick = useCallback(
     async (id: string): Promise<boolean> => {
-      if (!sessionId || !state) return false;
+      if (!state) return false;
+      if (!sessionId) {
+        aeSetDraftPick(id);
+        return true;
+      }
       const preset = state.presets.find((p) => p.id === id);
       try {
         const done = await aeLatestWins(sessionId, async () => {
@@ -138,7 +147,7 @@ export function useAeSessionPreset(sessionId: string | null | undefined) {
  * a position with no preset leaves the key alone (Option+digit types on a Mac).
  */
 export function useAePresetHotkey(
-  sessionId: string | null | undefined,
+  _sessionId: string | null | undefined,
   current: Pick<ReturnType<typeof useAeSessionPreset>, "state" | "choice" | "pick">,
 ) {
   const { state, choice, pick } = current;
@@ -146,7 +155,7 @@ export function useAePresetHotkey(
     (event: KeyboardEvent): boolean => {
       if (event.isComposing) return false;
       const index = aePresetDigit(event);
-      if (index === null || !state || !sessionId) return false;
+      if (index === null || !state) return false;
       const chord = aeChordFromEvent(event);
       const keys = readAeSuggestionKeys();
       if (chord && (aeSameChord(chord, keys.next) || aeSameChord(chord, keys.previous))) {
@@ -168,7 +177,7 @@ export function useAePresetHotkey(
       );
       return true;
     },
-    [choice, pick, sessionId, state],
+    [choice, pick, state],
   );
 }
 
