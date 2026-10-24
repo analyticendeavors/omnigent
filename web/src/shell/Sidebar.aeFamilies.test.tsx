@@ -8,12 +8,12 @@
 //   4. Show > Family dots turns the dots off.
 
 import type * as IdentityModule from "@/lib/identity";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/hooks/useScopeCache", () => import("@/test/mockScopeCache"));
 
-const mocks = vi.hoisted(() => ({ fetch: vi.fn() }));
+const mocks = vi.hoisted(() => ({ fetch: vi.fn(), archived: vi.fn() }));
 
 vi.mock("@/hooks/useIsMobileViewport", () => ({ useIsMobileViewport: () => false }));
 vi.mock("@/lib/serverOrigin", () => ({ isCurrentServerLocal: () => false }));
@@ -27,6 +27,7 @@ vi.mock("@/hooks/useConversations", async () => {
   const { conversationHooksMock } = await import("@/test/sidebarMockHelpers");
   return {
     ...conversationHooksMock(),
+    fetchConversationsPage: mocks.archived,
     usePinnedConversations: () => ({
       data: { conversations: [], filterHonored: true },
       isSuccess: true,
@@ -44,6 +45,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { type Conversation, useConversations } from "@/hooks/useConversations";
 import { SidebarDataProvider } from "@/hooks/useSidebarData";
 import { CapabilitiesProvider } from "@/lib/CapabilitiesContext";
+import { resetAeFamilyClosedCache } from "@/lib/aeFamilyClosed";
 import { resetAeFamilyFoldsCache } from "@/lib/aeFamilyTree";
 import { FALLBACK_SERVER_INFO } from "@/lib/capabilities";
 import { conversation, conversationPage } from "@/test/sidebarMockHelpers";
@@ -117,6 +119,9 @@ function dotOf(name: string): HTMLElement | null {
 beforeEach(() => {
   localStorage.clear();
   resetAeFamilyFoldsCache();
+  resetAeFamilyClosedCache();
+  mocks.archived.mockReset();
+  mocks.archived.mockResolvedValue({ data: [] });
   mocks.fetch.mockReset();
   mocks.fetch.mockResolvedValue(new Response("{}", { status: 404 }));
   useConvMock.mockImplementation(() => conversationPage(ROWS));
@@ -302,6 +307,103 @@ describe("Grouping > Family", () => {
     expect(rowNames()).toHaveLength(3);
     fireEvent.click(within(rowItem("Role routing build")).getByTestId("ae-family-fold"));
     expect(rowNames()).toHaveLength(6);
+  });
+
+  describe("closed rows", () => {
+    const lead = sid("Role routing build");
+    const ref = (name: string, updated: number) =>
+      row(name, updated, { "ae.orch": lead, "ae.status": "reference" });
+    const withClosed = (...extra: Conversation[]) =>
+      useConvMock.mockImplementation(() => conversationPage([...ROWS, ...extra]));
+    const closedNames = () =>
+      [...document.querySelectorAll('[data-testid="ae-family-closed-row"]')].map(
+        (li) => li.textContent,
+      );
+
+    it("folds a reference child into '1 closed', keeps a review child, and remembers opening it", () => {
+      withClosed(
+        ref("Old helper", 5),
+        row("Done helper", 6, { "ae.orch": lead, "ae.status": "review" }),
+      );
+      setView({ grouping: "family" });
+      const view = renderSidebar();
+      const pill = within(rowItem("Role routing build")).getByTestId("ae-family-fold");
+      expect(pill.textContent).toBe("5 · 4 open");
+      expect(pill.getAttribute("title")).toBe(
+        "5 sessions: 3 working, 1 done waiting for your read, 1 closed",
+      );
+      expect(rowItem("Done helper")).toBeTruthy();
+      expect(rowItem("Old helper")).toBeNull();
+      const fold = screen.getByTestId("ae-family-closed-fold");
+      expect(fold.textContent).toBe("1 closed");
+      expect(closedNames()).toEqual([]);
+      fireEvent.click(within(fold).getByRole("button"));
+      expect(closedNames()).toEqual(["Old helper"]);
+      view.rerenderSidebar();
+      expect(closedNames()).toEqual(["Old helper"]);
+      expect(JSON.parse(localStorage.getItem("omnigent:ae-family-closed-open")!)).toEqual([lead]);
+    });
+
+    it("counts archived children and lists them with the open group", async () => {
+      mocks.archived.mockResolvedValue({
+        data: [
+          { ...row("Archived one", 9, { "ae.orch": lead }), archived: true },
+          { ...row("Archived two", 3, { "ae.orch": lead }), archived: true },
+        ],
+      });
+      withClosed(ref("Old helper", 5));
+      localStorage.setItem("omnigent:ae-family-closed-open", JSON.stringify([lead]));
+      setView({ grouping: "family" });
+      renderSidebar();
+      await screen.findByText("Archived one");
+      expect(closedNames()).toEqual(["Archived one", "Old helper", "Archived two"]);
+      expect(
+        within(rowItem("Role routing build")).getByTestId("ae-family-fold").getAttribute("title"),
+      ).toBe("6 sessions: 3 working, 3 closed (2 archived)");
+    });
+
+    it("shows five closed rows, then reveals the rest from 'Show N more'", () => {
+      withClosed(...Array.from({ length: 7 }, (_, i) => ref(`Helper ${i}`, 30 - i)));
+      localStorage.setItem("omnigent:ae-family-closed-open", JSON.stringify([lead]));
+      setView({ grouping: "family" });
+      renderSidebar();
+      expect(closedNames()).toHaveLength(5);
+      const more = screen.getByTestId("ae-family-closed-more");
+      expect(more.textContent).toBe("Show 2 more");
+      fireEvent.click(within(more).getByRole("button"));
+      expect(closedNames()).toHaveLength(7);
+      expect(screen.queryByTestId("ae-family-closed-more")).toBeNull();
+    });
+
+    it("adds the cap note to the pill title and asks for archived sessions only in Family grouping", async () => {
+      let n = 0;
+      mocks.archived.mockImplementation(async () => {
+        n += 1;
+        return { data: [], last_id: `p${n}`, has_more: true };
+      });
+      setView({ grouping: "family" });
+      renderSidebar();
+      await waitFor(() =>
+        expect(
+          within(rowItem("Role routing build")).getByTestId("ae-family-fold").getAttribute("title"),
+        ).toBe("Hide 3 sessions (older archived not counted)"),
+      );
+      expect(mocks.archived.mock.calls[0][0]).toMatchObject({ visibility: "archived", limit: 200 });
+      cleanup();
+      mocks.archived.mockClear();
+      setView({ grouping: "default" });
+      renderSidebar();
+      expect(mocks.archived).not.toHaveBeenCalled();
+    });
+
+    it("leaves a family with no closed members as it was", () => {
+      setView({ grouping: "family" });
+      renderSidebar();
+      expect(screen.queryByTestId("ae-family-closed-fold")).toBeNull();
+      expect(within(rowItem("Role routing build")).getByTestId("ae-family-fold").textContent).toBe(
+        "3",
+      );
+    });
   });
 
   it("says how a family forms while none shows", () => {

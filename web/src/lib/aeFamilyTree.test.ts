@@ -2,6 +2,7 @@ import { renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Conversation } from "@/hooks/useConversations";
 import { aeFamilies } from "./aeFamily";
+import type { AeClosedInput } from "./aeFamilyClosed";
 import {
   AE_FAMILIES_SECTION,
   AE_FAMILY_REST_SECTION,
@@ -36,12 +37,14 @@ function build(
     byLead = false,
     orphans = true,
     lookup = undefined as ((id: string) => Conversation | undefined) | undefined,
+    closed = undefined as AeClosedInput | undefined,
   } = {},
 ) {
   return aeFamilyTree(ordered, aeFamilies(ordered, orphans), {
     folded: new Set(folded),
     byLead,
     lookup,
+    closed,
   });
 }
 
@@ -269,5 +272,122 @@ describe("useAeStableTree", () => {
     expect(result.current).toBe(first);
     rerender({ tree: treeFor(3, ["lead"]) });
     expect(result.current).not.toBe(first);
+  });
+});
+
+describe("aeFamilyTree closed rows", () => {
+  const ref = { "ae.status": "reference" };
+  const input = (over: Partial<AeClosedInput> = {}): AeClosedInput => ({
+    archived: new Map(),
+    open: new Set(),
+    all: new Set(),
+    ...over,
+  });
+  const base = () => [
+    row("lead"),
+    row("live", orch("lead")),
+    row("read", { ...orch("lead"), "ae.status": "review" }),
+    row("done1", { ...orch("lead"), ...ref }, { updated_at: 5 }),
+  ];
+
+  it("moves a reference child into a folded '1 closed' row and keeps a review child", () => {
+    const { sessions, tree } = build(base());
+    expect(sessions.map((c) => c.id)).toEqual(["lead", "live", "read", "ae-closed:lead:fold"]);
+    expect(tree.closed.get("ae-closed:lead:fold")).toMatchObject({
+      kind: "fold",
+      count: 1,
+      open: false,
+    });
+    expect(tree.rows.has("done1")).toBe(false);
+    // The last open row's line runs on to the fold row.
+    expect(tree.rows.get("read")).toMatchObject({ more: true });
+    expect(tree.closed.get("ae-closed:lead:fold")!.row).toMatchObject({ depth: 1, more: false });
+    expect(tree.unlisted.has("ae-closed:lead:fold")).toBe(true);
+  });
+
+  it("counts archived children and lists them newest first when the group is open", () => {
+    const a1 = row("arch1", orch("lead"), { archived: true, updated_at: 9 });
+    const a2 = row("arch2", orch("lead"), { archived: true, updated_at: 1 });
+    const closed = input({ archived: new Map([["lead", [a2, a1]]]), open: new Set(["lead"]) });
+    const { sessions, tree } = build(base(), { closed });
+    expect(sessions.map((c) => c.id)).toEqual([
+      "lead",
+      "live",
+      "read",
+      "ae-closed:lead:fold",
+      "arch1",
+      "done1",
+      "arch2",
+    ]);
+    expect(tree.leads.get("lead")).toMatchObject({
+      count: 5,
+      closed: { total: 5, open: 2, closed: 3, archived: 2, working: 1, review: 1 },
+    });
+    expect(tree.closed.get("arch1")).toMatchObject({ kind: "row" });
+  });
+
+  it("shows 5, then 'Show N more' that reveals the rest", () => {
+    const many = Array.from({ length: 8 }, (_, i) =>
+      row(`c${i}`, { ...orch("lead"), ...ref }, { updated_at: 100 - i }),
+    );
+    const ordered = [row("lead"), ...many];
+    const shortList = build(ordered, { closed: input({ open: new Set(["lead"]) }) });
+    const ids = shortList.sessions.map((c) => c.id);
+    expect(ids).toEqual([
+      "lead",
+      "ae-closed:lead:fold",
+      "c0",
+      "c1",
+      "c2",
+      "c3",
+      "c4",
+      "ae-closed:lead:more",
+    ]);
+    expect(shortList.tree.closed.get("ae-closed:lead:more")).toMatchObject({ hidden: 3 });
+    const all = build(ordered, {
+      closed: input({ open: new Set(["lead"]), all: new Set(["lead"]) }),
+    });
+    expect(all.sessions).toHaveLength(10);
+    expect(all.tree.closed.has("ae-closed:lead:more")).toBe(false);
+  });
+
+  it("leaves a family with no closed members unchanged", () => {
+    const { sessions, tree } = build([row("lead"), row("a", orch("lead"))]);
+    expect(sessions.map((c) => c.id)).toEqual(["lead", "a"]);
+    expect(tree.closed.size).toBe(0);
+    expect(tree.leads.get("lead")).toMatchObject({ count: 1, closed: null });
+    expect(tree.unlisted).toBe(tree.standIns);
+  });
+
+  it("keeps the tree signature through a time bump on a closed row", () => {
+    const { result, rerender } = renderHook(
+      ({ t }) =>
+        useAeStableTree(
+          build(base().map((c) => (c.id === "done1" ? { ...c, updated_at: t } : c))).tree,
+        ),
+      {
+        initialProps: { t: 5 },
+      },
+    );
+    const first = result.current;
+    rerender({ t: 6 });
+    expect(result.current).toBe(first);
+  });
+
+  it("treats a listed archived member as closed and counts it as archived", () => {
+    const { sessions, tree } = build([
+      row("lead"),
+      row("live", orch("lead")),
+      row("shelved", orch("lead"), { archived: true }),
+    ]);
+    expect(sessions.map((c) => c.id)).toEqual(["lead", "live", "ae-closed:lead:fold"]);
+    expect(tree.leads.get("lead")!.closed).toMatchObject({ closed: 1, archived: 1, open: 1 });
+  });
+
+  it("marks every lead when the archived read stopped at its cap", () => {
+    const { tree } = build([row("lead"), row("a", orch("lead"))], {
+      closed: input({ capped: true }),
+    });
+    expect(tree.leads.get("lead")!.archivedCapped).toBe(true);
   });
 });

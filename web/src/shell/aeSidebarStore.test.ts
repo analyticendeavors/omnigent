@@ -564,4 +564,45 @@ describe("useAePublishSidebarScopes in the family tree", () => {
     expect(aeCrossMove(useAeSidebarStore.getState(), "a1", "g1")).toBeNull();
     expect(aePlaceOf(useAeSidebarStore.getState(), "a1")).toBe("last");
   });
+  it("keeps closed-group rows out of every drop list", () => {
+    const sessions = ["a", "a1", "ae-closed:a:fold", "old"].map((id) => ({ id })) as never[];
+    const ae = {
+      listed: true,
+      manual: true,
+      order: null,
+      statusSort: false,
+      triage: false,
+      frozenTriage: null,
+      switchToManual: vi.fn(),
+    } as never;
+    const titles = new Map(sessions.map((c: { id: string }) => [c.id, "Families"]));
+    const family = { family: { root: "a" } };
+    const aeTree = {
+      rows: new Map([
+        ["a", family],
+        ["a1", family],
+      ]),
+      standIns: new Set<string>(),
+      closed: new Map([
+        ["ae-closed:a:fold", {}],
+        ["old", {}],
+      ]),
+    };
+    const client = new QueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client }, children);
+    renderHook(
+      () =>
+        useAePublishSidebarScopes(
+          ae,
+          { shared: [], sessions, projectGroups: [], groupTitles: titles, aeTree },
+          new Map(),
+          null,
+          null,
+        ),
+      { wrapper },
+    );
+    expect([...useAeSidebarStore.getState().lists]).toEqual([["family:a", ["a", "a1"]]]);
+    expect(useAeSidebarStore.getState().listOf.has("old")).toBe(false);
+  });
 });

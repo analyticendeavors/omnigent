@@ -259,6 +259,7 @@ import {
   useAeFamilyFolds,
   useAeStableTree,
 } from "@/lib/aeFamilyTree";
+import { useAeFamilyClosed } from "@/lib/aeFamilyClosed";
 import { AeFamilyDot, AeFamilyFilterBar } from "@/shell/AeFamilyDot";
 import * as AeTree from "@/shell/AeFamilyTree";
 import { PrimaryNavLink } from "@/shell/PrimaryNavLink";
@@ -1895,6 +1896,7 @@ function ConversationList({
     activeId ?? null,
     activeId ? (families.byRow.get(activeId)?.family.root ?? null) : null,
   );
+  const familyClosed = useAeFamilyClosed(families, view.grouping === "family", searchQuery);
   // Resolve the active conversation's top-level root once here (rows get a plain
   // `isActive` prop, not their own query). Falls back to the raw id while the
   // parent walk loads — a top-level session resolves to itself.
@@ -2077,6 +2079,7 @@ function ConversationList({
         folded: familyFolds,
         byLead: view.ordering === "manual",
         searching: searchQuery !== "",
+        closed: familyClosed,
         lookup: (id) =>
           allConversations.find((c) => c.id === id) ?? pinned.find((c) => c.id === id),
       });
@@ -2133,13 +2136,14 @@ function ConversationList({
     families,
     familyFilter,
     familyFolds,
+    familyClosed,
     searchQuery,
   ]);
 
   const aeTree = useAeStableTree(loadedSections.aeTree);
   const treeView = useMemo(() => ({ ...familyView, tree: aeTree }), [familyView, aeTree]);
   // A stand-in lead draws as its own entry; it is no session to navigate to or select.
-  const standIns = loadedSections.aeTree?.standIns;
+  const standIns = loadedSections.aeTree?.unlisted;
   const config = useContext(SidebarConfigContext);
   // Shared renders above Sessions, so the display window pages through both in that order.
   const listRows = useMemo(

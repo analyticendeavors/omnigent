@@ -14,12 +14,21 @@ import {
 import { aeAgentRole, aeFormatCost, aeFormatTokens, aeRoleName } from "@/lib/aeAgentRole";
 import { aeSpendOf, useAeSessionUsages } from "@/lib/aeAgentUsage";
 import { AE_FAMILY_COLORS, type AeFamily, aeFamilyHint } from "@/lib/aeFamily";
-import { Link } from "@/lib/routing";
+import {
+  AE_CLOSED_CAPPED_NOTE,
+  aeClosedPill,
+  aeClosedTitle,
+  revealAeFamilyClosed,
+  toggleAeFamilyClosed,
+} from "@/lib/aeFamilyClosed";
+import { Link, useParams } from "@/lib/routing";
+import { AeConversationStatusIcon } from "@/components/AeStatusIcon";
 import {
   AE_FAMILIES_HINT,
   AE_FAMILIES_SECTION,
   AE_FAMILY_REST_SECTION,
   AE_FAMILY_TREE_STEP,
+  type AeClosedEntry,
   type AeFamilyTree,
   type AeTreeLead,
   type AeTreeRow,
@@ -156,7 +165,10 @@ function FoldPill({ lead }: { lead: AeTreeLead }) {
     <span
       role="button"
       tabIndex={0}
-      title={label}
+      title={
+        (lead.closed ? aeClosedTitle(lead.closed) : label) +
+        (lead.archivedCapped ? AE_CLOSED_CAPPED_NOTE : "")
+      }
       aria-label={label}
       // Not aria-expanded: an expanded control inside a row reveals the row's hover controls.
       data-folded={lead.folded}
@@ -187,7 +199,7 @@ function FoldPill({ lead }: { lead: AeTreeLead }) {
           className="mr-0.5 size-2.5 animate-spin rounded-full border-[1.5px] border-current border-t-transparent motion-reduce:animate-none"
         />
       )}
-      {lead.count}
+      {lead.closed ? aeClosedPill(lead.closed) : lead.count}
       {lead.folded ? (
         <ChevronRightIcon className="size-3" />
       ) : (
@@ -309,6 +321,95 @@ function StandIn({
   );
 }
 
+const CLOSED_ROW = cn(
+  SIDEBAR_ROW,
+  "relative flex w-full items-center pr-2 text-left text-muted-foreground transition-colors",
+  ROW_HOVER,
+);
+
+/** The indent and lines of a closed-group row, then its content. */
+function ClosedFrame({ entry, children }: { entry: AeClosedEntry; children: ReactNode }) {
+  return (
+    <>
+      <Lines row={entry.row} />
+      <span
+        aria-hidden="true"
+        className="shrink-0"
+        style={{ width: AE_FAMILY_TREE_STEP * entry.row.depth }}
+      />
+      {children}
+    </>
+  );
+}
+
+/** A closed-group row: the "N closed" fold, a closed session, or "Show N more". */
+function ClosedSlot({
+  id,
+  entry,
+  onNavigate,
+}: {
+  id: string;
+  entry: AeClosedEntry;
+  onNavigate?: (e: MouseEvent<HTMLAnchorElement>) => void;
+}) {
+  const { conversationId } = useParams<{ conversationId: string }>();
+  const root = entry.row.family.root;
+  if (entry.kind === "row") {
+    const c = entry.conversation;
+    const archived = c.archived === true;
+    return (
+      <li className="group relative" data-testid="ae-family-closed-row" data-family={root}>
+        <Link
+          to={`/c/${id}`}
+          componentId="sidebar.family_closed"
+          onClick={onNavigate}
+          aria-current={conversationId === id ? "page" : undefined}
+          className={cn(CLOSED_ROW, conversationId === id && "bg-muted text-foreground")}
+        >
+          <ClosedFrame entry={entry}>
+            {archived ? (
+              <ArchiveIcon className="ui-icon mr-1.5" aria-hidden="true" />
+            ) : (
+              <AeConversationStatusIcon conversation={c} className="mr-1.5" />
+            )}
+            <span className="min-w-0 truncate">{c.title ?? c.id}</span>
+          </ClosedFrame>
+        </Link>
+      </li>
+    );
+  }
+  const fold = entry.kind === "fold";
+  const label = fold ? `${entry.count} closed` : `Show ${entry.hidden} more`;
+  const press = () => {
+    if (fold) toggleAeFamilyClosed(root, !entry.open);
+    else revealAeFamilyClosed(root);
+  };
+  return (
+    <li
+      className="group relative"
+      data-testid={fold ? "ae-family-closed-fold" : "ae-family-closed-more"}
+      data-family={root}
+    >
+      <button
+        type="button"
+        aria-expanded={fold ? entry.open : undefined}
+        onClick={press}
+        className={cn(CLOSED_ROW, "cursor-pointer")}
+      >
+        <ClosedFrame entry={entry}>
+          {fold &&
+            (entry.open ? (
+              <ChevronDownIcon className="ui-icon mr-1.5" aria-hidden="true" />
+            ) : (
+              <ChevronRightIcon className="ui-icon mr-1.5" aria-hidden="true" />
+            ))}
+          <span className="min-w-0 truncate">{label}</span>
+        </ClosedFrame>
+      </button>
+    </li>
+  );
+}
+
 /**
  * A row in a section's list: a stand-in lead draws as its own entry, any other
  * row as given. `section` is the section the row is in.
@@ -326,6 +427,14 @@ export function AeFamilyTreeSlot({
 }) {
   const { tree } = useContext(AeFamilyContext);
   if (!tree || section !== AE_FAMILIES_SECTION) return children;
+  const closed = tree.closed.get(conversationId);
+  if (closed) {
+    return (
+      <InFamilies.Provider value>
+        <ClosedSlot id={conversationId} entry={closed} onNavigate={onNavigate} />
+      </InFamilies.Provider>
+    );
+  }
   const standIn = tree.standIns.has(conversationId) ? tree.leads.get(conversationId) : undefined;
   return (
     <InFamilies.Provider value>

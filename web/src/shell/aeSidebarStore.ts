@@ -224,6 +224,8 @@ interface PublishedSections {
   aeTree?: {
     rows: ReadonlyMap<string, { family: { root: string } }>;
     standIns: ReadonlySet<string>;
+    /** Closed-group rows: in no drop list and no ranking. */
+    closed?: ReadonlyMap<string, unknown>;
   } | null;
 }
 
@@ -257,7 +259,7 @@ export function useAePublishSidebarScopes(
     if (titles) {
       const tree = sections.aeTree;
       for (const row of sections.sessions) {
-        if (tree?.standIns.has(row.id)) continue;
+        if (tree?.standIns.has(row.id) || tree?.closed?.has(row.id)) continue;
         const family = tree?.rows.get(row.id)?.family.root;
         add(family ? `family:${family}` : `group:${titles.get(row.id) ?? ""}`, [row]);
       }
@@ -280,7 +282,7 @@ export function useAePublishSidebarScopes(
       ].map((rows) =>
         (manual ? sortByUpdatedAtDesc(rows, activeOverride, frozenKeys) : rows)
           // A provisional `temp:` row (a session still being created) never enters the order.
-          .filter((row) => aeIsOrderId(row.id))
+          .filter((row) => aeIsOrderId(row.id) && !sections.aeTree?.closed?.has(row.id))
           .map(({ id, created_at }) => ({ id, created_at })),
       );
     useAeSidebarStore.setState({
