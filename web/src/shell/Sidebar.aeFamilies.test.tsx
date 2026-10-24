@@ -234,7 +234,7 @@ describe("Grouping > Family", () => {
     expect(depth("Fabric card speed")).toBeUndefined();
   });
 
-  it("shows the family's tokens on the lead and a role chip on a child that has one", async () => {
+  it("shows the family's cost on the lead and a role chip on a child that has one", async () => {
     useConvMock.mockImplementation(() =>
       conversationPage([
         row("Escalation tool", 60, { "ae.orch": sid("Role routing build"), "ae.role": "builder" }),
@@ -247,7 +247,7 @@ describe("Grouping > Family", () => {
           ? new Response(
               JSON.stringify({
                 usage_by_model: {
-                  "claude-sonnet-5-5": { input_tokens: 90_000, output_tokens: 10_000 },
+                  "claude-sonnet-5-5": { total_cost_usd: 1.5 },
                 },
               }),
             )
@@ -260,10 +260,32 @@ describe("Grouping > Family", () => {
       "Builder",
     );
     expect(within(rowItem("Families PR")).queryByTestId("ae-family-role")).toBeNull();
-    // Lead plus its three listed sessions at 100k each.
+    // Lead plus its three listed sessions at $1.50 each (cost only, as Claude reports).
     expect(
       (await within(rowItem("Role routing build")).findByTestId("ae-family-tokens")).textContent,
-    ).toBe("400k");
+    ).toBe("$6.00");
+  });
+
+  it("falls back to tokens on the family pill when no cost is reported", async () => {
+    useConvMock.mockImplementation(() => conversationPage(ROWS));
+    mocks.fetch.mockImplementation((input: unknown) =>
+      Promise.resolve(
+        String(input).startsWith("/v1/sessions/")
+          ? new Response(
+              JSON.stringify({
+                usage_by_model: {
+                  "gpt-5.5": { input_tokens: 90_000, output_tokens: 10_000 },
+                },
+              }),
+            )
+          : new Response("{}", { status: 404 }),
+      ),
+    );
+    setView({ grouping: "family" });
+    renderSidebar();
+    const pill = await within(rowItem("Role routing build")).findByTestId("ae-family-tokens");
+    expect(pill.textContent).toBe("400k");
+    expect(pill.getAttribute("title")).toBe("400k tokens across this family");
   });
 
   it("folds a family from the lead's pill and remembers it", () => {

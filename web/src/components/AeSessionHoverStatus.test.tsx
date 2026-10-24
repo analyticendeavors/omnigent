@@ -175,7 +175,16 @@ describe("AeSessionHoverStatus", () => {
       id: "x",
       reasoning_effort: "medium",
       model_override: "claude-opus-4-8",
-      usage_by_model: { [model]: { input_tokens: input, output_tokens: output } },
+      usage_by_model: {
+        [model]: { input_tokens: input, output_tokens: output, total_cost_usd: 1.64 },
+      },
+    });
+    // A Claude native row: cost only.
+    const costOnly = (cost: number) => ({
+      id: "x",
+      reasoning_effort: "medium",
+      model_override: "claude-haiku-4-5",
+      usage_by_model: { "claude-haiku-4-5": { total_cost_usd: cost } },
     });
     const row = (id: string, labels: Record<string, string>, title: string) =>
       ({ id, title, labels }) as never;
@@ -212,8 +221,86 @@ describe("AeSessionHoverStatus", () => {
       );
       const line = screen.getByTestId("ae-hover-role-line");
       expect(line).toHaveTextContent("Builder");
-      await waitFor(() => expect(line).toHaveTextContent("Opus 4.8 · medium · 116.4k tokens"));
+      await waitFor(() =>
+        expect(line).toHaveTextContent("Opus 4.8 · medium · $1.64 · 116.4k tokens"),
+      );
       expect(screen.getByTestId("ae-hover-started-by")).toHaveTextContent("Started by PR3 lead");
+    });
+
+    it.each([
+      [71.25, "Haiku 4.5 · medium · $71.25"],
+      [0, "Haiku 4.5 · medium · $0"],
+    ])("shows cost and no tokens for a cost-only row of %s", async (cost, text) => {
+      vi.mocked(authenticatedFetch).mockImplementation((input) =>
+        /^\/v1\/sessions\/[^/?]+\?/.test(String(input))
+          ? json(costOnly(cost))
+          : json({ object: "list", data: [], has_more: false }),
+      );
+      const view = familyView([row("kid", { "ae.orch": "lead", "ae.role": "builder" }, "Kid")]);
+      render(
+        <AeFamilyContext.Provider value={view}>
+          <AeSessionHoverStatus
+            sessionId="kid"
+            state={{ kind: "idle" } as never}
+            updatedAt={NOW}
+            labels={{ "ae.orch": "lead", "ae.role": "builder" }}
+          />
+        </AeFamilyContext.Provider>,
+      );
+      const line = screen.getByTestId("ae-hover-role-line");
+      await waitFor(() => expect(line).toHaveTextContent(text));
+      expect(line.textContent).not.toContain("tokens");
+    });
+
+    it("falls back to tokens for the child and the lead line when no cost is reported", async () => {
+      vi.mocked(authenticatedFetch).mockImplementation((input) =>
+        /^\/v1\/sessions\/[^/?]+\?/.test(String(input))
+          ? json({
+              id: "x",
+              reasoning_effort: "medium",
+              model_override: "claude-opus-4-8",
+              usage_by_model: {
+                "claude-opus-4-8": { input_tokens: 100_000, output_tokens: 16_400 },
+              },
+            })
+          : json({ object: "list", data: [], has_more: false }),
+      );
+      const rows = [
+        row("lead", {}, "PR3 lead"),
+        row("kid", { "ae.orch": "lead", "ae.role": "builder" }, "Kid"),
+      ];
+      const view = familyView(rows);
+      const kid = render(
+        <AeFamilyContext.Provider value={view}>
+          <AeSessionHoverStatus
+            sessionId="kid"
+            state={{ kind: "idle" } as never}
+            updatedAt={NOW}
+            labels={{ "ae.orch": "lead", "ae.role": "builder" }}
+          />
+        </AeFamilyContext.Provider>,
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId("ae-hover-role-line").textContent).toBe(
+          "BuilderOpus 4.8 · medium · 116.4k tokens",
+        ),
+      );
+      kid.unmount();
+      render(
+        <AeFamilyContext.Provider value={view}>
+          <AeSessionHoverStatus
+            sessionId="lead"
+            state={{ kind: "idle" } as never}
+            updatedAt={NOW}
+            labels={{}}
+          />
+        </AeFamilyContext.Provider>,
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId("ae-hover-lead-line")).toHaveTextContent(
+          "leads 1 session · family 232.8k tokens",
+        ),
+      );
     });
 
     it("shows a lead's session count and family total", async () => {
@@ -236,7 +323,7 @@ describe("AeSessionHoverStatus", () => {
       );
       await waitFor(() =>
         expect(screen.getByTestId("ae-hover-lead-line")).toHaveTextContent(
-          "leads 2 sessions · family 349.2k tokens",
+          "leads 2 sessions · family $4.92",
         ),
       );
     });

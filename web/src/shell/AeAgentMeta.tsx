@@ -1,10 +1,10 @@
 // What an agent row says about itself beyond its title (omnigent-ae): role chip,
-// effort and tokens, and the total line under the list. The Agents tab and the
+// effort and cost, and the total line under the list. The Agents tab and the
 // rail's Agents card share it; each wraps its rows in AeAgentMetaProvider.
 
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import type { ChildSessionInfo } from "@/hooks/useChildSessions";
-import { aeAgentRole, aeFormatTokens, aeRoleName } from "@/lib/aeAgentRole";
+import { aeAgentRole, aeFormatCost, aeFormatTokens, aeRoleName } from "@/lib/aeAgentRole";
 import {
   AE_MODEL_FAMILIES,
   AE_MODEL_FAMILY_BG,
@@ -86,7 +86,7 @@ export function AeAgentMetaProvider({
   );
 }
 
-/** Role chip, effort and tokens on one line; each shows only when known, and the line is gone when none is. */
+/** Role chip, effort and cost (tokens when known) on one line; each shows only when known, and the line is gone when none is. */
 export function AeAgentMetaLine({
   child,
   className,
@@ -101,9 +101,10 @@ export function AeAgentMetaLine({
   const native = useAeNativeInput(child);
   const role = aeAgentRole(child);
   const effort = usage?.effort ?? native?.effort ?? null;
-  const tokens = usage?.tokens ?? null;
+  const cost = usage?.costUsd ?? null;
+  const tokens = usage?.tokens != null && usage.tokens > 0 ? usage.tokens : null;
   const model = withModel ? (child.model ?? child.routed_model ?? native?.model ?? null) : null;
-  if (!role && !model && !effort && tokens === null) return null;
+  if (!role && !model && !effort && cost === null && tokens === null) return null;
   return (
     <p
       className={cn(
@@ -135,9 +136,15 @@ export function AeAgentMetaLine({
         </span>
       )}
       {effort && <span data-testid="subagent-effort">{effort}</span>}
-      {tokens !== null && (
-        <span className="ml-auto shrink-0 tabular-nums" data-testid="subagent-tokens">
-          {aeFormatTokens(tokens)}
+      {(cost !== null || tokens !== null) && (
+        <span className="ml-auto shrink-0 tabular-nums" data-testid="subagent-cost">
+          {cost !== null && aeFormatCost(cost)}
+          {tokens !== null && (
+            <span className="text-[10px] opacity-70" data-testid="subagent-tokens">
+              {cost !== null && " · "}
+              {aeFormatTokens(tokens)} tok
+            </span>
+          )}
         </span>
       )}
     </p>
@@ -159,23 +166,39 @@ export function AeAgentsTotal({
 }) {
   const usage = useContext(UsageContext);
   const lead = usage.get(rootSessionId);
-  if (!lead || lead.tokens === null) return null;
+  if (!lead) return null;
+  // Cost is the measure; tokens stand in only when the lead reports no cost.
+  const byCost = lead.costUsd !== null;
+  const measure = (u: AeSessionUsage) => (byCost ? (u.costUsd ?? 0) : (u.tokens ?? 0));
+  const leadValue = measure(lead);
+  const leadFamilies = byCost ? lead.costByFamily : lead.byFamily;
   const known = childIds.map((id) => usage.get(id)).filter((u): u is AeSessionUsage => !!u);
-  const childSum = known.reduce((sum, u) => sum + (u.tokens ?? 0), 0);
+  const childSum = known.reduce((sum, u) => sum + measure(u), 0);
   // Every child here is in the lead's spawn tree, so its usage already holds them.
   // The max covers a lead read that is older than the children's.
-  const total = Math.max(lead.tokens, childSum);
+  const total = Math.max(leadValue, childSum);
   // With an unread child (a folded group), the lead's share cannot be told apart.
-  const own = known.length === childIds.length ? Math.max(0, total - childSum) : null;
+  // Float residue under half a cent is a true zero.
+  const rest = Math.max(0, total - childSum);
+  const own = known.length === childIds.length ? (rest < 0.005 ? 0 : rest) : null;
   // A stale lead read has no trustworthy split, so the children's stand in.
-  const byFamily: Record<string, number> = childSum > lead.tokens ? {} : { ...lead.byFamily };
-  if (childSum > lead.tokens) {
+  const byFamily: Record<string, number> = childSum > leadValue ? {} : { ...leadFamilies };
+  if (childSum > leadValue) {
     for (const u of known) {
-      for (const [family, n] of Object.entries(u.byFamily)) {
+      for (const [family, n] of Object.entries(byCost ? u.costByFamily : u.byFamily)) {
         byFamily[family] = (byFamily[family] ?? 0) + (n ?? 0);
       }
     }
   }
+  const fmt = (n: number) => (byCost ? aeFormatCost(n) : `${aeFormatTokens(n)} tokens`);
+  // Tokens only when every model in the lead and the rows read reports them.
+  const tokenTotal =
+    byCost && lead.tokens !== null && known.every((u) => u.tokens !== null)
+      ? Math.max(
+          lead.tokens,
+          known.reduce((sum, u) => sum + (u.tokens ?? 0), 0),
+        )
+      : null;
   if (total <= 0) return null;
   const sum = Object.values(byFamily).reduce((a, b) => a + b, 0) || 1;
   const parts = AE_MODEL_FAMILIES.map((family) => ({ family, n: byFamily[family] ?? 0 })).filter(
@@ -185,8 +208,17 @@ export function AeAgentsTotal({
     <Tag data-testid="agents-total" className="mt-1 border-t border-border/60 px-2.5 py-2 text-xs">
       <div className="text-muted-foreground">
         This chat and its agents:{" "}
-        <b className="font-medium text-foreground tabular-nums">{aeFormatTokens(total)} tokens</b>{" "}
-        {own !== null && <>(lead {aeFormatTokens(own)})</>}
+        <b
+          className="font-medium text-foreground tabular-nums"
+          title="Estimated at API rates"
+          data-testid="agents-total-cost"
+        >
+          {fmt(total)}
+        </b>{" "}
+        {own !== null && <>(lead {fmt(own)})</>}
+        {tokenTotal !== null && tokenTotal > 0 && (
+          <span data-testid="agents-total-tokens"> · {aeFormatTokens(tokenTotal)} tokens</span>
+        )}
       </div>
       <div className="mt-1.5 flex h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden="true">
         {parts.map((p) => (

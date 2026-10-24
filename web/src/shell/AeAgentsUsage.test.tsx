@@ -12,6 +12,7 @@ vi.mock("@/lib/sessionsApi", async (importOriginal) => ({
   getSessionUsage: usageMock,
 }));
 
+// Cost is a hundred-thousandth of a dollar per token, so 116k tokens read $1.16.
 const usage = (model: string, input: number, output: number, effort: string | null = null) => ({
   id: "x",
   totalCostUsd: null,
@@ -23,10 +24,41 @@ const usage = (model: string, input: number, output: number, effort: string | nu
       totalTokens: null,
       cacheReadInputTokens: null,
       cacheCreationInputTokens: null,
-      totalCostUsd: null,
+      totalCostUsd: (input + output) / 100_000,
     },
   },
 });
+
+/** A Claude native row: cost only, no token counts. */
+const claudeUsage = (model: string, cost: number) => ({
+  id: "x",
+  totalCostUsd: null,
+  reasoningEffort: null,
+  usageByModel: {
+    [model]: {
+      inputTokens: null,
+      outputTokens: null,
+      totalTokens: null,
+      cacheReadInputTokens: null,
+      cacheCreationInputTokens: null,
+      totalCostUsd: cost,
+    },
+  },
+});
+
+function renderCard(agents: ChildSessionInfo[], withLine = false) {
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ul>
+        <AeAgentsSections
+          rootSessionId="conv_root"
+          agents={agents}
+          renderRow={(c) => <li key={c.id}>{withLine ? <AeAgentMetaLine child={c} /> : c.id}</li>}
+        />
+      </ul>
+    </QueryClientProvider>,
+  );
+}
 
 function child(id: string, extra: Partial<ChildSessionInfo> = {}): ChildSessionInfo {
   return {
@@ -80,17 +112,21 @@ describe("Agents card usage", () => {
         </ul>
       </QueryClientProvider>,
     );
-    await screen.findAllByTestId("subagent-tokens");
+    await screen.findAllByTestId("subagent-cost");
     await screen.findByTestId("agents-total");
     expect(screen.getByText("Builder")).toBeTruthy();
-    expect(screen.getAllByTestId("subagent-tokens").map((n) => n.textContent)).toEqual([
-      "116k",
-      "116k",
+    expect(screen.getAllByTestId("subagent-cost").map((n) => n.textContent)).toEqual([
+      "$1.16 · 116k tok",
+      "$1.16 · 116k tok",
     ]);
     expect(screen.getAllByTestId("subagent-effort")).toHaveLength(2);
     const total = screen.getByTestId("agents-total");
+    expect(total.textContent).toContain("$2.48");
+    expect(total.textContent).toContain("(lead $0.16)");
     expect(total.textContent).toContain("248k tokens");
-    expect(total.textContent).toContain("(lead 16k)");
+    expect(screen.getByTestId("agents-total-cost").getAttribute("title")).toBe(
+      "Estimated at API rates",
+    );
     expect(total.textContent).toContain("Sonnet 94%");
   });
 
@@ -151,8 +187,8 @@ describe("Agents card usage", () => {
   });
 
   it.each([
-    [100_000, "120k tokens", "(lead 0)"],
-    [300_000, "300k tokens", "(lead 180k)"],
+    [100_000, "$1.20", "(lead $0)"],
+    [300_000, "$3.00", "(lead $1.80)"],
   ])("totals a lead of %s with two 60k children", async (leadTokens, totalText, leadText) => {
     usageMock.mockImplementation(async (id: string) =>
       id === "conv_root"
@@ -217,7 +253,73 @@ describe("Agents card usage", () => {
       </QueryClientProvider>,
     );
     const total = await screen.findByTestId("agents-total");
-    expect(total.textContent).toContain("300k tokens");
+    expect(total.textContent).toContain("$3.00");
     expect(total.textContent).not.toContain("lead");
+  });
+
+  it("shows cost and no tokens for a Claude row that reports cost only", async () => {
+    usageMock.mockImplementation(async () => claudeUsage("claude-opus-4-8", 71.25));
+    renderCard([child("a", { busy: true, current_task_status: "in_progress" })], true);
+    const cost = await screen.findByTestId("subagent-cost");
+    expect(cost.textContent).toBe("$71.25");
+    expect(screen.queryByTestId("subagent-tokens")).toBeNull();
+    const total = await screen.findByTestId("agents-total");
+    expect(total.textContent).toContain("$71.25");
+    expect(total.textContent).not.toContain("tokens");
+  });
+
+  it("shows cost and tokens for a Codex row that reports both", async () => {
+    usageMock.mockImplementation(async () => usage("gpt-5.5", 150_000, 51_000));
+    renderCard([child("a", { busy: true, current_task_status: "in_progress" })], true);
+    const cost = await screen.findByTestId("subagent-cost");
+    expect(cost.textContent).toBe("$2.01 · 201k tok");
+  });
+
+  it("leaves the token suffix off a mixed total", async () => {
+    usageMock.mockImplementation(async (id: string) =>
+      id === "conv_root"
+        ? {
+            ...claudeUsage("claude-opus-4-8", 70),
+            usageByModel: {
+              ...claudeUsage("claude-opus-4-8", 70).usageByModel,
+              ...usage("gpt-5.5", 150_000, 51_000).usageByModel,
+            },
+          }
+        : usage("gpt-5.5", 150_000, 51_000),
+    );
+    renderCard([child("a", { busy: true, current_task_status: "in_progress" })]);
+    const total = await screen.findByTestId("agents-total");
+    expect(total.textContent).toContain("$72.01");
+    expect(screen.queryByTestId("agents-total-tokens")).toBeNull();
+  });
+
+  it("adds the token suffix when every row reports tokens", async () => {
+    usageMock.mockImplementation(async () => usage("gpt-5.5", 150_000, 51_000));
+    renderCard([child("a", { busy: true, current_task_status: "in_progress" })]);
+    const total = await screen.findByTestId("agents-total");
+    expect(total.textContent).toContain("201k tokens");
+  });
+
+  it("falls back to tokens when no row reports a cost", async () => {
+    const tokensOnly = () => {
+      const u = usage("gpt-5.5", 150_000, 51_000);
+      u.usageByModel["gpt-5.5"].totalCostUsd = null as never;
+      return u;
+    };
+    usageMock.mockImplementation(async () => tokensOnly());
+    renderCard([child("a", { busy: true, current_task_status: "in_progress" })], true);
+    const row = await screen.findByTestId("subagent-cost");
+    expect(row.textContent).toBe("201k tok");
+    const total = await screen.findByTestId("agents-total");
+    expect(total.textContent).toContain("201k tokens");
+    expect(total.textContent).not.toContain("$");
+  });
+
+  it("shows $0 for a zero-cost row and never 0 tokens", async () => {
+    usageMock.mockImplementation(async () => claudeUsage("claude-haiku-4-5", 0));
+    renderCard([child("a", { busy: true, current_task_status: "in_progress" })], true);
+    const cost = await screen.findByTestId("subagent-cost");
+    expect(cost.textContent).toBe("$0");
+    expect(document.body.textContent).not.toContain("0 tokens");
   });
 });

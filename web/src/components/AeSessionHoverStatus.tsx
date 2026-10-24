@@ -8,9 +8,10 @@ import { RunningDot } from "@/components/RunningDot";
 import { type ChildSessionInfo, fetchChildSessions } from "@/hooks/useChildSessions";
 import type { SessionState } from "@/hooks/useSessionState";
 import { useAeRoles } from "@/hooks/useAeRoles";
-import { aeAgentRole, aeFormatTokens, aeRoleName } from "@/lib/aeAgentRole";
+import { aeAgentRole, aeFormatCost, aeFormatTokens, aeRoleName } from "@/lib/aeAgentRole";
 import {
   AE_MODEL_FAMILY_BG,
+  aeSpendOf,
   type AeSessionUsage,
   aeModelFamily,
   useAeSessionUsages,
@@ -123,13 +124,15 @@ function LeadLine({
   usage: ReadonlyMap<string, AeSessionUsage>;
 }) {
   const roles = useAeRoles();
-  const total = [...usage.values()].reduce((sum, u) => sum + (u.tokens ?? 0), 0);
+  const spend = aeSpendOf(usage.values());
   const presetId = labels?.["ae.preset"];
   const title = roles.data?.presets.find((p) => p.id === presetId)?.title ?? null;
   const parts = [
     title,
     `leads ${count} session${count === 1 ? "" : "s"}`,
-    usage.size > 0 && total > 0 ? `family ${aeFormatTokens(total)} tokens` : null,
+    spend
+      ? `family ${spend.kind === "cost" ? aeFormatCost(spend.value) : `${aeFormatTokens(spend.value)} tokens`}`
+      : null,
   ].filter(Boolean);
   return (
     <p className="truncate text-xs text-muted-foreground" data-testid="ae-hover-lead-line">
@@ -168,7 +171,8 @@ function AeRoleLine({
   const detail = [
     own?.model ? agentModelLabel(own.model) : null,
     own?.effort,
-    own?.tokens != null ? `${aeFormatTokens(own.tokens)} tokens` : null,
+    own?.costUsd != null ? aeFormatCost(own.costUsd) : null,
+    own?.tokens != null && own.tokens > 0 ? `${aeFormatTokens(own.tokens)} tokens` : null,
   ].filter(Boolean);
   return (
     <>

@@ -53,3 +53,12 @@ export function aeFormatTokens(n: number): string {
   if (n < 1_000_000) return `${trim(Math.floor(n / 100) / 10, 1)}k`;
   return `${trim(n / 1_000_000, 2)}M`;
 }
+
+/** $0, <$0.01, $1.64, $71.25, $1,234. */
+export function aeFormatCost(usd: number): string {
+  if (usd <= 0) return "$0";
+  if (usd < 0.01) return "<$0.01";
+  // Decide on the rounded cents, so 99.996 reads $100 and not $100.00.
+  if (Math.round(usd * 100) < 10_000) return `$${usd.toFixed(2)}`;
+  return `$${Math.round(usd).toLocaleString("en-US")}`;
+}

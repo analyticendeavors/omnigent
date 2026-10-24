@@ -11,8 +11,8 @@ import {
   createContext,
   useContext,
 } from "react";
-import { aeAgentRole, aeFormatTokens, aeRoleName } from "@/lib/aeAgentRole";
-import { useAeSessionUsages } from "@/lib/aeAgentUsage";
+import { aeAgentRole, aeFormatCost, aeFormatTokens, aeRoleName } from "@/lib/aeAgentRole";
+import { aeSpendOf, useAeSessionUsages } from "@/lib/aeAgentUsage";
 import { AE_FAMILY_COLORS, type AeFamily, aeFamilyHint } from "@/lib/aeFamily";
 import { Link } from "@/lib/routing";
 import {
@@ -201,7 +201,7 @@ const PILL_MEMBERS = 25;
 const PILL_MS = 60_000;
 
 /**
- * The family's token total. It reads usage itself, so a token change re-renders
+ * The family's cost total. It reads usage itself, so a cost change re-renders
  * this pill and no row; the tree object stays the same.
  */
 function TokenPill({ family }: { family: AeFamily }) {
@@ -212,16 +212,17 @@ function TokenPill({ family }: { family: AeFamily }) {
     members.map((m) => ({ id: m.id, stamp: 0 })),
     { staleMs: PILL_MS, pollMs: PILL_MS, live: busy },
   );
-  const total = [...usage.values()].reduce((sum, u) => sum + (u.tokens ?? 0), 0);
-  if (usage.size === 0 || total <= 0) return null;
+  const spend = aeSpendOf(usage.values());
+  if (!spend) return null;
   const more = family.members.length > PILL_MEMBERS ? "+" : "";
+  const text = spend.kind === "cost" ? aeFormatCost(spend.value) : aeFormatTokens(spend.value);
   return (
     <span
       data-testid="ae-family-tokens"
-      title={`${aeFormatTokens(total)}${more} tokens across this family`}
+      title={`${text}${more} ${spend.kind === "cost" ? "estimated" : "tokens"} across this family`}
       className="inline-flex h-[18px] shrink-0 items-center rounded-full bg-foreground/[0.06] px-1.5 text-[11.5px] tabular-nums text-muted-foreground"
     >
-      {aeFormatTokens(total)}
+      {text}
       {more}
     </span>
   );

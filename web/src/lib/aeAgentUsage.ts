@@ -1,4 +1,4 @@
-// Token use per agent for the Agents card, the sidebar hover and the family
+// Spend per agent (cost, tokens where known) for the Agents card, the sidebar hover and the family
 // pill (omnigent-ae). A session's usage covers its whole subtree, so a lead's
 // number already holds its native subagents.
 
@@ -65,18 +65,65 @@ export function aeTokensByFamily(
   return out;
 }
 
-/** Input plus output tokens over a usage map, or null when none is known. */
+/**
+ * Input plus output tokens over a usage map. Null unless every row reports
+ * tokens: Claude native rows carry cost only, so a partial sum would read as
+ * the Codex share alone.
+ */
 export function aeUsageTokens(usage: Record<string, ModelUsage> | null | undefined): number | null {
   if (!usage || Object.keys(usage).length === 0) return null;
-  return Object.values(usage).reduce((sum, row) => sum + aeModelTokens(row), 0);
+  const rows = Object.values(usage);
+  if (!rows.every((row) => row.inputTokens != null || row.outputTokens != null)) return null;
+  return rows.reduce((sum, row) => sum + aeModelTokens(row), 0);
+}
+
+/** Estimated cost of one model's usage; every harness reports it. */
+export function aeModelCost(row: ModelUsage): number {
+  return row.totalCostUsd ?? 0;
+}
+
+/** Estimated cost over a usage map, or null when no row reports one. */
+export function aeUsageCost(usage: Record<string, ModelUsage> | null | undefined): number | null {
+  const rows = Object.values(usage ?? {}).filter((row) => row.totalCostUsd != null);
+  if (rows.length === 0) return null;
+  return rows.reduce((sum, row) => sum + aeModelCost(row), 0);
+}
+
+/** Estimated cost per model family, summed over a usage map. */
+export function aeCostByFamily(
+  usage: Record<string, ModelUsage> | null | undefined,
+): Partial<Record<AeModelFamily, number>> {
+  const out: Partial<Record<AeModelFamily, number>> = {};
+  for (const [model, row] of Object.entries(usage ?? {})) {
+    const family = aeModelFamily(model);
+    out[family] = (out[family] ?? 0) + aeModelCost(row);
+  }
+  return out;
 }
 
 export interface AeSessionUsage {
+  /** Null unless every model row reports tokens. */
   tokens: number | null;
   byFamily: Partial<Record<AeModelFamily, number>>;
+  costUsd: number | null;
+  costByFamily: Partial<Record<AeModelFamily, number>>;
   effort: string | null;
   /** The model the session runs on, or null when the read does not say. */
   model: string | null;
+}
+
+/**
+ * A set of sessions' spend: cost when any session reports it, else tokens,
+ * else null (nothing known, or nothing spent).
+ */
+export function aeSpendOf(
+  usages: Iterable<AeSessionUsage>,
+): { kind: "cost" | "tokens"; value: number } | null {
+  const list = [...usages];
+  const cost = list.reduce((sum, u) => sum + (u.costUsd ?? 0), 0);
+  if (list.some((u) => u.costUsd !== null)) return cost > 0 ? { kind: "cost", value: cost } : null;
+  const tokens = list.reduce((sum, u) => sum + (u.tokens ?? 0), 0);
+  return tokens > 0 ? { kind: "tokens", value: tokens } : null;
 }
 
 const USAGE_STALE_MS = 30_000;
@@ -120,6 +167,8 @@ export function useAeSessionUsages(
     out.set(sessions[index].id, {
       tokens: aeUsageTokens(data.usageByModel),
       byFamily: aeTokensByFamily(data.usageByModel),
+      costUsd: aeUsageCost(data.usageByModel),
+      costByFamily: aeCostByFamily(data.usageByModel),
       model: data.model,
       effort:
         data.reasoningEffort && data.reasoningEffort !== "default" ? data.reasoningEffort : null,

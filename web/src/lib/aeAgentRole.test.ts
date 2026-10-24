@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aeAgentRole, aeFormatTokens, aeRoleName } from "./aeAgentRole";
+import { aeAgentRole, aeFormatCost, aeFormatTokens, aeRoleName } from "./aeAgentRole";
 
 describe("aeAgentRole", () => {
   it("reads the ae.role label", () => {
@@ -60,5 +60,22 @@ describe("aeFormatTokens", () => {
     [1_000_000, "1M"],
   ])("%s", (n, text) => {
     expect(aeFormatTokens(n)).toBe(text);
+  });
+});
+
+describe("aeFormatCost", () => {
+  it.each([
+    [0, "$0"],
+    [0.004, "<$0.01"],
+    [0.01, "$0.01"],
+    [1.636, "$1.64"],
+    [71.25, "$71.25"],
+    [99.994, "$99.99"],
+    [99.995, "$100"],
+    [99.996, "$100"],
+    [100, "$100"],
+    [1234.4, "$1,234"],
+  ])("formats %s as %s", (usd, text) => {
+    expect(aeFormatCost(usd)).toBe(text);
   });
 });
