@@ -4,6 +4,7 @@ import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { useProjects } from "@/hooks/useConversations";
 import { AeTablerRowIcon, aeTablerName } from "@/lib/aeTablerIcon";
 import { cn } from "@/lib/utils";
+import { AeCreateProjectRow } from "./AeCreateProjectRow";
 
 /**
  * Leading visual for a project row: the project's emoji icon when set,
@@ -108,6 +109,13 @@ export function ProjectPicker({
             </span>
           </DropdownMenuItem>
         </div>
+      )}
+      {!trimmed && (
+        <AeCreateProjectRow
+          Item={DropdownMenuItem}
+          projects={projects.map((project) => project.name)}
+          onCreate={onSelect}
+        />
       )}
       {currentProject && (
         <div className="border-t pt-1">

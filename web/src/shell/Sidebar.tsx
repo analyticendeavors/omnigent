@@ -185,6 +185,7 @@ import { useArchiveWorktreePrompt } from "./ArchiveWorktreeDialog";
 import { PermissionsModal } from "@/components/PermissionsModal";
 import { ProjectSettingsDialog } from "./ProjectSettingsDialog";
 import { ProjectRowIcon } from "./ProjectPicker";
+import { AeCreateProjectRow } from "./AeCreateProjectRow";
 import { EmojiPicker } from "@/components/ProjectIconPicker";
 import { AeProjectIconGlyph } from "@/lib/aeTablerIcon";
 import { SessionStateBadge } from "@/components/SessionStateBadge";
@@ -6401,6 +6402,13 @@ function ProjectPickerMenu({
             </span>
           </C.Item>
         </div>
+      )}
+      {!trimmed && (
+        <AeCreateProjectRow
+          Item={C.Item}
+          projects={projects.map((p) => p.name)}
+          onCreate={onSelect}
+        />
       )}
       {currentProject && (
         <div className="border-t pt-1">

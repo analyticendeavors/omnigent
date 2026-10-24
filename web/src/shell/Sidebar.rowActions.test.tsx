@@ -1061,6 +1061,24 @@ describe("mobile in-place project picker", () => {
     });
   });
 
+  it("offers Create project at the foot and creates from its name box on Enter", () => {
+    mocks.isMobile = true;
+    mocks.projects = ["Sprint 42"];
+    renderSidebar();
+
+    fireEvent.pointerDown(screen.getByTestId("conversation-actions"), { button: 0 });
+    fireEvent.click(screen.getByTestId("move-to-project"));
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Create project" }));
+    const box = screen.getByRole("textbox", { name: "New project name" });
+    expect(box).toHaveFocus();
+    expect(mocks.moveToProject.mutate).not.toHaveBeenCalled();
+
+    fireEvent.change(box, { target: { value: "Roadmap" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(mocks.moveToProject.mutate).toHaveBeenCalledWith({ id: "conv_1", project: "Roadmap" });
+  });
+
   it("offers no create row when the typed name already exists", () => {
     mocks.isMobile = true;
     mocks.projects = ["Sprint 42"];

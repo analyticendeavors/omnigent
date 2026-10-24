@@ -355,6 +355,51 @@ describe("HeaderConversationMenu", () => {
     expect(mocks.moveToProject).toHaveBeenCalledWith({ id: "conv-1", project: "Sprint 42" });
   });
 
+  it("offers Create project at the foot, which turns into its own name box", () => {
+    mocks.isMobile = true;
+    renderMenu();
+    openMenu();
+    fireEvent.click(screen.getByTestId("header-move-to-project"));
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Create project" }));
+    // The menu stays open; the row is now a focused name box.
+    const box = screen.getByRole("textbox", { name: "New project name" });
+    expect(box).toHaveFocus();
+    expect(screen.queryByRole("menuitem", { name: "Create project" })).toBeNull();
+    expect(mocks.moveToProject).not.toHaveBeenCalled();
+
+    fireEvent.change(box, { target: { value: "  Fresh work " } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(mocks.moveToProject).toHaveBeenCalledWith({ id: "conv-1", project: "Fresh work" });
+  });
+
+  it("files into an existing project instead of a duplicate, and ignores IME Enter", () => {
+    mocks.isMobile = true;
+    renderMenu();
+    openMenu();
+    fireEvent.click(screen.getByTestId("header-move-to-project"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Create project" }));
+
+    const box = screen.getByRole("textbox", { name: "New project name" });
+    fireEvent.change(box, { target: { value: "sprint 42" } });
+    fireEvent.keyDown(box, { key: "Enter", isComposing: true });
+    expect(mocks.moveToProject).not.toHaveBeenCalled();
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(mocks.moveToProject).toHaveBeenCalledWith({ id: "conv-1", project: "Sprint 42" });
+  });
+
+  it("leaves Enter in the search box alone", () => {
+    mocks.isMobile = true;
+    renderMenu();
+    openMenu();
+    fireEvent.click(screen.getByTestId("header-move-to-project"));
+
+    const search = screen.getByRole("textbox", { name: "Search or create project" });
+    fireEvent.change(search, { target: { value: "spr" } });
+    fireEvent.keyDown(search, { key: "Enter" });
+    expect(mocks.moveToProject).not.toHaveBeenCalled();
+  });
+
   it("opens the project picker as a submenu flyout on desktop and moves the session", async () => {
     // Desktop has room for a side flyout, so Move session is a submenu trigger
     // (not the in-place body swap the mobile menu uses).
