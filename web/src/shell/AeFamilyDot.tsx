@@ -1,7 +1,7 @@
 // Session family marks in the sidebar (omnigent-ae, 2026-10-23): one colored
-// dot on every row of a family, a filter the dot turns on, and the "By family"
-// group header. The families come from `aeFamilies` (lib/aeFamily.ts), the
-// context from lib/aeFamilyView.ts.
+// dot on every row of a family and a filter the dot turns on. In Grouping >
+// Family's tree only the lead keeps its dot; lines mark the rest. The families
+// come from `aeFamilies` (lib/aeFamily.ts), the context from lib/aeFamilyView.ts.
 
 import { XIcon } from "lucide-react";
 import { type KeyboardEvent, type MouseEvent, useContext } from "react";
@@ -24,16 +24,22 @@ export function AeFamilySwatch({ family, className }: { family: AeFamily; classN
   );
 }
 
-/**
- * The row's dot, before the title. A click narrows the list to the family (a
- * second click widens it again) without opening the session.
- */
-export function AeFamilyDot({ conversationId }: { conversationId: string }) {
-  const { families, dots, filter, onFilter } = useContext(AeFamilyContext);
-  const role = families.byRow.get(conversationId);
-  if (!dots || !role) return null;
-  const { root } = role.family;
-  const hint = aeFamilyHint(role);
+/** The dot as the filter button, for a row or a stand-in lead; a lead's dot carries a ring. */
+export function AeFamilyDotButton({
+  family,
+  isLead,
+  hint,
+  dashed,
+}: {
+  family: AeFamily;
+  isLead: boolean;
+  hint: string;
+  /** An outline dot, for a lead that is not loaded. */
+  dashed?: boolean;
+}) {
+  const { filter, onFilter } = useContext(AeFamilyContext);
+  const { root } = family;
+  const color = AE_FAMILY_COLORS[family.color];
   const toggle = (event: MouseEvent | KeyboardEvent) => {
     event.preventDefault();
     event.stopPropagation();
@@ -62,15 +68,25 @@ export function AeFamilyDot({ conversationId }: { conversationId: string }) {
       <span
         className={cn(
           "size-2 rounded-full",
-          role.isLead && "ring-1 ring-current ring-offset-1 ring-offset-background",
+          isLead && !dashed && "ring-1 ring-current ring-offset-1 ring-offset-background",
+          dashed && "border-[1.5px] border-dashed",
         )}
-        style={{
-          backgroundColor: AE_FAMILY_COLORS[role.family.color],
-          color: AE_FAMILY_COLORS[role.family.color],
-        }}
+        style={dashed ? { borderColor: color } : { backgroundColor: color, color }}
       />
     </span>
   );
+}
+
+/**
+ * The row's dot, before the title. A click narrows the list to the family (a
+ * second click widens it again) without opening the session.
+ */
+export function AeFamilyDot({ conversationId }: { conversationId: string }) {
+  const { families, dots, tree } = useContext(AeFamilyContext);
+  const role = families.byRow.get(conversationId);
+  const treeDepth = tree?.rows.get(conversationId)?.depth;
+  if (!role || (treeDepth === undefined ? !dots : treeDepth > 0)) return null;
+  return <AeFamilyDotButton family={role.family} isLead={role.isLead} hint={aeFamilyHint(role)} />;
 }
 
 /** Shown above the list while it is narrowed to one family. */
@@ -96,20 +112,5 @@ export function AeFamilyFilterBar() {
         <XIcon className="size-3.5" />
       </button>
     </div>
-  );
-}
-
-/** A "By family" group's header: the dot, the lead's title and the row count. */
-export function AeFamilyTitle({ family }: { family: AeFamily }) {
-  return (
-    <span
-      data-testid="ae-family-title"
-      data-family={family.root}
-      className="inline-flex max-w-full items-center gap-1.5 align-middle"
-    >
-      <AeFamilySwatch family={family} />
-      <span className="truncate">{familyName(family)}</span>
-      <span className="shrink-0 tabular-nums opacity-70">{family.members.length}</span>
-    </span>
   );
 }

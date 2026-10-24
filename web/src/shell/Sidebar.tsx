@@ -251,13 +251,16 @@ import {
   useAeSidebarView,
 } from "@/shell/aeSidebarStore";
 import { AE_TRIAGE_GROUPS } from "@/lib/aeTriage";
+import { AeFamilyContext, type AeFamilyView, useAeFamilies } from "@/lib/aeFamilyView";
 import {
-  AeFamilyContext,
-  type AeFamilyView,
-  aeFamilyGroups,
-  useAeFamilies,
-} from "@/lib/aeFamilyView";
-import { AeFamilyDot, AeFamilyFilterBar, AeFamilyTitle } from "@/shell/AeFamilyDot";
+  aeFamilyTree,
+  aeWithFamiliesSection,
+  useAeEffectiveFolds,
+  useAeFamilyFolds,
+  useAeStableTree,
+} from "@/lib/aeFamilyTree";
+import { AeFamilyDot, AeFamilyFilterBar } from "@/shell/AeFamilyDot";
+import * as AeTree from "@/shell/AeFamilyTree";
 import { PrimaryNavLink } from "@/shell/PrimaryNavLink";
 import { useViewerId } from "@/hooks/useViewerId";
 import { useExtensions } from "@/extensions/ExtensionProvider";
@@ -1817,6 +1820,7 @@ function ConversationList({
   const families = useAeFamilies(
     familyRows,
     view.familyDots || view.grouping === "family" || familyFilter !== null,
+    view.grouping === "family",
   );
   // Another display (Shared, Archived) starts unfiltered.
   useEffect(() => setFamilyFilter(null), [activeTab]);
@@ -1885,6 +1889,12 @@ function ConversationList({
   // out from under you. Snapshot is dropped on navigate-away so the
   // chat snaps back to its real position once you've left.
   const { conversationId: activeId } = useParams<{ conversationId: string }>();
+  // The open session's family unfolds while it is one of its hidden sessions.
+  const familyFolds = useAeEffectiveFolds(
+    useAeFamilyFolds(),
+    activeId ?? null,
+    activeId ? (families.byRow.get(activeId)?.family.root ?? null) : null,
+  );
   // Resolve the active conversation's top-level root once here (rows get a plain
   // `isActive` prop, not their own query). Falls back to the raw id while the
   // parent walk loads — a top-level session resolves to itself.
@@ -2059,17 +2069,18 @@ function ConversationList({
         projectGroups,
         groupTitles: null,
         groupOrder: null,
-        familyByTitle: null,
+        aeTree: null,
       };
     }
     if (view.grouping === "family") {
-      const { leadsFirst, ...groups } = aeFamilyGroups(ordered, families);
-      const sessions = groupConversations(
-        leadsFirst,
-        (c) => groups.groupTitles.get(c.id),
-        groups.groupOrder,
-      ).flatMap((g) => g.conversations);
-      return { pinned, shared, projectGroups, sessions, ...groups };
+      const { tree: aeTree, ...groups } = aeFamilyTree(ordered, families, {
+        folded: familyFolds,
+        byLead: view.ordering === "manual",
+        searching: searchQuery !== "",
+        lookup: (id) =>
+          allConversations.find((c) => c.id === id) ?? pinned.find((c) => c.id === id),
+      });
+      return { pinned, shared, projectGroups, ...groups, aeTree };
     }
     // Buckets use render-time "now", so a day rollover shows on the next list update.
     const now = new Date();
@@ -2095,7 +2106,7 @@ function ConversationList({
       projectGroups,
       groupTitles,
       groupOrder: null,
-      familyByTitle: null,
+      aeTree: null,
     };
     // `unseenTick` / `draftIds` aren't read here: they version the stores status buckets read.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2121,8 +2132,14 @@ function ConversationList({
     ae,
     families,
     familyFilter,
+    familyFolds,
+    searchQuery,
   ]);
 
+  const aeTree = useAeStableTree(loadedSections.aeTree);
+  const treeView = useMemo(() => ({ ...familyView, tree: aeTree }), [familyView, aeTree]);
+  // A stand-in lead draws as its own entry; it is no session to navigate to or select.
+  const standIns = loadedSections.aeTree?.standIns;
   const config = useContext(SidebarConfigContext);
   // Shared renders above Sessions, so the display window pages through both in that order.
   const listRows = useMemo(
@@ -2152,8 +2169,9 @@ function ConversationList({
     const titles = loadedSections.groupTitles;
     if (!titles || sections.sessions.length === 0) return null;
     const order = loadedSections.groupOrder ?? groupOrder;
-    return groupConversations(sections.sessions, (c) => titles.get(c.id), order);
-  }, [loadedSections.groupTitles, loadedSections.groupOrder, sections.sessions, groupOrder]);
+    const groups = groupConversations(sections.sessions, (c) => titles.get(c.id), order);
+    return aeWithFamiliesSection(groups, loadedSections.aeTree);
+  }, [loadedSections, sections.sessions, groupOrder]);
 
   // Scope-active flags: which section owns the current selection UI (checkboxes
   // + bulk-action bar). Only one is true at a time unless the selection is unified.
@@ -2513,8 +2531,10 @@ function ConversationList({
       ...(sessionGroups
         ? sessionGroups.flatMap((g) => visible(g.title, g.conversations))
         : visible("Chats", sections.sessions)),
-    ].map((c) => c.id);
-  }, [sections, sessionGroups, effectiveCollapsedSections, expandedProjects]);
+    ]
+      .filter((c) => !standIns?.has(c.id))
+      .map((c) => c.id);
+  }, [sections, sessionGroups, effectiveCollapsedSections, expandedProjects, standIns]);
   // Getter for the shift-select range, built on demand (at click time). Scopes
   // to whichever section is selectable: the flat Sessions list, or the sessions
   // across expanded project folders (in render order). For projects scope the
@@ -2532,7 +2552,9 @@ function ConversationList({
     };
     if (selectionScope === "projects") return projectIds();
     const visibleIds = (title: string, list: readonly Conversation[]) =>
-      effectiveCollapsedSections.includes(title) ? [] : list.map((c) => c.id);
+      effectiveCollapsedSections.includes(title)
+        ? []
+        : list.filter((c) => !standIns?.has(c.id)).map((c) => c.id);
     return [
       ...(unifiedSelection ? projectIds() : []),
       ...visibleIds("Shared", sections.shared),
@@ -2707,7 +2729,7 @@ function ConversationList({
       viewerId={viewerId}
       serverInfo={serverInfo}
       onActivate={activateRow}
-      familyView={familyView}
+      familyView={treeView}
     >
       <DndContext
         sensors={sensors}
@@ -2972,14 +2994,13 @@ function ConversationList({
                               key={group.title}
                               title={group.title}
                               titleContent={
-                                loadedSections.familyByTitle?.has(group.title) ? (
-                                  <AeFamilyTitle
-                                    family={loadedSections.familyByTitle.get(group.title)!}
-                                  />
-                                ) : (
-                                  aeTriageTitle(ae, group.title, loadedSections.groupTitles)
-                                )
+                                AeTree.aeFamilySectionTitle(loadedSections.aeTree, group) ??
+                                aeTriageTitle(ae, group.title, loadedSections.groupTitles)
                               }
+                              emptyMessage={AeTree.aeFamiliesHint(
+                                loadedSections.aeTree,
+                                group.title,
+                              )}
                               conversations={group.conversations}
                               footer={
                                 index === sessionGroups.length - 1 ? sessionStatus : undefined
@@ -3890,18 +3911,24 @@ function ConversationSection({
             // Indent project chats a step under the project-folder name above.
             <ul className={cn("flex flex-col gap-px", indentRows && "pl-6")}>
               {conversations.map((conv) => (
-                <ConversationRow
+                <AeTree.AeFamilyTreeSlot
                   key={conv.id}
-                  conversation={conv}
-                  isActive={conv.id === activeConversationId}
-                  isPinned={pinnedConversationIds.includes(conv.id)}
-                  onClick={onRowClick}
-                  onTogglePinned={onTogglePinned}
-                  selectionMode={selectionMode}
-                  isSelected={selectedIds.has(conv.id)}
-                  onToggleSelected={onToggleSelected}
-                  onProjectAssigned={onProjectAssigned}
-                />
+                  conversationId={conv.id}
+                  section={title}
+                  onNavigate={onRowClick}
+                >
+                  <ConversationRow
+                    conversation={conv}
+                    isActive={conv.id === activeConversationId}
+                    isPinned={pinnedConversationIds.includes(conv.id)}
+                    onClick={onRowClick}
+                    onTogglePinned={onTogglePinned}
+                    selectionMode={selectionMode}
+                    isSelected={selectedIds.has(conv.id)}
+                    onToggleSelected={onToggleSelected}
+                    onProjectAssigned={onProjectAssigned}
+                  />
+                </AeTree.AeFamilyTreeSlot>
               ))}
             </ul>
           )}
@@ -5154,6 +5181,7 @@ function ConversationRowImpl({
       {/* Row 1: the session name. Working, needs-approval, unseen, and draft
           markers render in the shared trailing indicator slot below. */}
       <div className="flex w-full items-center">
+        <AeTree.AeFamilyTreeIndent conversationId={conversation.id} selectionMode={selectionMode} />
         <AeConversationStatusIcon conversation={conversation} className="mr-1.5" />
         <AeFamilyDot conversationId={conversation.id} />
         <span
@@ -5167,6 +5195,7 @@ function ConversationRowImpl({
           {label}
           {hasUnseenMessages && <span className="sr-only"> (unread)</span>}
         </span>
+        <AeTree.AeFamilyFold conversationId={conversation.id} />
       </div>
       {/* Row 2: the "Show" metadata, each part omitted when it has no value. */}
       <SessionMetaLine environment={metaEnvironment} repo={metaRepo} branch={metaBranch} />

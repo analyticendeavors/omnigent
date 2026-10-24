@@ -220,6 +220,11 @@ interface PublishedSections {
   sessions: Conversation[];
   projectGroups: { name: string; conversations: Conversation[] }[];
   groupTitles: ReadonlyMap<string, string> | null;
+  /** Grouping > Family's tree: each family is its own list, and a stand-in lead is in none. */
+  aeTree?: {
+    rows: ReadonlyMap<string, { family: { root: string } }>;
+    standIns: ReadonlySet<string>;
+  } | null;
 }
 
 /**
@@ -250,7 +255,12 @@ export function useAePublishSidebarScopes(
     add("shared", sections.shared);
     const titles = sections.groupTitles;
     if (titles) {
-      for (const row of sections.sessions) add(`group:${titles.get(row.id) ?? ""}`, [row]);
+      const tree = sections.aeTree;
+      for (const row of sections.sessions) {
+        if (tree?.standIns.has(row.id)) continue;
+        const family = tree?.rows.get(row.id)?.family.root;
+        add(family ? `family:${family}` : `group:${titles.get(row.id) ?? ""}`, [row]);
+      }
     } else add("sessions", sections.sessions);
     for (const group of sections.projectGroups) {
       add(`folder:${group.name}`, folderConversations.get(group.name) ?? group.conversations);

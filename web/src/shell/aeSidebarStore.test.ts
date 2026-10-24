@@ -24,6 +24,7 @@ import {
   aePlaceOf,
   aePointerWithin,
   aeTrackDragMove,
+  useAePublishSidebarScopes,
   useAeSidebarStore,
   useAeSidebarView,
 } from "./aeSidebarStore";
@@ -505,5 +506,62 @@ describe("useAeSidebarView", () => {
       );
       expect(paged.fetchNextPage).toHaveBeenCalledTimes(loads);
     }
+  });
+});
+
+describe("useAePublishSidebarScopes in the family tree", () => {
+  it("publishes each family as its own list, and no stand-in lead", () => {
+    const rows = (...ids: string[]) => ids.map((id) => ({ id })) as never[];
+    const ae = {
+      listed: true,
+      manual: true,
+      order: null,
+      statusSort: false,
+      triage: false,
+      frozenTriage: null,
+      switchToManual: vi.fn(),
+    } as never;
+    const sessions = rows("a", "a1", "ghost", "g1", "plain");
+    const titles = new Map([
+      ["a", "Families"],
+      ["a1", "Families"],
+      ["ghost", "Families"],
+      ["g1", "Families"],
+      ["plain", "Not in a family"],
+    ]);
+    const family = (root: string) => ({ family: { root } });
+    const aeTree = {
+      rows: new Map([
+        ["a", family("a")],
+        ["a1", family("a")],
+        ["ghost", family("ghost")],
+        ["g1", family("ghost")],
+      ]),
+      standIns: new Set(["ghost"]),
+    };
+    const client = new QueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client }, children);
+    renderHook(
+      () =>
+        useAePublishSidebarScopes(
+          ae,
+          { shared: [], sessions, projectGroups: [], groupTitles: titles, aeTree },
+          new Map(),
+          null,
+          null,
+        ),
+      { wrapper },
+    );
+    const { lists, listOf } = useAeSidebarStore.getState();
+    expect([...lists]).toEqual([
+      ["family:a", ["a", "a1"]],
+      ["family:ghost", ["g1"]],
+      ["group:Not in a family", ["plain"]],
+    ]);
+    expect(listOf.has("ghost")).toBe(false);
+    // A drop in another family has no list to land on, so nothing collides or snaps back.
+    expect(aeCrossMove(useAeSidebarStore.getState(), "a1", "g1")).toBeNull();
+    expect(aePlaceOf(useAeSidebarStore.getState(), "a1")).toBe("last");
   });
 });

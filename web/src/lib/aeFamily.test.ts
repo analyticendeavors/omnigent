@@ -61,6 +61,18 @@ describe("aeFamilies", () => {
     ).toBe(0);
   });
 
+  it("resolves every member of an ae.orch cycle to one top session", () => {
+    const rows = [
+      row("D", { "ae.orch": "A" }),
+      row("A", { "ae.orch": "B" }),
+      row("B", { "ae.orch": "A" }),
+    ];
+    const { byRoot, byRow } = aeFamilies(rows);
+    expect([...byRoot.keys()]).toEqual(["A"]);
+    expect([...byRow.keys()].sort()).toEqual(["A", "B", "D"]);
+    expect(byRow.get("A")!.isLead).toBe(true);
+  });
+
   it("follows a slot to the top of the ae.orch chain, never through a fork", () => {
     const rows = [row("lead"), row("k1", { "ae.orch": "lead" }), row("g", { "ae.orch": "k1" })];
     const byId = new Map(rows.map((c) => [c.id, c] as const));

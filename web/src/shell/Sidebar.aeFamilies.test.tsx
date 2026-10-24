@@ -3,7 +3,8 @@
 //   1. A lead and the sessions it started (ae.orch), and forks of them, carry
 //      one colored dot; other rows carry none.
 //   2. A dot narrows the list to its family without opening the session.
-//   3. Grouping > Family lists one group per family, lead first, then the rest.
+//   3. Grouping > Family lists "Families" (each lead with its sessions as a
+//      tree, foldable from the lead's pill) then "Not in a family".
 //   4. Show > Family dots turns the dots off.
 
 import type * as IdentityModule from "@/lib/identity";
@@ -43,6 +44,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { type Conversation, useConversations } from "@/hooks/useConversations";
 import { SidebarDataProvider } from "@/hooks/useSidebarData";
 import { CapabilitiesProvider } from "@/lib/CapabilitiesContext";
+import { resetAeFamilyFoldsCache } from "@/lib/aeFamilyTree";
 import { FALLBACK_SERVER_INFO } from "@/lib/capabilities";
 import { conversation, conversationPage } from "@/test/sidebarMockHelpers";
 import { Sidebar } from "./Sidebar";
@@ -74,7 +76,7 @@ function setView(view: Record<string, unknown>) {
   );
 }
 
-function renderSidebar() {
+function renderSidebar(onClose = vi.fn()) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const ui = () => (
     <QueryClientProvider client={qc}>
@@ -87,7 +89,7 @@ function renderSidebar() {
                 features: { ...FALLBACK_SERVER_INFO.features, sidebar_grouping_ui: true },
               }}
             >
-              <Sidebar open={true} onClose={vi.fn()} />
+              <Sidebar open={true} onClose={onClose} />
             </CapabilitiesProvider>
           </MemoryRouter>
         </TooltipProvider>
@@ -114,6 +116,7 @@ function dotOf(name: string): HTMLElement | null {
 
 beforeEach(() => {
   localStorage.clear();
+  resetAeFamilyFoldsCache();
   mocks.fetch.mockReset();
   mocks.fetch.mockResolvedValue(new Response("{}", { status: 404 }));
   useConvMock.mockImplementation(() => conversationPage(ROWS));
@@ -205,12 +208,14 @@ describe("family dots", () => {
 });
 
 describe("Grouping > Family", () => {
-  it("lists each family under its lead, lead first, then every other session", () => {
+  function sections(): (string | null)[] {
+    return screen.getAllByTestId("ae-family-section").map((el) => el.textContent);
+  }
+
+  it("lists families first as tree rows, then every other session", () => {
     setView({ grouping: "family" });
     renderSidebar();
-    const titles = screen.getAllByTestId("ae-family-title");
-    expect(titles).toHaveLength(1);
-    expect(titles[0].textContent).toBe("Role routing build4");
+    expect(sections()).toEqual(["Families1", "Not in a family2"]);
     expect(rowNames()).toEqual([
       "Role routing build",
       "Escalation tool",
@@ -219,7 +224,94 @@ describe("Grouping > Family", () => {
       "Fabric card speed",
       "PASS deck",
     ]);
-    const headers = [...document.querySelectorAll("h2 > button")].map((b) => b.textContent);
-    expect(headers).toEqual(["Role routing build4", "Sessions"]);
+    // The lead keeps its dot; lines and indent replace the dots on its sessions.
+    expect(dotOf("Role routing build")).not.toBeNull();
+    expect(dotOf("Escalation tool")).toBeNull();
+    const depth = (name: string) =>
+      within(rowItem(name)).queryByTestId("ae-family-indent")?.getAttribute("data-depth");
+    expect(depth("Escalation tool")).toBe("1");
+    expect(depth("Families PR (fork)")).toBe("2");
+    expect(depth("Fabric card speed")).toBeUndefined();
+  });
+
+  it("folds a family from the lead's pill and remembers it", () => {
+    setView({ grouping: "family" });
+    const view = renderSidebar();
+    const pill = within(rowItem("Role routing build")).getByTestId("ae-family-fold");
+    expect(pill.textContent).toBe("3");
+    fireEvent.click(pill);
+    expect(rowNames()).toEqual(["Role routing build", "Fabric card speed", "PASS deck"]);
+    expect(JSON.parse(localStorage.getItem("omnigent:ae-family-folds")!)).toEqual([
+      sid("Role routing build"),
+    ]);
+    view.rerenderSidebar();
+    expect(rowNames()).toHaveLength(3);
+    fireEvent.click(within(rowItem("Role routing build")).getByTestId("ae-family-fold"));
+    expect(rowNames()).toHaveLength(6);
+  });
+
+  it("says how a family forms while none shows", () => {
+    useConvMock.mockImplementation(() =>
+      conversationPage(
+        ROWS.filter((c) => !c.labels?.["ae.orch"] && !c.labels?.["omnigent.fork.source_id"]),
+      ),
+    );
+    setView({ grouping: "family" });
+    renderSidebar();
+    expect(sections()).toEqual(["Families0", "Not in a family3"]);
+    expect(screen.getByTestId("ae-families-hint")).toBeTruthy();
+  });
+
+  it("stands in for a lead that is not loaded, keeping its session out of the rest", () => {
+    useConvMock.mockImplementation(() =>
+      conversationPage(ROWS.filter((c) => c.title !== "Role routing build")),
+    );
+    setView({ grouping: "family" });
+    renderSidebar();
+    expect(screen.getByTestId("ae-family-stand-in").textContent).toContain("Lead not loaded");
+    expect(rowNames().slice(0, 3)).toEqual([
+      "Escalation tool",
+      "Families PR",
+      "Families PR (fork)",
+    ]);
+  });
+
+  const withoutLead = () =>
+    useConvMock.mockImplementation(() =>
+      conversationPage(ROWS.filter((c) => c.title !== "Role routing build")),
+    );
+
+  it("lists only the stand-in while its family is folded, never the hidden session", () => {
+    withoutLead();
+    localStorage.setItem("omnigent:ae-family-folds", JSON.stringify([sid("Role routing build")]));
+    setView({ grouping: "family" });
+    renderSidebar();
+    const standIn = screen.getByTestId("ae-family-stand-in");
+    expect(within(standIn).getByTestId("ae-family-fold").textContent).toBe("3");
+    expect(rowNames()).toEqual(["Fabric card speed", "PASS deck"]);
+  });
+
+  it("narrows to a stand-in family from its dot", () => {
+    withoutLead();
+    setView({ grouping: "family" });
+    renderSidebar();
+    fireEvent.click(within(screen.getByTestId("ae-family-stand-in")).getByTestId("ae-family-dot"));
+    expect(screen.getByTestId("ae-family-filter")).toBeTruthy();
+    expect(rowNames()).toEqual(["Escalation tool", "Families PR", "Families PR (fork)"]);
+  });
+
+  it("closes the phone drawer when the stand-in lead is tapped", () => {
+    withoutLead();
+    setView({ grouping: "family" });
+    const matchMedia = window.matchMedia;
+    window.matchMedia = vi.fn().mockReturnValue({ matches: false }) as never;
+    try {
+      const onClose = vi.fn();
+      renderSidebar(onClose);
+      fireEvent.click(within(screen.getByTestId("ae-family-stand-in")).getByRole("link"));
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      window.matchMedia = matchMedia;
+    }
   });
 });

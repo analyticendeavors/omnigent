@@ -40,13 +40,17 @@ function topOf(
   row: FamilyRow,
   byId: ReadonlyMap<string, FamilyRow>,
   parentOf: (labels: Labels) => string | null,
+  /** A cycle's members all resolve to its lowest id, so each shows in one family. */
+  canonicalCycle = false,
 ): string {
   let key = row.id;
-  const seen = new Set([key]);
+  const chain = [key];
   let parent = parentOf(row.labels);
-  for (let depth = 0; depth < MAX_DEPTH && parent && !seen.has(parent); depth += 1) {
+  for (let depth = 0; depth < MAX_DEPTH && parent; depth += 1) {
+    const at = chain.indexOf(parent);
+    if (at !== -1) return canonicalCycle ? chain.slice(at).reduce((a, b) => (b < a ? b : a)) : key;
     key = parent;
-    seen.add(key);
+    chain.push(key);
     const next = byId.get(key);
     parent = next ? parentOf(next.labels) : null;
   }
@@ -195,17 +199,25 @@ export function assignFamilyColors(roots: readonly string[]): Map<string, number
 /**
  * The families among *rows*, in the order their first member appears. A family
  * needs two loaded members to show: a lone row has nothing to be marked against.
+ * With *orphans* (the family tree view), a lone row started by an unlisted
+ * session shows too, under that lead, rather than falling into the rest.
  */
-export function aeFamilies(rows: readonly Conversation[]): AeFamilies {
+export function aeFamilies(rows: readonly Conversation[], orphans = false): AeFamilies {
   const byId = new Map(rows.map((row) => [row.id, row] as const));
   const grouped = new Map<string, Conversation[]>();
   for (const row of rows) {
-    const root = topOf(row, byId, aeFamilyParent);
+    const root = topOf(row, byId, aeFamilyParent, true);
     const members = grouped.get(root);
     if (members) members.push(row);
     else grouped.set(root, [row]);
   }
-  const shown = [...grouped].filter(([, members]) => members.length > 1);
+  // Tree view: an unlisted top session makes a family only through `ae.orch`
+  // (a fork of an unloaded source stays in the rest).
+  const shown = [...grouped].filter(([root, members]) =>
+    orphans && !byId.has(root)
+      ? members.some((row) => aeOrchParent(row.labels) === root)
+      : members.length > 1,
+  );
   if (shown.length === 0) return NO_FAMILIES;
   const colors = assignFamilyColors(shown.map(([root]) => root));
   const byRoot = new Map<string, AeFamily>();
