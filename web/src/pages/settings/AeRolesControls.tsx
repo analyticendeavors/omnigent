@@ -23,7 +23,7 @@ export function AeRolePresetTile({
   icon: string;
   color: AeRoleColor;
   dot?: boolean;
-  size?: "sm" | "md" | "lg";
+  size?: "xs" | "sm" | "md" | "lg";
   className?: string;
 }) {
   return (
@@ -33,6 +33,7 @@ export function AeRolePresetTile({
       data-icon={icon}
       className={cn(
         "relative inline-flex shrink-0 items-center justify-center rounded-lg",
+        size === "xs" && "size-5 text-[11px]",
         size === "sm" && "size-6 text-[13px]",
         size === "md" && "size-7 text-[15px]",
         size === "lg" && "size-9 text-[18px]",

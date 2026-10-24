@@ -1,7 +1,7 @@
 // The composer's roles preset pill (omnigent-ae, 2026-10-23): the session's
 // preset icon and name beside the model picker. Its menu has a search box,
-// "Lead picks", pinned and recent presets, then every preset with its Alt
-// digit. A pick writes the `roles` field of the session's ae.team label.
+// "Lead picks", the pinned presets (and the active one) with their Alt digits,
+// and a "More presets" row that opens the rest in place. A pick writes the `roles` field of the session's ae.team label.
 // Since the Auto / Solo / Team button folded into presets (2026-10-23) it is
 // the composer's one "who works on this" control: the menu also lists this
 // chat's sessions and opens the full dialog, the pill counts added sessions,
@@ -19,7 +19,8 @@ import {
   type AeRolePreset,
   aeRoleSummary,
 } from "@/lib/aeRoles";
-import { aeChoiceId, aeReadRecentPresets } from "@/lib/aeSessionRoles";
+import { AE_MORE_ICONS_MAX, aePresetMenuGroups } from "@/lib/aePresetMenu";
+import { aeChoiceId } from "@/lib/aeSessionRoles";
 import { useNavigate } from "@/lib/routing";
 import { cn } from "@/lib/utils";
 import { aeSessionsLockedHint } from "@/lib/aeTeamPresets";
@@ -110,6 +111,7 @@ export function AeSessionPresetPill({
   const isMobile = useIsMobileViewport();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [moreOpen, setMoreOpen] = useState(false);
   const current = useAeSessionPreset(sessionId);
   const { state, choice, pick, team, setMember, locked, pending, rolesQuery } = current;
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -125,6 +127,10 @@ export function AeSessionPresetPill({
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [disabled, onPresetKey]);
+  // The hidden presets fold away again whenever the menu closes.
+  useEffect(() => {
+    if (!open) setMoreOpen(false);
+  }, [open]);
   if (!state || !choice) {
     // Presets did not load (yet): keep a pill-shaped way into "Who works on this?"
     // so Change lead and the sessions list stay reachable, and retry the read.
@@ -162,9 +168,6 @@ export function AeSessionPresetPill({
   const matches = (text: string) => words.every((w) => text.toLowerCase().includes(w));
   const presets = state.presets;
   const shown = presets.filter((p) => matches(`${p.title} ${p.description}`));
-  const recent = aeReadRecentPresets()
-    .map((id) => presets.find((p) => p.id === id))
-    .filter((p): p is AeRolePreset => !!p && !p.pinned);
   // Sessions wait unused while the preset keeps work in house, so the pill counts none.
   const count = locked ? 0 : team.members.length;
   const openTeam = () => {
@@ -195,7 +198,7 @@ export function AeSessionPresetPill({
       {text}
     </div>
   );
-  const pinned = shown.filter((p) => p.pinned);
+  const groups = aePresetMenuGroups(presets, activeId);
   const label = `Roles preset: ${name}${count ? `, ${count} session${count === 1 ? "" : "s"}` : ""}`;
   const trigger = (
     <button
@@ -210,14 +213,18 @@ export function AeSessionPresetPill({
       }
       disabled={disabled}
       onClick={isMobile ? () => setOpen(true) : undefined}
-      className="relative inline-flex h-8 max-w-48 min-w-0 shrink-0 items-center gap-1.5 rounded-full border border-border py-0.5 pr-2 pl-0.5 text-xs hover:bg-accent disabled:opacity-50 max-sm:pr-0.5"
+      // Styled like the model picker beside it: ghost button, bare colored icon.
+      className="relative inline-flex min-h-8 max-w-48 min-w-0 shrink-0 items-center gap-1.5 rounded-lg px-2 text-[13px] hover:bg-muted aria-expanded:bg-muted disabled:opacity-50 md:min-h-7 dark:hover:bg-muted/50"
     >
       {choice.kind === "lead-picks" ? (
-        <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-lg bg-teal-500/15 text-teal-400">
-          <WandSparklesIcon className="size-3.5" />
-        </span>
+        <WandSparklesIcon aria-hidden="true" className="size-4 shrink-0 text-teal-500" />
       ) : (
-        <AeRolePresetTile icon={choice.preset.icon} color={choice.preset.color} size="sm" />
+        <AeRolePresetTile
+          icon={choice.preset.icon}
+          color={choice.preset.color}
+          size="sm"
+          className="size-4 bg-transparent text-[15px]"
+        />
       )}
       {!isMobile && <span className="truncate">{name}</span>}
       {count > 0 && (
@@ -232,7 +239,7 @@ export function AeSessionPresetPill({
           {count}
         </span>
       )}
-      {!isMobile && <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />}
+      <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />
     </button>
   );
   const body: ReactNode = (
@@ -275,21 +282,44 @@ export function AeSessionPresetPill({
             </span>
           </button>
         )}
-        {words.length === 0 && pinned.length > 0 && (
+        {words.length === 0 ? (
           <>
-            {heading("Pinned")}
-            {pinned.map((p) => row(p, `pinned-${p.id}`))}
+            {heading(groups.heading)}
+            {groups.top.map((p) => row(p, p.id))}
+            {groups.hidden.length > 0 && (
+              <button
+                type="button"
+                aria-expanded={moreOpen}
+                onClick={() => setMoreOpen((on) => !on)}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-md px-2 text-left text-muted-foreground hover:bg-muted",
+                  isMobile ? "py-2.5 text-sm" : "py-1.5 text-sm",
+                )}
+              >
+                <ChevronDownIcon
+                  className={cn("size-3.5 shrink-0", !moreOpen && "-rotate-90")}
+                  aria-hidden="true"
+                />
+                <span>More presets</span>
+                <span className="rounded-full bg-muted px-1.5 text-[10px] font-semibold">
+                  {groups.hidden.length}
+                </span>
+                <span className="ml-auto flex gap-1">
+                  {groups.hidden.slice(0, AE_MORE_ICONS_MAX).map((p) => (
+                    <AeRolePresetTile key={p.id} icon={p.icon} color={p.color} size="xs" />
+                  ))}
+                </span>
+              </button>
+            )}
+            {moreOpen && groups.hidden.map((p) => row(p, p.id))}
+          </>
+        ) : (
+          <>
+            {heading("Matches")}
+            {shown.map((p) => row(p, p.id))}
           </>
         )}
-        {words.length === 0 && recent.length > 0 && (
-          <>
-            {heading("Recent")}
-            {recent.map((p) => row(p, `recent-${p.id}`))}
-          </>
-        )}
-        {heading(words.length > 0 ? "Matches" : "All presets")}
-        {shown.map((p) => row(p, `all-${p.id}`))}
-        {shown.length === 0 && (
+        {words.length > 0 && shown.length === 0 && (
           <p className="px-2 py-2 text-xs text-muted-foreground">No preset matches.</p>
         )}
         {onOpenTeam && words.length === 0 && (

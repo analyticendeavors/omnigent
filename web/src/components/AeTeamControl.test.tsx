@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { MemoryRouter } from "react-router-dom";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AvailableAgent } from "@/hooks/useAvailableAgents";
@@ -942,6 +942,115 @@ describe("composer preset pill states", () => {
     const search = screen.getByRole("searchbox", { name: "Search presets" });
     await waitFor(() => expect(menu).toContainElement(document.activeElement as HTMLElement));
     expect(document.activeElement).toBe(search);
+  });
+
+  describe("menu layout", () => {
+    const pins = (...pinned: string[]) => ({
+      data: {
+        ...ROLES,
+        presets: [
+          ...ROLES.presets,
+          preset("solo", "Solo", "own"),
+          preset("quick-fix", "Quick fix"),
+        ].map((p) => ({ ...p, pinned: pinned.includes(p.id) })),
+      },
+    });
+    const radios = () => screen.getAllByRole("menuitemradio").map((el) => el.textContent ?? "");
+    const open = (name = /^Roles preset: / as RegExp) =>
+      fireEvent.click(screen.getByRole("button", { name }));
+
+    it("shows pinned rows and folds the rest behind More with their count", () => {
+      mocks.roles.mockReturnValue(pins("save-tokens", "balanced"));
+      renderPill();
+      open();
+      const names = radios();
+      expect(names).toHaveLength(3);
+      expect(names[1]).toMatch(/^Save tokens/);
+      expect(names[2]).toMatch(/^Balanced/);
+      expect(screen.getByText("Pinned")).toBeInTheDocument();
+      expect(screen.queryByText("Recent")).not.toBeInTheDocument();
+      expect(screen.queryByText("All presets")).not.toBeInTheDocument();
+      const more = screen.getByRole("button", { name: /More presets/ });
+      expect(more).toHaveAttribute("aria-expanded", "false");
+      expect(more).toHaveTextContent("3");
+      expect(screen.queryByRole("menuitemradio", { name: /YOLO/ })).not.toBeInTheDocument();
+    });
+
+    it("expands the hidden rows in place and folds them again when the menu closes", () => {
+      mocks.roles.mockReturnValue(pins("save-tokens", "balanced"));
+      renderPill();
+      open();
+      const more = screen.getByRole("button", { name: /More presets/ });
+      fireEvent.click(more);
+      expect(more).toHaveAttribute("aria-expanded", "true");
+      expect(screen.getByRole("menuitemradio", { name: /YOLO/ })).toBeInTheDocument();
+      expect(screen.getByRole("menuitemradio", { name: /Quick fix/ })).toBeInTheDocument();
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+      open();
+      expect(screen.getByRole("button", { name: /More presets/ })).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      );
+    });
+
+    it("keeps an active unpinned preset in the top group", () => {
+      mocks.roles.mockReturnValue(pins("save-tokens"));
+      renderPill();
+      open(/^Roles preset: Balanced/);
+      const names = radios();
+      expect(names[1]).toMatch(/^Save tokens/);
+      expect(names[2]).toMatch(/^Balanced/);
+      expect(screen.getByRole("button", { name: /More presets/ })).toHaveTextContent("3");
+    });
+
+    it("shows one flat list and no More row when nothing is pinned", () => {
+      mocks.roles.mockReturnValue(pins());
+      renderPill();
+      open();
+      expect(screen.getByText("All presets")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /More presets/ })).not.toBeInTheDocument();
+      expect(radios()).toHaveLength(6);
+    });
+
+    it("searches every preset, hidden ones included, as one Matches list", () => {
+      mocks.roles.mockReturnValue(pins("save-tokens"));
+      renderPill();
+      open();
+      fireEvent.change(screen.getByRole("searchbox", { name: "Search presets" }), {
+        target: { value: "quick" },
+      });
+      expect(screen.getByText("Matches")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /More presets/ })).not.toBeInTheDocument();
+      expect(screen.getByRole("menuitemradio", { name: /Quick fix/ })).toBeInTheDocument();
+    });
+
+    it("keeps each Alt number tied to the preset's place in the full list", () => {
+      mocks.roles.mockReturnValue(pins("save-tokens", "balanced"));
+      renderPill();
+      open();
+      fireEvent.click(screen.getByRole("button", { name: /More presets/ }));
+      const alt = (title: RegExp) =>
+        screen.getByRole("menuitemradio", { name: title }).querySelector("kbd")?.textContent;
+      expect(alt(/Save tokens/)).toBe("Alt 1");
+      expect(alt(/YOLO/)).toBe("Alt 3");
+      expect(alt(/Solo/)).toBe("Alt 4");
+      expect(alt(/Quick fix/)).toBe("Alt 5");
+    });
+  });
+
+  it.each([
+    ["phone", true],
+    ["desktop", false],
+  ])("styles the %s pill like the model picker: no ring, bare icon, chevron", (_, mobile) => {
+    mocks.mobile.mockReturnValue(mobile);
+    mocks.roles.mockReturnValue({ data: ROLES });
+    renderPill();
+    const pill = screen.getByTestId("ae-preset-pill");
+    expect(pill.className).not.toMatch(/(^|\s)border(\s|$)/);
+    expect(pill.className).not.toContain("rounded-full");
+    expect(pill.className).toContain("rounded-lg");
+    expect(within(pill).getByTestId("ae-role-preset-tile").className).toContain("bg-transparent");
+    expect(pill.querySelector("svg.lucide-chevron-down")).not.toBeNull();
   });
 
   it("disables adding and removing sessions in the menu while a turn runs", () => {
