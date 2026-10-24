@@ -45,7 +45,7 @@ const renderMarkdownText = (text: string) =>
   );
 
 describe("BlockRenderer dispatch", () => {
-  describe("set_session_model rows (omnigent-ae)", () => {
+  describe("set_session_model calls (omnigent-ae)", () => {
     const CHANGED = JSON.stringify({
       status: "changed",
       session_id: "conv_b",
@@ -88,7 +88,7 @@ describe("BlockRenderer dispatch", () => {
     }
 
     it.each(["set_session_model", "mcp__ae__set_session_model"])(
-      "renders %s as a model change row",
+      "renders %s as the plain tool card, never a model change row",
       (name) => {
         render(
           <MemoryRouter>
@@ -98,28 +98,12 @@ describe("BlockRenderer dispatch", () => {
             />
           </MemoryRouter>,
         );
-        expect(screen.getByTestId("ae-model-change")).toBeDefined();
+        expect(screen.queryByTestId("ae-model-change")).toBeNull();
+        expect(screen.queryByTestId("ae-model-change-note")).toBeNull();
+        // It lands in the ordinary tool-run group.
+        expect(document.querySelector('[data-slot="collapsible-content"]')).not.toBeNull();
       },
     );
-
-    it("keeps the plain tool card while the call runs or when the output is not JSON", () => {
-      const { unmount } = render(
-        <BlockRenderer
-          items={[toolItem("set_session_model", null, "input-available")]}
-          sessionStatus="running"
-        />,
-      );
-      expect(screen.queryByTestId("ae-model-change")).toBeNull();
-      unmount();
-      render(
-        <BlockRenderer
-          items={[toolItem("set_session_model", "plain words", "output-available")]}
-          sessionStatus="idle"
-        />,
-      );
-      expect(screen.queryByTestId("ae-model-change")).toBeNull();
-      expect(screen.queryByTestId("ae-model-change-note")).toBeNull();
-    });
   });
 
   it("renders a slash_command RenderItem via SlashCommandCard", () => {

@@ -13,6 +13,7 @@ import {
 } from "react";
 import { aeAgentRole, aeFormatCost, aeFormatTokens, aeRoleName } from "@/lib/aeAgentRole";
 import { aeSpendOf, useAeSessionUsages } from "@/lib/aeAgentUsage";
+import { aeRaiseMarks } from "@/lib/aeModelChange";
 import { AE_FAMILY_COLORS, type AeFamily, aeFamilyHint } from "@/lib/aeFamily";
 import {
   AE_CLOSED_CAPPED_NOTE,
@@ -264,6 +265,46 @@ export function AeFamilyFold({ conversationId }: { conversationId: string }) {
       <TokenPill family={lead.family} />
       <FoldPill lead={lead} />
     </span>
+  );
+}
+
+/**
+ * A raised helper's second line: where it runs now and where it started, with a cap chip.
+ * It reads usage only for a member with `ae.model_start`, under TokenPill's query key.
+ */
+export function AeFamilyRaiseLine({ conversationId }: { conversationId: string }) {
+  const { tree } = useContext(AeFamilyContext);
+  const inFamilies = useContext(InFamilies);
+  const row = inFamilies ? tree?.rows.get(conversationId) : undefined;
+  const labels = row?.family.members.find((m) => m.id === conversationId)?.labels;
+  const tracked = row !== undefined && row.depth > 0 && !!labels?.["ae.model_start"];
+  const usage = useAeSessionUsages([{ id: conversationId, stamp: 0 }], {
+    enabled: tracked,
+    live: tracked,
+    staleMs: PILL_MS,
+    pollMs: PILL_MS,
+  }).get(conversationId);
+  if (!tracked) return null;
+  // Until usage lands the current point is unknown; show nothing rather than guess.
+  if (!usage || (!usage.model && !usage.effort)) return null;
+  const marks = aeRaiseMarks(labels, { model: usage.model, effort: usage.effort });
+  if (!marks.raised) return null;
+  return (
+    <div
+      className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground"
+      data-testid="ae-family-raise-line"
+      title={marks.title}
+    >
+      <span className="min-w-0 truncate">{marks.line}</span>
+      {marks.capReached && (
+        <span
+          data-testid="ae-family-cap-reached"
+          className="shrink-0 rounded bg-foreground/[0.07] px-1.5 text-[10px]"
+        >
+          cap reached
+        </span>
+      )}
+    </div>
   );
 }
 

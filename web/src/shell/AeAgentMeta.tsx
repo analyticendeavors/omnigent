@@ -4,12 +4,7 @@
 
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import type { ChildSessionInfo } from "@/hooks/useChildSessions";
-import {
-  aeLabelCount,
-  aeModelPointText,
-  aeRunsAboveStart,
-  parseAeModelStart,
-} from "@/lib/aeModelChange";
+import { aeRaiseMarks } from "@/lib/aeModelChange";
 import { aeAgentRole, aeFormatCost, aeFormatTokens, aeRoleName } from "@/lib/aeAgentRole";
 import {
   AE_MODEL_FAMILIES,
@@ -110,16 +105,11 @@ export function AeAgentMetaLine({
   const cost = usage?.costUsd ?? null;
   const tokens = usage?.tokens != null && usage.tokens > 0 ? usage.tokens : null;
   const model = withModel ? (child.model ?? child.routed_model ?? native?.model ?? null) : null;
-  const raises = aeLabelCount(child.labels?.["ae.raises"]) ?? 0;
-  const cap = aeLabelCount(child.labels?.["ae.raise_cap"]);
-  const started = parseAeModelStart(child.labels?.["ae.model_start"]);
-  const raisedTitle = `Raised ${raises} time${raises === 1 ? "" : "s"}${
-    started ? ` from ${aeModelPointText(started)}` : ""
-  }`;
   const nowModel = child.model ?? child.routed_model ?? native?.model ?? null;
   // The count is history; the arrow shows only while the helper still runs above where it started.
-  const raised =
-    raises >= 1 && (!started || aeRunsAboveStart({ model: nowModel, effort }, started));
+  const marks = aeRaiseMarks(child.labels, { model: nowModel, effort });
+  const raised = marks.raised;
+  const raisedTitle = marks.title;
   if (!role && !model && !effort && cost === null && tokens === null && !raised) return null;
   return (
     <p
@@ -157,7 +147,7 @@ export function AeAgentMetaLine({
           &uarr;
         </span>
       )}
-      {raises >= 1 && cap !== null && raises >= cap && (
+      {marks.capReached && (
         <span
           data-testid="subagent-cap-reached"
           className="shrink-0 rounded bg-foreground/[0.07] px-1.5 text-[10px]"

@@ -280,6 +280,7 @@ import { GoalDialog, CommandGoalDialog, GoalStatusPill, useGoalState } from "@/c
 import { useIsCoarsePointer } from "@/hooks/useIsCoarsePointer";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { ConnectionIndicator } from "./ChatIndicators";
+import { AeModelChangeBand } from "@/components/AeModelChangeBand";
 import { Transcript } from "@/components/chat/Transcript";
 import { useForkDialog } from "@/shell/ForkDialogContext";
 
@@ -1705,6 +1706,7 @@ const MainAgentSurface = memo(function MainAgentSurfaceImpl({
           onSurfaceElement={isActive ? setTerminalSurfaceEl : undefined}
           readOnly={entry.readOnly}
         />
+        {isShown && <AeModelChangeBand leadId={entry.conversationId} />}
         {isShown && (
           <ConnectionIndicator liveness={liveness} onShowReconnectHelp={onShowReconnectHelp} />
         )}
@@ -1800,6 +1802,7 @@ const MainAgentSurface = memo(function MainAgentSurfaceImpl({
           {/* Reconnect-or-fork banner when unreachable, nothing otherwise.
           Sits below the composer so its position is consistent with the
           terminal view. */}
+          <AeModelChangeBand leadId={conversationId} />
           <ConnectionIndicator liveness={liveness} onShowReconnectHelp={onShowReconnectHelp} />
         </>
       )}

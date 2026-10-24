@@ -5205,6 +5205,7 @@ function ConversationRowImpl({
       </div>
       {/* Row 2: the "Show" metadata, each part omitted when it has no value. */}
       <SessionMetaLine environment={metaEnvironment} repo={metaRepo} branch={metaBranch} />
+      <AeTree.AeFamilyRaiseLine conversationId={conversation.id} />
     </Link>
   );
 

@@ -271,6 +271,61 @@ describe("Grouping > Family", () => {
     ).toBe("$6.00");
   });
 
+  describe("raise line", () => {
+    const RAISED = {
+      "ae.orch": sid("Role routing build"),
+      "ae.model_start": "claude-sonnet-5-5|medium",
+      "ae.raises": "1",
+      "ae.raise_cap": "1",
+    };
+
+    function runsOn(model: string, effort: string) {
+      mocks.fetch.mockImplementation((input: unknown) =>
+        Promise.resolve(
+          String(input).startsWith("/v1/sessions/")
+            ? new Response(JSON.stringify({ llm_model: model, reasoning_effort: effort }))
+            : new Response("{}", { status: 404 }),
+        ),
+      );
+    }
+
+    function withRaised() {
+      useConvMock.mockImplementation(() =>
+        conversationPage([row("Escalation tool", 60, RAISED), ...ROWS.slice(1)]),
+      );
+      setView({ grouping: "family" });
+    }
+
+    it("shows a muted line and the cap chip while the helper runs above its start", async () => {
+      runsOn("claude-opus-4-8", "high");
+      withRaised();
+      renderSidebar();
+      const line = await within(rowItem("Escalation tool")).findByTestId("ae-family-raise-line");
+      expect(line.textContent).toContain("\u2191 Opus high \u00b7 from Sonnet medium");
+      expect(line.getAttribute("title")).toContain("Raised 1 time");
+      expect(within(line).getByTestId("ae-family-cap-reached")).toBeDefined();
+    });
+
+    it("hides the line once the helper is back at its start", async () => {
+      runsOn("claude-sonnet-5-5", "medium");
+      withRaised();
+      renderSidebar();
+      await waitFor(() => expect(mocks.fetch).toHaveBeenCalled());
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 50);
+      });
+      expect(within(rowItem("Escalation tool")).queryByTestId("ae-family-raise-line")).toBeNull();
+    });
+
+    it("shows nothing for a member without a start label", async () => {
+      runsOn("claude-opus-4-8", "high");
+      withRaised();
+      renderSidebar();
+      await within(rowItem("Escalation tool")).findByTestId("ae-family-raise-line");
+      expect(within(rowItem("Families PR")).queryByTestId("ae-family-raise-line")).toBeNull();
+    });
+  });
+
   it("falls back to tokens on the family pill when no cost is reported", async () => {
     useConvMock.mockImplementation(() => conversationPage(ROWS));
     mocks.fetch.mockImplementation((input: unknown) =>
