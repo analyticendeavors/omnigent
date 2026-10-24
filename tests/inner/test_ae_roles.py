@@ -11,7 +11,7 @@ from unittest.mock import Mock
 import pytest
 
 from omnigent.entities.conversation import Conversation
-from omnigent.inner import ae_roles
+from omnigent.inner import ae_reviewers, ae_roles
 from omnigent.inner.ae_roles import render_roles, resolve_roles
 from omnigent.inner.ae_team import TEAM_LABEL, render_team_notice, team_notice
 
@@ -532,7 +532,15 @@ def test_an_older_model_version_keeps_its_full_id() -> None:
 
 # ── several reviewers ─────────────────────────────────────────────────────
 
-CODEX = {"mode": "agent", "agent": "ag_codex", "name": "Codex", "model": None, "effort": "medium"}
+CODEX = {
+    "mode": "agent",
+    "agent": "ag_codex",
+    "agent_name": "codex-native-ui",
+    "name": "Codex",
+    "model": None,
+    "effort": "medium",
+}
+OTHER = {**CODEX, "agent": "ag_other", "agent_name": None, "name": "Other CLI"}
 SONNET_MEDIUM = {"mode": "fixed", "model": "claude-sonnet-5-5", "effort": "medium"}
 
 
@@ -551,8 +559,9 @@ def test_two_reviewers_render_as_drawn() -> None:
     assert len(lines) == 9
     assert lines[3] == (
         "- Reviewers (final review of a build): 1. sonnet, medium (native subagent). "
-        "2. Codex agent (a fresh child session each review: sys_session_create with "
-        "agent_id ag_codex, reasoning_effort medium; its default model)."
+        "2. Codex agent (a fresh session each review: create_session with "
+        'role "reviewer", harness "codex", effort medium, a title naming the review '
+        "round, and workspace the repo under review; its default model)."
     )
     assert lines[4].startswith(
         "  These reviewers replace the /dual-review offer; run them when the work is done, "
@@ -608,15 +617,19 @@ def test_a_single_agent_reviewer_gets_one_line() -> None:
     preset = _with_reviewers(CODEX)
     text = render_roles({"preset": preset, "custom": False, "current": CURRENT}) or ""
     assert (
-        "- Reviewer (reviews, verifying a finding, fix checks): Codex agent (a fresh child "
-        "session each review: sys_session_create with agent_id ag_codex, reasoning_effort "
-        "medium; its default model); a review never goes to an existing child session." in text
+        "- Reviewer (reviews, verifying a finding, fix checks): Codex agent (a fresh session "
+        'each review: create_session with role "reviewer", harness "codex", effort '
+        "medium, a title naming the review round, and workspace the repo under review; "
+        "its default model); a review never "
+        "goes to an existing session." in text
     )
+    assert "sys_session_create" not in text
+    assert "child session" not in text
     assert "dual-review" not in text
 
 
 def test_own_helpers_skip_agent_reviewers() -> None:
-    gemini = {**CODEX, "agent": "ag_gem", "name": "Gemini CLI"}
+    gemini = {**OTHER, "agent": "ag_gem", "name": "Gemini CLI"}
     preset = _with_reviewers(SONNET_MEDIUM, CODEX, helpers="own")
     text = render_roles({"preset": preset, "custom": False, "current": CURRENT}) or ""
     assert (
@@ -643,8 +656,9 @@ def test_lead_picks_summarize_reviewers(prefs: dict[str, Any]) -> None:
     lines = text.split("\n")
     assert "reviewer sonnet, medium;" in lines[1]
     assert (
-        "reviewers sonnet, medium + Codex (fresh child session: sys_session_create "
-        "agent_id ag_codex, reasoning_effort medium);" in lines[2]
+        'reviewers sonnet, medium + Codex (fresh session: create_session role "reviewer", '
+        'harness "codex", effort medium, a title naming the review round, '
+        "and workspace the repo under review);" in lines[2]
     )
     assert lines[-1].startswith("Reviewers named with an agent or with several: run all")
     assert len(lines) < 12
@@ -682,7 +696,8 @@ def test_real_balanced_starter_carries_codex(monkeypatch: pytest.MonkeyPatch) ->
     role_prefs = pytest.importorskip("ae_omni_policies.role_prefs")
     starter = next(p for p in role_prefs.starters() if p["id"] == "balanced")
     text = render_roles({"preset": starter, "custom": False, "current": CURRENT}) or ""
-    assert f"agent_id {role_prefs.CODEX_AGENT_ID}" in text
+    assert 'role "reviewer", harness "codex"' in text
+    assert role_prefs.CODEX_AGENT_ID == ae_reviewers.CODEX_AGENT_ID
     assert len(text.split("\n")) == 9
 
 
@@ -690,7 +705,7 @@ def test_the_notice_never_sends_a_review_to_an_existing_session() -> None:
     preset = _with_reviewers(SONNET_MEDIUM, CODEX)
     text = render_roles({"preset": preset, "custom": False, "current": CURRENT}) or ""
     assert (
-        "Never hand a review to an existing child session, including one added to this chat: "
+        "Never hand a review to an existing session, including one added to this chat: "
         "this overrides reusing sessions or handing work to the team, for reviews only." in text
     )
 
@@ -698,8 +713,21 @@ def test_the_notice_never_sends_a_review_to_an_existing_session() -> None:
 def test_a_slot_without_effort_leaves_reasoning_effort_out() -> None:
     preset = _with_reviewers(SONNET_MEDIUM, {**CODEX, "effort": None})
     text = render_roles({"preset": preset, "custom": False, "current": CURRENT}) or ""
-    assert "sys_session_create with agent_id ag_codex; its default model and effort" in text
+    assert (
+        'create_session with role "reviewer", harness "codex", a title naming the '
+        "review round, and workspace the repo under review; its default model and effort" in text
+    )
+    assert "effort medium" not in text
     assert "reasoning_effort" not in text
+
+
+def test_a_non_codex_agent_slot_keeps_sys_session_create() -> None:
+    preset = _with_reviewers(SONNET_MEDIUM, OTHER)
+    text = render_roles({"preset": preset, "custom": False, "current": CURRENT}) or ""
+    assert (
+        "Other CLI agent (a fresh child session each review: sys_session_create with "
+        "agent_id ag_other, reasoning_effort medium; its default model)." in text
+    )
 
 
 def test_lead_picks_carry_what_a_pick_needs_to_run(prefs: dict[str, Any]) -> None:
@@ -719,14 +747,18 @@ def test_lead_picks_carry_what_a_pick_needs_to_run(prefs: dict[str, Any]) -> Non
     roles = resolve_roles(conversation(team_label(roles={"preset": "lead-picks"})), owner_store())
     lines = (render_roles(roles) or "").split("\n")
     assert (
-        "reviewers sonnet, medium + Codex (fresh child session: sys_session_create agent_id "
-        "ag_codex, reasoning_effort medium) + Gemini CLI (fresh child session: "
+        'reviewers sonnet, medium + Codex (fresh session: create_session role "reviewer", '
+        'harness "codex", effort medium, a title naming the review round, '
+        "and workspace the repo under review) + Gemini CLI (fresh child session: "
         "sys_session_create agent_id ag_gem, model g-2); show each reviewer's list first; "
         "ask first if one cannot start;" in lines[1]
     )
     assert "reviewer sonnet, medium; Codex skipped: this preset keeps work" in lines[2]
     assert "sys_session_create" not in lines[2]
-    assert "reviewer Codex (fresh child session: sys_session_create agent_id ag_codex," in lines[3]
+    assert (
+        'reviewer Codex (fresh session: create_session role "reviewer", harness "codex",'
+        in lines[3]
+    )
     assert "never an existing one" in lines[-1]
 
 
@@ -758,14 +790,14 @@ def test_an_agent_slot_resolves_its_live_id_by_name(
 
     monkeypatch.setattr(ae_roles, "_agent_lookup", lambda store: lookup)
     text = render_roles(resolve_roles(conversation(), owner_store())) or ""
-    assert "agent_id live_codex_id" in text
-    assert "random-seeded-id" not in text
+    assert "live_codex_id" not in text
+    assert 'harness "codex"' in text
     assert asked == ["codex-native-ui"]
     picks = render_roles(
         resolve_roles(conversation(team_label(roles={"preset": "lead-picks"})), owner_store())
     )
     assert picks is not None
-    assert picks.count("agent_id live_codex_id") == 2
+    assert picks.count('harness "codex"') == 2
 
 
 def test_an_unknown_or_failing_name_keeps_the_stored_id(
@@ -773,23 +805,17 @@ def test_an_unknown_or_failing_name_keeps_the_stored_id(
 ) -> None:
     prefs["presets"] = [_with_reviewers(SONNET_MEDIUM, _named_codex()) | {"id": "balanced"}]
     monkeypatch.setattr(ae_roles, "_agent_lookup", lambda store: lambda name: None)
-    assert "agent_id random-seeded-id" in (
-        render_roles(resolve_roles(conversation(), owner_store())) or ""
-    )
+    assert 'harness "codex"' in (render_roles(resolve_roles(conversation(), owner_store())) or "")
 
     def broken(name: str) -> str | None:
         raise RuntimeError("db down")
 
     monkeypatch.setattr(ae_roles, "_agent_lookup", lambda store: broken)
-    assert "agent_id random-seeded-id" in (
-        render_roles(resolve_roles(conversation(), owner_store())) or ""
-    )
+    assert 'harness "codex"' in (render_roles(resolve_roles(conversation(), owner_store())) or "")
     # A mock store has no agent table: the stored id stays.
     monkeypatch.undo()
     monkeypatch.setattr(ae_roles, "_load_prefs", lambda user: ("balanced", prefs["presets"]))
-    assert "agent_id random-seeded-id" in (
-        render_roles(resolve_roles(conversation(), owner_store())) or ""
-    )
+    assert 'harness "codex"' in (render_roles(resolve_roles(conversation(), owner_store())) or "")
 
 
 def test_the_shared_sanitizer_strips_line_separators() -> None:

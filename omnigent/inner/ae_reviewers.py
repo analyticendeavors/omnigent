@@ -33,6 +33,8 @@ from omnigent.inner.ae_text import text as _text
 MAX_REVIEWERS = 3
 MULTI = "multi"
 AGENT = "agent"
+CODEX_AGENT_ID = "16a06503889b0c3034496821afd41b9e"
+CODEX_AGENT_NAME = "codex-native-ui"
 _LABEL = "Reviewer (reviews, verifying a finding, fix checks)"
 _LABEL_MANY = "Reviewers (final review of a build)"
 
@@ -53,6 +55,13 @@ def slots(setting: object) -> list[dict[str, object]]:
 
 def _is_agent(slot: dict[str, object]) -> bool:
     return slot.get("mode") == AGENT and bool(_text(slot.get("agent"), 128))
+
+
+def _is_codex(slot: dict[str, object]) -> bool:
+    return (
+        _text(slot.get("agent"), 128) == CODEX_AGENT_ID
+        or _text(slot.get("agent_name"), 64) == CODEX_AGENT_NAME
+    )
 
 
 def _agent_name(slot: dict[str, object]) -> str:
@@ -107,13 +116,24 @@ def _agent(slot: dict[str, object], *, brief: bool = False) -> str:
     agent = _text(slot.get("agent"), 128)
     model = _text(slot.get("model"), 128)
     effort = _text(slot.get("effort"), 16)
-    args = [f"agent_id {agent}"]
+    codex = _is_codex(slot)
+    # A Codex reviewer started by create_session joins the lead's family (capped, listed,
+    # raisable); one started by sys_session_create is a bare child outside it.
+    args = ['role "reviewer"', 'harness "codex"'] if codex else [f"agent_id {agent}"]
     if model:
         args.append(f"model {model}")
     if effort:
-        args.append(f"reasoning_effort {effort}")
+        args.append(f"{'effort' if codex else 'reasoning_effort'} {effort}")
     defaults = [word for word, value in (("model", model), ("effort", effort)) if not value]
     default = f"; its default {' and '.join(defaults)}" if defaults else ""
+    if codex:
+        title = ", a title naming the review round, and workspace the repo under review"
+        if brief:
+            return f"{_agent_name(slot)} (fresh session: create_session {', '.join(args)}{title})"
+        return (
+            f"{_agent_name(slot)} agent (a fresh session each review: create_session with "
+            f"{', '.join(args)}{title}{default})"
+        )
     if brief:
         return f"{_agent_name(slot)} (fresh child session: sys_session_create {', '.join(args)})"
     return (
@@ -157,7 +177,7 @@ def reviewer_lines(
         if not usable:
             one = "your pick"
         elif _is_agent(usable[0]):
-            one = f"{_agent(usable[0])}; a review never goes to an existing child session"
+            one = f"{_agent(usable[0])}; a review never goes to an existing session"
         else:
             one = model_text(usable[0], current)
         note = f" ({skip_note})" if skip_note else ""
@@ -182,7 +202,7 @@ def reviewer_lines(
         f"- {_LABEL_MANY}: {listed}",
         "  These reviewers replace the /dual-review offer; run them when the work is done, "
         "without asking. Give every reviewer the same diff and brief, run them at once, never "
-        "show one reviewer's findings to another. Never hand a review to an existing child "
+        "show one reviewer's findings to another. Never hand a review to an existing "
         "session, including one added to this chat: this overrides reusing sessions or "
         "handing work to the team, for reviews only. Then merge into one verdict: dedupe, "
         "mark agreements, settle each disagreement with a one-line reason, rank by severity, "
@@ -238,6 +258,6 @@ MANY_PICKS = (
     "(never show one's findings to another), then merge into one verdict: dedupe, mark "
     "agreements, settle disagreements, rank by severity; unless the line says otherwise, "
     "keep each list under it and, for a reviewer that cannot start, skip it and say so. "
-    "Agents run as a fresh child session each review, never an existing one; fix checks go "
+    "Agents run as a fresh session each review, never an existing one; fix checks go "
     "to reviewer 1."
 )
