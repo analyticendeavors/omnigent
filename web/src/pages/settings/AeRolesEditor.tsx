@@ -305,11 +305,7 @@ export function AeRolesEditor({
         <h3 className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
           Model changes in this preset
         </h3>
-        <RuleRow
-          title="Raise a stuck child, or lower the lead"
-          hint="Applies to both directions"
-          later
-        >
+        <RuleRow title="Raise a stuck child, or lower the lead" hint="Applies to both directions">
           <AeSegmented
             label="Raise a stuck child, or lower the lead"
             value={draft.rules.raise_or_lower}
@@ -322,7 +318,6 @@ export function AeRolesEditor({
         <RuleRow
           title="Lead steps down for mechanical work"
           hint="Watching CI, applying decided fixes: the Builder's model"
-          later
         >
           <AeSegmented
             label="Lead steps down for mechanical work"
@@ -333,7 +328,7 @@ export function AeRolesEditor({
             disabled={saving}
           />
         </RuleRow>
-        <RuleRow title="Automatic raises per child" hint="After this, every raise asks you" later>
+        <RuleRow title="Automatic raises per child" hint="After this, every raise asks you">
           <AeStepper
             label="Automatic raises per child"
             value={draft.rules.auto_raises}

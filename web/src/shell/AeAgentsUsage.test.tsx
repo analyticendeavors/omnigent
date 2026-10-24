@@ -323,3 +323,60 @@ describe("Agents card usage", () => {
     expect(document.body.textContent).not.toContain("0 tokens");
   });
 });
+
+describe("AeAgentMetaLine raise marks", () => {
+  const row = (labels: Record<string, string>) =>
+    ({
+      id: "r",
+      title: "t",
+      task_summary: null,
+      tool: null,
+      session_name: null,
+      labels,
+      current_task_status: "completed",
+      busy: false,
+      last_message_preview: null,
+      pending_elicitations_count: 0,
+    }) as unknown as ChildSessionInfo;
+
+  const mark = (c: ChildSessionInfo) =>
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AeAgentMetaLine child={c} />
+      </QueryClientProvider>,
+    );
+
+  it("shows an amber arrow whose title says how often and from what", () => {
+    mark(
+      row({ "ae.raises": "2", "ae.model_start": "claude-sonnet-5-5|medium", "ae.raise_cap": "3" }),
+    );
+    expect(screen.getByTestId("subagent-raised").getAttribute("title")).toBe(
+      "Raised 2 times from Sonnet medium",
+    );
+    expect(screen.queryByTestId("subagent-cap-reached")).toBeNull();
+  });
+
+  it("says Raised 1 time without a start label, and marks the cap when reached", () => {
+    mark(row({ "ae.raises": "1", "ae.raise_cap": "1" }));
+    expect(screen.getByTestId("subagent-raised").getAttribute("title")).toBe("Raised 1 time");
+    expect(screen.getByTestId("subagent-cap-reached").textContent).toBe("cap reached");
+  });
+
+  it.each([
+    ["claude-opus-4-8", true],
+    ["claude-sonnet-5-5", false],
+    ["claude-haiku-4-5", false],
+  ])("shows the arrow for %s only while above the start family: %s", (model, shown) => {
+    mark({
+      ...row({ "ae.raises": "1", "ae.model_start": "claude-sonnet-5-5|medium" }),
+      model,
+    } as never);
+    expect(screen.queryByTestId("subagent-raised") !== null).toBe(shown);
+  });
+
+  it("shows nothing for a helper that was never raised", () => {
+    mark(row({ "ae.raises": "0", "ae.raise_cap": "0" }));
+    expect(screen.queryByTestId("subagent-raised")).toBeNull();
+    expect(screen.queryByTestId("subagent-cap-reached")).toBeNull();
+  });
+});

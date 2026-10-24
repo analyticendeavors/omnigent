@@ -31,6 +31,8 @@ import { FilePathAwareMessageResponse } from "./ChatMarkdown";
 import { ElicitationCard } from "./ApprovalCard";
 import { ReasoningView } from "./ReasoningView";
 import { SlashCommandCard } from "./SlashCommandCard";
+import { AE_SET_SESSION_MODEL_NAMES, parseAeModelChange } from "@/lib/aeModelChange";
+import { AeModelChangeRow } from "./AeModelChangeRow";
 import { SmartRoutingCard } from "./SmartRoutingCard";
 import { TerminalCommandCard } from "./TerminalCommandCard";
 import { ErrorBanner, PolicyDeniedBanner, RetryIndicator } from "./StatusBlocks";
@@ -683,12 +685,15 @@ function renderToolRunFragment(
 }
 
 const ADVISE_MODELS_NAMES = new Set(["sys_advise_models", "mcp__omnigent__sys_advise_models"]);
+const SET_SESSION_MODEL_NAMES = AE_SET_SESSION_MODEL_NAMES;
 const SESSION_SEND_NAMES = new Set(["sys_session_send", "mcp__omnigent__sys_session_send"]);
 
 function isPersistentToolCard(item: RenderItem): boolean {
   return (
     item.kind === "tool" &&
-    (ADVISE_MODELS_NAMES.has(item.execution.name) || SESSION_SEND_NAMES.has(item.execution.name))
+    (ADVISE_MODELS_NAMES.has(item.execution.name) ||
+      SESSION_SEND_NAMES.has(item.execution.name) ||
+      SET_SESSION_MODEL_NAMES.has(item.execution.name))
   );
 }
 
@@ -778,6 +783,12 @@ function renderItem(
             state={item.state}
           />
         );
+      }
+      // The lead's model change reads as one row with Undo; a running call or
+      // an output that is not the result JSON keeps the plain card.
+      if (SET_SESSION_MODEL_NAMES.has(item.execution.name) && item.state === "output-available") {
+        const change = parseAeModelChange(item.output);
+        if (change) return <AeModelChangeRow key={key} change={change} />;
       }
       return (
         <ToolCard

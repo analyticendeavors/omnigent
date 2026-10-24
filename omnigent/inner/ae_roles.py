@@ -486,21 +486,39 @@ def _rules_short(rules: object) -> str:
     return f"{change}, {down}, {raises} raise{'' if raises == 1 else 's'}, {helpers}"
 
 
+_RAISE_TOOL = (
+    "Model changes: use set_session_model to raise a stuck helper or step yourself down; "
+)
+# A native subagent has no live model switch, and a START ON line may not have been applied.
+_CHANGE_TAIL = (
+    "A native subagent cannot change model mid-run: stop it and start a new one a tier up, "
+    "and treat it like a raise under the same rule. If the first message has a START ON: "
+    "line this chat is not on yet, switch yourself with set_session_model."
+)
+
+
 def _rules(rules: object) -> str:
     rules = rules if isinstance(rules, dict) else {}
-    change = {
-        "tell": "Model changes: raise a stuck child or lower yourself: tell the user after.",
-        "ask": "Model changes: raise a stuck child or lower yourself: ask the user first.",
-        "off": "Model changes: do not raise a child or lower yourself on your own.",
-    }.get(str(rules.get("raise_or_lower")), "Model changes: ask the user first.")
     down = "on" if rules.get("lead_steps_down") is True else "off"
     raises = rules.get("auto_raises")
     raises = raises if isinstance(raises, int) and not isinstance(raises, bool) else 0
-    past = "." if rules.get("raise_or_lower") == "off" else "; past that, ask first."
-    return (
-        f"{change} Step down for mechanical work: {down}. "
-        f"Automatic raises per child: {raises}{past}"
-    )
+    mode = rules.get("raise_or_lower")
+    if mode == "off":
+        return (
+            "Model changes: do not raise a helper or lower yourself; set_session_model refuses. "
+            f"Step down for mechanical work: {down}. Automatic raises per child: {raises}."
+        )
+    if mode == "tell":
+        change = (
+            f"{_RAISE_TOOL}it applies at once up to {raises} automatic "
+            f"raise{'' if raises == 1 else 's'} per helper, then asks the user."
+        )
+    else:
+        change = (
+            f"{_RAISE_TOOL}every change asks the user first, "
+            "except going back to the model you started on."
+        )
+    return f"{change} Step down for mechanical work: {down}. {_CHANGE_TAIL}"
 
 
 _TOOLS = (

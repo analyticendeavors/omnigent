@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RenderItem } from "@/lib/renderItems";
@@ -44,6 +45,83 @@ const renderMarkdownText = (text: string) =>
   );
 
 describe("BlockRenderer dispatch", () => {
+  describe("set_session_model rows (omnigent-ae)", () => {
+    const CHANGED = JSON.stringify({
+      status: "changed",
+      session_id: "conv_b",
+      title: "Fix the lock",
+      role: "builder",
+      is_lead: false,
+      from: { model: "sonnet", effort: "medium" },
+      to: { model: "opus", effort: "high" },
+      kind: "raise",
+      raises: 1,
+      cap: 1,
+      counted: true,
+      approved: "auto",
+      reason: "Stuck",
+      undo: { model: "sonnet", effort: "medium" },
+    });
+
+    function toolItem(
+      name: string,
+      output: string | null,
+      state: "output-available" | "input-available",
+    ) {
+      return {
+        kind: "tool",
+        itemId: "fc_m",
+        execution: {
+          name,
+          arguments: { model: "opus" },
+          argsSummary: "",
+          callId: "call_m",
+          agentName: "test",
+          executedBy: "server",
+          output,
+        },
+        output,
+        state,
+        startedAt: null,
+        duration: undefined,
+      } as RenderItem;
+    }
+
+    it.each(["set_session_model", "mcp__ae__set_session_model"])(
+      "renders %s as a model change row",
+      (name) => {
+        render(
+          <MemoryRouter>
+            <BlockRenderer
+              items={[toolItem(name, CHANGED, "output-available")]}
+              sessionStatus="idle"
+            />
+          </MemoryRouter>,
+        );
+        expect(screen.getByTestId("ae-model-change")).toBeDefined();
+      },
+    );
+
+    it("keeps the plain tool card while the call runs or when the output is not JSON", () => {
+      const { unmount } = render(
+        <BlockRenderer
+          items={[toolItem("set_session_model", null, "input-available")]}
+          sessionStatus="running"
+        />,
+      );
+      expect(screen.queryByTestId("ae-model-change")).toBeNull();
+      unmount();
+      render(
+        <BlockRenderer
+          items={[toolItem("set_session_model", "plain words", "output-available")]}
+          sessionStatus="idle"
+        />,
+      );
+      expect(screen.queryByTestId("ae-model-change")).toBeNull();
+      expect(screen.queryByTestId("ae-model-change-note")).toBeNull();
+    });
+  });
+
   it("renders a slash_command RenderItem via SlashCommandCard", () => {
     const items: RenderItem[] = [
       {

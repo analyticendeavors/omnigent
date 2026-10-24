@@ -4,6 +4,12 @@
 
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import type { ChildSessionInfo } from "@/hooks/useChildSessions";
+import {
+  aeLabelCount,
+  aeModelPointText,
+  aeRunsAboveStart,
+  parseAeModelStart,
+} from "@/lib/aeModelChange";
 import { aeAgentRole, aeFormatCost, aeFormatTokens, aeRoleName } from "@/lib/aeAgentRole";
 import {
   AE_MODEL_FAMILIES,
@@ -104,7 +110,17 @@ export function AeAgentMetaLine({
   const cost = usage?.costUsd ?? null;
   const tokens = usage?.tokens != null && usage.tokens > 0 ? usage.tokens : null;
   const model = withModel ? (child.model ?? child.routed_model ?? native?.model ?? null) : null;
-  if (!role && !model && !effort && cost === null && tokens === null) return null;
+  const raises = aeLabelCount(child.labels?.["ae.raises"]) ?? 0;
+  const cap = aeLabelCount(child.labels?.["ae.raise_cap"]);
+  const started = parseAeModelStart(child.labels?.["ae.model_start"]);
+  const raisedTitle = `Raised ${raises} time${raises === 1 ? "" : "s"}${
+    started ? ` from ${aeModelPointText(started)}` : ""
+  }`;
+  const nowModel = child.model ?? child.routed_model ?? native?.model ?? null;
+  // The count is history; the arrow shows only while the helper still runs above where it started.
+  const raised =
+    raises >= 1 && (!started || aeRunsAboveStart({ model: nowModel, effort }, started));
+  if (!role && !model && !effort && cost === null && tokens === null && !raised) return null;
   return (
     <p
       className={cn(
@@ -136,6 +152,19 @@ export function AeAgentMetaLine({
         </span>
       )}
       {effort && <span data-testid="subagent-effort">{effort}</span>}
+      {raised && (
+        <span data-testid="subagent-raised" title={raisedTitle} className="shrink-0 text-amber-500">
+          &uarr;
+        </span>
+      )}
+      {raises >= 1 && cap !== null && raises >= cap && (
+        <span
+          data-testid="subagent-cap-reached"
+          className="shrink-0 rounded bg-foreground/[0.07] px-1.5 text-[10px]"
+        >
+          cap reached
+        </span>
+      )}
       {(cost !== null || tokens !== null) && (
         <span className="ml-auto shrink-0 tabular-nums" data-testid="subagent-cost">
           {cost !== null && aeFormatCost(cost)}

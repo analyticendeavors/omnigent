@@ -350,8 +350,9 @@ def test_balanced_wording_matches_the_contract(prefs: dict[str, Any]) -> None:
         "- Reviewer (reviews, verifying a finding, fix checks): sonnet, medium.",
         "- Builder (code once the plan is pinned): sonnet, medium.",
         "- Helper (polling, PR watching, screenshots, mechanical commits): haiku, low.",
-        "Model changes: raise a stuck child or lower yourself: tell the user after. Step down "
-        "for mechanical work: on. Automatic raises per child: 1; past that, ask first.",
+        "Model changes: use set_session_model to raise a stuck helper or step yourself down; "
+        "it applies at once up to 1 automatic raise per helper, then asks the user. Step down "
+        "for mechanical work: on. " + ae_roles._CHANGE_TAIL,
     ]
 
 
@@ -370,10 +371,28 @@ def test_auto_roles_and_a_fixed_lead_render(prefs: dict[str, Any]) -> None:
     assert lines[0].startswith("Roles preset: YOLO (customized for this session).")
     assert lines[1] == "- Lead: you, on fable, max."
     assert lines[4] == "- Builder (code once the plan is pinned): your pick."
-    assert lines[-1].startswith("Model changes: do not raise a child or lower yourself")
+    assert lines[-1].startswith("Model changes: do not raise a helper or lower yourself")
     assert lines[-1].endswith("Step down for mechanical work: off. Automatic raises per child: 0.")
     assert "past that" not in text
     assert len(lines) < 12
+
+
+def test_the_notice_names_the_tool_for_every_rule() -> None:
+    def last(rule: str, raises: int = 2) -> str:
+        preset = copy.deepcopy(BALANCED)
+        preset["rules"].update({"raise_or_lower": rule, "auto_raises": raises})
+        return (render_roles({"preset": preset, "custom": False}) or "").splitlines()[-1]
+
+    assert "up to 2 automatic raises per helper, then asks the user" in last("tell")
+    assert (
+        "every change asks the user first, except going back to the model you started on"
+        in last("ask")
+    )
+    assert "START ON:" in last("ask")
+    off = last("off")
+    assert "set_session_model refuses" in off
+    assert "START ON" not in off
+    assert "and treat it like a raise under the same rule" in last("tell")
 
 
 def test_a_model_without_a_tier_alias_keeps_its_id() -> None:
