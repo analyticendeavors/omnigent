@@ -131,6 +131,7 @@ from omnigent.server.routes._host_worktree import CreatedWorktree
 from omnigent.server.routes._session_create_validation import (
     validate_existing_host_workspace,
 )
+from omnigent.server.routes._sessions import ae_session_suggestion
 from omnigent.server.routes._sessions.ae_child_model import child_display_model
 
 # Shared constants, state, and small dataclasses live in the _sessions.common
@@ -4935,6 +4936,9 @@ def _publish_status(
         return
     previous_status = _session_status_cache.get(session_id)
     _session_status_cache[session_id] = status
+    if status == "running":
+        # A new turn makes the held next-prompt guess stale; Codex never posts a clear.
+        ae_session_suggestion.forget(session_id)
     if previous_status != status:
         _publish_child_status_to_parent(session_id, status)
     # Mirror the transition onto the conversation row (best-effort,
@@ -9330,6 +9334,25 @@ async def _evaluate_output_policy(
     }
 
 
+def _pre_ready_replay(session_id: str) -> list[dict[str, Any]]:
+    """
+    Events replayed to a new stream subscriber before its ready heartbeat.
+
+    The in-flight text and the last ``session.suggestion`` are gathered in
+    separate blocks so one failing does not drop the other.
+    """
+    events: list[dict[str, Any]] = []
+    try:
+        events.extend(inflight_text.snapshot_for(session_id))
+    except Exception:  # noqa: BLE001 - one replay failing must not drop the other
+        _logger.exception("in-flight text replay failed for %s", session_id)
+    try:
+        events.extend(ae_session_suggestion.snapshot_for(session_id))
+    except Exception:  # noqa: BLE001 - one replay failing must not drop the other
+        _logger.exception("suggestion replay failed for %s", session_id)
+    return events
+
+
 async def _stream_live_events(
     request: Request,
     session_id: str,
@@ -9342,8 +9365,9 @@ async def _stream_live_events(
     Yield SSE-formatted events from the conversation's live stream.
 
     Events are delivered live from the moment :func:`session_stream.subscribe`
-    is invoked forward — there is no buffer and no replay. Events
-    published before this generator subscribed are lost; clients
+    is invoked forward — there is no buffer. Only two things replay before the
+    ready heartbeat: the in-flight text and the last ``session.suggestion``.
+    Other events published before this generator subscribed are lost; clients
     reconcile pre-subscribe state via the snapshot endpoint
     (``GET /v1/sessions/{id}``) and dedupe by item id.
 
@@ -9429,7 +9453,7 @@ async def _stream_live_events(
                 # async ``on_subscribed`` hook, or window deltas double-render.
                 # Resource state stays in ``on_subscribed`` — it needs
                 # awaits and is not dedup-sensitive.
-                pre_ready_snapshot=lambda: inflight_text.snapshot_for(session_id),
+                pre_ready_snapshot=lambda: _pre_ready_replay(session_id),
                 on_subscribed=on_subscribed,
             )
         ) as live_events:

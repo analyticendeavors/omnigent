@@ -942,7 +942,8 @@ def register_events_routes(
           it), without persisting an item or starting / steering a task.
         - ``"external_session_suggestion"`` publishes a transient
           ``session.suggestion`` event with a predicted next prompt
-          (``suggestion``; null clears it), without persisting anything.
+          (``suggestion``; null clears it), held in memory for replay to a new
+          stream subscriber, without persisting anything.
         - ``"subagent.status"`` with ``data.idle=true`` publishes idle status
           for transcript inactivity without forwarding a completion
           to the runner.

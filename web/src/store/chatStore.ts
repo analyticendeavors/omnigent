@@ -4557,7 +4557,9 @@ async function bindStream(
         // Events seen on an earlier visit are stale; the snapshot's blocks date it.
         lastEventAt: null,
         aeProgress: null,
-        aeSuggestion: null,
+        // A replay that landed during the fetch is newer than the snapshot.
+        aeSuggestion:
+          state.aeSuggestion !== stateBeforeFetch.aeSuggestion ? state.aeSuggestion : null,
         // This conversation's own effective effort, which is what a warm switch
         // back re-projects (it does not re-bind, so it cannot recompute it).
         sessionReasoningEffort: effectiveEffort,

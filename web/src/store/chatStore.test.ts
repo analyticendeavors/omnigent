@@ -794,6 +794,41 @@ describe("chatStore — lazy subtree usage", () => {
     expect(useChatStore.getState().sessionCostUsd).toBe(8);
   });
 
+  it("keeps a suggestion replayed during the bind snapshot fetch, and nulls an old one", async () => {
+    let finishSnapshot!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => {
+      finishSnapshot = resolve;
+    });
+    routeUsage(
+      "conv_sug_replay",
+      () => mockResponse({ id: "conv_sug_replay", total_cost_usd: null, usage_by_model: null }),
+      pending,
+    );
+    const binding = useChatStore.getState().switchTo("conv_sug_replay");
+    await tick();
+    // The stream's replay lands while the snapshot is still in flight.
+    useChatStore.setState({ aeSuggestion: ["Open a PR"] });
+
+    finishSnapshot(snapshot("conv_sug_replay"));
+    await binding;
+    await tick();
+    expect(useChatStore.getState().aeSuggestion).toEqual(["Open a PR"]);
+
+    // A suggestion set before the bind and unchanged during the fetch is stale.
+    useChatStore.setState({ aeSuggestion: ["Set before bind"] });
+    routeUsage("conv_sug_same", () => mockResponse({ id: "conv_sug_same" }));
+    await useChatStore.getState().switchTo("conv_sug_same");
+    await tick();
+    expect(useChatStore.getState().aeSuggestion).toBeNull();
+
+    // A suggestion left from an earlier visit is stale: a fresh bind clears it.
+    useChatStore.setState({ aeSuggestion: ["Old guess"] });
+    routeUsage("conv_sug_fresh", () => mockResponse({ id: "conv_sug_fresh" }));
+    await useChatStore.getState().switchTo("conv_sug_fresh");
+    await tick();
+    expect(useChatStore.getState().aeSuggestion).toBeNull();
+  });
+
   it("does not overwrite newer streamed cost or model usage with a slow read", async () => {
     let finishUsage!: (response: Response) => void;
     const pending = new Promise<Response>((resolve) => {

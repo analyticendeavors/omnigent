@@ -168,6 +168,7 @@ from omnigent.server.routes._session_create_validation import (
     validate_session_agent,
     validate_session_model_metadata,
 )
+from omnigent.server.routes._sessions import ae_session_suggestion
 from omnigent.server.routes._sessions.ae_session_activity import (
     session_active_child_count,
     session_background_task_count,
@@ -7722,6 +7723,7 @@ class _RelayTransportLost(Exception):
 def _relinquish_session_live_state(session_id: str) -> None:
     """Drop local live state for a session now owned by another replica."""
     _session_status_cache.pop(session_id, None)
+    ae_session_suggestion.forget(session_id)
     _session_active_response_cache.pop(session_id, None)
     _session_blocked_on_cache.pop(session_id, None)
     session_live_state.forget_live_status(session_id)
@@ -12410,6 +12412,8 @@ async def _run_runner_status_probe(
                 if isinstance(payload, dict):
                     raw = str(payload.get("status", "idle"))
                     _session_status_cache[session_id] = raw
+                    if raw == "running":
+                        ae_session_suggestion.forget(session_id)
                     # The probe names no dialog, so a remembered one may be gone.
                     _session_blocked_on_cache.pop(session_id, None)
                     if raw in ("idle", "running", "waiting", "failed"):

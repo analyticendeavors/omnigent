@@ -2,14 +2,32 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import httpx
 import pytest
 
+from omnigent.server.routes._sessions import ae_session_suggestion
+from omnigent.server.routes._sessions import helpers as session_helpers
+from omnigent.server.routes._sessions.common import _session_status_cache
 from tests.server.helpers import create_test_agent
 
 pytestmark = pytest.mark.asyncio
+
+
+@pytest.fixture(autouse=True)
+def _reset_held_suggestions() -> Any:
+    ae_session_suggestion.reset_for_tests()
+    yield
+    ae_session_suggestion.reset_for_tests()
+
+
+def _post(client: httpx.AsyncClient, session_id: str, data: dict[str, Any]) -> Any:
+    return client.post(
+        f"/v1/sessions/{session_id}/events",
+        json={"type": "external_session_suggestion", "data": data},
+    )
 
 
 async def _session_with_capture(
@@ -45,6 +63,8 @@ async def test_suggestion_is_published_as_a_transient_session_suggestion(
         assert resp.status_code == 202, resp.text
         assert resp.json() == {"queued": False}
 
+    # The null post cleared what the earlier posts held.
+    assert ae_session_suggestion.snapshot_for(session_id) == []
     assert published == [
         (
             session_id,
@@ -80,6 +100,93 @@ async def test_suggestion_is_published_as_a_transient_session_suggestion(
     items = await client.get(f"/v1/sessions/{session_id}/items")
     assert items.status_code == 200, items.text
     assert items.json()["data"] == []
+
+
+async def test_latest_suggestion_is_held_for_replay(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A post is held in memory and ``snapshot_for`` returns the newest event."""
+    session_id, _ = await _session_with_capture(client, monkeypatch)
+
+    assert ae_session_suggestion.snapshot_for(session_id) == []
+    assert (await _post(client, session_id, {"suggestions": ["One", "Two"]})).status_code == 202
+    assert (await _post(client, session_id, {"suggestion": "Newest"})).status_code == 202
+
+    assert ae_session_suggestion.snapshot_for(session_id) == [
+        {
+            "type": "session.suggestion",
+            "sequence_number": None,
+            "conversation_id": session_id,
+            "suggestion": "Newest",
+            "suggestions": ["Newest"],
+        }
+    ]
+
+
+async def test_suggestion_posted_while_running_is_published_but_not_held(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The web drops a guess that lands mid-turn, so the server does not replay it."""
+    session_id, published = await _session_with_capture(client, monkeypatch)
+    monkeypatch.setitem(_session_status_cache, session_id, "running")
+
+    assert (await _post(client, session_id, {"suggestion": "Too late"})).status_code == 202
+
+    assert len(published) == 1
+    assert ae_session_suggestion.snapshot_for(session_id) == []
+
+
+async def test_running_status_forgets_the_held_suggestion(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A new turn drops the guess even when no harness posts a clear (Codex)."""
+    session_id, _ = await _session_with_capture(client, monkeypatch)
+    assert (await _post(client, session_id, {"suggestion": "Stale soon"})).status_code == 202
+    assert ae_session_suggestion.snapshot_for(session_id) != []
+
+    session_helpers._publish_status(session_id, "running")
+
+    assert ae_session_suggestion.snapshot_for(session_id) == []
+
+
+async def test_guess_read_before_a_running_edge_is_not_stored() -> None:
+    """A status read that began before ``forget`` ran must not store a stale guess."""
+    observed_at = time.monotonic()
+    ae_session_suggestion.forget("conv_race")
+
+    ae_session_suggestion._remember("conv_race", {"conversation_id": "conv_race"}, observed_at)
+
+    assert ae_session_suggestion.snapshot_for("conv_race") == []
+
+
+async def test_held_suggestion_expires_after_six_hours(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_id, _ = await _session_with_capture(client, monkeypatch)
+    assert (await _post(client, session_id, {"suggestion": "Old"})).status_code == 202
+    assert ae_session_suggestion.snapshot_for(session_id) != []
+
+    stored_at = ae_session_suggestion._latest[session_id][0]
+    monkeypatch.setattr(
+        ae_session_suggestion.time,
+        "monotonic",
+        lambda: stored_at + ae_session_suggestion._MAX_AGE_S + 1,
+    )
+
+    assert ae_session_suggestion.snapshot_for(session_id) == []
+    assert session_id not in ae_session_suggestion._latest
+
+
+async def test_held_suggestions_are_capped_oldest_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ae_session_suggestion, "_MAX_SESSIONS", 2)
+    for sid in ("conv_a", "conv_b", "conv_c"):
+        ae_session_suggestion._remember(sid, {"conversation_id": sid}, time.monotonic())
+
+    assert ae_session_suggestion.snapshot_for("conv_a") == []
+    assert ae_session_suggestion.snapshot_for("conv_b") != []
+    assert ae_session_suggestion.snapshot_for("conv_c") != []
 
 
 @pytest.mark.parametrize(
