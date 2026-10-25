@@ -19,8 +19,16 @@ export async function fetchAeRoles(): Promise<AeRolesState> {
   return parsed;
 }
 
+/** What the save did to the scheduled preset review (`insights_task` in the PUT answer). */
+export interface AeInsightsTask {
+  ok: boolean;
+  action?: string;
+  error?: string;
+}
+
 export type AeRolesPutResult =
-  { ok: true; saved: AeRolesState } | { ok: false; current: AeRolesState };
+  | { ok: true; saved: AeRolesState; insightsTask?: AeInsightsTask }
+  | { ok: false; current: AeRolesState };
 
 /**
  * Save `doc` on top of its revision. A stale revision comes back as the
@@ -55,7 +63,12 @@ export async function putAeRoles(doc: AeRolesDoc): Promise<AeRolesPutResult> {
   }
   const saved = aeParseRolesState(body);
   if (!saved) throw new Error("PUT /v1/ae/roles answered without presets");
-  return { ok: true, saved };
+  const task = (body as { insights_task?: unknown } | null)?.insights_task;
+  const insightsTask =
+    task && typeof task === "object" && typeof (task as AeInsightsTask).ok === "boolean"
+      ? (task as AeInsightsTask)
+      : undefined;
+  return { ok: true, saved, ...(insightsTask ? { insightsTask } : {}) };
 }
 
 export function useAeRoles() {

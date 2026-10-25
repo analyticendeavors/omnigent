@@ -13,6 +13,7 @@ import {
   aeRestoreStarters,
   aeSetPinned,
   aeTopModel,
+  aeWithInsights,
 } from "./aeRoles";
 
 const preset = (id: string, pinned = false): AeRolePreset => ({
@@ -113,7 +114,25 @@ describe("aeRoles", () => {
     expect(aeRolesDoc(state as AeRolesDoc).insights).toEqual(insights);
     expect(aeParseRolesState({ ...body, insights: { enabled: "yes" } })?.insights).toBeUndefined();
     expect(aeParseRolesState({ ...body, insights: null })?.insights).toBeUndefined();
+    const shown = { ...insights, show: "tokens" };
+    expect(aeParseRolesState({ ...body, insights: shown })?.insights).toEqual(shown);
+    expect(aeParseRolesState({ ...body, insights: { ...insights, show: "x" } })?.insights).toEqual(
+      insights,
+    );
     expect("insights" in aeRolesDoc(doc([preset("a")]))).toBe(false);
+  });
+
+  it("aeWithInsights replaces the setting and keeps the rest of the doc", () => {
+    const base = {
+      ...doc([preset("a")]),
+      starters: [],
+      insights: { enabled: false, weeks: 2, scope: "all" },
+    } as const;
+    const next = aeWithInsights(base as AeRolesDoc, { enabled: true, weeks: 2, scope: "own" });
+    expect(next.insights).toEqual({ enabled: true, weeks: 2, scope: "own" });
+    expect(next.revision).toBe(base.revision);
+    expect(next.presets).toEqual(base.presets);
+    expect("starters" in next).toBe(false);
   });
 
   it("trims a long title by code points so the copy fits 40 without splitting a pair", () => {

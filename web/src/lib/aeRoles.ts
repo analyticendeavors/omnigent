@@ -135,19 +135,31 @@ export interface AeRolePreset {
   rules: AeRoleRules;
 }
 
-/** The user's preset-insights setting. The editor has no control for it yet; a save sends it back unchanged. */
+/** The user's preset-insights setting (AePresetInsightsBlock); every other save sends it back unchanged. */
 export interface AeInsights {
   enabled: boolean;
   weeks: number;
   scope: "all" | "own";
+  /** What the Admin Center Presets card shows this user; absent means both. */
+  show?: AeInsightsShow;
 }
+
+export type AeInsightsShow = "cost" | "tokens" | "both";
 
 function parseInsights(value: unknown): AeInsights | null {
   if (!isObject(value)) return null;
-  const { enabled, weeks, scope } = value;
+  const { enabled, weeks, scope, show } = value;
   if (typeof enabled !== "boolean" || typeof weeks !== "number") return null;
   if (scope !== "all" && scope !== "own") return null;
+  if (show === "cost" || show === "tokens" || show === "both") {
+    return { enabled, weeks, scope, show };
+  }
   return { enabled, weeks, scope };
+}
+
+/** `state` with its insights setting replaced, for the Preset insights block's save. */
+export function aeWithInsights(state: AeRolesDoc, insights: AeInsights): AeRolesDoc {
+  return aeRolesDoc({ ...state, insights });
 }
 
 /** What `PUT /v1/ae/roles` takes. */

@@ -35,6 +35,7 @@ import {
   aeSameRoles,
   aeSetPinned,
 } from "@/lib/aeRoles";
+import { AePresetInsightsBlock } from "./AePresetInsightsBlock";
 import { type AeRoleDraft, AeRolesEditor } from "./AeRolesEditor";
 import { type AePresetDetails, AeRolesPresetForm } from "./AeRolesPresetForm";
 import { AeRolesCollapsedRow, AeRolesPresetList } from "./AeRolesPresetRow";
@@ -313,6 +314,8 @@ export function AeRolesSettingsSection() {
           </button>
         </p>
       )}
+
+      <AePresetInsightsBlock state={state} />
 
       {form && (
         <AeRolesPresetForm

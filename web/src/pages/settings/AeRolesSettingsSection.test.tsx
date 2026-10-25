@@ -11,6 +11,7 @@ import type * as AeTablerIconModule from "@/lib/aeTablerIcon";
 const mocks = vi.hoisted(() => ({ fetch: vi.fn(), showToast: vi.fn() }));
 vi.mock("@/lib/identity", () => ({ authenticatedFetch: mocks.fetch }));
 vi.mock("@/components/ui/toast", () => ({ showToast: mocks.showToast }));
+vi.mock("@/hooks/useIsAdmin", () => ({ useIsAdmin: () => false }));
 vi.mock("@/hooks/useAeReviewerAgents", () => ({
   useAeReviewerAgents: () => ({ options: [], host: null, loaded: false }),
 }));
