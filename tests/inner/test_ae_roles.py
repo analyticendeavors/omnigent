@@ -344,7 +344,8 @@ def test_balanced_wording_matches_the_contract(prefs: dict[str, Any]) -> None:
         "Roles preset: Balanced. Name a role for each helper you start and give a native "
         "subagent that role's model and effort. Native subagents (Claude's Agent tool) take "
         "a tier alias (opus, sonnet, haiku, fable) and an effort. For a separate session, "
-        "name its role in the brief. " + ae_roles._SESSION_ROLE + " " + ae_roles._SUBAGENT_ROLE,
+        "name its role in the brief. " + ae_roles._SESSION_ROLE + " " + ae_roles._SUBAGENT_ROLE
+        + " " + ae_roles._REPORT_REVIEW,
         "- Lead: you, on the session model.",
         "- Planner (design, architecture, unknown root cause): opus, high.",
         "- Reviewer (reviews, verifying a finding, fix checks): sonnet, medium.",

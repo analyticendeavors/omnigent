@@ -135,6 +135,21 @@ export interface AeRolePreset {
   rules: AeRoleRules;
 }
 
+/** The user's preset-insights setting. The editor has no control for it yet; a save sends it back unchanged. */
+export interface AeInsights {
+  enabled: boolean;
+  weeks: number;
+  scope: "all" | "own";
+}
+
+function parseInsights(value: unknown): AeInsights | null {
+  if (!isObject(value)) return null;
+  const { enabled, weeks, scope } = value;
+  if (typeof enabled !== "boolean" || typeof weeks !== "number") return null;
+  if (scope !== "all" && scope !== "own") return null;
+  return { enabled, weeks, scope };
+}
+
 /** What `PUT /v1/ae/roles` takes. */
 export interface AeRolesDoc {
   revision: number;
@@ -143,6 +158,8 @@ export interface AeRolesDoc {
   presets: AeRolePreset[];
   /** Starter ids the read offered; a save sends them back so the server knows what this client saw. */
   starters_seen?: string[];
+  /** Absent until the user sets it. */
+  insights?: AeInsights;
 }
 
 /** What `GET` and `PUT /v1/ae/roles` answer. */
@@ -266,7 +283,8 @@ function parsePresets(value: unknown): AeRolePreset[] | null {
 /** The server's roles state, or null when the body is not one. */
 export function aeParseRolesState(value: unknown): AeRolesState | null {
   if (!isObject(value)) return null;
-  const { revision, default_preset, apply_start_on, presets, starters, starters_seen } = value;
+  const { revision, default_preset, apply_start_on, presets, starters, starters_seen, insights } =
+    value;
   if (typeof revision !== "number" || !Number.isInteger(revision) || revision < 0) return null;
   if (typeof default_preset !== "string") return null;
   const list = parsePresets(presets);
@@ -280,6 +298,7 @@ export function aeParseRolesState(value: unknown): AeRolesState | null {
     ...(Array.isArray(starters_seen) && starters_seen.every((id) => typeof id === "string")
       ? { starters_seen: starters_seen as string[] }
       : {}),
+    ...(parseInsights(insights) ? { insights: parseInsights(insights) as AeInsights } : {}),
   };
 }
 
@@ -291,6 +310,7 @@ export function aeRolesDoc(state: AeRolesDoc): AeRolesDoc {
     apply_start_on: state.apply_start_on,
     presets: state.presets,
     ...(state.starters_seen ? { starters_seen: state.starters_seen } : {}),
+    ...(state.insights ? { insights: state.insights } : {}),
   };
 }
 

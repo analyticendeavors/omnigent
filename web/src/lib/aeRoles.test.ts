@@ -8,6 +8,7 @@ import {
   aeIsTopTierEverywhere,
   aeOneLine,
   aeParseRolesState,
+  aeRolesDoc,
   aePresetId,
   aeRestoreStarters,
   aeSetPinned,
@@ -102,6 +103,17 @@ describe("aeRoles", () => {
         presets: [{ ...preset("a"), roles: { ...preset("a").roles, lead: { mode: "fixed" } } }],
       }),
     ).toBeNull();
+  });
+
+  it("carries the insights setting through a read and a save, and leaves it out when absent", () => {
+    const insights = { enabled: true, weeks: 4, scope: "own" } as const;
+    const body = { ...doc([preset("a")]), starters: [], insights };
+    const state = aeParseRolesState(body);
+    expect(state?.insights).toEqual(insights);
+    expect(aeRolesDoc(state as AeRolesDoc).insights).toEqual(insights);
+    expect(aeParseRolesState({ ...body, insights: { enabled: "yes" } })?.insights).toBeUndefined();
+    expect(aeParseRolesState({ ...body, insights: null })?.insights).toBeUndefined();
+    expect("insights" in aeRolesDoc(doc([preset("a")]))).toBe(false);
   });
 
   it("trims a long title by code points so the copy fits 40 without splitting a pair", () => {

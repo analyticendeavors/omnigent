@@ -537,13 +537,20 @@ _SUBAGENT_ROLE = (
 )
 
 
+# Feeds the preset run log (the report_review tool is the fork's, packages/ae_omni_policies).
+_REPORT_REVIEW = (
+    "After the final review, call report_review with the reviewers run, findings returned "
+    "and findings fixed."
+)
+
+
 def _tools(roles: dict[str, Any]) -> str:
     """The Agent tool sentence for the lead, plus how to name a role on each start."""
     session = roles.get("lead_session")
     base = _TOOLS_OTHER if isinstance(session, dict) and session.get("claude") is False else _TOOLS
     # Native subagents apply under "own" too; create_session does not.
     named = [_SUBAGENT_ROLE] if helpers_of(roles) == OWN else [_SESSION_ROLE, _SUBAGENT_ROLE]
-    return " ".join([base, *named])
+    return " ".join([base, *named, _REPORT_REVIEW])
 
 
 def render_roles(roles: object) -> str | None:
