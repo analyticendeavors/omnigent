@@ -4,8 +4,11 @@
 //      one colored dot; other rows carry none.
 //   2. A dot narrows the list to its family without opening the session.
 //   3. Grouping > Family lists "Families" (each lead with its sessions as a
-//      tree, foldable from the lead's pill) then "Standalone".
+//      tree, foldable from the lead's chevron) then "Standalone".
 //   4. Show > Family dots turns the dots off.
+//   5. A lead row shows only its name and chevron; the family's cost and
+//      session count are in its hover card (2026-10-25).
+//   6. Archiving a lead archives its sessions, asking first while one is open.
 
 import type * as IdentityModule from "@/lib/identity";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -14,7 +17,12 @@ import { clearSessionDrafts, setSessionDraft } from "@/lib/sessionDrafts";
 
 vi.mock("@/hooks/useScopeCache", () => import("@/test/mockScopeCache"));
 
-const mocks = vi.hoisted(() => ({ fetch: vi.fn(), archived: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  fetch: vi.fn(),
+  archived: vi.fn(),
+  archiveOne: vi.fn(),
+  archiveMany: vi.fn(),
+}));
 
 vi.mock("@/hooks/useIsMobileViewport", () => ({ useIsMobileViewport: () => false }));
 vi.mock("@/lib/serverOrigin", () => ({ isCurrentServerLocal: () => false }));
@@ -36,6 +44,13 @@ vi.mock("@/hooks/useConversations", async () => {
     useProjects: () => ({ data: [] }),
     useMoveToProject: () => ({ mutate: vi.fn() }),
     useTogglePinnedConversation: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
+    useArchiveConversation: () => ({ mutate: mocks.archiveOne }),
+    useBulkArchiveConversations: () => ({
+      mutate: mocks.archiveMany,
+      mutateAsync: mocks.archiveMany,
+      isPending: false,
+      isError: false,
+    }),
   };
 });
 vi.mock("@/components/PermissionsModal", () => ({ PermissionsModal: () => null }));
@@ -113,6 +128,16 @@ function rowNames(): string[] {
   );
 }
 
+/** Hovers a lead's row and returns its hover card's lead line, once it reads `text`. */
+async function leadLine(name: string, text: string): Promise<HTMLElement> {
+  const link = rowItem(name).querySelector<HTMLElement>(`a[href="/c/${sid(name)}"]`)!;
+  fireEvent.pointerMove(link, { pointerType: "mouse" });
+  const card = await screen.findByTestId("session-tooltip-content");
+  const line = await within(card).findByTestId("ae-hover-lead-line");
+  await waitFor(() => expect(line.textContent).toContain(text));
+  return line;
+}
+
 function dotOf(name: string): HTMLElement | null {
   return within(rowItem(name)).queryByTestId("ae-family-dot");
 }
@@ -125,6 +150,8 @@ beforeEach(() => {
   resetAeFamilyClosedCache();
   mocks.archived.mockReset();
   mocks.archived.mockResolvedValue({ data: [] });
+  mocks.archiveOne.mockReset();
+  mocks.archiveMany.mockReset();
   mocks.fetch.mockReset();
   mocks.fetch.mockResolvedValue(new Response("{}", { status: 404 }));
   useConvMock.mockImplementation(() => conversationPage(ROWS));
@@ -242,7 +269,7 @@ describe("Grouping > Family", () => {
     expect(depth("Fabric card speed")).toBeUndefined();
   });
 
-  it("shows the family's cost on the lead and a role chip on a child that has one", async () => {
+  it("shows the family's cost and open count on the lead's hover card and a role chip on a child", async () => {
     useConvMock.mockImplementation(() =>
       conversationPage([
         row("Escalation tool", 60, { "ae.orch": sid("Role routing build"), "ae.role": "builder" }),
@@ -269,9 +296,27 @@ describe("Grouping > Family", () => {
     );
     expect(within(rowItem("Families PR")).queryByTestId("ae-family-role")).toBeNull();
     // Lead plus its three listed sessions at $1.50 each (cost only, as Claude reports).
-    expect(
-      (await within(rowItem("Role routing build")).findByTestId("ae-family-tokens")).textContent,
-    ).toBe("$6.00");
+    const line = await leadLine("Role routing build", "family $6.00");
+    expect(line.textContent).toBe("leads 3 sessions, 3 open · family $6.00");
+  });
+
+  it("shows only the name and a bare chevron on the lead row, never a cost or count pill", async () => {
+    mocks.fetch.mockImplementation((input: unknown) =>
+      Promise.resolve(
+        String(input).startsWith("/v1/sessions/")
+          ? new Response(JSON.stringify({ usage_by_model: { m: { total_cost_usd: 1 } } }))
+          : new Response("{}", { status: 404 }),
+      ),
+    );
+    setView({ grouping: "family" });
+    renderSidebar();
+    const lead = rowItem("Role routing build");
+    await leadLine("Role routing build", "family $4.00");
+    const chevron = within(lead).getByTestId("ae-family-fold");
+    expect(chevron.textContent).toBe("");
+    expect(chevron.getAttribute("aria-label")).toBe("Hide 3 sessions");
+    const link = lead.querySelector<HTMLElement>(`a[href="/c/${sid("Role routing build")}"]`)!;
+    expect(link.textContent).toBe("Role routing build");
   });
 
   describe("raise line", () => {
@@ -362,25 +407,24 @@ describe("Grouping > Family", () => {
       setView({ grouping: "family" });
     }
 
-    it("shows tokens on the family pill in tokens mode", async () => {
+    it("shows the family's tokens on the hover card in tokens mode", async () => {
       window.localStorage.setItem("omnigent:ae-spend-display", "tokens");
       tokenUsage();
       renderSidebar();
-      const pill = await within(rowItem("Role routing build")).findByTestId("ae-family-tokens");
-      expect(pill.textContent).toBe("400k tok");
-      expect(pill.getAttribute("title")).toContain("input (incl. cache writes) 360k");
+      await leadLine("Role routing build", "family 400k tokens");
     });
 
-    it("shows no family pill when off", async () => {
+    it("shows no family total on the hover card when off", async () => {
       window.localStorage.setItem("omnigent:ae-spend-display", "off");
       tokenUsage();
       renderSidebar();
+      const line = await leadLine("Role routing build", "leads 3 sessions, 3 open");
       await waitFor(() => expect(mocks.fetch).toHaveBeenCalled());
-      expect(within(rowItem("Role routing build")).queryByTestId("ae-family-tokens")).toBeNull();
+      expect(line.textContent).not.toContain("family");
     });
   });
 
-  it("falls back to tokens on the family pill when no cost is reported", async () => {
+  it("falls back to tokens on the hover card when no cost is reported", async () => {
     useConvMock.mockImplementation(() => conversationPage(ROWS));
     mocks.fetch.mockImplementation((input: unknown) =>
       Promise.resolve(
@@ -397,16 +441,14 @@ describe("Grouping > Family", () => {
     );
     setView({ grouping: "family" });
     renderSidebar();
-    const pill = await within(rowItem("Role routing build")).findByTestId("ae-family-tokens");
-    expect(pill.textContent).toBe("400k");
-    expect(pill.getAttribute("title")).toBe("400k tokens across this family");
+    await leadLine("Role routing build", "family 400k tokens");
   });
 
-  it("folds a family from the lead's pill and remembers it", () => {
+  it("folds a family from the lead's chevron and remembers it", () => {
     setView({ grouping: "family" });
     const view = renderSidebar();
     const pill = within(rowItem("Role routing build")).getByTestId("ae-family-fold");
-    expect(pill.textContent).toBe("3");
+    expect(pill.getAttribute("title")).toBe("Hide 3 sessions");
     fireEvent.click(pill);
     expect(rowNames()).toEqual(["Role routing build", "Fabric card speed", "PASS deck"]);
     expect(JSON.parse(localStorage.getItem("omnigent:ae-family-folds")!)).toEqual([
@@ -429,7 +471,7 @@ describe("Grouping > Family", () => {
         (li) => li.textContent,
       );
 
-    it("folds a reference child into '1 closed', keeps a review child, and remembers opening it", () => {
+    it("folds a reference child into '1 closed', keeps a review child, and remembers opening it", async () => {
       withClosed(
         ref("Old helper", 5),
         row("Done helper", 6, { "ae.orch": lead, "ae.status": "review" }),
@@ -437,7 +479,7 @@ describe("Grouping > Family", () => {
       setView({ grouping: "family" });
       const view = renderSidebar();
       const pill = within(rowItem("Role routing build")).getByTestId("ae-family-fold");
-      expect(pill.textContent).toBe("5 · 4 open");
+      expect(pill.textContent).toBe("");
       expect(pill.getAttribute("title")).toBe(
         "5 sessions: 3 working, 1 done waiting for your read, 1 closed",
       );
@@ -451,6 +493,7 @@ describe("Grouping > Family", () => {
       view.rerenderSidebar();
       expect(closedNames()).toEqual(["Old helper"]);
       expect(JSON.parse(localStorage.getItem("omnigent:ae-family-closed-open")!)).toEqual([lead]);
+      await leadLine("Role routing build", "leads 5 sessions, 4 open");
     });
 
     it("counts archived children and lists them with the open group", async () => {
@@ -509,9 +552,9 @@ describe("Grouping > Family", () => {
       setView({ grouping: "family" });
       renderSidebar();
       expect(screen.queryByTestId("ae-family-closed-fold")).toBeNull();
-      expect(within(rowItem("Role routing build")).getByTestId("ae-family-fold").textContent).toBe(
-        "3",
-      );
+      expect(
+        within(rowItem("Role routing build")).getByTestId("ae-family-fold").getAttribute("title"),
+      ).toBe("Hide 3 sessions");
     });
   });
 
@@ -552,7 +595,9 @@ describe("Grouping > Family", () => {
     setView({ grouping: "family" });
     renderSidebar();
     const standIn = screen.getByTestId("ae-family-stand-in");
-    expect(within(standIn).getByTestId("ae-family-fold").textContent).toBe("3");
+    expect(within(standIn).getByTestId("ae-family-fold").getAttribute("title")).toBe(
+      "Show 3 sessions",
+    );
     expect(rowNames()).toEqual(["Fabric card speed", "PASS deck"]);
   });
 
@@ -578,5 +623,94 @@ describe("Grouping > Family", () => {
     } finally {
       window.matchMedia = matchMedia;
     }
+  });
+
+  describe("archive cascade", () => {
+    const lead = sid("Role routing build");
+    const mine = (c: Conversation): Conversation => ({ ...c, owner: "viewer@example.com" });
+    const child = (name: string, status: string, parent = lead) =>
+      mine(row(name, 50, { "ae.orch": parent, "ae.status": status }));
+    /** *listed* are the sidebar's rows; the archive reads them plus *unlisted* from the server. */
+    const family = (listed: Conversation[], unlisted: Conversation[] = []) => {
+      const rows = [...listed, mine(row("PASS deck", 20)), mine(row("Role routing build", 10))];
+      useConvMock.mockImplementation(() => conversationPage(rows));
+      mocks.archived.mockImplementation(async ({ visibility }: { visibility?: string }) =>
+        visibility === "archived"
+          ? { data: [] }
+          : { data: [...rows, ...unlisted], has_more: false, last_id: null },
+      );
+      setView({ grouping: "family" });
+    };
+    const archivedIds = () => mocks.archiveMany.mock.calls[0][0].ids;
+
+    function rightClickArchive(name: string) {
+      const link = rowItem(name).querySelector<HTMLElement>(`a[href="/c/${sid(name)}"]`)!;
+      fireEvent.contextMenu(link);
+      fireEvent.click(screen.getByTestId("archive-conversation"));
+    }
+
+    beforeEach(() => mocks.archiveMany.mockResolvedValue([]));
+
+    it("archives every child at once when all are in the closed group, grandchildren too", async () => {
+      family([
+        child("Escalation tool", "reference"),
+        child("Families PR", "reference"),
+        child("Nested helper", "reference", sid("Families PR")),
+      ]);
+      renderSidebar();
+      rightClickArchive("Role routing build");
+      await waitFor(() => expect(mocks.archiveMany).toHaveBeenCalledTimes(1));
+      expect(screen.queryByTestId("ae-family-archive-confirm")).toBeNull();
+      expect(archivedIds()).toEqual([
+        lead,
+        sid("Escalation tool"),
+        sid("Families PR"),
+        sid("Nested helper"),
+      ]);
+      expect(mocks.archiveMany.mock.calls[0][0].archived).toBe(true);
+      expect(mocks.archiveOne).not.toHaveBeenCalled();
+    });
+
+    it("asks first while a child is open, then archives them all", async () => {
+      family([child("Escalation tool", "reference"), child("Families PR", "working")]);
+      renderSidebar();
+      rightClickArchive("Role routing build");
+      const confirm = await screen.findByTestId("ae-family-archive-confirm");
+      expect(confirm.textContent).toContain(
+        "Are you sure you would like to archive this? There are still open sessions.",
+      );
+      expect(mocks.archiveMany).not.toHaveBeenCalled();
+      fireEvent.click(within(confirm).getByRole("button", { name: "Archive" }));
+      expect(mocks.archiveMany).toHaveBeenCalledTimes(1);
+      expect(archivedIds()).toEqual([lead, sid("Escalation tool"), sid("Families PR")]);
+    });
+
+    it("finds an open child the sidebar has not loaded, and asks first", async () => {
+      family([child("Escalation tool", "reference")], [child("Older helper", "working")]);
+      renderSidebar();
+      rightClickArchive("Role routing build");
+      const confirm = await screen.findByTestId("ae-family-archive-confirm");
+      fireEvent.click(within(confirm).getByRole("button", { name: "Archive" }));
+      expect(archivedIds()).toEqual([lead, sid("Escalation tool"), sid("Older helper")]);
+    });
+
+    it("archives nothing when the confirm is cancelled", async () => {
+      family([child("Escalation tool", "working"), child("Families PR", "working")]);
+      renderSidebar();
+      rightClickArchive("Role routing build");
+      const confirm = await screen.findByTestId("ae-family-archive-confirm");
+      fireEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
+      await waitFor(() => expect(screen.queryByTestId("ae-family-archive-confirm")).toBeNull());
+      expect(mocks.archiveMany).not.toHaveBeenCalled();
+      expect(mocks.archiveOne).not.toHaveBeenCalled();
+    });
+
+    it("archives a session with no family alone", () => {
+      family([child("Escalation tool", "working"), child("Families PR", "working")]);
+      renderSidebar();
+      rightClickArchive("PASS deck");
+      expect(mocks.archiveOne).toHaveBeenCalledTimes(1);
+      expect(mocks.archiveMany).not.toHaveBeenCalled();
+    });
   });
 });

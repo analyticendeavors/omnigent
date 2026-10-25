@@ -325,7 +325,7 @@ describe("AeSessionHoverStatus", () => {
       );
       await waitFor(() =>
         expect(screen.getByTestId("ae-hover-lead-line")).toHaveTextContent(
-          "leads 1 session · family 232.8k tokens",
+          "leads 1 session, 1 open · family 232.8k tokens",
         ),
       );
     });
@@ -350,7 +350,7 @@ describe("AeSessionHoverStatus", () => {
       );
       await waitFor(() =>
         expect(screen.getByTestId("ae-hover-lead-line")).toHaveTextContent(
-          "leads 2 sessions · family $4.92",
+          "leads 2 sessions, 2 open · family $4.92",
         ),
       );
     });

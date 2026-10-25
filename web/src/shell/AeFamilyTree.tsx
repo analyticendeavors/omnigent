@@ -1,7 +1,9 @@
 // Grouping > Family's tree rows in the sidebar (omnigent-ae, 2026-10-24): the
-// indent and colored lines before a row's icon, the lead's fold pill, the
+// indent and colored lines before a row's icon, the lead's fold chevron, the
 // stand-in row for a lead that is not listed, and the section titles. The tree
-// itself: lib/aeFamilyTree.ts.
+// itself: lib/aeFamilyTree.ts. Since 2026-10-25 a lead row shows only its name
+// and the chevron, so a narrow panel keeps the name readable; the family's cost
+// and open count are on the hover card's lead line (AeSessionHoverStatus.tsx).
 
 import { ArchiveIcon, ChevronDownIcon, ChevronRightIcon, GhostIcon, InfoIcon } from "lucide-react";
 import {
@@ -13,12 +15,10 @@ import {
 } from "react";
 import { aeAgentRole, aeRoleName } from "@/lib/aeAgentRole";
 import { useAeSessionUsages } from "@/lib/aeAgentUsage";
-import { aeSpendLabel, useAeSpendDisplay } from "@/lib/aeSpendDisplay";
 import { aeRaiseMarks } from "@/lib/aeModelChange";
-import { AE_FAMILY_COLORS, type AeFamily, aeFamilyHint } from "@/lib/aeFamily";
+import { AE_FAMILY_COLORS, aeFamilyHint } from "@/lib/aeFamily";
 import {
   AE_CLOSED_CAPPED_NOTE,
-  aeClosedPill,
   aeClosedTitle,
   revealAeFamilyClosed,
   toggleAeFamilyClosed,
@@ -163,7 +163,7 @@ function stop(event: MouseEvent | KeyboardEvent) {
   event.stopPropagation();
 }
 
-function FoldPill({ lead }: { lead: AeTreeLead }) {
+function FoldChevron({ lead }: { lead: AeTreeLead }) {
   if (lead.count === 0) return null;
   const { root } = lead.family;
   const toggle = (event: MouseEvent | KeyboardEvent) => {
@@ -186,7 +186,7 @@ function FoldPill({ lead }: { lead: AeTreeLead }) {
       data-family={root}
       className={cn(
         // The tap target runs the row's full height on a phone.
-        "relative ml-auto inline-flex h-[18px] shrink-0 items-center gap-0.5 rounded-full pr-1 pl-1.5 text-[11.5px] tabular-nums before:absolute before:-inset-x-2 before:-inset-y-3 before:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "relative ml-auto inline-flex h-[18px] min-w-[18px] shrink-0 items-center justify-center gap-0.5 rounded-full px-0.5 before:absolute before:-inset-x-2 before:-inset-y-3 before:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         lead.folded
           ? "bg-foreground/10 text-foreground"
           : "bg-foreground/[0.06] text-muted-foreground",
@@ -209,7 +209,6 @@ function FoldPill({ lead }: { lead: AeTreeLead }) {
           className="mr-0.5 size-2.5 animate-spin rounded-full border-[1.5px] border-current border-t-transparent motion-reduce:animate-none"
         />
       )}
-      {lead.closed ? aeClosedPill(lead.closed) : lead.count}
       {lead.folded ? (
         <ChevronRightIcon className="size-3" />
       ) : (
@@ -219,42 +218,9 @@ function FoldPill({ lead }: { lead: AeTreeLead }) {
   );
 }
 
-const PILL_MEMBERS = 25;
-const PILL_MS = 60_000;
+const USAGE_MS = 60_000;
 
-/**
- * The family's cost total. It reads usage itself, so a cost change re-renders
- * this pill and no row; the tree object stays the same.
- */
-function TokenPill({ family }: { family: AeFamily }) {
-  const members = family.members.slice(0, PILL_MEMBERS);
-  // One read per member, kept a minute; it polls only while one of them works.
-  const busy = members.some((m) => m.turn_active === true || m.status === "running");
-  const usage = useAeSessionUsages(
-    members.map((m) => ({ id: m.id, stamp: 0 })),
-    { staleMs: PILL_MS, pollMs: PILL_MS, live: busy },
-  );
-  const mode = useAeSpendDisplay();
-  const spend = aeSpendLabel(usage.values(), mode, family.members.length - members.length);
-  if (!spend) return null;
-  const more = mode === "cost" && family.members.length > PILL_MEMBERS ? "+" : "";
-  return (
-    <span
-      data-testid="ae-family-tokens"
-      title={
-        mode === "cost"
-          ? `${spend.text}${more} ${spend.unit} across this family`
-          : `${spend.title} across this family`
-      }
-      className="inline-flex h-[18px] shrink-0 items-center rounded-full bg-foreground/[0.06] px-1.5 text-[11.5px] tabular-nums text-muted-foreground"
-    >
-      {spend.text}
-      {more}
-    </span>
-  );
-}
-
-/** A listed lead's token and fold pills, or a child's role chip, after its title. */
+/** A listed lead's fold chevron, or a child's role chip, after its title. */
 export function AeFamilyFold({ conversationId }: { conversationId: string }) {
   const { tree } = useContext(AeFamilyContext);
   const inFamilies = useContext(InFamilies);
@@ -273,17 +239,12 @@ export function AeFamilyFold({ conversationId }: { conversationId: string }) {
     ) : null;
   }
   if (lead.standIn) return null;
-  return (
-    <span className="ml-auto flex shrink-0 items-center gap-1">
-      <TokenPill family={lead.family} />
-      <FoldPill lead={lead} />
-    </span>
-  );
+  return <FoldChevron lead={lead} />;
 }
 
 /**
  * A raised helper's second line: where it runs now and where it started, with a cap chip.
- * It reads usage only for a member with `ae.model_start`, under TokenPill's query key.
+ * It reads usage only for a member with `ae.model_start`, under the hover card's query key.
  */
 export function AeFamilyRaiseLine({ conversationId }: { conversationId: string }) {
   const { tree } = useContext(AeFamilyContext);
@@ -294,8 +255,8 @@ export function AeFamilyRaiseLine({ conversationId }: { conversationId: string }
   const usage = useAeSessionUsages([{ id: conversationId, stamp: 0 }], {
     enabled: tracked,
     live: tracked,
-    staleMs: PILL_MS,
-    pollMs: PILL_MS,
+    staleMs: USAGE_MS,
+    pollMs: USAGE_MS,
   }).get(conversationId);
   if (!tracked) return null;
   // Until usage lands the current point is unknown; show nothing rather than guess.
@@ -366,10 +327,7 @@ function StandIn({
             Archived
           </span>
         )}
-        <span className="ml-auto flex shrink-0 items-center gap-1">
-          <TokenPill family={family} />
-          <FoldPill lead={lead} />
-        </span>
+        <FoldChevron lead={lead} />
       </Link>
     </li>
   );

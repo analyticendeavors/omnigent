@@ -16,6 +16,7 @@ import {
   useAeSessionUsages,
 } from "@/lib/aeAgentUsage";
 import { aeOrchParent } from "@/lib/aeFamily";
+import { aeIsClosedMember } from "@/lib/aeFamilyClosed";
 import { aeSpendLabel, useAeSpendDisplay } from "@/lib/aeSpendDisplay";
 import { AeFamilyContext } from "@/lib/aeFamilyView";
 import { fetchAeSessionPeek } from "@/lib/aeSessionPeek";
@@ -117,10 +118,13 @@ function RunningAgents({ sessionId, updatedAt }: { sessionId: string; updatedAt:
 function LeadLine({
   labels,
   count,
+  open,
   usage,
 }: {
   labels: Record<string, string> | undefined;
   count: number;
+  /** Sessions not closed (reference or archived); the lead row itself shows no count. */
+  open: number;
   usage: ReadonlyMap<string, AeSessionUsage>;
 }) {
   const roles = useAeRoles();
@@ -129,11 +133,12 @@ function LeadLine({
   const title = roles.data?.presets.find((p) => p.id === presetId)?.title ?? null;
   const parts = [
     title,
-    `leads ${count} session${count === 1 ? "" : "s"}`,
+    `leads ${count} session${count === 1 ? "" : "s"}, ${open} open`,
     spend ? `family ${spend.long}` : null,
   ].filter(Boolean);
   return (
-    <p className="truncate text-xs text-muted-foreground" data-testid="ae-hover-lead-line">
+    // Wraps rather than truncates, so the family total at the end stays readable.
+    <p className="text-xs text-muted-foreground" data-testid="ae-hover-lead-line">
       {parts.join(" · ")}
     </p>
   );
@@ -149,7 +154,7 @@ function AeRoleLine({
   labels: Record<string, string> | undefined;
   updatedAt: number;
 }) {
-  const { families } = useContext(AeFamilyContext);
+  const { families, tree } = useContext(AeFamilyContext);
   const mode = useAeSpendDisplay();
   const role = aeAgentRole({ labels });
   const familyRole = families.byRow.get(sessionId);
@@ -163,7 +168,14 @@ function AeRoleLine({
     { enabled: ids.length > 0 },
   );
   if (lead) {
-    return <LeadLine labels={labels} count={lead.members.length - 1} usage={usage} />;
+    // Grouping > Family also counts archived children, as its "N closed" row does.
+    const treeLead = tree?.leads.get(sessionId);
+    const others = lead.members.filter((m) => m.id !== sessionId);
+    const count = treeLead?.count ?? others.length;
+    const open = treeLead
+      ? (treeLead.closed?.open ?? treeLead.count)
+      : others.filter((m) => !aeIsClosedMember(m)).length;
+    return <LeadLine labels={labels} count={count} open={open} usage={usage} />;
   }
   if (!started) return null;
   const own = usage.get(sessionId);

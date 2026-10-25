@@ -180,6 +180,7 @@ import { relativeTime } from "@/lib/relativeTime";
 import { USER_SESSION_TITLE_MAX_CHARS } from "@/lib/sessionTitles";
 import { showToast } from "@/components/ui/toast";
 import { showArchiveUndoToast } from "./archiveUndoToast";
+import { useAeFamilyArchive } from "@/shell/AeFamilyArchive";
 import { unpinWithUndo } from "./unpinUndoToast";
 import { useArchiveWorktreePrompt } from "./ArchiveWorktreeDialog";
 import { PermissionsModal } from "@/components/PermissionsModal";
@@ -4740,6 +4741,7 @@ function ConversationRowImpl({
   const del = useStopAndDeleteConversation();
   const archive = useArchiveConversation();
   const archiveWorktreePrompt = useArchiveWorktreePrompt();
+  const familyArchive = useAeFamilyArchive(conversation, archiveWorktreePrompt.requestArchive);
   const leave = useLeaveSession();
   const moveToProject = useMoveToProject();
   // The kebab's user-facing "Stop session" action. Archiving does NOT go
@@ -5020,6 +5022,7 @@ function ConversationRowImpl({
       runUnarchive();
       return;
     }
+    if (familyArchive.archiveFamily()) return;
     archiveWorktreePrompt.requestArchive([conversation], (deleteWorktreeIds) =>
       archiveNow(deleteWorktreeIds.has(conversation.id)),
     );
@@ -5653,6 +5656,8 @@ function ConversationRowImpl({
         )}
       </Dialog>
       {archiveWorktreePrompt.dialog}
+      {familyArchive.source}
+      {familyArchive.dialog}
       <Dialog open={leaveOpen} onOpenChange={setLeaveOpen}>
         {leaveOpen && (
           <DialogContent
