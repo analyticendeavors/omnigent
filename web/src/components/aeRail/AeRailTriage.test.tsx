@@ -60,7 +60,7 @@ let client: QueryClient;
 
 function route(url: string, init?: RequestInit): Promise<Response> {
   const method = init?.method ?? "GET";
-  if (url === "/v1/ae/capacity") return Promise.resolve(json(200, { limit: 3, working: [] }));
+  if (url.split("?")[0] === "/v1/ae/capacity") return Promise.resolve(json(200, { limit: 3, working: [] }));
   if (method === "PATCH" && url === "/v1/sessions/s1") return Promise.resolve(json(200, {}));
   if (url === "/v1/ae/gate/s1/reply") return Promise.resolve(gateAnswer());
   if (url.startsWith("/v1/ae/lot")) {
@@ -150,7 +150,7 @@ describe("AeRailTriage", () => {
 
   it("refuses Working at the slot limit with the menu's toast", async () => {
     mocks.fetch.mockImplementation((url: string, init?: RequestInit) =>
-      url === "/v1/ae/capacity"
+      url.split("?")[0] === "/v1/ae/capacity"
         ? Promise.resolve(
             json(200, {
               limit: 3,

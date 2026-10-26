@@ -17,7 +17,7 @@ import { LayoutDashboardIcon } from "lucide-react";
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { type MouseEvent, useCallback, useEffect, useSyncExternalStore } from "react";
 import { AE_PARKING_LOT_PATH, countAeSlots, isAeDashboardPath } from "@/lib/aeLabels";
-import { useAeSlotLimit } from "@/lib/aeSlotLimit";
+import { readAeHelpersCount, useAeHelpersCount, useAeSlotLimit } from "@/lib/aeSlotLimit";
 import { syncAeAppBadge } from "@/lib/aeAppBadge";
 import { useLocation } from "@/lib/routing";
 import type { ConversationsInfiniteData } from "@/lib/sessionListCache";
@@ -29,7 +29,7 @@ export function readAeSlotCount(queryClient: QueryClient): number {
   const rows = queryClient
     .getQueriesData<ConversationsInfiniteData>({ queryKey: ["conversations"] })
     .flatMap(([, data]) => data?.pages.flatMap((page) => page.data) ?? []);
-  return countAeSlots(rows);
+  return countAeSlots(rows, readAeHelpersCount(queryClient));
 }
 
 /** Subscribes to the query cache; the snapshot is a number, so React skips unchanged counts. */
@@ -48,6 +48,7 @@ export interface AeSlotsPillProps {
 }
 
 export function AeSlotsPill({ onNavigate }: AeSlotsPillProps) {
+  useAeHelpersCount();
   const count = useAeSlotCount();
   const limit = useAeSlotLimit();
   const full = count >= limit;

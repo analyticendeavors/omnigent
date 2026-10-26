@@ -31,6 +31,28 @@ export function aeOrchParent(labels: Labels): string | null {
   return orch && orch !== AE_ORCH_UNKNOWN ? orch : null;
 }
 
+/**
+ * Whether a row is a helper another session started: `ae.orch` names a parent that is
+ * not the row itself and whose chain (as far as `byId` reaches) does not lead back to
+ * it. A self-parent or a cycle has no lead above it and counts as a lead
+ * (mirrors `ae_omni_policies.sessions.is_helper`).
+ */
+export function aeIsHelper(row: FamilyRow, byId?: ReadonlyMap<string, FamilyRow>): boolean {
+  const first = aeOrchParent(row.labels);
+  if (first === null) return false;
+  let parent: string = first;
+  const seen = new Set([row.id]);
+  for (let depth = 0; depth < MAX_DEPTH; depth++) {
+    if (seen.has(parent)) return parent !== row.id;
+    seen.add(parent);
+    const above: FamilyRow | undefined = byId?.get(parent);
+    const next: string | null = above ? aeOrchParent(above.labels) : null;
+    if (next === null) return true; // a lead, or a parent out of sight, sits above it
+    parent = next;
+  }
+  return true;
+}
+
 /** The session this one descends from in the sidebar: its starter, else its fork source. */
 export function aeFamilyParent(labels: Labels): string | null {
   return aeOrchParent(labels) ?? value(labels, AE_FORK_SOURCE_KEY);

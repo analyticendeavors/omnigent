@@ -10,7 +10,7 @@
 // or blank value as unset.
 
 import type { Conversation } from "@/hooks/useConversations";
-import { familySlotKey } from "@/lib/aeFamily";
+import { aeIsHelper } from "@/lib/aeFamily";
 
 export const AE_NAMESPACE = "ae.";
 
@@ -159,20 +159,21 @@ export function pickAeLabels(labels: unknown): Record<string, string> {
 }
 
 /**
- * Count the slots held across rows, each session counted once by id and each
- * session family once (a lead and the sessions it started hold one slot; see
- * `lib/aeFamily.ts`).
+ * Count the slots held across rows, each session once by id. A lead holds one
+ * slot for its family (see `lib/aeFamily.ts`); a helper it started (a row with an
+ * `ae.orch` parent) holds none, even when its lead is parked, archived or not
+ * loaded, unless `helpersCount` (Settings > Global Policies, slot cap) is on, when
+ * each working helper holds one of its own. Mirrors `ae_omni_policies.sessions.held_keys`.
  */
 export function countAeSlots(
   conversations: Iterable<AeSlotRow & Pick<Conversation, "id">>,
+  helpersCount = false,
 ): number {
-  const rows = new Map<string, AeSlotRow & Pick<Conversation, "id">>();
-  for (const conversation of conversations) {
-    if (!rows.has(conversation.id)) rows.set(conversation.id, conversation);
-  }
+  const rows = [...conversations];
+  const byId = new Map(rows.map((row) => [row.id, row] as const));
   const held = new Set<string>();
-  for (const row of rows.values()) {
-    if (isAeSlot(row)) held.add(familySlotKey(row, rows));
+  for (const row of rows) {
+    if (isAeSlot(row) && (helpersCount || !aeIsHelper(row, byId))) held.add(row.id);
   }
   return held.size;
 }

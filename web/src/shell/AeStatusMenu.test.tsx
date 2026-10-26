@@ -81,7 +81,7 @@ function serve({
   patch = json(200, {}),
 }: { capacity?: Response | Error; patch?: Response } = {}) {
   mocks.fetch.mockImplementation(async (path: string, init?: RequestInit) => {
-    if (path === "/v1/ae/capacity") {
+    if (path.split("?")[0] === "/v1/ae/capacity") {
       if (capacity instanceof Error) throw capacity;
       return capacity;
     }
@@ -316,12 +316,12 @@ describe("applyAeStatus", () => {
 
   it("lets a family member work in its family's slot, even with its top unloaded", async () => {
     // Server: three families hold all three slots; "kid" works in the lead's.
-    const row = (id: string, family: string) => ({ id, title: id, family });
+    const row = (id: string, family: string, helper = false) => ({ id, title: id, family, helper });
     const answer = () =>
       serve({
         capacity: json(200, {
           limit: 3,
-          working: [row("lead", "lead"), row("kid", "lead"), row("b", "b"), row("c", "c")],
+          working: [row("lead", "lead"), row("kid", "lead", true), row("b", "b"), row("c", "c")],
         }),
       });
     answer();
@@ -339,6 +339,76 @@ describe("applyAeStatus", () => {
     answer();
     const refused = await checkAeSlotRoom(qc, "solo");
     expect(refused).toMatchObject({ ok: false, used: 3, limit: 3, source: "server" });
+  });
+
+  it("lets a fork ride the slot of a working session it hangs from", async () => {
+    // Three families at the limit; the fork's chain points at "kid", which works as a
+    // helper of the lead whose family holds a slot, so the fork takes none.
+    const row = (id: string, family: string, helper = false) => ({ id, title: id, family, helper });
+    serve({
+      capacity: json(200, {
+        limit: 3,
+        working: [row("lead", "lead"), row("kid", "lead", true), row("b", "b"), row("c", "c")],
+      }),
+    });
+    const qc = new QueryClient();
+    qc.setQueryData(
+      ["conversations", "", false],
+      pages([conv("fork", { labels: { "ae.orch": "kid" } })]),
+    );
+    expect(await checkAeSlotRoom(qc, "fork")).toEqual({ ok: true });
+  });
+
+  it("counts working helpers when the server says helpers count", async () => {
+    const row = (id: string, helper = false) => ({ id, title: id, family: id, helper });
+    serve({
+      capacity: json(200, {
+        limit: 3,
+        helpers_count: true,
+        working: [row("lead"), row("k1", true), row("k2", true)],
+      }),
+    });
+    const qc = new QueryClient();
+    qc.setQueryData(["conversations", "", false], pages([conv("solo")]));
+    expect(await checkAeSlotRoom(qc, "solo")).toMatchObject({ ok: false, used: 3, limit: 3 });
+    serve({
+      capacity: json(200, {
+        limit: 3,
+        helpers_count: false,
+        working: [row("lead"), row("k1", true), row("k2", true)],
+      }),
+    });
+    expect(await checkAeSlotRoom(qc, "solo")).toEqual({ ok: true });
+  });
+
+  it("falls back to the cached ae.orch label when an older server sends no helper field", async () => {
+    const row = (id: string) => ({ id, title: id, family: id });
+    serve({
+      capacity: json(200, {
+        limit: 3,
+        working: [row("lead"), row("kid"), row("b"), row("c")],
+      }),
+    });
+    const qc = new QueryClient();
+    qc.setQueryData(
+      ["conversations", "", false],
+      pages([conv("kid", { labels: { "ae.status": "working", "ae.orch": "lead" } }), conv("solo")]),
+    );
+    // kid is a helper by its cached label; rows the cache lacks count as leads, so 3 of 3.
+    expect(await checkAeSlotRoom(qc, "solo")).toMatchObject({ ok: false, used: 3, limit: 3 });
+  });
+
+  it("trusts the server's own_helper flag when the helper row is not loaded", async () => {
+    const lead = (id: string) => ({ id, title: id, family: id, helper: false });
+    const working = [lead("a"), lead("b"), lead("c")];
+    const qc = new QueryClient();
+    serve({ capacity: json(200, { limit: 3, helpers_count: false, own_helper: true, working }) });
+    expect(await checkAeSlotRoom(qc, "unloaded")).toEqual({ ok: true });
+    serve({ capacity: json(200, { limit: 3, helpers_count: true, own_helper: true, working }) });
+    expect(await checkAeSlotRoom(qc, "unloaded")).toMatchObject({ ok: false, used: 3 });
+    expect(mocks.fetch).toHaveBeenCalledWith("/v1/ae/capacity?session=unloaded", {
+      method: "GET",
+    });
   });
 
   it("surfaces the server's refusal of the PATCH and leaves the cache alone", async () => {

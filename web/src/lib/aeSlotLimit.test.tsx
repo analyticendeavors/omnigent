@@ -12,9 +12,12 @@ vi.mock("@/lib/identity", () => ({ authenticatedFetch: mocks.fetch }));
 import {
   AE_SLOT_LIMIT_QUERY_KEY,
   fetchAeSlotLimit,
+  fetchAeSlotRules,
   parseAeSlotLimit,
   readAeSlotLimit,
+  refreshAeSlotLimit,
   rememberAeSlotLimit,
+  useAeHelpersCount,
   useAeSlotLimit,
 } from "./aeSlotLimit";
 
@@ -93,6 +96,43 @@ describe("useAeSlotLimit", () => {
     answer(json(200, { limit: 4 }));
     await waitFor(() => expect(screen.getByTestId("limit")).toHaveTextContent("4"));
     expect(qc.getQueryData(AE_SLOT_LIMIT_QUERY_KEY)).toBe(4);
+  });
+
+  it("takes the limit and the helpers setting from one answer", async () => {
+    mocks.fetch.mockResolvedValue(json(200, { limit: 5, helpers_count: true }));
+    const qc = new QueryClient();
+    function Both() {
+      return (
+        <span data-testid="both">
+          {useAeSlotLimit()}/{String(useAeHelpersCount())}
+        </span>
+      );
+    }
+    render(
+      <QueryClientProvider client={qc}>
+        <Both />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("both")).toHaveTextContent("5/true"));
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks again after a policy save instead of sharing a request begun before it", async () => {
+    let finishOld: (res: Response) => void = () => {};
+    mocks.fetch.mockReturnValueOnce(
+      new Promise<Response>((resolve) => {
+        finishOld = resolve;
+      }),
+    );
+    const qc = new QueryClient();
+    const old = fetchAeSlotRules();
+    mocks.fetch.mockResolvedValueOnce(json(200, { limit: 6, helpers_count: true }));
+    await refreshAeSlotLimit(qc);
+    const fresh = await fetchAeSlotRules();
+    expect(fresh).toEqual({ limit: 6, helpersCount: true });
+    expect(mocks.fetch.mock.calls.length).toBeGreaterThanOrEqual(2);
+    finishOld(json(200, { limit: 3, helpers_count: false }));
+    await expect(old).resolves.toEqual({ limit: 3, helpersCount: false });
   });
 
   it("stays on three when the route cannot answer", async () => {

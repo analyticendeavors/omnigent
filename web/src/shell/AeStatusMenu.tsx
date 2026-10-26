@@ -21,8 +21,13 @@ import {
   aeStatusOf,
   isAeSlot,
 } from "@/lib/aeLabels";
-import { familySlotChain, familySlotKey } from "@/lib/aeFamily";
-import { readAeSlotLimit, rememberAeSlotLimit } from "@/lib/aeSlotLimit";
+import { aeIsHelper, familySlotChain, familySlotKey } from "@/lib/aeFamily";
+import {
+  readAeHelpersCount,
+  readAeSlotLimit,
+  rememberAeHelpersCount,
+  rememberAeSlotLimit,
+} from "@/lib/aeSlotLimit";
 import { authenticatedFetch } from "@/lib/identity";
 import type { ConversationsInfiniteData } from "@/lib/sessionListCache";
 import { AeMenuFold } from "@/shell/AeMenuFold";
@@ -104,10 +109,15 @@ interface CapacityRow {
   title?: string | null;
   /** The family it counts against (`/v1/ae/capacity`, 2026-10-23). */
   family?: string;
+  /** Started by another session (`/v1/ae/capacity`, 2026-10-26). */
+  helper?: boolean;
 }
 
 interface CapacityAnswer {
   limit?: unknown;
+  helpers_count?: unknown;
+  /** Whether the asked-about session is a helper (`?session=`, 2026-10-26). */
+  own_helper?: boolean | null;
   slots_used?: number;
   working?: CapacityRow[];
 }
@@ -135,6 +145,26 @@ function ridesInHeldSlot(queryClient: QueryClient, sessionId: string, held: Set<
   return [familySlotKey(own, byId), ...familySlotChain(own, byId)].some((id) => held.has(id));
 }
 
+/** Whether the session is a helper another one started (it holds no slot unless counted). */
+function ownIsHelper(
+  queryClient: QueryClient,
+  sessionId: string,
+  fromServer?: boolean | null,
+): boolean {
+  // The server knows rows the sidebar has not loaded; the cache covers an older server.
+  if (typeof fromServer === "boolean") return fromServer;
+  const rows = cachedRows(queryClient);
+  const own = rows.find((row) => row.id === sessionId);
+  return own !== undefined && aeIsHelper(own, new Map(rows.map((row) => [row.id, row] as const)));
+}
+
+/** A working row's helper flag: the server's, else the cached row's `ae.orch` (older server). */
+function rowIsHelper(row: CapacityRow, cached: Map<string, Conversation>): boolean {
+  if (typeof row.helper === "boolean") return row.helper;
+  const own = cached.get(row.id);
+  return own !== undefined && aeIsHelper(own, cached);
+}
+
 /** A session list row from the cache, for a write that starts from a drag. */
 export function aeCachedRow(queryClient: QueryClient, id: string): Conversation | undefined {
   return cachedRows(queryClient).find((row) => row.id === id);
@@ -149,15 +179,25 @@ export async function checkAeSlotRoom(
   sessionId: string,
 ): Promise<AeSlotRoom> {
   try {
-    const res = await authenticatedFetch("/v1/ae/capacity", { method: "GET" });
+    const res = await authenticatedFetch(
+      `/v1/ae/capacity?session=${encodeURIComponent(sessionId)}`,
+      { method: "GET" },
+    );
     if (res.ok) {
       const answer = (await res.json()) as CapacityAnswer;
       const working = (answer.working ?? []).filter((row) => row.id !== sessionId);
       const limit = rememberAeSlotLimit(queryClient, answer.limit) ?? readAeSlotLimit(queryClient);
-      // A family holds one slot (2026-10-23): joining one that works takes none.
-      const families = new Set(working.map((row) => row.family ?? row.id));
+      const helpers = rememberAeHelpersCount(queryClient, answer.helpers_count);
+      // A lead holds one slot for its family (2026-10-23); a helper holds none unless
+      // Settings counts helpers (2026-10-26).
+      if (!helpers && ownIsHelper(queryClient, sessionId, answer.own_helper)) return { ok: true };
+      const cachedById = new Map(cachedRows(queryClient).map((row) => [row.id, row] as const));
+      const holding = working.filter((row) => helpers || !rowIsHelper(row, cachedById));
+      // A family holds one slot (2026-10-23): joining one that works takes none. With
+      // helpers counted each holds its own, so nothing rides.
+      const families = new Set(holding.map((row) => (helpers ? row.id : (row.family ?? row.id))));
       const held = new Set([...families, ...working.map((row) => row.id)]);
-      if (ridesInHeldSlot(queryClient, sessionId, held)) return { ok: true };
+      if (!helpers && ridesInHeldSlot(queryClient, sessionId, held)) return { ok: true };
       const used = families.size;
       if (used < limit) return { ok: true };
       return {
@@ -173,16 +213,23 @@ export async function checkAeSlotRoom(
   }
   const seen = new Set<string>([sessionId]);
   const working: Conversation[] = [];
-  for (const row of cachedRows(queryClient)) {
+  const allRows = cachedRows(queryClient);
+  const byId = new Map(allRows.map((row) => [row.id, row] as const));
+  for (const row of allRows) {
     if (seen.has(row.id)) continue;
     seen.add(row.id);
     if (isAeSlot(row)) working.push(row);
   }
   const limit = readAeSlotLimit(queryClient);
-  const byId = new Map(cachedRows(queryClient).map((row) => [row.id, row] as const));
-  const families = new Set(working.map((row) => familySlotKey(row, byId)));
+  const helpers = readAeHelpersCount(queryClient);
+  if (!helpers && ownIsHelper(queryClient, sessionId)) return { ok: true };
+  const families = new Set(
+    working
+      .filter((row) => helpers || !aeIsHelper(row, byId))
+      .map((row) => (helpers ? row.id : familySlotKey(row, byId))),
+  );
   const held = new Set([...families, ...working.map((row) => row.id)]);
-  if (ridesInHeldSlot(queryClient, sessionId, held)) return { ok: true };
+  if (!helpers && ridesInHeldSlot(queryClient, sessionId, held)) return { ok: true };
   if (families.size < limit) return { ok: true };
   return {
     ok: false,

@@ -119,12 +119,35 @@ describe("slots", () => {
     expect(
       countAeSlots([working("lead"), child("k1", "lead"), child("k2", "lead"), child("g", "k1")]),
     ).toBe(1);
-    // Children of a lead that is not listed still share its slot.
-    expect(countAeSlots([child("k1", "gone"), child("k2", "gone"), working("b")])).toBe(2);
+    // A helper whose lead is absent, parked or archived holds nothing (2026-10-26).
+    expect(countAeSlots([child("k1", "gone"), child("k2", "gone"), working("b")])).toBe(1);
     expect(countAeSlots([child("x", "1"), child("y", "1")])).toBe(2);
     // A fork is related in the sidebar but keeps its own slot.
     const fork = { id: "f", labels: { "ae.status": "working", "omnigent.fork.source_id": "lead" } };
     expect(countAeSlots([working("lead"), fork])).toBe(2);
+  });
+});
+
+describe("countAeSlots with helpers counted", () => {
+  const working = (id: string) => ({ id, labels: { "ae.status": "working" } });
+  const child = (id: string, parent: string, status = "working") => ({
+    id,
+    labels: { "ae.status": status, "ae.orch": parent },
+  });
+
+  it("counts each working helper as well as its lead; finished ones and repeats do not", () => {
+    const rows = [
+      working("lead"),
+      child("k1", "lead"),
+      child("k2", "lead"),
+      child("done", "lead", "review"),
+      child("orphan", "gone"),
+      working("other"),
+    ];
+    expect(countAeSlots(rows)).toBe(2);
+    expect(countAeSlots(rows, false)).toBe(2);
+    expect(countAeSlots(rows, true)).toBe(5);
+    expect(countAeSlots([...rows, child("k1", "lead")], true)).toBe(5);
   });
 });
 

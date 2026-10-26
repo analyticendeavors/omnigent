@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Conversation } from "@/hooks/useConversations";
 import { AE_PARKING_LOT_PATH } from "@/lib/aeLabels";
-import { AE_SLOT_LIMIT_QUERY_KEY } from "@/lib/aeSlotLimit";
+import { AE_HELPERS_COUNT_QUERY_KEY, AE_SLOT_LIMIT_QUERY_KEY } from "@/lib/aeSlotLimit";
 import type { ConversationsInfiniteData } from "@/lib/sessionListCache";
 import { AeSlotsPill, readAeSlotCount } from "./AeSlotsPill";
 
@@ -66,6 +66,32 @@ describe("readAeSlotCount", () => {
     expect(readAeSlotCount(qc)).toBe(2);
   });
 
+  it("counts working helpers only when Settings counts them", () => {
+    const helper = (id: string, parent: string) =>
+      row(id, { labels: { "ae.status": "working", "ae.orch": parent } });
+    const qc = new QueryClient();
+    qc.setQueryData(
+      ["conversations", "", false],
+      pages([row("lead"), helper("k1", "lead"), helper("k2", "lead"), helper("o", "gone")]),
+    );
+    expect(readAeSlotCount(qc)).toBe(1);
+    qc.setQueryData(AE_HELPERS_COUNT_QUERY_KEY, true);
+    expect(readAeSlotCount(qc)).toBe(4);
+  });
+
+  it("counts a self-parented or cyclic row as a lead", () => {
+    const qc = new QueryClient();
+    qc.setQueryData(
+      ["conversations", "", false],
+      pages([
+        row("self", { labels: { "ae.status": "working", "ae.orch": "self" } }),
+        row("r1", { labels: { "ae.status": "working", "ae.orch": "r2" } }),
+        row("r2", { labels: { "ae.status": "working", "ae.orch": "r1" } }),
+      ]),
+    );
+    expect(readAeSlotCount(qc)).toBe(3);
+  });
+
   it("is zero with nothing cached", () => {
     expect(readAeSlotCount(new QueryClient())).toBe(0);
   });
@@ -116,6 +142,21 @@ describe("AeSlotsPill", () => {
     });
     expect(screen.getByRole("link", { name: "Session Dashboard 4/4" })).toBeInTheDocument();
     expect(screen.getByTestId("ae-slots-count")).toHaveAttribute("data-full", "true");
+  });
+
+  it("shows helpers in the pill once the setting is on", () => {
+    const qc = new QueryClient();
+    qc.setQueryData(AE_HELPERS_COUNT_QUERY_KEY, true);
+    qc.setQueryData(
+      ["conversations", "", false],
+      pages([row("lead"), row("k1", { labels: { "ae.status": "working", "ae.orch": "lead" } })]),
+    );
+    renderPill(qc);
+    expect(screen.getByRole("link", { name: "Session Dashboard 2/3" })).toBeInTheDocument();
+    act(() => {
+      qc.setQueryData(AE_HELPERS_COUNT_QUERY_KEY, false);
+    });
+    expect(screen.getByRole("link", { name: "Session Dashboard 1/3" })).toBeInTheDocument();
   });
 
   it("repaints when the cache changes", () => {
