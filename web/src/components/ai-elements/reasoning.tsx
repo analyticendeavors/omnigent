@@ -6,6 +6,7 @@ import { ChevronRightIcon, SparklesIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Streamdown } from "streamdown";
+import { AE_SESSION_LINK_COMPONENTS } from "@/components/blocks/AeSessionLink";
 import { MERMAID_STREAMDOWN_PROPS } from "@/components/ai-elements/MermaidBlock";
 import { useResolvedThemeMode } from "@/components/theme/useResolvedThemeMode";
 
@@ -53,6 +54,12 @@ export type ReasoningProps = ComponentProps<typeof Collapsible> & {
    * non-interactive header (see `ReasoningTrigger` / `ReasoningContent`).
    */
   expandable?: boolean;
+};
+
+// Mermaid's block override plus the in-app session link anchor, one stable object.
+const REASONING_COMPONENTS = {
+  ...MERMAID_STREAMDOWN_PROPS.components,
+  ...AE_SESSION_LINK_COMPONENTS,
 };
 
 export const Reasoning = memo(
@@ -208,6 +215,7 @@ export const ReasoningContent = memo(({ className, children, ...props }: Reasoni
           {...MERMAID_STREAMDOWN_PROPS}
           key={themeMode}
           plugins={STREAMDOWN_PLUGINS}
+          components={REASONING_COMPONENTS}
           mermaid={mermaidOptions}
           // Let links open on a plain click (and cmd/ctrl-click in a new tab)
           // instead of Streamdown's default "Open external link?" modal.

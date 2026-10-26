@@ -2,6 +2,7 @@ import { cjk } from "@streamdown/cjk";
 import { createMathPlugin } from "@streamdown/math";
 import { mermaid } from "@streamdown/mermaid";
 import { defaultRehypePlugins, type LinkSafetyConfig, type StreamdownProps } from "streamdown";
+import { isSessionPath } from "@/lib/aeSessionLinks";
 import { lazyCodePlugin } from "./lazyCodePlugin";
 
 type StreamdownRehypePlugins = NonNullable<StreamdownProps["rehypePlugins"]>;
@@ -175,6 +176,8 @@ export function markWorkspaceFileLinks() {
       const href = node.properties?.href;
       if (typeof href !== "string" || !href) return;
       if (NON_FILE_HREF.test(href) || href.includes("?")) return;
+      // A link to another session (`/c/<id>`) is an app route, never a file.
+      if (isSessionPath(href)) return;
       const cited = splitWorkspaceFileCitation(href);
       if (href.includes("#") && !cited.hasPosition) return;
       node.properties = {

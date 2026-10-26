@@ -182,3 +182,18 @@ describe("markWorkspaceFileLinks", () => {
     expect(bare.properties).toEqual({});
   });
 });
+
+describe("markWorkspaceFileLinks and session links", () => {
+  const ID = "e96ed7580fd0415090a5407cbff87612";
+
+  it.each([`/c/${ID}`, `/c/${ID}/`, `/c/${ID}?x=1`, `/c/${ID}#frag`, `/c/${ID}#L12`])(
+    "leaves %s for the router, never the file opener",
+    (href) => {
+      expect(markHref(href)).toEqual({ href });
+    },
+  );
+
+  it("still treats a lookalike path as a file citation", () => {
+    expect(markHref(`/c/${ID}/notes.md#L3`)[WORKSPACE_FILE_LINK_ATTR]).toBe(`/c/${ID}/notes.md#L3`);
+  });
+});

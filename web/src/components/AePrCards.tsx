@@ -63,6 +63,7 @@ import { useEffect, useId, useMemo, useState } from "react";
 import remarkBreaks from "remark-breaks";
 import { defaultRemarkPlugins } from "streamdown";
 import { MessageResponse } from "@/components/ai-elements/message";
+import { AE_SESSION_LINK_COMPONENTS } from "@/components/blocks/AeSessionLink";
 import { isPathologicalText, PlainTextFallback } from "@/components/blocks/ChatMarkdown";
 import { Button } from "@/components/ui/button";
 import { useAeMarkReady } from "@/hooks/useAeMarkReady";
@@ -448,9 +449,7 @@ export function ConfirmMerge({
             title={label}
             onClick={() => merge.mutate()}
           >
-            {merging && (
-              <AeTablerSvg node={AE_ICON_LOADER} className="size-3.5 animate-spin" />
-            )}
+            {merging && <AeTablerSvg node={AE_ICON_LOADER} className="size-3.5 animate-spin" />}
             <span className="truncate">{label}</span>
           </Button>
         </div>
@@ -471,6 +470,7 @@ function AePrBody({ body }: { body: string | null | undefined }) {
   return (
     <MessageResponse
       className={AE_PR_BODY_CLASS}
+      components={AE_SESSION_LINK_COMPONENTS}
       mode="static"
       remarkPlugins={AE_PR_BODY_REMARK_PLUGINS}
     >

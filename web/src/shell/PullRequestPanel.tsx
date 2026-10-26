@@ -64,6 +64,7 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/h
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { MessageResponse } from "@/components/ai-elements/message";
+import { AE_SESSION_LINK_COMPONENTS } from "@/components/blocks/AeSessionLink";
 import {
   Select,
   SelectContent,
@@ -620,7 +621,7 @@ function PullRequestCommentCard({
         )}
       </div>
       <div className="text-ui break-words">
-        <MessageResponse>{comment.body}</MessageResponse>
+        <MessageResponse components={AE_SESSION_LINK_COMPONENTS}>{comment.body}</MessageResponse>
       </div>
     </li>
   );
@@ -699,7 +700,7 @@ function PullRequestSummaryTab({
         </h3>
         {body ? (
           <div className="text-ui break-words">
-            <MessageResponse>{body}</MessageResponse>
+            <MessageResponse components={AE_SESSION_LINK_COMPONENTS}>{body}</MessageResponse>
           </div>
         ) : (
           <p className="text-ui text-muted-foreground italic">No description provided.</p>

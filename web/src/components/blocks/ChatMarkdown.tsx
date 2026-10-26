@@ -13,6 +13,7 @@
 import type React from "react";
 import { useMemo } from "react";
 import { GitPullRequestIcon } from "lucide-react";
+import { useInRouterContext } from "react-router-dom";
 import { defaultRemarkPlugins } from "streamdown";
 import remarkBreaks from "remark-breaks";
 import { normalizeExplicitMathDelimiters } from "@/components/ai-elements/mathMarkdown";
@@ -26,6 +27,8 @@ import { AePrLinkHoverCard } from "@/components/AePrLinkHoverCard";
 import { useThrottledValue } from "@/hooks/useThrottledValue";
 import { withBasePath } from "@/lib/basePath";
 import { isNativeShell } from "@/lib/nativeBridge";
+import { SessionRouteLink } from "@/components/blocks/AeSessionLink";
+import { sessionLinkRoute } from "@/lib/aeSessionLinks";
 import { maybeOpenLinkInApp } from "@/lib/openLinkInApp";
 import { cn } from "@/lib/utils";
 import {
@@ -304,6 +307,7 @@ function WorkspaceFileLink({
   const { open: openWorkspaceFile, unopenable, resolvedPath } = useWorkspaceFileOpener(path, true);
   // Scopes the desktop in-app browser route to this conversation's view.
   const conversationId = useFileViewerConversationId();
+  const inRouter = useInRouterContext();
 
   if (!path) {
     // Rebase an app-internal link (e.g. an agent's `/clear` "the new chat"
@@ -315,6 +319,21 @@ function WorkspaceFileLink({
     // popup fallback so a click still works where new tabs can't open.
     const blankHref = props.target === "_blank" && typeof rebased === "string" ? rebased : null;
     const pullRequest = githubPullRequest(rebased);
+    // A link to another session switches to it inside the app, on every shell.
+    const sessionRoute = typeof rebased === "string" ? sessionLinkRoute(rebased) : null;
+    if (sessionRoute && inRouter && typeof rebased === "string") {
+      return (
+        <SessionRouteLink
+          {...props}
+          route={sessionRoute}
+          href={rebased}
+          className={className}
+          title={title}
+        >
+          {children}
+        </SessionRouteLink>
+      );
+    }
     const link = (
       <a
         href={rebased}
