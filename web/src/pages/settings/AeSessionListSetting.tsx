@@ -6,6 +6,7 @@
 import { QueryClient, QueryClientContext } from "@tanstack/react-query";
 import { useContext, useState } from "react";
 import { toast } from "sonner";
+import { AeHint } from "@/components/AeHint";
 import { Button } from "@/components/ui/button";
 import { showToast } from "@/components/ui/toast";
 import { aeEnqueueOrder, aeOrderSettled, aeReadOrder, reasonOf } from "@/hooks/useAeSidebarOrder";
@@ -58,7 +59,10 @@ export function AeSessionListSetting() {
       className="flex items-start justify-between gap-6 max-sm:flex-col max-sm:gap-2"
     >
       <div className="flex min-w-0 flex-1 flex-col">
-        <span className="text-ui font-medium">Session list</span>
+        <span className="text-ui font-medium">
+          Session list
+          <AeHint id="chat.session_list_reset" />
+        </span>
         <span className="text-ui text-muted-foreground">
           Pick Triage grouping or Manual ordering from the filter button at the top of the session
           list. The manual order is saved for your account, so it follows you to every device.

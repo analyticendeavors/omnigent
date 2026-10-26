@@ -6,6 +6,7 @@
 // list replaces this one and a toast says so.
 
 import { useRef, useState } from "react";
+import { AeHint } from "@/components/AeHint";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -216,7 +217,11 @@ export function AeRolesSettingsSection() {
   return (
     <div data-testid="ae-roles-settings" className="flex flex-col gap-4">
       <p className="text-ui text-muted-foreground">
-        Pick a preset to edit it. Your default starts every new session.
+        Pick a preset to edit it. Your default starts every new{" "}
+        <span className="whitespace-nowrap">
+          session.
+          <AeHint id="roles.presets" />
+        </span>
       </p>
       <AeRolesCollapsedRow
         presets={presets}

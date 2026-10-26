@@ -4,6 +4,7 @@
 import { useId } from "react";
 import { SettingsLabel } from "@/components/SettingsLabel";
 import { CardRadioGroup } from "@/components/theme/CardRadioGroup";
+import { AE_SPEND_SHORT, aeHint } from "@/lib/aeSettingHints";
 import {
   AE_SPEND_DISPLAYS,
   type AeSpendDisplay,
@@ -26,7 +27,8 @@ export function AeSpendDisplaySetting() {
       <SettingsLabel
         label="Spend shows"
         labelId={labelId}
-        description="Tokens suit a subscription account; cost is an API-price estimate."
+        description={AE_SPEND_SHORT}
+        tooltipDescription={aeHint("chat.spend_display")}
       />
       <CardRadioGroup<AeSpendDisplay>
         labelledBy={labelId}

@@ -5,6 +5,7 @@
 import { useId } from "react";
 import { SettingsLabel } from "@/components/SettingsLabel";
 import { CardRadioGroup } from "@/components/theme/CardRadioGroup";
+import { AE_PIN_FAMILY_SHORT, aeHint } from "@/lib/aeSettingHints";
 import { useAePinFamily, writeAePinFamily } from "@/lib/aePinFamily";
 
 type Choice = "yes" | "no";
@@ -26,7 +27,8 @@ export function AePinFamilySetting() {
       <SettingsLabel
         label="Pin a lead's family"
         labelId={labelId}
-        description="When you pin a family's lead, also pin its open sessions, and unpin them with it."
+        description={AE_PIN_FAMILY_SHORT}
+        tooltipDescription={aeHint("chat.pin_family")}
       />
       <CardRadioGroup<Choice>
         labelledBy={labelId}

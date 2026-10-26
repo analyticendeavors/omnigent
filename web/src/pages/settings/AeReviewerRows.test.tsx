@@ -83,6 +83,30 @@ function Harness({
 const sonnet = { mode: "fixed" as const, model: "claude-sonnet-5-5", effort: "medium" as const };
 
 describe("AeReviewerRows", () => {
+  it("gives the reviewer rows and both review rules a hint icon", () => {
+    const rules: AeRoleRules = { raise_or_lower: "tell", lead_steps_down: true, auto_raises: 1 };
+    render(
+      <>
+        <AeReviewerRowsView
+          setting={{ mode: "multi", reviewers: [sonnet, sonnet] }}
+          models={[]}
+          onChange={() => {}}
+          disabled={false}
+          agents={{ options: [], host: null, loaded: true }}
+        />
+        <AeReviewSettings
+          reviewer={{ mode: "multi", reviewers: [sonnet, sonnet] }}
+          rules={rules}
+          disabled={false}
+          onChange={() => {}}
+        />
+      </>,
+    );
+    for (const id of ["roles.reviewer", "rules.review_merge", "rules.reviewer_unavailable"]) {
+      expect(screen.getByTestId(`ae-hint-${id}`), id).toBeInTheDocument();
+    }
+  });
+
   it("renders an old single reviewer as one row and keeps its shape on an effort edit", () => {
     const onSave = vi.fn();
     render(<Harness initial={sonnet} onSave={onSave} />);

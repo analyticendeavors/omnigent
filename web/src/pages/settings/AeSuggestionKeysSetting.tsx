@@ -4,6 +4,7 @@
 // clicking elsewhere cancels. Saved in this browser (lib/aeSuggestionKeys.ts).
 
 import { useEffect, useId, useRef, useState } from "react";
+import { AeHint } from "@/components/AeHint";
 import { Kbd } from "@/components/KeyboardShortcut";
 import { Button } from "@/components/ui/button";
 import {
@@ -125,8 +126,9 @@ export function AeSuggestionKeysSetting() {
   return (
     <div className="flex flex-col gap-3" aria-labelledby={labelId} role="group">
       <div className="flex min-w-0 flex-col">
-        <span id={labelId} className="text-ui font-medium">
-          Suggestion keys
+        <span className="text-ui font-medium">
+          <span id={labelId}>Suggestion keys</span>
+          <AeHint id="chat.suggestion_keys" />
         </span>
         <span className="text-ui text-muted-foreground">
           When the composer offers more than one suggestion, these keys step through them; Tab still

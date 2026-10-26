@@ -3,7 +3,9 @@
 // below it are the preset's model change rules. Edits stay local until Save.
 
 import { AlertTriangleIcon, CopyIcon, PencilIcon, Trash2Icon } from "lucide-react";
+import { AeHint } from "@/components/AeHint";
 import { Button } from "@/components/ui/button";
+import type { AeSettingHintId } from "@/lib/aeSettingHints";
 import type { AeRoleModelChoice } from "@/hooks/useAeRoleModels";
 import { aeClaudeCodeDefaultEffort } from "@/lib/aeEffortDefault";
 import {
@@ -87,7 +89,10 @@ export function AeRoleRow({
       className="grid grid-cols-[5.5rem_1fr] items-center gap-x-3 gap-y-2 border-t border-border py-2.5 @lg/roles:grid-cols-[7rem_minmax(0,14rem)_1fr]"
     >
       <div className="min-w-0">
-        <div className="text-sm font-semibold">{label}</div>
+        <div className="text-sm font-semibold">
+          {label}
+          <AeHint id={`roles.${role}`} />
+        </div>
         <div className="text-xs leading-tight text-muted-foreground">{hint}</div>
       </div>
       <label className="relative flex min-w-0 items-center">
@@ -142,11 +147,13 @@ export function AeRoleRow({
 function RuleRow({
   title,
   hint,
+  hintId,
   later,
   children,
 }: {
   title: string;
   hint?: string;
+  hintId?: AeSettingHintId;
   /** Tags a rule nothing acts on yet with a muted "Coming later" note. */
   later?: boolean;
   children: React.ReactNode;
@@ -156,6 +163,7 @@ function RuleRow({
       <div className="min-w-0">
         <div className="text-sm">
           {title}
+          {hintId && <AeHint id={hintId} />}
           {later && (
             <span
               title={AE_COMING_LATER.hint}
@@ -305,7 +313,11 @@ export function AeRolesEditor({
         <h3 className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
           Model changes in this preset
         </h3>
-        <RuleRow title="Raise a stuck child, or lower the lead" hint="Applies to both directions">
+        <RuleRow
+          title="Raise a stuck child, or lower the lead"
+          hint="Applies to both directions"
+          hintId="rules.raise_or_lower"
+        >
           <AeSegmented
             label="Raise a stuck child, or lower the lead"
             value={draft.rules.raise_or_lower}
@@ -317,6 +329,7 @@ export function AeRolesEditor({
         </RuleRow>
         <RuleRow
           title="Lead steps down for mechanical work"
+          hintId="rules.lead_steps_down"
           hint="Watching CI, applying decided fixes: the Builder's model"
         >
           <AeSegmented
@@ -328,7 +341,11 @@ export function AeRolesEditor({
             disabled={saving}
           />
         </RuleRow>
-        <RuleRow title="Automatic raises per child" hint="After this, every raise asks you">
+        <RuleRow
+          title="Automatic raises per child"
+          hint="After this, every raise asks you"
+          hintId="rules.auto_raises"
+        >
           <AeStepper
             label="Automatic raises per child"
             value={draft.rules.auto_raises}
@@ -338,7 +355,11 @@ export function AeRolesEditor({
             disabled={saving}
           />
         </RuleRow>
-        <RuleRow title="Helpers" hint="Who the lead may hand work to besides its own subagents">
+        <RuleRow
+          title="Helpers"
+          hint="Who the lead may hand work to besides its own subagents"
+          hintId="rules.helpers"
+        >
           <AeSegmented
             label="Helpers"
             value={aeHelpersOf(draft.rules)}

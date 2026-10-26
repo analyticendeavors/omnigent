@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AeRolePreset, AeRolesState } from "@/lib/aeRoles";
+import { AE_SETTING_HINTS, type AeSettingHintId } from "@/lib/aeSettingHints";
 import type * as AeTablerIconModule from "@/lib/aeTablerIcon";
 
 const mocks = vi.hoisted(() => ({ fetch: vi.fn(), showToast: vi.fn() }));
@@ -167,6 +168,42 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("AeRolesSettingsSection", () => {
+  it("renders a hint for every Roles control in the inventory", async () => {
+    const two = {
+      mode: "multi" as const,
+      reviewers: [fixed(SONNET, "medium"), fixed(HAIKU, "low")],
+    };
+    const balanced = { ...BALANCED, roles: { ...BALANCED.roles, reviewer: two } };
+    serve(
+      stateOf({
+        presets: [balanced, SAVE_TOKENS, YOLO],
+        insights: { enabled: true, weeks: 2, scope: "all" },
+      }),
+    );
+    renderSection();
+    await screen.findByRole("heading", { name: "Balanced" });
+    fireEvent.click(screen.getByRole("button", { name: "New preset" }));
+    const form = await screen.findByTestId("ae-preset-form");
+    const page = document.body.textContent ?? "";
+    const prefixes = ["roles.", "rules.", "reviewer.", "preset.", "insights."];
+    const ids = (Object.keys(AE_SETTING_HINTS) as AeSettingHintId[]).filter((id) =>
+      prefixes.some((prefix) => id.startsWith(prefix)),
+    );
+    expect(ids.length).toBeGreaterThan(20);
+    for (const id of ids) {
+      const { hint, source } = AE_SETTING_HINTS[id];
+      expect(hint.trim(), id).not.toBe("");
+      if (source === "tooltip") {
+        // The form is a dialog, so its icons are in the form, the rest behind it.
+        const icons = screen.queryAllByTestId(`ae-hint-${id}`);
+        expect(icons.length, id).toBeGreaterThan(0);
+      } else {
+        expect(page, id).toContain(hint);
+      }
+    }
+    expect(within(form).getByTestId("ae-hint-preset.default")).toBeInTheDocument();
+  });
+
   it("renders the starters from GET with the default open", async () => {
     serve(stateOf());
     renderSection();
@@ -316,7 +353,7 @@ describe("AeRolesSettingsSection", () => {
     fireEvent.change(form.getByLabelText("Description, shown on the card"), {
       target: { value: "Opus fixes, Sonnet checks" },
     });
-    fireEvent.change(form.getByLabelText(/When to use/), {
+    fireEvent.change(form.getByLabelText(/^When to use/), {
       target: { value: "A known bug.\nShips today." },
     });
     fireEvent.click(form.getByRole("button", { name: "Icon and color" }));

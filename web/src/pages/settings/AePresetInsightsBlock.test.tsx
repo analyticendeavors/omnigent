@@ -4,6 +4,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { AE_SETTING_HINTS } from "@/lib/aeSettingHints";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AePresetSuggestion } from "@/hooks/useAePresetReview";
 import type { AeRolesState } from "@/lib/aeRoles";
@@ -166,6 +167,22 @@ describe("off", () => {
 });
 
 describe("Presets card shows", () => {
+  it("gives the Show, Scope and Run now controls a hint icon, and keeps the hint lines", async () => {
+    serve();
+    mocks.admin.value = true;
+    mount(stateOf({ insights: ON }));
+    await screen.findByTestId("ae-hint-insights.run_now");
+    for (const id of [
+      "insights.show",
+      "insights.frequency",
+      "insights.scope",
+      "insights.run_now",
+    ]) {
+      expect(screen.getByTestId(`ae-hint-${id}`), id).toBeInTheDocument();
+    }
+    expect(document.getElementById("ae-insights-frequency-hint")?.textContent).toMatch(/Monday/);
+  });
+
   it("renders in the off state, defaults to Both, and saves only show", async () => {
     const calls = serve();
     mount(stateOf({ insights: { enabled: false, weeks: 2, scope: "all" } }));
@@ -227,10 +244,14 @@ describe("review frequency", () => {
     expect(screen.queryByText(/up to 8 weeks/)).toBeNull();
   });
 
-  it("shows the Run now sentence, worded up to 8 weeks, only on Monthly", () => {
+  it("keeps the frequency line short on Monthly and puts the Run now slip in the hint icon", () => {
     serve();
     mount(stateOf({ insights: { ...ON, frequency: "monthly" } }));
-    expect(screen.getByText(/can push the next Monthly review out by up to 8 weeks/)).toBeTruthy();
+    const line = document.getElementById("ae-insights-frequency-hint")?.textContent ?? "";
+    expect(line).not.toMatch(/8 weeks/);
+    expect(line.length).toBeLessThan(110);
+    expect(screen.getByTestId("ae-hint-insights.frequency")).toBeInTheDocument();
+    expect(AE_SETTING_HINTS["insights.frequency"].hint).toMatch(/Monthly.*up to 8 weeks/);
   });
 
   it("an unknown frequency from the server reads as Every 2 weeks", () => {

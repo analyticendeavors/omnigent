@@ -19,6 +19,12 @@ vi.mock("@/lib/identity", () => ({
 
 import { SettingsPage } from "@/pages/SettingsPage";
 import { SettingsSidebarBody, settingsNavGroups } from "@/shell/settingsNav";
+import {
+  AE_PIN_FAMILY_SHORT,
+  AE_SETTING_HINTS,
+  AE_SPEND_SHORT,
+  type AeSettingHintId,
+} from "@/lib/aeSettingHints";
 import { AeChatSettingsSection } from "./AeChatSettingsSection";
 
 function renderAt(path: string, node: React.ReactNode) {
@@ -79,6 +85,7 @@ describe("AeChatSettingsSection", () => {
   it("offers Pin a lead's family, off by default, and saves the choice", () => {
     renderAt("/settings/chat", <AeChatSettingsSection />);
     expect(screen.getByRole("radiogroup", { name: "Pin a lead's family" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "About Pin a lead's family" })).toBeInTheDocument();
     expect(screen.getByTestId("ae-pin-family-no")).toHaveAttribute("aria-checked", "true");
     fireEvent.click(screen.getByTestId("ae-pin-family-yes"));
     expect(window.localStorage.getItem("omnigent:ae-pin-family")).toBe("on");
@@ -105,5 +112,22 @@ describe("AeChatSettingsSection", () => {
     expect(link).toHaveAttribute("aria-current", "page");
     expect(link.querySelector("svg")).toHaveClass("ui-icon");
     expect(link.className).not.toContain("max-md:hidden");
+  });
+
+  it("renders a hint for every Chat control in the inventory", () => {
+    renderAt("/settings/chat", <AeChatSettingsSection />);
+    const page = document.body.textContent ?? "";
+    const ids = (Object.keys(AE_SETTING_HINTS) as AeSettingHintId[]).filter((id) =>
+      id.startsWith("chat."),
+    );
+    expect(ids.length).toBe(4);
+    for (const id of ids) {
+      const { label, hint, source } = AE_SETTING_HINTS[id];
+      expect(hint.trim(), id).not.toBe("");
+      if (source === "tooltip") expect(screen.getByTestId(`ae-hint-${id}`), id).toBeInTheDocument();
+      else expect(screen.getByRole("button", { name: `About ${label}` }), id).toBeInTheDocument();
+    }
+    expect(page).toContain(AE_SPEND_SHORT);
+    expect(page).toContain(AE_PIN_FAMILY_SHORT);
   });
 });

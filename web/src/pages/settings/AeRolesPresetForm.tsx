@@ -4,6 +4,7 @@
 
 import { type CSSProperties, useId, useState } from "react";
 import { ChevronDownIcon } from "lucide-react";
+import { AeHint } from "@/components/AeHint";
 import { AeTablerIconPicker } from "@/components/AeTablerIconPicker";
 import { Button } from "@/components/ui/button";
 import {
@@ -186,9 +187,13 @@ export function AeRolesPresetForm({
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <label htmlFor={ids.when} className="text-xs text-muted-foreground">
-              When to use <span className="opacity-80">(the lead reads this for “Lead picks”)</span>
-            </label>
+            <div className="flex items-center text-xs text-muted-foreground">
+              <label htmlFor={ids.when}>
+                When to use{" "}
+                <span className="opacity-80">(the lead reads this for “Lead picks”)</span>
+              </label>
+              <AeHint id="preset.when_to_use" />
+            </div>
             <textarea
               id={ids.when}
               rows={3}
@@ -201,8 +206,9 @@ export function AeRolesPresetForm({
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <span id={ids.shortcut} className="text-xs text-muted-foreground">
-              Shortcut
+            <span className="flex items-center text-xs text-muted-foreground">
+              <span id={ids.shortcut}>Shortcut</span>
+              <AeHint id="preset.shortcut" />
             </span>
             <p aria-labelledby={ids.shortcut} className={cn(FIELD, "text-muted-foreground")}>
               {shortcut}
@@ -213,16 +219,19 @@ export function AeRolesPresetForm({
           </div>
 
           <DialogFooter className="flex-row items-center justify-between gap-2 sm:justify-between">
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="size-4 accent-primary"
-                checked={details.makeDefault}
-                disabled={mode === "edit" && isDefault}
-                onChange={(e) => set({ makeDefault: e.target.checked })}
-              />
-              Make my default
-            </label>
+            <div className="flex items-center text-sm">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  className="size-4 accent-primary"
+                  checked={details.makeDefault}
+                  disabled={mode === "edit" && isDefault}
+                  onChange={(e) => set({ makeDefault: e.target.checked })}
+                />
+                Make my default
+              </label>
+              <AeHint id="preset.default" />
+            </div>
             <div className="flex gap-2">
               <Button type="button" variant="outline" size="sm" onClick={onCancel}>
                 Cancel

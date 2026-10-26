@@ -7,6 +7,8 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import { AeHint } from "@/components/AeHint";
+import { AE_INSIGHTS_COST_CAP, type AeSettingHintId } from "@/lib/aeSettingHints";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { showToast } from "@/components/ui/toast";
@@ -33,7 +35,7 @@ import {
 
 const CONFLICT = "Your roles changed on another device, so the saved presets were reloaded.";
 const DEFAULT_WEEKS = 2;
-const COST_CAP = "$2";
+const COST_CAP = AE_INSIGHTS_COST_CAP;
 const POLL_MS = 15_000;
 const POLL_MAX_MS = 10 * 60_000;
 
@@ -53,11 +55,13 @@ export function aeOwnSuggestions(all: AePresetSuggestion[] | undefined): AePrese
 
 function Row({
   title,
+  info,
   hint,
   hintId,
   children,
 }: {
   title: string;
+  info?: AeSettingHintId;
   hint?: React.ReactNode;
   hintId?: string;
   children?: React.ReactNode;
@@ -65,7 +69,10 @@ function Row({
   return (
     <div className="flex flex-col gap-2 border-t border-border px-4 py-3 first:border-t-0 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
       <div className="min-w-0 break-words">
-        <div className="text-sm font-medium">{title}</div>
+        <div className="text-sm font-medium">
+          {title}
+          {info && <AeHint id={info} />}
+        </div>
         {hint ? (
           <div id={hintId} className="text-xs text-muted-foreground">
             {hint}
@@ -285,6 +292,7 @@ export function AePresetInsightsBlock({ state }: { state: AeRolesState }) {
       </Row>
       <Row
         title="Presets card shows"
+        info="insights.show"
         hint="Cost is an estimate at API rates. Tokens are what a subscription actually uses up."
       >
         <div role="group" aria-label="Presets card shows" className="flex gap-1">
@@ -320,13 +328,9 @@ export function AePresetInsightsBlock({ state }: { state: AeRolesState }) {
         <>
           <Row
             title="How often"
+            info="insights.frequency"
             hintId="ae-insights-frequency-hint"
-            hint={
-              "Reviews run Monday 07:00 (server time); Monthly runs on the first Monday of the month. The reviewer reads every log line since its last run." +
-              (frequency === "monthly"
-                ? " Run now counts as a review, so Run now in the middle of a month can push the next Monthly review out by up to 8 weeks."
-                : "")
-            }
+            hint="Reviews run Mondays 07:00 (server time). The reviewer reads every log line since its last run."
           >
             {/* Known limit: the scheduler skips any fire more than 30 s late (MISFIRE_GRACE_TIME_S),
                 so a deploy at exactly the first-Monday 07:00 slot loses that month's review. */}
@@ -360,6 +364,7 @@ export function AePresetInsightsBlock({ state }: { state: AeRolesState }) {
           <Row title="Reviewer" hint={reviewerText} />
           <Row
             title="Presets it reviews"
+            info="insights.scope"
             hint={
               isAdmin
                 ? "Starters, your own presets, and every user's custom presets."
@@ -393,6 +398,7 @@ export function AePresetInsightsBlock({ state }: { state: AeRolesState }) {
           </Row>
           <Row
             title={when}
+            info="insights.run_now"
             hint={
               mine.length || info
                 ? `${open} ${open === 1 ? "suggestion" : "suggestions"} waiting`

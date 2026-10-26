@@ -4,6 +4,7 @@
 // same effort bars as the other roles) or another agent (a child session,
 // with its model and effort). The two review settings show with 2 or more.
 
+import { AeHint } from "@/components/AeHint";
 import { PlusIcon, XIcon } from "lucide-react";
 import { type AeReviewerAgents, useAeReviewerAgents } from "@/hooks/useAeReviewerAgents";
 import type { AeRoleModelChoice } from "@/hooks/useAeRoleModels";
@@ -218,7 +219,10 @@ function SlotRow({
     <div data-testid={`ae-reviewer-slot-${index + 1}`} className={cn(GRID, index > 0 && "pt-2")}>
       {index === 0 ? (
         <div className="min-w-0">
-          <div className="text-sm font-semibold">{rowLabel}</div>
+          <div className="text-sm font-semibold">
+            {rowLabel}
+            <AeHint id="roles.reviewer" />
+          </div>
           <div className="text-xs leading-tight text-muted-foreground">{hint}</div>
         </div>
       ) : (
@@ -433,7 +437,7 @@ export function AeReviewerRowsView({
         />
       ))}
       <div className={cn(GRID, "pt-2")}>
-        <div className="col-start-2">
+        <div className="col-start-2 flex items-center">
           {slots.length < AE_REVIEWERS_MAX ? (
             <button
               type="button"
@@ -452,6 +456,7 @@ export function AeReviewerRowsView({
               {AE_REVIEWERS_MAX} of {AE_REVIEWERS_MAX}. Remove one to add another.
             </span>
           )}
+          <AeHint id="reviewer.add" />
         </div>
       </div>
     </div>
@@ -498,7 +503,10 @@ export function AeReviewSettings({
       {note}
       <div className={row}>
         <div className="min-w-0">
-          <div className="text-sm">With more than one reviewer</div>
+          <div className="text-sm">
+            With more than one reviewer
+            <AeHint id="rules.review_merge" />
+          </div>
           <div className="text-xs text-muted-foreground">
             Each reviewer works alone on the same diff either way
           </div>
@@ -514,7 +522,10 @@ export function AeReviewSettings({
       </div>
       <div className={row}>
         <div className="min-w-0">
-          <div className="text-sm">A reviewer is offline or not set up</div>
+          <div className="text-sm">
+            A reviewer is offline or not set up
+            <AeHint id="rules.reviewer_unavailable" />
+          </div>
           <div className="text-xs text-muted-foreground">Checked when the review starts</div>
         </div>
         <AeSegmented
