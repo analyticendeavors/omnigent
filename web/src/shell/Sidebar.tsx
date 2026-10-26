@@ -263,6 +263,20 @@ import {
   useAeStableTree,
 } from "@/lib/aeFamilyTree";
 import { AE_TIME_COLUMN } from "@/lib/aeFamilyBadge";
+import {
+  AE_LEAD_ACTION_BUTTON,
+  AE_LEAD_ACTIONS_OVERLAY,
+  AE_LEAD_FADE_ACTIVE,
+  AE_LEAD_FADE_PLAIN,
+  AE_LEAD_FADE_TRIGGERS,
+  AE_LEAD_FOCUS_HIDE,
+  AE_LEAD_FOCUS_SHOW,
+  AE_LEAD_SLOT_FADE_OUT,
+  AE_LEAD_SPINNER_RIGHT,
+  AE_LEAD_SPINNER_SLOT,
+  AE_LEAD_TIME_SLOT,
+  aeLeadRowGeometry,
+} from "@/lib/aeLeadRowSlots";
 import { useAeFamilyClosed } from "@/lib/aeFamilyClosed";
 import { AeFamilyDot, AeFamilyFilterBar } from "@/shell/AeFamilyDot";
 import * as AeTree from "@/shell/AeFamilyTree";
@@ -4905,12 +4919,31 @@ function ConversationRowImpl({
   // present; otherwise only an inactive row needs the draft marker.
   const showDraftIndicator = hasDraft && !isActive;
   const showSharedIndicator = !isOwner;
-  const hasSessionIndicator = sessionState !== null || showDraftIndicator;
+  // A family lead keeps fixed right-hand slots (aeLeadRowSlots.ts): its thinking
+  // spinner has a slot of its own, so only the other markers share the time slot.
+  const leadSlots = AeTree.useAeLeadSlots(conversation.id);
+  const leadSpinner =
+    leadSlots.slots && (sessionState?.kind === "running" || sessionState?.kind === "starting");
+  // For a lead, "indicator" means a marker in the time slot: a thinking state moved to
+  // the spinner slot (leadSpinner), so it no longer counts.
+  const hasSessionIndicator = (sessionState !== null || showDraftIndicator) && !leadSpinner;
   // The "Show → Updated" timestamp takes the indicator slot only when it's free.
   const show = useContext(SidebarShowContext);
   const showUpdated = show.includes("updated") && !hasSessionIndicator;
   const hasTrailingIndicator = hasSessionIndicator || showSharedIndicator || showUpdated;
   const familyReserve = AeTree.useAeFamilyMarkerReserve(conversation.id);
+  const leadGeometry = aeLeadRowGeometry({
+    shared: showSharedIndicator,
+    wide:
+      sessionState?.kind === "awaiting"
+        ? "pill"
+        : aeIsWideMarker(sessionState)
+          ? sessionState?.kind === "scheduled"
+            ? "scheduled"
+            : "badge"
+          : null,
+    spinner: leadSpinner || leadSlots.foldedRunning,
+  });
   const metaEnvironment = show.includes("environment") ? (
     <SessionEnvironmentLabel conversation={conversation} hostsById={hostsById} />
   ) : null;
@@ -5137,32 +5170,40 @@ function ConversationRowImpl({
         // reserves only what the badge needs — the same width desktop uses at
         // rest, before hover reveals the controls.
         !selectionMode &&
-          (sessionState?.kind === "awaiting"
-            ? showSharedIndicator
-              ? "pr-36"
-              : "pr-29"
-            : aeIsWideMarker(sessionState)
-              ? aeWideMarkerReserve(sessionState, showSharedIndicator)
-              : showUpdated
-                ? showSharedIndicator
-                  ? "pr-18"
-                  : "pr-11"
-                : hasSessionIndicator && showSharedIndicator
-                  ? "pr-14"
-                  : hasTrailingIndicator
-                    ? (familyReserve ?? "pr-8")
-                    : "pr-2"),
+          (leadSlots.slots
+            ? undefined // paddingRight below, from aeLeadRowGeometry
+            : sessionState?.kind === "awaiting"
+              ? showSharedIndicator
+                ? "pr-36"
+                : "pr-29"
+              : aeIsWideMarker(sessionState)
+                ? aeWideMarkerReserve(sessionState, showSharedIndicator)
+                : showUpdated
+                  ? showSharedIndicator
+                    ? "pr-18"
+                    : "pr-11"
+                  : hasSessionIndicator && showSharedIndicator
+                    ? "pr-14"
+                    : hasTrailingIndicator
+                      ? (familyReserve ?? "pr-8")
+                      : "pr-2"),
         // The narrowed reserve must track exactly when the trailing controls
         // appear and the state marker fades — both keyed on `:focus-visible`.
         // `focus-within` also fires for a plain click, which shrank the reserve
         // on the selected row while the marker stayed put, sliding the title
         // under it.
-        !selectionMode && "md:group-hover:pr-20 md:group-has-[:focus-visible]:pr-20",
-        !selectionMode && menuOpen && "md:pr-20",
+        // A lead's slots never move: its hover actions overlay the time column.
+        !selectionMode &&
+          !leadSlots.slots &&
+          "md:group-hover:pr-20 md:group-has-[:focus-visible]:pr-20",
+        !selectionMode && !leadSlots.slots && menuOpen && "md:pr-20",
+        // An open menu drops :hover (it is portaled), so keep the row lit for the fade.
+        !selectionMode && leadSlots.slots && menuOpen && !isActive && "bg-muted dark:bg-muted/50",
         selectionMode && "pr-2 pl-8",
         !selectionMode && isActive && SIDEBAR_ACTIVE_HIGHLIGHT,
         selectionMode && isSelected && SIDEBAR_ACTIVE_HIGHLIGHT,
       )}
+      style={!selectionMode && leadSlots.slots ? { paddingRight: leadGeometry.reserve } : undefined}
       onClick={(e) => {
         recentClickTimesRef.current = [...recentClickTimesRef.current.slice(-1), performance.now()];
         // Swallow the click that trails a drag so it doesn't navigate.
@@ -5217,7 +5258,10 @@ function ConversationRowImpl({
           {hasUnseenMessages && <span className="sr-only"> (unread)</span>}
         </span>
         <AeTree.AeFamilyRaiseMark conversationId={conversation.id} />
-        <AeTree.AeFamilyFold conversationId={conversation.id} />
+        <AeTree.AeFamilyFold
+          conversationId={conversation.id}
+          slotTop={selectionMode ? undefined : overlayTop}
+        />
       </div>
       {/* Row 2: the "Show" metadata, each part omitted when it has no value. */}
       <SessionMetaLine environment={metaEnvironment} repo={metaRepo} branch={metaBranch} />
@@ -5370,14 +5414,16 @@ function ConversationRowImpl({
       ) : hasSessionIndicator ? (
         <span
           className={cn(
-            SESSION_STATE_SLOT_CLASS,
+            leadSlots.slots ? AE_LEAD_SLOT_FADE_OUT : SESSION_STATE_SLOT_CLASS,
             overlayTop,
-            "right-1",
+            leadSlots.slots ? AE_LEAD_TIME_SLOT : "right-1",
             // The wide "awaiting" pill keeps its natural width; every other
             // marker (running/starting/unseen dot, or the draft pencil) sits in
             // the fixed centered box so it lines up under the kebab.
-            isDotMarker(sessionState) && SESSION_STATE_DOT_SLOT_CLASS,
+            isDotMarker(sessionState) && !leadSlots.slots && SESSION_STATE_DOT_SLOT_CLASS,
           )}
+          data-testid={leadSlots.slots ? "ae-lead-time" : undefined}
+          style={leadSlots.slots ? { right: leadGeometry.markerRight } : undefined}
         >
           {sessionState !== null ? (
             <SessionStateBadge state={sessionState} />
@@ -5396,26 +5442,55 @@ function ConversationRowImpl({
         <span
           data-testid="session-row-updated"
           className={cn(
-            SESSION_STATE_SLOT_CLASS,
+            leadSlots.slots ? AE_LEAD_SLOT_FADE_OUT : SESSION_STATE_SLOT_CLASS,
             overlayTop,
-            "right-2 text-sm text-muted-foreground",
+            "text-sm text-muted-foreground",
             // One fixed column, so the times of a family's rows line up.
-            AE_TIME_COLUMN,
+            leadSlots.slots ? AE_LEAD_TIME_SLOT : ["right-2", AE_TIME_COLUMN],
           )}
+          style={leadSlots.slots ? { right: leadGeometry.markerRight } : undefined}
         >
           <SessionUpdatedLabel updatedAt={conversation.updated_at} />
         </span>
       ) : null}
+      {!selectionMode && leadSlots.slots && (leadSpinner || leadSlots.foldedRunning) && (
+        <span
+          data-testid="ae-lead-spinner"
+          className={cn(AE_LEAD_SLOT_FADE_OUT, overlayTop, AE_LEAD_SPINNER_SLOT)}
+          style={{ right: AE_LEAD_SPINNER_RIGHT }}
+        >
+          {leadSpinner && sessionState !== null ? (
+            <SessionStateBadge state={sessionState} />
+          ) : (
+            <span
+              aria-hidden="true"
+              className="size-3 animate-spin rounded-full border-2 border-current border-t-transparent text-muted-foreground motion-reduce:animate-none"
+            />
+          )}
+        </span>
+      )}
       {!selectionMode && showSharedIndicator && (
         <span
           role="img"
           aria-label="Shared session"
           title="Shared with you"
           className={cn(
-            "-translate-y-1/2 pointer-events-none absolute inline-flex h-5 w-6 shrink-0 items-center justify-center text-muted-foreground transition-opacity md:group-hover:opacity-0 md:group-has-[:focus-visible]:opacity-0 md:group-has-[[aria-expanded=true]]:opacity-0",
+            "-translate-y-1/2 pointer-events-none absolute inline-flex h-5 w-6 shrink-0 items-center justify-center text-muted-foreground transition-opacity md:group-hover:opacity-0 md:group-has-[[aria-expanded=true]]:opacity-0",
+            leadSlots.slots ? AE_LEAD_FOCUS_HIDE : "md:group-has-[:focus-visible]:opacity-0",
             overlayTop,
-            hasSessionIndicator ? "right-8" : showUpdated ? "right-11" : "right-1",
+            leadSlots.slots
+              ? undefined
+              : hasSessionIndicator
+                ? "right-8"
+                : showUpdated
+                  ? "right-11"
+                  : "right-1",
           )}
+          style={
+            leadSlots.slots && leadGeometry.sharedRight !== null
+              ? { right: leadGeometry.sharedRight }
+              : undefined
+          }
         >
           <UsersIcon className="size-3.5" aria-hidden="true" />
         </span>
@@ -5431,8 +5506,17 @@ function ConversationRowImpl({
           <ContextMenuTrigger asChild>
             <div
               className={cn(
-                "-translate-y-1/2 absolute right-1 flex items-center gap-0.5",
-                overlayTop,
+                "absolute flex items-center gap-0.5",
+                leadSlots.slots
+                  ? cn(
+                      AE_LEAD_ACTIONS_OVERLAY,
+                      AE_LEAD_FADE_TRIGGERS,
+                      isActive ? AE_LEAD_FADE_ACTIVE : AE_LEAD_FADE_PLAIN,
+                      overlayTop === "top-1/2"
+                        ? "inset-y-0"
+                        : cn("-translate-y-1/2 h-7", overlayTop),
+                    )
+                  : cn("-translate-y-1/2 right-1", overlayTop),
               )}
             >
               {/* Archived rows omit the pin entirely: pinning is meaningless there
@@ -5467,8 +5551,12 @@ function ConversationRowImpl({
                         // display when revealing it.
                         "text-muted-foreground transition-opacity",
                         "hidden md:inline-flex",
+                        leadSlots.slots && AE_LEAD_ACTION_BUTTON,
                         "md:opacity-0 md:group-hover:opacity-100",
-                        "md:group-has-[:focus-visible]:opacity-100 md:group-has-[[aria-expanded=true]]:opacity-100",
+                        leadSlots.slots
+                          ? AE_LEAD_FOCUS_SHOW
+                          : "md:group-has-[:focus-visible]:opacity-100",
+                        "md:group-has-[[aria-expanded=true]]:opacity-100",
                       )}
                       onClick={(e) => {
                         // Keep the toggle click off the surrounding Link (no navigation).
@@ -5506,8 +5594,12 @@ function ConversationRowImpl({
                       className={cn(
                         "text-muted-foreground transition-opacity",
                         "hidden md:inline-flex",
+                        leadSlots.slots && AE_LEAD_ACTION_BUTTON,
                         "md:opacity-0 md:group-hover:opacity-100",
-                        "md:group-has-[:focus-visible]:opacity-100 md:group-has-[[aria-expanded=true]]:opacity-100",
+                        leadSlots.slots
+                          ? AE_LEAD_FOCUS_SHOW
+                          : "md:group-has-[:focus-visible]:opacity-100",
+                        "md:group-has-[[aria-expanded=true]]:opacity-100",
                       )}
                       onClick={(e) => {
                         // Keep the toggle click off the surrounding Link (no navigation).
@@ -5546,7 +5638,11 @@ function ConversationRowImpl({
                     className={cn(
                       "text-muted-foreground transition-opacity",
                       "hidden md:inline-flex",
-                      "md:opacity-0 md:group-hover:opacity-100 md:group-has-[:focus-visible]:opacity-100",
+                      leadSlots.slots && AE_LEAD_ACTION_BUTTON,
+                      "md:opacity-0 md:group-hover:opacity-100",
+                      leadSlots.slots
+                        ? AE_LEAD_FOCUS_SHOW
+                        : "md:group-has-[:focus-visible]:opacity-100",
                       "md:aria-expanded:opacity-100",
                     )}
                     onClick={(e) => {

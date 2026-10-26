@@ -5,6 +5,7 @@
 // and the chevron, so a narrow panel keeps the name readable; the family's cost
 // and open count are on the hover card's lead line (AeSessionHoverStatus.tsx).
 
+import { AE_LEAD_CHEVRON_SLOT } from "@/lib/aeLeadRowSlots";
 import { ArchiveIcon, ChevronDownIcon, ChevronRightIcon, GhostIcon, InfoIcon } from "lucide-react";
 import {
   type KeyboardEvent,
@@ -170,7 +171,7 @@ function stop(event: MouseEvent | KeyboardEvent) {
   event.stopPropagation();
 }
 
-function FoldChevron({ lead }: { lead: AeTreeLead }) {
+function FoldChevron({ lead, slotTop }: { lead: AeTreeLead; slotTop?: string }) {
   if (lead.count === 0) return null;
   const { root } = lead.family;
   const toggle = (event: MouseEvent | KeyboardEvent) => {
@@ -193,7 +194,14 @@ function FoldChevron({ lead }: { lead: AeTreeLead }) {
       data-family={root}
       className={cn(
         // The tap target runs the row's full height on a phone.
-        "relative ml-auto inline-flex h-[18px] min-w-[18px] shrink-0 items-center justify-center gap-0.5 rounded-full px-0.5 before:absolute before:-inset-x-2 before:-inset-y-3 before:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        slotTop !== undefined
+          ? // Its own fixed 20px slot at the row's right edge (aeLeadRowSlots.ts).
+            cn(
+              AE_LEAD_CHEVRON_SLOT,
+              slotTop,
+              "-translate-y-1/2 rounded-full before:absolute before:-inset-x-2 before:-inset-y-3 before:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            )
+          : "relative ml-auto inline-flex h-[18px] min-w-[18px] shrink-0 items-center justify-center gap-0.5 rounded-full px-0.5 before:absolute before:-inset-x-2 before:-inset-y-3 before:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         lead.folded
           ? "bg-foreground/10 text-foreground"
           : "bg-foreground/[0.06] text-muted-foreground",
@@ -207,10 +215,13 @@ function FoldChevron({ lead }: { lead: AeTreeLead }) {
       {lead.folded && lead.needsResponse && (
         <span
           data-testid="ae-family-fold-waiting"
-          className="mr-0.5 size-1.5 rounded-full bg-brand-accent"
+          className={cn(
+            "size-1.5 rounded-full bg-brand-accent",
+            slotTop !== undefined ? "absolute -top-0.5 -right-0.5" : "mr-0.5",
+          )}
         />
       )}
-      {lead.folded && lead.running && (
+      {lead.folded && lead.running && slotTop === undefined && (
         <span
           data-testid="ae-family-fold-running"
           className="mr-0.5 size-2.5 animate-spin rounded-full border-[1.5px] border-current border-t-transparent motion-reduce:animate-none"
@@ -228,12 +239,34 @@ function FoldChevron({ lead }: { lead: AeTreeLead }) {
 const USAGE_MS = 60_000;
 
 /** A listed lead's fold chevron; nothing for a child, its role badge sits before the title. */
-export function AeFamilyFold({ conversationId }: { conversationId: string }) {
+export function AeFamilyFold({
+  conversationId,
+  slotTop,
+}: {
+  conversationId: string;
+  /** The row's overlay top class: puts the chevron in its fixed right-hand slot. */
+  slotTop?: string;
+}) {
   const { tree } = useContext(AeFamilyContext);
   const inFamilies = useContext(InFamilies);
   const lead = inFamilies ? tree?.leads.get(conversationId) : undefined;
   if (!lead || lead.standIn) return null;
-  return <FoldChevron lead={lead} />;
+  return <FoldChevron lead={lead} slotTop={slotTop} />;
+}
+
+/**
+ * Whether this row is a lead with a fold chevron (so it gets the fixed right-hand
+ * slots), and whether a folded-away child is running (the spinner slot shows it).
+ */
+export function useAeLeadSlots(conversationId: string): {
+  slots: boolean;
+  foldedRunning: boolean;
+} {
+  const { tree } = useContext(AeFamilyContext);
+  const inFamilies = useContext(InFamilies);
+  const lead = inFamilies ? tree?.leads.get(conversationId) : undefined;
+  const slots = !!lead && !lead.standIn && lead.count > 0;
+  return { slots, foldedRunning: slots && !!lead?.folded && !!lead?.running };
 }
 
 /** What a child's marks read: its labels, and the model it runs on now once usage lands. */
