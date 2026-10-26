@@ -261,6 +261,7 @@ import {
   useAeFamilyFolds,
   useAeStableTree,
 } from "@/lib/aeFamilyTree";
+import { AE_TIME_COLUMN } from "@/lib/aeFamilyBadge";
 import { useAeFamilyClosed } from "@/lib/aeFamilyClosed";
 import { AeFamilyDot, AeFamilyFilterBar } from "@/shell/AeFamilyDot";
 import * as AeTree from "@/shell/AeFamilyTree";
@@ -5197,6 +5198,7 @@ function ConversationRowImpl({
         <AeTree.AeFamilyTreeIndent conversationId={conversation.id} selectionMode={selectionMode} />
         <AeConversationStatusIcon conversation={conversation} className="mr-1.5" />
         <AeFamilyDot conversationId={conversation.id} />
+        <AeTree.AeFamilyRoleBadge conversationId={conversation.id} />
         <span
           className={cn(
             "relative min-w-0 truncate",
@@ -5208,11 +5210,11 @@ function ConversationRowImpl({
           {label}
           {hasUnseenMessages && <span className="sr-only"> (unread)</span>}
         </span>
+        <AeTree.AeFamilyRaiseMark conversationId={conversation.id} />
         <AeTree.AeFamilyFold conversationId={conversation.id} />
       </div>
       {/* Row 2: the "Show" metadata, each part omitted when it has no value. */}
       <SessionMetaLine environment={metaEnvironment} repo={metaRepo} branch={metaBranch} />
-      <AeTree.AeFamilyRaiseLine conversationId={conversation.id} />
     </Link>
   );
 
@@ -5391,6 +5393,8 @@ function ConversationRowImpl({
             SESSION_STATE_SLOT_CLASS,
             overlayTop,
             "right-2 text-sm text-muted-foreground",
+            // One fixed column, so the times of a family's rows line up.
+            AE_TIME_COLUMN,
           )}
         >
           <SessionUpdatedLabel updatedAt={conversation.updated_at} />

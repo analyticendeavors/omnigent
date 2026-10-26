@@ -291,13 +291,32 @@ describe("Grouping > Family", () => {
     );
     setView({ grouping: "family" });
     renderSidebar();
-    expect(within(rowItem("Escalation tool")).getByTestId("ae-family-role").textContent).toBe(
-      "Builder",
-    );
+    const badge = within(rowItem("Escalation tool")).getByTestId("ae-family-role");
+    expect(badge.textContent).toBe("B");
+    expect(badge.getAttribute("title")).toBe("Builder");
     expect(within(rowItem("Families PR")).queryByTestId("ae-family-role")).toBeNull();
     // Lead plus its three listed sessions at $1.50 each (cost only, as Claude reports).
     const line = await leadLine("Role routing build", "family $6.00");
     expect(line.textContent).toBe("leads 3 sessions, 3 open · family $6.00");
+  });
+
+  it.each([
+    ["planner", "P", "Planner"],
+    ["reviewer", "R", "Reviewer"],
+    ["helper", "H", "Helper"],
+    ["lead", "L", "Lead"],
+  ])("shows %s as the letter %s on a child", (role, letter, name) => {
+    useConvMock.mockImplementation(() =>
+      conversationPage([
+        row("Escalation tool", 60, { "ae.orch": sid("Role routing build"), "ae.role": role }),
+        ...ROWS.slice(1),
+      ]),
+    );
+    setView({ grouping: "family" });
+    renderSidebar();
+    const badge = within(rowItem("Escalation tool")).getByTestId("ae-family-role");
+    expect(badge.textContent).toBe(letter);
+    expect(badge.getAttribute("title")).toBe(name);
   });
 
   it("shows only the name and a bare chevron on the lead row, never a cost or count pill", async () => {
@@ -319,7 +338,7 @@ describe("Grouping > Family", () => {
     expect(link.textContent).toBe("Role routing build");
   });
 
-  describe("raise line", () => {
+  describe("raise arrow", () => {
     const RAISED = {
       "ae.orch": sid("Role routing build"),
       "ae.model_start": "claude-sonnet-5-5|medium",
@@ -344,14 +363,29 @@ describe("Grouping > Family", () => {
       setView({ grouping: "family" });
     }
 
-    it("shows a muted line and the cap chip while the helper runs above its start", async () => {
+    it("shows an amber arrow naming the start and the limit while the helper runs above its start", async () => {
       runsOn("claude-opus-4-8", "high");
       withRaised();
       renderSidebar();
       const line = await within(rowItem("Escalation tool")).findByTestId("ae-family-raise-line");
-      expect(line.textContent).toContain("\u2191 Opus high \u00b7 from Sonnet medium");
-      expect(line.getAttribute("title")).toContain("Raised 1 time");
-      expect(within(line).getByTestId("ae-family-cap-reached")).toBeDefined();
+      expect(line.textContent).toBe("");
+      expect(line.getAttribute("title")).toBe("Raise limit reached (1 of 1)");
+      expect(within(rowItem("Escalation tool")).queryByText(/cap reached/)).toBeNull();
+    });
+
+    it("names where the helper started and the raises used against the limit", async () => {
+      runsOn("claude-opus-4-8", "high");
+      useConvMock.mockImplementation(() =>
+        conversationPage([
+          row("Escalation tool", 60, { ...RAISED, "ae.raise_cap": "2" }),
+          ...ROWS.slice(1),
+        ]),
+      );
+      setView({ grouping: "family" });
+      renderSidebar();
+      const line = await within(rowItem("Escalation tool")).findByTestId("ae-family-raise-line");
+      expect(line.getAttribute("data-cap-reached")).toBe("false");
+      expect(line.getAttribute("title")).toBe("Raised from Sonnet medium (1 of 2)");
     });
 
     it("hides the line once the helper is back at its start", async () => {

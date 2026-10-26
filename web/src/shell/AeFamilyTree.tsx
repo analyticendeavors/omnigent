@@ -15,14 +15,21 @@ import {
 } from "react";
 import { aeAgentRole, aeRoleName } from "@/lib/aeAgentRole";
 import { useAeSessionUsages } from "@/lib/aeAgentUsage";
-import { aeRaiseMarks } from "@/lib/aeModelChange";
 import { AE_FAMILY_COLORS, aeFamilyHint } from "@/lib/aeFamily";
+import {
+  AE_ARROW_UP_ICON,
+  AE_FAMILY_BADGES,
+  aeFamilyBadgeLabel,
+  aeRaiseArrowTitle,
+} from "@/lib/aeFamilyBadge";
 import {
   AE_CLOSED_CAPPED_NOTE,
   aeClosedTitle,
   revealAeFamilyClosed,
   toggleAeFamilyClosed,
 } from "@/lib/aeFamilyClosed";
+import { aeRaiseMarks, parseAeModelStart } from "@/lib/aeModelChange";
+import { AeTablerSvg } from "@/lib/aeTablerIcon";
 import { Link, useParams } from "@/lib/routing";
 import { AeConversationStatusIcon } from "@/components/AeStatusIcon";
 import {
@@ -220,65 +227,83 @@ function FoldChevron({ lead }: { lead: AeTreeLead }) {
 
 const USAGE_MS = 60_000;
 
-/** A listed lead's fold chevron, or a child's role chip, after its title. */
+/** A listed lead's fold chevron; nothing for a child, its role badge sits before the title. */
 export function AeFamilyFold({ conversationId }: { conversationId: string }) {
   const { tree } = useContext(AeFamilyContext);
   const inFamilies = useContext(InFamilies);
   const lead = inFamilies ? tree?.leads.get(conversationId) : undefined;
-  if (!lead) {
-    const row = inFamilies ? tree?.rows.get(conversationId) : undefined;
-    const labels = row?.family.members.find((m) => m.id === conversationId)?.labels;
-    const role = row && row.depth > 0 ? aeAgentRole({ labels }) : null;
-    return role ? (
-      <span
-        data-testid="ae-family-role"
-        className="ml-auto shrink-0 rounded bg-foreground/[0.07] px-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-      >
-        {aeRoleName(role)}
-      </span>
-    ) : null;
-  }
-  if (lead.standIn) return null;
+  if (!lead || lead.standIn) return null;
   return <FoldChevron lead={lead} />;
 }
 
-/**
- * A raised helper's second line: where it runs now and where it started, with a cap chip.
- * It reads usage only for a member with `ae.model_start`, under the hover card's query key.
- */
-export function AeFamilyRaiseLine({ conversationId }: { conversationId: string }) {
+/** What a child's marks read: its labels, and the model it runs on now once usage lands. */
+function useChildMarks(conversationId: string) {
   const { tree } = useContext(AeFamilyContext);
   const inFamilies = useContext(InFamilies);
   const row = inFamilies ? tree?.rows.get(conversationId) : undefined;
   const labels = row?.family.members.find((m) => m.id === conversationId)?.labels;
-  const tracked = row !== undefined && row.depth > 0 && !!labels?.["ae.model_start"];
+  const child = row !== undefined && row.depth > 0;
+  const tracked = child && !!labels?.["ae.model_start"];
+  // Under the hover card's query key, so the row adds no request of its own.
   const usage = useAeSessionUsages([{ id: conversationId, stamp: 0 }], {
     enabled: tracked,
     live: tracked,
     staleMs: USAGE_MS,
     pollMs: USAGE_MS,
   }).get(conversationId);
+  return { child, tracked, labels, usage };
+}
+
+/** A child's one-letter role badge before its title; nothing for an unknown role. */
+export function AeFamilyRoleBadge({ conversationId }: { conversationId: string }) {
+  const { child, labels, usage } = useChildMarks(conversationId);
+  const role = child ? aeAgentRole({ labels }) : null;
+  const badge = role ? AE_FAMILY_BADGES[role] : undefined;
+  if (!role || !badge) return null;
+  const now =
+    usage && (usage.model || usage.effort) ? usage : parseAeModelStart(labels?.["ae.model_start"]);
+  const label = aeFamilyBadgeLabel(
+    aeRoleName(role),
+    now ? { model: now.model ?? null, effort: now.effort ?? null } : null,
+  );
+  return (
+    <span
+      role="img"
+      data-testid="ae-family-role"
+      data-role={role}
+      title={label}
+      className={cn(
+        "mr-1.5 grid size-4 shrink-0 place-items-center rounded-[4px] text-[10px] font-bold leading-none",
+        badge.className,
+      )}
+    >
+      {badge.letter}
+    </span>
+  );
+}
+
+/**
+ * A raised helper's small amber up arrow after its title. It reads usage only for a
+ * member with `ae.model_start`, under the hover card's query key.
+ */
+export function AeFamilyRaiseMark({ conversationId }: { conversationId: string }) {
+  const { tracked, labels, usage } = useChildMarks(conversationId);
   if (!tracked) return null;
   // Until usage lands the current point is unknown; show nothing rather than guess.
   if (!usage || (!usage.model && !usage.effort)) return null;
   const marks = aeRaiseMarks(labels, { model: usage.model, effort: usage.effort });
   if (!marks.raised) return null;
+  const title = aeRaiseArrowTitle(labels, marks.capReached);
   return (
-    <div
-      className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground"
+    <span
+      role="img"
       data-testid="ae-family-raise-line"
-      title={marks.title}
+      data-cap-reached={marks.capReached}
+      title={title}
+      className="ml-1 shrink-0 text-amber-600 dark:text-amber-400"
     >
-      <span className="min-w-0 truncate">{marks.line}</span>
-      {marks.capReached && (
-        <span
-          data-testid="ae-family-cap-reached"
-          className="shrink-0 rounded bg-foreground/[0.07] px-1.5 text-[10px]"
-        >
-          cap reached
-        </span>
-      )}
-    </div>
+      <AeTablerSvg node={AE_ARROW_UP_ICON} className="size-3" />
+    </span>
   );
 }
 
