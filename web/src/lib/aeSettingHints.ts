@@ -47,7 +47,7 @@ export const AE_SETTING_HINTS = {
   },
   "roles.reviewer": {
     label: "Reviewer",
-    hint: "Checks finished work. Up to 3 reviewers, each a model and effort or another agent. Agents are skipped if Helpers is Own subagents only.",
+    hint: "Checks finished work. Up to 3 reviewers, each a Claude or Codex model and effort. Codex is skipped if Helpers is Own subagents only.",
     source: "tooltip",
   },
   "roles.builder": {
@@ -62,7 +62,7 @@ export const AE_SETTING_HINTS = {
   },
   "reviewer.add": {
     label: "Adding reviewers",
-    hint: "Adds a reviewer, up to 3. The new one is another agent if one is ready, else a model not used yet. The x removes one.",
+    hint: "Adds a reviewer, up to 3. The new one is Codex on its Sol model if ready, else a Claude model not used yet. The x removes one.",
     source: "tooltip",
   },
   "rules.raise_or_lower": {
@@ -93,6 +93,16 @@ export const AE_SETTING_HINTS = {
   "rules.reviewer_unavailable": {
     label: "A reviewer is offline or not set up",
     hint: "Run the rest, tell me (default): the others run and you are told. Ask me: the lead asks you before the review.",
+    source: "tooltip",
+  },
+  "nudge.update": {
+    label: "Update to a newer model",
+    hint: "Switches this row to the newer model in the same family and keeps its effort. Undo puts it back. Nothing changes until you click.",
+    source: "tooltip",
+  },
+  "nudge.update_all": {
+    label: "Update all",
+    hint: "Switches every listed row to its newer model, each keeping its effort. Undo all puts them back. Nothing is saved until you press Save.",
     source: "tooltip",
   },
   "roles.apply_start_on": {

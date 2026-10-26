@@ -7,7 +7,9 @@
 
 import type { Host } from "@/hooks/useHosts";
 import {
+  AE_AGENT_EFFORTS,
   AE_ROLE_EFFORTS,
+  type AeAgentEffort,
   type AeRoleEffort,
   type AeRoleSetting,
   aeModelLabel,
@@ -36,7 +38,7 @@ export interface AeReviewerAgentSlot {
   /** Null: the agent's default model. */
   model: string | null;
   /** Null: the agent's default effort. */
-  effort: AeRoleEffort | null;
+  effort: AeAgentEffort | null;
 }
 
 export type AeReviewerSlot =
@@ -83,6 +85,10 @@ function isEffort(value: unknown): value is AeRoleEffort {
   return (AE_ROLE_EFFORTS as readonly unknown[]).includes(value);
 }
 
+function isAgentEffort(value: unknown): value is AeAgentEffort {
+  return (AE_AGENT_EFFORTS as readonly unknown[]).includes(value);
+}
+
 function parseSlot(value: unknown, index: number): AeReviewerSlot | null {
   if (!isObject(value)) return null;
   if (value.mode === "auto") return index === 0 ? { mode: "auto" } : null;
@@ -98,14 +104,14 @@ function parseSlot(value: unknown, index: number): AeReviewerSlot | null {
     if (typeof name !== "string" || !name || Array.from(name).length > AE_AGENT_NAME_MAX)
       return null;
     if (model != null && (typeof model !== "string" || !model)) return null;
-    if (effort != null && !isEffort(effort)) return null;
+    if (effort != null && !isAgentEffort(effort)) return null;
     return {
       mode: "agent",
       agent,
       agent_name: typeof agentName === "string" ? agentName : null,
       name,
       model: typeof model === "string" ? model : null,
-      effort: isEffort(effort) ? effort : null,
+      effort: isAgentEffort(effort) ? effort : null,
     };
   }
   return null;
@@ -184,6 +190,25 @@ export function aeReviewerAgentStatus(
   return { status: option.readiness.state === "setup-required" ? "setup" : "offline", option };
 }
 
+/** Whether an agent is the Codex one: by its built-in id or name, else by its harness. */
+export function aeIsCodexAgent(agent: { id: string; name: string; harness?: string | null }) {
+  return (
+    agent.id === AE_CODEX_AGENT_ID ||
+    agent.name === AE_CODEX_AGENT_NAME ||
+    nativeCodingAgentForHarness(agent.harness)?.key === "codex"
+  );
+}
+
+/** Whether a stored agent slot runs on Codex; `option` is the listed agent it names, when found. */
+export function aeIsCodexSlot(
+  slot: Pick<AeReviewerAgentSlot, "agent" | "agent_name">,
+  option: AeTeamOption | null,
+): boolean {
+  return option
+    ? aeIsCodexAgent(option.agent)
+    : slot.agent === AE_CODEX_AGENT_ID || slot.agent_name === AE_CODEX_AGENT_NAME;
+}
+
 /** The registered name to store on a slot, or null when it is not one the server accepts. */
 export function aeAgentNameOf(name: string): string | null {
   return AGENT_NAME_PATTERN.test(name) ? name : null;
@@ -218,14 +243,15 @@ export function aeReviewerSlotIs(
 export function aeAgentEfforts(
   harness: string | null | undefined,
   modelLevels: readonly string[] = [],
-): AeRoleEffort[] {
+): AeAgentEffort[] {
   const key = nativeCodingAgentForHarness(harness)?.key;
   const name = (harness ?? "").toLowerCase();
-  let levels: readonly AeRoleEffort[] = AE_ROLE_EFFORTS;
+  let levels: readonly AeAgentEffort[] = AE_ROLE_EFFORTS;
   if (key === "antigravity" || name.includes("gemini")) levels = ["low", "medium", "high"];
   else if (name.includes("copilot")) levels = ["low", "medium", "high", "xhigh"];
   if ((key === "codex" || key === "devin") && modelLevels.length > 0) {
-    const listed = levels.filter((e) => modelLevels.includes(e));
+    const pool = key === "codex" ? AE_AGENT_EFFORTS : levels;
+    const listed = pool.filter((e) => modelLevels.includes(e));
     if (listed.length > 0) return listed;
   }
   return [...levels];

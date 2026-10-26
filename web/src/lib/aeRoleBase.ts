@@ -6,6 +6,10 @@ import { aeClaudeVersionLabel } from "@/lib/aeClaudeModels";
 export const AE_ROLE_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export type AeRoleEffort = (typeof AE_ROLE_EFFORTS)[number];
 
+/** An agent reviewer slot also stores "ultra", which some Codex models offer above max. */
+export const AE_AGENT_EFFORTS = [...AE_ROLE_EFFORTS, "ultra"] as const;
+export type AeAgentEffort = (typeof AE_AGENT_EFFORTS)[number];
+
 export type AeRoleSetting =
   { mode: "auto" } | { mode: "session" } | { mode: "fixed"; model: string; effort: AeRoleEffort };
 

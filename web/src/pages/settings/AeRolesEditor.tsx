@@ -2,11 +2,15 @@
 // each role Auto, a model and effort, or for the Lead the session's own model;
 // below it are the preset's model change rules. Edits stay local until Save.
 
+import { useMemo } from "react";
 import { AlertTriangleIcon, CopyIcon, PencilIcon, Trash2Icon } from "lucide-react";
 import { AeHint } from "@/components/AeHint";
 import { Button } from "@/components/ui/button";
 import type { AeSettingHintId } from "@/lib/aeSettingHints";
 import type { AeRoleModelChoice } from "@/hooks/useAeRoleModels";
+import { useAeCodexCatalog } from "@/hooks/useAeCodexCatalog";
+import { useAeModelUpdates } from "@/hooks/useAeModelUpdates";
+import { useAeReviewerAgents } from "@/hooks/useAeReviewerAgents";
 import { aeClaudeCodeDefaultEffort } from "@/lib/aeEffortDefault";
 import {
   AE_AUTO_RAISES_MAX,
@@ -28,7 +32,9 @@ import {
 import { comparableModelId } from "@/lib/codexNativeModels";
 import { cn } from "@/lib/utils";
 import { AeEffortBar, AeRolePresetTile, AeSegmented, AeStepper } from "./AeRolesControls";
-import { AeReviewerRows, AeReviewSettings } from "./AeReviewerRows";
+import { aeReviewerAgents } from "@/lib/aeReviewers";
+import { AeUpdateBanner, AeUpdateChip } from "./AeModelUpdates";
+import { AeReviewerRowsView, AeReviewSettings } from "./AeReviewerRows";
 
 export type { AeRoleModelChoice } from "@/hooks/useAeRoleModels";
 
@@ -57,12 +63,15 @@ export function AeRoleRow({
   models,
   onChange,
   disabled,
+  chip = null,
 }: {
   role: AeRoleId;
   setting: AeRoleSetting;
   models: readonly AeRoleModelChoice[];
   onChange: (setting: AeRoleSetting) => void;
   disabled: boolean;
+  /** The update chip, on the bar's line. */
+  chip?: React.ReactNode;
 }) {
   const { label, hint } = AE_ROLE_LABELS[role];
   const fixed = setting.mode === "fixed" ? setting : null;
@@ -126,7 +135,7 @@ export function AeRoleRow({
           ))}
         </select>
       </label>
-      <div className="col-start-2 @lg/roles:col-start-3">
+      <div className="col-start-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 @lg/roles:col-start-3 @[480px]/roles:flex-nowrap">
         {fixed ? (
           <AeEffortBar
             role={label}
@@ -139,6 +148,7 @@ export function AeRoleRow({
             {setting.mode === "session" ? "The session's model and effort" : "The lead chooses"}
           </span>
         )}
+        {chip}
       </div>
     </div>
   );
@@ -222,13 +232,26 @@ export function AeRolesEditor({
     onChange({ ...draft, roles: { ...draft.roles, [role]: setting } });
   const setRules = (rules: Partial<AeRoleRules>) =>
     onChange({ ...draft, rules: { ...draft.rules, ...rules } });
+  // The update nudge: a chip per row on an older model, never applied without a click.
+  const agents = useAeReviewerAgents(
+    undefined,
+    aeReviewerAgents(draft.roles.reviewer).map((r) => r.slot.agent),
+  );
+  const codex = useAeCodexCatalog(agents);
+  const claudeIds = useMemo(() => models.map((m) => m.value), [models]);
+  const updates = useAeModelUpdates(preset.id, draft.roles, claudeIds, codex.rows, (roles) =>
+    onChange({ ...draft, roles }),
+  );
   return (
     <div data-testid="ae-roles-editor" className="flex flex-col">
       <div className="flex flex-wrap items-start justify-between gap-3 pb-3">
-        <div className="flex min-w-0 items-center gap-3">
+        <div className="flex min-w-0 flex-[1_1_18rem] items-center gap-3">
           <AeRolePresetTile icon={preset.icon} color={preset.color} size="lg" />
           <div className="min-w-0">
-            <h2 className="truncate text-base font-semibold">{preset.title}</h2>
+            <div className="flex min-w-0 items-center gap-3">
+              <h2 className="truncate text-base font-semibold">{preset.title}</h2>
+              <AeUpdateBanner state={updates} disabled={saving} />
+            </div>
             <p className="text-xs text-muted-foreground">
               {isStarter ? "Starter" : "Yours"}
               {isDefault ? " · your default" : ""}
@@ -282,12 +305,14 @@ export function AeRolesEditor({
       <div role="group" aria-label="Roles" className="@container/roles">
         {AE_ROLE_IDS.map((role) =>
           role === "reviewer" ? (
-            <AeReviewerRows
+            <AeReviewerRowsView
               key={role}
               setting={draft.roles.reviewer}
               models={models}
               onChange={(reviewer) => onChange({ ...draft, roles: { ...draft.roles, reviewer } })}
               disabled={saving}
+              agents={agents}
+              updates={updates}
             />
           ) : (
             <AeRoleRow
@@ -297,6 +322,7 @@ export function AeRolesEditor({
               models={models}
               onChange={(setting) => setRole(role, setting)}
               disabled={saving}
+              chip={<AeUpdateChip rowKey={role} state={updates} disabled={saving} />}
             />
           ),
         )}

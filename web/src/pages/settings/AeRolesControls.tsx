@@ -174,19 +174,29 @@ export function AeStepper({
   );
 }
 
-/** Five effort bars, Low to Max, as a radio group. */
-export function AeEffortBar({
+/**
+ * Effort bars as a radio group: the five levels Low to Max, or the `levels` a
+ * model offers. A null `effort` (an agent on its own default) fills no bar.
+ */
+export function AeEffortBar<T extends string = AeRoleEffort>({
   role,
   effort,
   onChange,
   disabled,
+  levels = AE_ROLE_EFFORTS as unknown as readonly T[],
+  emptyLabel = "Default",
+  unavailable = null,
 }: {
   role: string;
-  effort: AeRoleEffort;
-  onChange: (effort: AeRoleEffort) => void;
+  effort: T | null;
+  onChange: (effort: T) => void;
   disabled: boolean;
+  levels?: readonly T[];
+  emptyLabel?: string;
+  /** A stored level the model no longer offers: shown as the last step, marked so. */
+  unavailable?: T | null;
 }) {
-  const level = AE_ROLE_EFFORTS.indexOf(effort);
+  const level = effort ? levels.indexOf(effort) : -1;
   return (
     <div className="flex items-center gap-2">
       <div
@@ -203,20 +213,20 @@ export function AeEffortBar({
           if (!step) return;
           e.preventDefault();
           if (disabled) return;
-          const next = Math.max(0, Math.min(AE_ROLE_EFFORTS.length - 1, level + step));
-          onChange(AE_ROLE_EFFORTS[next]);
+          const next = Math.max(0, Math.min(levels.length - 1, level + step));
+          onChange(levels[next]);
           e.currentTarget.querySelectorAll<HTMLButtonElement>("[role=radio]")[next]?.focus();
         }}
       >
-        {AE_ROLE_EFFORTS.map((value, i) => (
+        {levels.map((value, i) => (
           <button
             key={value}
             type="button"
             role="radio"
             aria-checked={value === effort}
             disabled={disabled}
-            aria-label={aeClaudeEffortLabel(value) ?? value}
-            tabIndex={value === effort ? 0 : -1}
+            aria-label={`${aeClaudeEffortLabel(value) ?? value}${value === unavailable ? " (unavailable)" : ""}`}
+            tabIndex={value === effort || (level < 0 && i === 0) ? 0 : -1}
             onClick={() => onChange(value)}
             className={cn(
               "h-4 w-2 rounded-[2px] focus-visible:outline-2 focus-visible:outline-ring",
@@ -225,7 +235,11 @@ export function AeEffortBar({
           />
         ))}
       </div>
-      <span className="w-10 text-xs text-muted-foreground">{aeClaudeEffortLabel(effort)}</span>
+      <span className="min-w-10 text-xs whitespace-nowrap text-muted-foreground">
+        {(effort &&
+          `${aeClaudeEffortLabel(effort)}${effort === unavailable ? " (unavailable)" : ""}`) ||
+          emptyLabel}
+      </span>
     </div>
   );
 }
