@@ -128,14 +128,19 @@ function rowNames(): string[] {
   );
 }
 
-/** Hovers a lead's row and returns its hover card's lead line, once it reads `text`. */
-async function leadLine(name: string, text: string): Promise<HTMLElement> {
+/**
+ * Hovers a lead's row and returns its hover card's family block, once its
+ * `field` (sessions or spend) reads `text`, label and value run together.
+ */
+async function familyBlock(name: string, field: string, text: string): Promise<HTMLElement> {
   const link = rowItem(name).querySelector<HTMLElement>(`a[href="/c/${sid(name)}"]`)!;
   fireEvent.pointerMove(link, { pointerType: "mouse" });
   const card = await screen.findByTestId("session-tooltip-content");
-  const line = await within(card).findByTestId("ae-hover-lead-line");
-  await waitFor(() => expect(line.textContent).toContain(text));
-  return line;
+  const block = await within(card).findByTestId("ae-hover-family");
+  await waitFor(() =>
+    expect(within(block).queryByTestId(`ae-hover-family-${field}`)?.textContent).toBe(text),
+  );
+  return block;
 }
 
 function dotOf(name: string): HTMLElement | null {
@@ -296,8 +301,10 @@ describe("Grouping > Family", () => {
     expect(badge.getAttribute("title")).toBe("Builder");
     expect(within(rowItem("Families PR")).queryByTestId("ae-family-role")).toBeNull();
     // Lead plus its three listed sessions at $1.50 each (cost only, as Claude reports).
-    const line = await leadLine("Role routing build", "family $6.00");
-    expect(line.textContent).toBe("leads 3 sessions, 3 open · family $6.00");
+    const block = await familyBlock("Role routing build", "spend", "Cost$6.00");
+    expect(within(block).getByTestId("ae-hover-family-sessions").textContent).toBe(
+      "Sessions3, 3 open",
+    );
   });
 
   it.each([
@@ -330,7 +337,7 @@ describe("Grouping > Family", () => {
     setView({ grouping: "family" });
     renderSidebar();
     const lead = rowItem("Role routing build");
-    await leadLine("Role routing build", "family $4.00");
+    await familyBlock("Role routing build", "spend", "Cost$4.00");
     const chevron = within(lead).getByTestId("ae-family-fold");
     expect(chevron.textContent).toBe("");
     expect(chevron.getAttribute("aria-label")).toBe("Hide 3 sessions");
@@ -445,16 +452,16 @@ describe("Grouping > Family", () => {
       window.localStorage.setItem("omnigent:ae-spend-display", "tokens");
       tokenUsage();
       renderSidebar();
-      await leadLine("Role routing build", "family 400k tokens");
+      await familyBlock("Role routing build", "spend", "Tokens400k");
     });
 
     it("shows no family total on the hover card when off", async () => {
       window.localStorage.setItem("omnigent:ae-spend-display", "off");
       tokenUsage();
       renderSidebar();
-      const line = await leadLine("Role routing build", "leads 3 sessions, 3 open");
+      const block = await familyBlock("Role routing build", "sessions", "Sessions3, 3 open");
       await waitFor(() => expect(mocks.fetch).toHaveBeenCalled());
-      expect(line.textContent).not.toContain("family");
+      expect(within(block).queryByTestId("ae-hover-family-spend")).toBeNull();
     });
   });
 
@@ -475,7 +482,7 @@ describe("Grouping > Family", () => {
     );
     setView({ grouping: "family" });
     renderSidebar();
-    await leadLine("Role routing build", "family 400k tokens");
+    await familyBlock("Role routing build", "spend", "Tokens400k");
   });
 
   it("folds a family from the lead's chevron and remembers it", () => {
@@ -527,7 +534,7 @@ describe("Grouping > Family", () => {
       view.rerenderSidebar();
       expect(closedNames()).toEqual(["Old helper"]);
       expect(JSON.parse(localStorage.getItem("omnigent:ae-family-closed-open")!)).toEqual([lead]);
-      await leadLine("Role routing build", "leads 5 sessions, 4 open");
+      await familyBlock("Role routing build", "sessions", "Sessions5, 4 open");
     });
 
     it("counts archived children and lists them with the open group", async () => {

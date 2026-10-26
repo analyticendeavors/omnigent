@@ -4,6 +4,11 @@ import { cleanup, render as rtlRender, screen, waitFor } from "@testing-library/
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
+// The family block names a lead's preset from the roles document.
+vi.mock("@/hooks/useAeRoles", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  useAeRoles: () => ({ data: { presets: [{ id: "balanced", title: "Balanced build preset" }] } }),
+}));
 
 import { authenticatedFetch } from "@/lib/identity";
 import { aeFamilies } from "@/lib/aeFamily";
@@ -324,10 +329,39 @@ describe("AeSessionHoverStatus", () => {
         </AeFamilyContext.Provider>,
       );
       await waitFor(() =>
-        expect(screen.getByTestId("ae-hover-lead-line")).toHaveTextContent(
-          "leads 1 session, 1 open · family 232.8k tokens",
-        ),
+        expect(screen.getByTestId("ae-hover-family-spend").textContent).toBe("Tokens232.8k"),
       );
+      expect(screen.getByTestId("ae-hover-family-sessions").textContent).toBe("Sessions1, 1 open");
+      // The family block sits above the status block.
+      const family = screen.getByTestId("ae-hover-family");
+      expect(
+        family.compareDocumentPosition(screen.getByTestId("ae-hover-status")) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(screen.queryByTestId("ae-hover-role-line")).toBeNull();
+    });
+
+    it("names a lead's preset, in full on hover, and only when the preset is known", async () => {
+      answerUsage();
+      const view = familyView([row("lead", {}, "PR3 lead"), row("a", { "ae.orch": "lead" }, "A")]);
+      const lead = (preset: string) => (
+        <AeFamilyContext.Provider value={view}>
+          <AeSessionHoverStatus
+            sessionId="lead"
+            state={{ kind: "idle" } as never}
+            updatedAt={NOW}
+            labels={{ "ae.preset": preset }}
+          />
+        </AeFamilyContext.Provider>
+      );
+      const known = render(lead("balanced"));
+      const preset = screen.getByTestId("ae-hover-family-preset");
+      expect(preset.textContent).toBe("PresetBalanced build preset");
+      expect(preset).toHaveAttribute("title", "Balanced build preset");
+      known.unmount();
+      render(lead("gone"));
+      expect(screen.getByTestId("ae-hover-family")).toBeInTheDocument();
+      expect(screen.queryByTestId("ae-hover-family-preset")).toBeNull();
     });
 
     it("shows a lead's session count and family total", async () => {
@@ -349,10 +383,9 @@ describe("AeSessionHoverStatus", () => {
         </AeFamilyContext.Provider>,
       );
       await waitFor(() =>
-        expect(screen.getByTestId("ae-hover-lead-line")).toHaveTextContent(
-          "leads 2 sessions, 2 open · family $4.92",
-        ),
+        expect(screen.getByTestId("ae-hover-family-spend").textContent).toBe("Cost$4.92"),
       );
+      expect(screen.getByTestId("ae-hover-family-sessions").textContent).toBe("Sessions2, 2 open");
     });
 
     it("adds no line to a plain session", () => {
@@ -366,7 +399,7 @@ describe("AeSessionHoverStatus", () => {
         />,
       );
       expect(screen.queryByTestId("ae-hover-role-line")).toBeNull();
-      expect(screen.queryByTestId("ae-hover-lead-line")).toBeNull();
+      expect(screen.queryByTestId("ae-hover-family")).toBeNull();
     });
   });
 });

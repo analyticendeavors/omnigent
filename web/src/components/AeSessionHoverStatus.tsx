@@ -3,19 +3,14 @@
 // question, agents or last reply fetched only while the card is open.
 
 import { useQuery } from "@tanstack/react-query";
-import { useContext, useEffect, useState } from "react";
+import { type ReactNode, useContext, useEffect, useState } from "react";
 import { RunningDot } from "@/components/RunningDot";
 import { type ChildSessionInfo, fetchChildSessions } from "@/hooks/useChildSessions";
 import type { SessionState } from "@/hooks/useSessionState";
 import { useAeRoles } from "@/hooks/useAeRoles";
 import { aeAgentRole, aeFormatCost, aeFormatTokens, aeRoleName } from "@/lib/aeAgentRole";
-import {
-  AE_MODEL_FAMILY_BG,
-  type AeSessionUsage,
-  aeModelFamily,
-  useAeSessionUsages,
-} from "@/lib/aeAgentUsage";
-import { aeOrchParent } from "@/lib/aeFamily";
+import { AE_MODEL_FAMILY_BG, aeModelFamily, useAeSessionUsages } from "@/lib/aeAgentUsage";
+import { type AeFamily, aeOrchParent } from "@/lib/aeFamily";
 import { aeIsClosedMember } from "@/lib/aeFamilyClosed";
 import { aeSpendLabel, useAeSpendDisplay } from "@/lib/aeSpendDisplay";
 import { AeFamilyContext } from "@/lib/aeFamilyView";
@@ -115,36 +110,110 @@ function RunningAgents({ sessionId, updatedAt }: { sessionId: string; updatedAt:
   );
 }
 
-function LeadLine({
-  labels,
-  count,
-  open,
-  usage,
+/** One label and value row of the family block, as the card's details rows read. */
+function FamilyRow({
+  label,
+  testId,
+  title,
+  children,
 }: {
-  labels: Record<string, string> | undefined;
-  count: number;
-  /** Sessions not closed (reference or archived); the lead row itself shows no count. */
-  open: number;
-  usage: ReadonlyMap<string, AeSessionUsage>;
+  label: string;
+  testId: string;
+  title?: string;
+  children: ReactNode;
 }) {
-  const roles = useAeRoles();
-  const spend = aeSpendLabel(usage.values(), useAeSpendDisplay());
-  const presetId = labels?.["ae.preset"];
-  const title = roles.data?.presets.find((p) => p.id === presetId)?.title ?? null;
-  const parts = [
-    title,
-    `leads ${count} session${count === 1 ? "" : "s"}, ${open} open`,
-    spend ? `family ${spend.long}` : null,
-  ].filter(Boolean);
   return (
-    // Wraps rather than truncates, so the family total at the end stays readable.
-    <p className="text-xs text-muted-foreground" data-testid="ae-hover-lead-line">
-      {parts.join(" · ")}
-    </p>
+    <div data-testid={testId} className="flex items-center justify-between gap-3" title={title}>
+      <span className="shrink-0 text-muted-foreground">{label}</span>
+      <span className="min-w-0 truncate tabular-nums">{children}</span>
+    </div>
   );
 }
 
-/** Third line: a started session's role, model and use, or a lead's preset and family total. */
+/**
+ * A lead's family, as its own block above the status (2026-10-26, replacing
+ * the grey "leads N sessions · family X" line): its preset, its sessions with
+ * how many are open, and the family total as Spend shows sets it. The lead row
+ * itself shows only its name (patch 0184), so this is where the counts live.
+ */
+function AeFamilyBlock({
+  sessionId,
+  labels,
+  updatedAt,
+}: {
+  sessionId: string;
+  labels: Record<string, string> | undefined;
+  updatedAt: number;
+}) {
+  const { families } = useContext(AeFamilyContext);
+  const familyRole = families.byRow.get(sessionId);
+  const lead =
+    familyRole?.isLead === true && familyRole.family.members.length > 1 ? familyRole.family : null;
+  // Its own component, so a session that leads nothing reads no roles or usage.
+  return lead ? (
+    <FamilyBlockBody sessionId={sessionId} lead={lead} labels={labels} updatedAt={updatedAt} />
+  ) : null;
+}
+
+function FamilyBlockBody({
+  sessionId,
+  lead,
+  labels,
+  updatedAt,
+}: {
+  sessionId: string;
+  lead: AeFamily;
+  labels: Record<string, string> | undefined;
+  updatedAt: number;
+}) {
+  const { tree } = useContext(AeFamilyContext);
+  const roles = useAeRoles();
+  const mode = useAeSpendDisplay();
+  // A lead's total is its family's sessions, each read once.
+  const usage = useAeSessionUsages(
+    lead.members.map((m) => ({ id: m.id, stamp: m.id === sessionId ? updatedAt : 0 })),
+  );
+  // Grouping > Family also counts archived children, as its "N closed" row does.
+  const treeLead = tree?.leads.get(sessionId);
+  const others = lead.members.filter((m) => m.id !== sessionId);
+  const count = treeLead?.count ?? others.length;
+  const open = treeLead
+    ? (treeLead.closed?.open ?? treeLead.count)
+    : others.filter((m) => !aeIsClosedMember(m)).length;
+  const spend = aeSpendLabel(usage.values(), mode);
+  const presetId = labels?.["ae.preset"];
+  const preset = roles.data?.presets.find((p) => p.id === presetId)?.title ?? null;
+  return (
+    <div
+      className="mt-2.5 flex flex-col gap-1 border-t border-border pt-2.5 text-sm"
+      data-testid="ae-hover-family"
+    >
+      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        Family
+      </p>
+      {preset && (
+        // Truncates in the narrow card; the title holds the whole name.
+        <FamilyRow label="Preset" testId="ae-hover-family-preset" title={preset}>
+          {preset}
+        </FamilyRow>
+      )}
+      <FamilyRow label="Sessions" testId="ae-hover-family-sessions">
+        {count}, {open} open
+      </FamilyRow>
+      {spend && (
+        <FamilyRow
+          label={spend.unit === "estimated" ? "Cost" : "Tokens"}
+          testId="ae-hover-family-spend"
+          title={spend.title}
+        >
+          {spend.long.replace(/ tokens$/, "")}
+        </FamilyRow>
+      )}
+    </div>
+  );
+}
+
+/** Third line: a started session's role, model and use. A lead's family: `AeFamilyBlock`. */
 function AeRoleLine({
   sessionId,
   labels,
@@ -154,30 +223,19 @@ function AeRoleLine({
   labels: Record<string, string> | undefined;
   updatedAt: number;
 }) {
-  const { families, tree } = useContext(AeFamilyContext);
+  const { families } = useContext(AeFamilyContext);
   const mode = useAeSpendDisplay();
   const role = aeAgentRole({ labels });
   const familyRole = families.byRow.get(sessionId);
   const started = role !== null || aeOrchParent(labels) !== null;
-  const lead =
-    familyRole?.isLead === true && familyRole.family.members.length > 1 ? familyRole.family : null;
-  // A lead's total is its family's sessions, each read once; a child shows its own use.
-  const ids = lead ? lead.members.map((m) => m.id) : started ? [sessionId] : [];
+  const lead = familyRole?.isLead === true && familyRole.family.members.length > 1;
+  // A child shows its own use; a lead's family total is AeFamilyBlock's.
+  const ids = !lead && started ? [sessionId] : [];
   const usage = useAeSessionUsages(
     ids.map((id) => ({ id, stamp: id === sessionId ? updatedAt : 0 })),
     { enabled: ids.length > 0 },
   );
-  if (lead) {
-    // Grouping > Family also counts archived children, as its "N closed" row does.
-    const treeLead = tree?.leads.get(sessionId);
-    const others = lead.members.filter((m) => m.id !== sessionId);
-    const count = treeLead?.count ?? others.length;
-    const open = treeLead
-      ? (treeLead.closed?.open ?? treeLead.count)
-      : others.filter((m) => !aeIsClosedMember(m)).length;
-    return <LeadLine labels={labels} count={count} open={open} usage={usage} />;
-  }
-  if (!started) return null;
+  if (lead || !started) return null;
   const own = usage.get(sessionId);
   const ownSpend = own ? aeSpendLabel([own], mode) : null;
   const detail = [
@@ -320,13 +378,16 @@ export function AeSessionHoverStatus({
   }
 
   return (
-    <div
-      className="mt-2.5 flex flex-col gap-1 border-t border-border pt-2.5"
-      data-testid="ae-hover-status"
-      data-kind={kind}
-    >
-      {body}
-      <AeRoleLine sessionId={sessionId} labels={labels} updatedAt={updatedAt} />
-    </div>
+    <>
+      <AeFamilyBlock sessionId={sessionId} labels={labels} updatedAt={updatedAt} />
+      <div
+        className="mt-2.5 flex flex-col gap-1 border-t border-border pt-2.5"
+        data-testid="ae-hover-status"
+        data-kind={kind}
+      >
+        {body}
+        <AeRoleLine sessionId={sessionId} labels={labels} updatedAt={updatedAt} />
+      </div>
+    </>
   );
 }
