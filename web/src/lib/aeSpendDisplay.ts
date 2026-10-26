@@ -1,5 +1,5 @@
 // What the spend pills show (omnigent-ae, 2026-10-24): tokens, the estimated
-// cost, or nothing. Device-local. Tokens are the default because an OAuth
+// cost, both, or nothing. Device-local. Tokens are the default because an OAuth
 // (subscription) account does not pay the API-price estimate the cost shows.
 
 import { useSyncExternalStore } from "react";
@@ -9,8 +9,8 @@ import type { ModelUsage } from "@/lib/types";
 
 const STORAGE_KEY = "omnigent:ae-spend-display";
 
-export type AeSpendDisplay = "tokens" | "cost" | "off";
-export const AE_SPEND_DISPLAYS: readonly AeSpendDisplay[] = ["tokens", "cost", "off"];
+export type AeSpendDisplay = "tokens" | "cost" | "both" | "off";
+export const AE_SPEND_DISPLAYS: readonly AeSpendDisplay[] = ["tokens", "cost", "both", "off"];
 export const DEFAULT_AE_SPEND_DISPLAY: AeSpendDisplay = "tokens";
 
 export function readAeSpendDisplay(): AeSpendDisplay {
@@ -118,29 +118,21 @@ export interface AeSpendLabel {
   long: string;
   title: string;
   /** Cost mode: what the number is, for a title built around the pill's own "+". */
-  unit: "estimated" | "tokens";
+  unit: "estimated" | "tokens" | "both";
+  /** The token and cost labels this one is made of; the one that is absent is null. */
+  parts?: { tokens: AeSpendLabel | null; cost: AeSpendLabel | null };
 }
 
-/**
- * The one formatter behind every spend pill. Cost mode is the old behavior;
- * tokens mode sums the sessions that have counts and marks the total with "+"
- * when some do not (or when `extraMissing` says more sessions are unread).
- */
-export function aeSpendLabel(
-  usages: Iterable<AeSessionUsage>,
-  mode: AeSpendDisplay,
-  omitted = 0,
-): AeSpendLabel | null {
-  if (mode === "off") return null;
-  const list = [...usages];
-  if (mode === "cost") {
-    const spend = aeSpendOf(list);
-    if (!spend) return null;
-    const text = spend.kind === "cost" ? aeFormatCost(spend.value) : aeFormatTokens(spend.value);
-    const long = spend.kind === "cost" ? text : `${text} tokens`;
-    const unit = spend.kind === "cost" ? "estimated" : "tokens";
-    return { text, long, title: `${text} ${unit}`, unit };
-  }
+function costLabel(list: AeSessionUsage[]): AeSpendLabel | null {
+  const spend = aeSpendOf(list);
+  if (!spend) return null;
+  const text = spend.kind === "cost" ? aeFormatCost(spend.value) : aeFormatTokens(spend.value);
+  const long = spend.kind === "cost" ? text : `${text} tokens`;
+  const unit = spend.kind === "cost" ? "estimated" : "tokens";
+  return { text, long, title: `${text} ${unit}`, unit };
+}
+
+function tokensLabel(list: AeSessionUsage[], omitted: number): AeSpendLabel | null {
   let spent = 0;
   let missing = omitted;
   let cacheWriteKnown = false;
@@ -170,4 +162,55 @@ export function aeSpendLabel(
     unit: "tokens",
     title: `${text} tokens: ${aeTokenBreakdown({ ...sum, spent, cacheWriteKnown, complete: true })}${note}`,
   };
+}
+
+/**
+ * The one formatter behind every spend pill. Cost mode is the old behavior;
+ * tokens mode sums the sessions that have counts and marks the total with "+"
+ * when some do not (or when `omitted` says more sessions are unread). Both mode
+ * joins the two, each only when it is really available.
+ */
+export function aeSpendLabel(
+  usages: Iterable<AeSessionUsage>,
+  mode: AeSpendDisplay,
+  omitted = 0,
+): AeSpendLabel | null {
+  if (mode === "off") return null;
+  const list = [...usages];
+  if (mode === "cost") {
+    const cost = costLabel(list);
+    if (!cost) return null;
+    return cost.unit === "estimated"
+      ? { ...cost, parts: { tokens: null, cost } }
+      : { ...cost, parts: { tokens: cost, cost: null } };
+  }
+  const tokens = tokensLabel(list, omitted);
+  if (mode === "tokens") return tokens && { ...tokens, parts: { tokens, cost: null } };
+  const realCost = costLabel(list);
+  // Both: a cost that leaves sessions out is marked "+", as an incomplete token total is
+  // (a subscription session reports no cost). Cost mode keeps its old text.
+  const noCost = list.filter((u) => u.costUsd === null).length + omitted;
+  const cost =
+    realCost?.unit !== "estimated"
+      ? null
+      : noCost > 0
+        ? {
+            ...realCost,
+            text: `${realCost.text}+`,
+            long: `${realCost.long}+`,
+            title: `${realCost.title} · ${noCost} session${noCost === 1 ? " reports" : "s report"} no cost`,
+          }
+        : realCost;
+  if (tokens && cost) {
+    return {
+      text: `${tokens.text} · ${cost.text}`,
+      long: `${tokens.long} · ${cost.long}`,
+      title: `${tokens.title} · ${cost.title}`,
+      unit: "both",
+      parts: { tokens, cost },
+    };
+  }
+  if (tokens) return { ...tokens, parts: { tokens, cost: null } };
+  if (cost) return { ...cost, parts: { tokens: null, cost } };
+  return null;
 }

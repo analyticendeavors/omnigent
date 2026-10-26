@@ -104,7 +104,7 @@ export function AeAgentMetaLine({
   const role = aeAgentRole(child);
   const effort = usage?.effort ?? native?.effort ?? null;
   const mode = useAeSpendDisplay();
-  const own = usage && mode === "tokens" ? aeSpendLabel([usage], mode) : null;
+  const own = usage && (mode === "tokens" || mode === "both") ? aeSpendLabel([usage], mode) : null;
   const cost = mode === "cost" ? (usage?.costUsd ?? null) : null;
   const tokens = mode === "cost" && usage?.tokens != null && usage.tokens > 0 ? usage.tokens : null;
   const model = withModel ? (child.model ?? child.routed_model ?? native?.model ?? null) : null;
@@ -203,9 +203,15 @@ export function AeAgentsTotal({
   const lead = usage.get(rootSessionId);
   if (!lead || mode === "off") return null;
   // Cost is the measure; tokens stand in only when the lead reports no cost.
-  const byCost = mode === "cost" && lead.costUsd !== null;
+  // Both mode needs one number, so it uses cost only when every session has one.
+  const allRead = [lead, ...childIds.map((id) => usage.get(id))];
+  const byCost =
+    mode === "cost"
+      ? lead.costUsd !== null
+      : mode === "both" && allRead.every((u) => u !== undefined && u.costUsd !== null);
+  const byTokens = mode === "tokens" || (mode === "both" && !byCost);
   const measure = (u: AeSessionUsage) =>
-    byCost ? (u.costUsd ?? 0) : mode === "tokens" ? (aeUsageSpentTokens(u) ?? 0) : (u.tokens ?? 0);
+    byCost ? (u.costUsd ?? 0) : byTokens ? (aeUsageSpentTokens(u) ?? 0) : (u.tokens ?? 0);
   const leadValue = measure(lead);
   const leadFamilies = byCost ? lead.costByFamily : lead.byFamily;
   const known = childIds.map((id) => usage.get(id)).filter((u): u is AeSessionUsage => !!u);
@@ -227,8 +233,7 @@ export function AeAgentsTotal({
     }
   }
   // Tokens mode: sessions without a count leave the total short, so it ends in "+".
-  const noCount =
-    mode === "tokens" ? [lead, ...known].filter((u) => aeUsageSpentTokens(u) === null) : [];
+  const noCount = byTokens ? [lead, ...known].filter((u) => aeUsageSpentTokens(u) === null) : [];
   const plus = noCount.length > 0 ? "+" : "";
   const fmt = (n: number) => (byCost ? aeFormatCost(n) : `${aeFormatTokens(n)}${plus} tokens`);
   // Tokens only when every model in the lead and the rows read reports them.
@@ -251,7 +256,7 @@ export function AeAgentsTotal({
         <b
           className="font-medium text-foreground tabular-nums"
           title={
-            mode === "tokens"
+            byTokens
               ? noCount.length > 0
                 ? `${noCount.length} session${noCount.length === 1 ? " has" : "s have"} no token count`
                 : "New input plus output tokens"

@@ -83,3 +83,67 @@ describe("aeSpendLabel", () => {
     expect(aeSpendLabel([withTokens, noTokens], "cost")?.text).toBe("$4.00");
   });
 });
+
+describe("aeSpendLabel both", () => {
+  const big = usage({ a: row({ inputTokens: 1_900_000, outputTokens: 80_000 }) }, 9.8);
+  const withTokens = usage({ a: row({ inputTokens: 200_000, outputTokens: 12_000 }) }, 3);
+  const noTokens = usage({ a: row({ totalCostUsd: 1 }) }, 1);
+  const tokensOnly = usage({ a: row({ inputTokens: 1000, outputTokens: 200 }) }, null);
+
+  it("joins tokens and the estimated cost", () => {
+    const label = aeSpendLabel([big], "both");
+    expect(label).toMatchObject({
+      text: "1.98M tok · $9.80",
+      long: "1.98M tokens · $9.80",
+      unit: "both",
+    });
+    expect(label?.title).toBe(`${label?.parts?.tokens?.title} · $9.80 estimated`);
+    expect(label?.parts?.tokens?.text).toBe("1.98M tok");
+    expect(label?.parts?.cost?.text).toBe("$9.80");
+  });
+
+  it("keeps the plus for incomplete tokens", () => {
+    expect(aeSpendLabel([withTokens, noTokens], "both")?.text).toBe("212k+ tok · $4.00");
+  });
+
+  it("marks a cost that leaves out a session with no cost, as tokens mark theirs", () => {
+    // A subscription session reports tokens but no cost.
+    const label = aeSpendLabel([big, tokensOnly], "both");
+    expect(label?.text).toBe("1.98M tok \u00b7 $9.80+");
+    expect(label?.parts?.cost?.title).toBe("$9.80 estimated \u00b7 1 session reports no cost");
+    // Cost mode keeps its old text.
+    expect(aeSpendLabel([big, tokensOnly], "cost")?.text).toBe("$9.80");
+  });
+
+  it("falls back to the tokens label when no real cost exists", () => {
+    const label = aeSpendLabel([tokensOnly], "both");
+    expect(label).toMatchObject({ text: "1.2k tok", unit: "tokens" });
+    expect(label?.parts).toMatchObject({ cost: null });
+  });
+
+  it("falls back to the cost label when no tokens exist", () => {
+    const label = aeSpendLabel([noTokens], "both");
+    expect(label).toMatchObject({ text: "$1.00", unit: "estimated" });
+    expect(label?.parts).toMatchObject({ tokens: null });
+  });
+
+  it("is null when off and fills parts in the other modes", () => {
+    expect(aeSpendLabel([big], "off")).toBeNull();
+    expect(aeSpendLabel([big], "tokens")).toMatchObject({
+      text: "1.98M tok",
+      parts: { cost: null },
+    });
+    const cost = aeSpendLabel([big], "cost");
+    expect(cost?.text).toBe("$9.80");
+    expect(cost?.parts).toMatchObject({ tokens: null });
+    expect(cost?.parts?.cost?.text).toBe("$9.80");
+    const fell = aeSpendLabel([{ ...tokensOnly, tokens: 5000 }], "cost");
+    expect(fell?.parts?.cost).toBeNull();
+    expect(fell?.parts?.tokens?.text).toBe("5k");
+  });
+
+  it("accepts both from storage", () => {
+    window.localStorage.setItem("omnigent:ae-spend-display", "both");
+    expect(readAeSpendDisplay()).toBe("both");
+  });
+});

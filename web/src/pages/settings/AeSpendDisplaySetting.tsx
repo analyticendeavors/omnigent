@@ -14,6 +14,7 @@ import {
 const CARDS: Record<AeSpendDisplay, { label: string; title: string }> = {
   tokens: { label: "Tokens", title: "Pills show new input plus output tokens." },
   cost: { label: "Cost", title: "Pills show the estimated cost at API rates." },
+  both: { label: "Both", title: "Pills show tokens and the estimated cost." },
   off: { label: "Off", title: "No spend on pills, rows or the hover card." },
 };
 
@@ -32,7 +33,7 @@ export function AeSpendDisplaySetting() {
         value={value}
         onSelect={writeAeSpendDisplay}
         componentId="settings.chat.spend_display"
-        className="grid grid-cols-1 gap-3 sm:grid-cols-3"
+        className="grid grid-cols-1 gap-3 sm:grid-cols-4"
         cardClassName="items-center gap-2 p-4"
         items={AE_SPEND_DISPLAYS.map((mode) => ({
           value: mode,
