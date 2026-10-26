@@ -182,6 +182,7 @@ import { showToast } from "@/components/ui/toast";
 import { showArchiveUndoToast } from "./archiveUndoToast";
 import { useAeFamilyArchive } from "@/shell/AeFamilyArchive";
 import { unpinWithUndo } from "./unpinUndoToast";
+import { aeTogglePinFamily } from "@/shell/aePinFamily";
 import { useArchiveWorktreePrompt } from "./ArchiveWorktreeDialog";
 import { PermissionsModal } from "@/components/PermissionsModal";
 import { ProjectSettingsDialog } from "./ProjectSettingsDialog";
@@ -911,17 +912,22 @@ function SidebarImpl({
     [pinnedConversations],
   );
   // Stable identity (useStableCallback) so its changing deps don't defeat the row memo.
+  const { pinCap, pinsIncludeShared, sharedAvailable } = useContext(SidebarConfigContext);
   const togglePinnedConversation = useStableCallback((conversationId: string) => {
-    if (!pinnedIdSet.has(conversationId)) {
-      togglePinnedMutation.mutate({ id: conversationId, pinned: true });
-      return;
-    }
-    unpinWithUndo(
+    const isPinned = pinnedIdSet.has(conversationId);
+    const before = pinnedConversations.find((c) => c.id === conversationId);
+    aeTogglePinFamily({
       queryClient,
-      togglePinnedMutation.mutateAsync,
-      conversationId,
-      pinnedConversations.find((c) => c.id === conversationId),
-    );
+      writePin: togglePinnedMutation.mutateAsync,
+      session: before ?? { id: conversationId },
+      pinned: isPinned,
+      pinCap,
+      includeShared: pinsIncludeShared && sharedAvailable,
+      alone: () =>
+        isPinned
+          ? unpinWithUndo(queryClient, togglePinnedMutation.mutateAsync, conversationId, before)
+          : togglePinnedMutation.mutate({ id: conversationId, pinned: true }),
+    });
   });
 
   // One-time migration: pins used to live only in localStorage. Push any

@@ -1,4 +1,5 @@
 import {
+  useContext,
   useEffect,
   useRef,
   useState,
@@ -67,6 +68,8 @@ import { useNavigate } from "@/lib/routing";
 import { USER_SESSION_TITLE_MAX_CHARS } from "@/lib/sessionTitles";
 import { showArchiveUndoToast } from "./archiveUndoToast";
 import { unpinWithUndo } from "./unpinUndoToast";
+import { aeTogglePinFamily } from "@/shell/aePinFamily";
+import { SidebarConfigContext } from "@/lib/sidebarConfig";
 import { useArchiveWorktreePrompt } from "./ArchiveWorktreeDialog";
 import { useAeFamilyArchive } from "@/shell/AeFamilyArchive";
 import { cn } from "@/lib/utils";
@@ -117,6 +120,7 @@ export function HeaderConversationMenu({
   const togglePinned = useTogglePinnedConversation();
   // Pin writes don't overlap, so Pin/Unpin is disabled while one is saving.
   const pinSaving = useIsMutating({ mutationKey: PIN_WRITE_MUTATION_KEY }) > 0;
+  const { pinCap, pinsIncludeShared, sharedAvailable } = useContext(SidebarConfigContext);
   const rename = useRenameConversation();
   const moveToProject = useMoveToProject();
   const archive = useArchiveConversation();
@@ -242,9 +246,23 @@ export function HeaderConversationMenu({
         className={itemClass}
         disabled={pinSaving}
         onSelect={() =>
-          isPinned
-            ? unpinWithUndo(queryClient, togglePinned.mutateAsync, conversation.id, conversation)
-            : togglePinned.mutate({ id: conversation.id, pinned: true })
+          aeTogglePinFamily({
+            queryClient,
+            writePin: togglePinned.mutateAsync,
+            session: conversation,
+            pinned: isPinned,
+            pinCap,
+            includeShared: pinsIncludeShared && sharedAvailable,
+            alone: () =>
+              isPinned
+                ? unpinWithUndo(
+                    queryClient,
+                    togglePinned.mutateAsync,
+                    conversation.id,
+                    conversation,
+                  )
+                : togglePinned.mutate({ id: conversation.id, pinned: true }),
+          })
         }
       >
         {isPinned ? <PinOffIcon className="size-3.5" /> : <PinIcon className="size-3.5" />}

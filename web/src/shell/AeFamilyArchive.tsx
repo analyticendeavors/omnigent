@@ -9,7 +9,7 @@
 // sidebar's rows: those stop at the loaded pages and a search, and the tree
 // keeps its objects across updates that only change a worktree or a time.
 
-import { type QueryClient, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   type ReactNode,
   type RefObject,
@@ -31,10 +31,9 @@ import { showToast } from "@/components/ui/toast";
 import {
   BulkConversationMutationError,
   type Conversation,
-  fetchConversationsPage,
   useBulkArchiveConversations,
 } from "@/hooks/useConversations";
-import { aeFamilies } from "@/lib/aeFamily";
+import { aeFamilyOf, aeReadFamilySessions } from "@/lib/aeFamilyRead";
 import { aeIsClosedMember } from "@/lib/aeFamilyClosed";
 import type { AeFamilyTree } from "@/lib/aeFamilyTree";
 import { AeFamilyContext } from "@/lib/aeFamilyView";
@@ -44,53 +43,13 @@ import { showArchiveUndoToast } from "@/shell/archiveUndoToast";
 export const AE_FAMILY_ARCHIVE_CONFIRM =
   "Are you sure you would like to archive this? There are still open sessions.";
 
-const READ_LIMIT = 200;
-const READ_PAGES = 5;
-
 /** The sessions under a lead among *rows*, and how many are open (not in the closed group). */
 export function aeFamilyArchiveTargets(
   rows: readonly Conversation[],
   id: string,
 ): { children: Conversation[]; open: number } {
-  const members = aeFamilies(rows, true).byRoot.get(id)?.members ?? [];
-  const children = members.filter((c) => c.id !== id && c.archived !== true);
+  const children = aeFamilyOf(rows, id).filter((c) => c.id !== id && c.archived !== true);
   return { children, open: children.filter((c) => !aeIsClosedMember(c)).length };
-}
-
-/** One slice of the session list, newest first, up to `READ_PAGES` pages. */
-async function readSlice(queryClient: QueryClient, archived: boolean): Promise<Conversation[]> {
-  const rows: Conversation[] = [];
-  let after: string | undefined;
-  for (let page = 0; page < READ_PAGES; page += 1) {
-    // eslint-disable-next-line no-await-in-loop -- each page needs the previous cursor
-    const got = await fetchConversationsPage({
-      searchQuery: "",
-      includeArchived: archived,
-      visibility: archived ? "archived" : undefined,
-      queryClient,
-      limit: READ_LIMIT,
-      after,
-    });
-    rows.push(...got.data);
-    if (!got.has_more || got.last_id === null) break;
-    after = got.last_id ?? undefined;
-  }
-  return rows;
-}
-
-/**
- * The open sessions, plus the archived ones so that a session started by an
- * archived helper still traces back to its lead. Archived rows only link the
- * family; `aeFamilyArchiveTargets` never archives them again.
- */
-async function readSessions(queryClient: QueryClient): Promise<Conversation[]> {
-  const [open, archived] = await Promise.all([
-    readSlice(queryClient, false),
-    readSlice(queryClient, true),
-  ]);
-  const byId = new Map<string, Conversation>();
-  for (const c of [...archived, ...open]) byId.set(c.id, c);
-  return [...byId.values()];
 }
 
 interface Seen {
@@ -164,7 +123,7 @@ export function useAeFamilyArchive(
     }
     if (reading.current) return;
     reading.current = true;
-    readSessions(queryClient)
+    aeReadFamilySessions(queryClient)
       .finally(() => {
         reading.current = false;
       })

@@ -76,6 +76,17 @@ describe("AeChatSettingsSection", () => {
     );
   });
 
+  it("offers Pin a lead's family, off by default, and saves the choice", () => {
+    renderAt("/settings/chat", <AeChatSettingsSection />);
+    expect(screen.getByRole("radiogroup", { name: "Pin a lead's family" })).toBeInTheDocument();
+    expect(screen.getByTestId("ae-pin-family-no")).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(screen.getByTestId("ae-pin-family-yes"));
+    expect(window.localStorage.getItem("omnigent:ae-pin-family")).toBe("on");
+    expect(screen.getByTestId("ae-pin-family-yes")).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(screen.getByTestId("ae-pin-family-no"));
+    expect(window.localStorage.getItem("omnigent:ae-pin-family")).toBe("off");
+  });
+
   it("is what /settings/chat renders", () => {
     renderAt("/settings/chat", <SettingsPage />);
     expect(screen.getByTestId("ae-chat-settings")).toBeInTheDocument();
