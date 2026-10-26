@@ -104,7 +104,46 @@ describe("AeModelChangeBand", () => {
     );
     expect(screen.getByTestId("ae-model-change-undo")).toBeDefined();
     expect(screen.getByText("Open helper").getAttribute("href")).toBe("/c/conv_b");
-    expect(screen.getByTestId("ae-model-change-dismiss")).toBeDefined();
+    const close = screen.getByTestId("ae-model-change-dismiss");
+    expect(close.getAttribute("aria-label")).toBe("Dismiss");
+    expect(close.getAttribute("title")).toBe("Dismiss");
+    expect(close.textContent).toBe("");
+    expect(screen.queryByText("Dismiss")).toBeNull();
+  });
+
+  it("draws Undo, Open helper and the close box as filled chips", async () => {
+    feed = [item()];
+    renderBand();
+    const undo = await screen.findByTestId("ae-model-change-undo");
+    expect(undo.className).toContain("h-[18px]");
+    expect(undo.className).toContain("bg-emerald-500/15");
+    const helper = screen.getByText("Open helper");
+    expect(helper.tagName).toBe("A");
+    expect(helper.getAttribute("href")).toBe("/c/conv_b");
+    expect(helper.className).toContain("h-[18px]");
+    expect(helper.className).toContain("bg-foreground/[0.07]");
+    const close = screen.getByTestId("ae-model-change-dismiss");
+    expect(close.className).toContain("size-[18px]");
+    expect(close.className).toContain("bg-foreground/[0.07]");
+  });
+
+  it("disables Undo and reads Undoing while the request is out", async () => {
+    feed = [item()];
+    mocks.fetch.mockImplementation((_url: string, init?: { method?: string }) =>
+      init?.method === "POST" ? new Promise(() => {}) : json({ changes: feed }),
+    );
+    renderBand();
+    fireEvent.click(await screen.findByTestId("ae-model-change-undo"));
+    const undo = await screen.findByText("Undoing");
+    expect(undo.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("shows Undone as plain text, not a chip", async () => {
+    feed = [item({ kind: "lower", undone: true })];
+    renderBand();
+    const undone = await screen.findByTestId("ae-model-change-undone");
+    expect(undone.className).not.toContain("bg-");
+    expect(screen.queryByTestId("ae-model-change-undo")).toBeNull();
   });
 
   it("reads a lowering", async () => {

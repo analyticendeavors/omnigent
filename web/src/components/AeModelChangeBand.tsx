@@ -1,5 +1,5 @@
 // The model change band (omnigent-ae): a line above every chat for each model change the
-// lead made with set_session_model, with Undo, a link to the helper and Dismiss. It reads
+// lead made with set_session_model, with Undo, a link to the helper and a close box. It reads
 // `GET /v1/ae/sessions/{id}/model-changes`, so it shows in the terminal view too, where the
 // chat transcript never renders.
 
@@ -7,6 +7,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ArrowDownIcon, ArrowUpIcon } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { AE_ICON_X } from "@/lib/aeActionDockIcons";
 import { aeAgentRole, aeRoleName } from "@/lib/aeAgentRole";
 import { AE_MODEL_FAMILY_BG } from "@/lib/aeAgentUsage";
 import {
@@ -18,12 +19,23 @@ import {
   aeUndoModelChange,
   useAeModelChanges,
 } from "@/lib/aeModelChange";
+import { AeTablerSvg } from "@/lib/aeTablerIcon";
 import { Link } from "@/lib/routing";
 import { cn } from "@/lib/utils";
 import { CHAT_COLUMN_WIDTH } from "@/pages/chatLayout";
 
 const DISMISSED_KEY = "omnigent:ae-model-changes-dismissed";
 const SHOWN = 2;
+
+// A filled 18 px chip on an 18 px line; the ::after widens the tap area to 30 px tall and 22 px past the sides
+// of the text (4 px clear of the next area at gap-x-2) without moving anything.
+const CHIP =
+  "relative h-[18px] rounded-[4px] px-2 text-xs font-medium leading-[18px] after:absolute after:-inset-x-0.5 after:-inset-y-1.5 after:content-['']";
+// The ghost variant's own hover colours are overridden, dark mode included.
+const CHIP_NEUTRAL =
+  "bg-foreground/[0.07] text-foreground hover:bg-foreground/[0.12] hover:text-foreground dark:hover:bg-foreground/[0.12]";
+const CHIP_ACCENT =
+  "bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25 hover:text-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-500/25 dark:hover:text-emerald-300";
 
 type Dismissed = Record<string, { sig: string; at: number }>;
 const DAY_S = 86_400;
@@ -144,7 +156,7 @@ function BandLine({
         <span className="text-muted-foreground" data-testid="ae-model-change-why">
           {change.reason && ` · ${change.reason}`} &middot; {aeRelativeTime(item.at)}
         </span>
-        <span className="ml-2 inline-flex flex-wrap items-center gap-x-2">
+        <span className="ml-2 inline-flex flex-wrap items-center gap-x-2 align-middle">
           {item.undone ? (
             <span className="text-muted-foreground" data-testid="ae-model-change-undone">
               Undone
@@ -152,9 +164,9 @@ function BandLine({
           ) : (
             undoTo && (
               <Button
-                variant="link"
+                variant="ghost"
                 size="xs"
-                className="h-auto px-0 text-xs"
+                className={cn(CHIP, CHIP_ACCENT)}
                 disabled={busy}
                 onClick={runUndo}
                 componentId="ae.model_change.undo"
@@ -166,25 +178,15 @@ function BandLine({
           )}
           {!change.isLead && (
             <Button
-              variant="link"
+              variant="ghost"
               size="xs"
-              className="h-auto px-0 text-xs"
+              className={cn(CHIP, CHIP_NEUTRAL)}
               asChild
               componentId="ae.model_change.open_helper"
             >
               <Link to={`/c/${change.sessionId}`}>Open helper</Link>
             </Button>
           )}
-          <Button
-            variant="link"
-            size="xs"
-            className="h-auto px-0 text-xs text-muted-foreground"
-            onClick={() => onDismiss(item)}
-            componentId="ae.model_change.dismiss"
-            data-testid="ae-model-change-dismiss"
-          >
-            Dismiss
-          </Button>
           {error && (
             <span role="alert" className="text-destructive" data-testid="ae-model-change-error">
               {error}
@@ -192,6 +194,22 @@ function BandLine({
           )}
         </span>
       </div>
+      <Button
+        variant="ghost"
+        size="xs"
+        className={cn(
+          CHIP,
+          CHIP_NEUTRAL,
+          "ml-auto size-[18px] shrink-0 self-start px-0 text-muted-foreground after:-inset-0.5",
+        )}
+        onClick={() => onDismiss(item)}
+        aria-label="Dismiss"
+        title="Dismiss"
+        componentId="ae.model_change.dismiss"
+        data-testid="ae-model-change-dismiss"
+      >
+        <AeTablerSvg node={AE_ICON_X} className="size-3" />
+      </Button>
     </div>
   );
 }
