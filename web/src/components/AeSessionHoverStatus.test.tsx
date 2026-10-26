@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { type ReactElement, type ReactNode, useState } from "react";
-import { cleanup, render as rtlRender, screen, waitFor } from "@testing-library/react";
+import { cleanup, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
@@ -331,7 +331,7 @@ describe("AeSessionHoverStatus", () => {
       await waitFor(() =>
         expect(screen.getByTestId("ae-hover-family-spend").textContent).toBe("Tokens232.8k"),
       );
-      expect(screen.getByTestId("ae-hover-family-sessions").textContent).toBe("Sessions1, 1 open");
+      expect(screen.getByTestId("ae-hover-family-sessions").textContent).toBe("Sessions1 open");
       // The family block sits above the status block.
       const family = screen.getByTestId("ae-hover-family");
       expect(
@@ -385,7 +385,128 @@ describe("AeSessionHoverStatus", () => {
       await waitFor(() =>
         expect(screen.getByTestId("ae-hover-family-spend").textContent).toBe("Cost$4.92"),
       );
-      expect(screen.getByTestId("ae-hover-family-sessions").textContent).toBe("Sessions2, 2 open");
+      expect(screen.getByTestId("ae-hover-family-sessions").textContent).toBe("Sessions2 open");
+    });
+
+    const hover = (rows: never[], sessionId: string, labels: Record<string, string> = {}) => {
+      const view = familyView(rows);
+      return render(
+        <AeFamilyContext.Provider value={view}>
+          <AeSessionHoverStatus
+            sessionId={sessionId}
+            state={{ kind: "idle" } as never}
+            updatedAt={NOW}
+            labels={labels}
+          />
+        </AeFamilyContext.Provider>,
+      );
+    };
+    const kid = (id: string, extra: Record<string, unknown> = {}) =>
+      ({
+        id,
+        title: `Kid ${id}`,
+        labels: { "ae.orch": "lead", "ae.role": "builder" },
+        updated_at: 1,
+        ...extra,
+      }) as never;
+
+    it("lists a lead's open sessions, waiting first, then working, and counts the rest", () => {
+      answerUsage();
+      hover(
+        [
+          row("lead", {}, "PR3 lead"),
+          kid("a"),
+          kid("b", { status: "running" }),
+          kid("c", { pending_elicitations_count: 1 }),
+          kid("d"),
+          kid("e"),
+          kid("f", { labels: { "ae.orch": "lead", "ae.status": "reference" } }),
+        ],
+        "lead",
+      );
+      expect(screen.getByTestId("ae-hover-family-sessions").textContent).toBe(
+        "Sessions5 open \u00b7 1 closed",
+      );
+      const items = within(screen.getByTestId("ae-hover-family-open")).getAllByRole("listitem");
+      expect(items.map((li) => li.getAttribute("data-state"))).toEqual([
+        "waiting",
+        "working",
+        "idle",
+        "idle",
+        null,
+      ]);
+      expect(items[0].textContent).toBe("BKid cwaits on you");
+      expect(screen.getByTestId("ae-hover-family-more").textContent).toBe("+1 more");
+    });
+
+    it("shows tokens and cost as two rows when Spend shows Both", async () => {
+      window.localStorage.setItem("omnigent:ae-spend-display", "both");
+      answerUsage();
+      hover([row("lead", {}, "PR3 lead"), kid("a")], "lead");
+      await waitFor(() =>
+        expect(screen.getByTestId("ae-hover-family-spend-cost").textContent).toBe("Cost$3.28"),
+      );
+      expect(screen.getByTestId("ae-hover-family-spend-tokens").textContent).toBe("Tokens232.8k");
+      expect(screen.queryByTestId("ae-hover-family-spend")).toBeNull();
+    });
+
+    it("shows a child's own sessions under Its sessions, and nothing for a child with none", () => {
+      answerUsage();
+      const rows = [
+        row("lead", {}, "PR3 lead"),
+        kid("a"),
+        kid("g", { labels: { "ae.orch": "a", "ae.role": "helper" } }),
+      ];
+      const view = hover(rows, "a", { "ae.orch": "lead", "ae.role": "builder" });
+      const block = screen.getByTestId("ae-hover-family");
+      expect(block.getAttribute("data-kind")).toBe("own");
+      expect(block.textContent).toContain("Its sessions");
+      expect(screen.getByTestId("ae-hover-family-sessions").textContent).toBe("Sessions1 open");
+      view.unmount();
+      hover(rows, "g", { "ae.orch": "a", "ae.role": "helper" });
+      expect(screen.queryByTestId("ae-hover-family")).toBeNull();
+    });
+
+    it("says where a raised helper started, when, that its cap is reached, and why", async () => {
+      answerUsage();
+      const labels = {
+        "ae.orch": "lead",
+        "ae.role": "helper",
+        "ae.model_start": "claude-haiku-5-5|low",
+        "ae.raises": "1",
+        "ae.raise_cap": "1",
+        "ae.model_last": JSON.stringify({
+          f: ["claude-haiku-5-5", "low"],
+          t: ["claude-opus-4-8", "medium"],
+          k: "r",
+          r: "Needs a deeper read of the diff.",
+          a: Math.floor(NOW / 1000) - 3600,
+        }),
+      };
+      hover([row("lead", {}, "PR3 lead"), row("kid", labels, "Kid")], "kid", labels);
+      await waitFor(() =>
+        expect(screen.getByTestId("ae-hover-raise-line").textContent).toBe(
+          "\u2191Raised from Haiku low \u00b7 1h ago \u00b7 cap reached",
+        ),
+      );
+      const reason = screen.getByTestId("ae-hover-raise-reason");
+      expect(reason.textContent).toBe("Needs a deeper read of the diff.");
+      expect(reason.getAttribute("title")).toBe("Needs a deeper read of the diff.");
+    });
+
+    it("adds no raise line once a helper runs where it started", async () => {
+      answerUsage();
+      const labels = {
+        "ae.orch": "lead",
+        "ae.role": "helper",
+        "ae.model_start": "claude-opus-4-8|medium",
+        "ae.raises": "1",
+      };
+      hover([row("lead", {}, "PR3 lead"), row("kid", labels, "Kid")], "kid", labels);
+      await waitFor(() =>
+        expect(screen.getByTestId("ae-hover-role-line").textContent).toMatch(/Opus/),
+      );
+      expect(screen.queryByTestId("ae-hover-raise-line")).toBeNull();
     });
 
     it("adds no line to a plain session", () => {

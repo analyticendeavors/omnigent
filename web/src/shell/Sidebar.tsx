@@ -10,6 +10,7 @@ import {
   type CSSProperties,
   type KeyboardEvent,
   type MouseEvent,
+  type ReactElement,
   type ReactNode,
   type RefObject,
   createContext,
@@ -272,7 +273,6 @@ import {
   AE_LEAD_FOCUS_HIDE,
   AE_LEAD_FOCUS_SHOW,
   AE_LEAD_SLOT_FADE_OUT,
-  AE_LEAD_SPINNER_RIGHT,
   AE_LEAD_SPINNER_SLOT,
   AE_LEAD_TIME_SLOT,
   aeLeadRowGeometry,
@@ -3943,6 +3943,7 @@ function ConversationSection({
                   conversationId={conv.id}
                   section={title}
                   onNavigate={onRowClick}
+                  closedHover={aeClosedHover}
                 >
                   <ConversationRow
                     conversation={conv}
@@ -4706,6 +4707,38 @@ function SessionTooltipContent({
   );
 }
 
+/**
+ * A closed family row's hover card (omnigent-ae, 2026-10-26): the same card an
+ * open row shows, desktop only, as the row's Tooltip does for every other row.
+ */
+function AeClosedRowHover({
+  conversation,
+  children,
+}: {
+  conversation: Conversation;
+  children: ReactElement;
+}) {
+  const isMobile = useContext(IsMobileContext);
+  const hostsById = useContext(HostsByIdContext);
+  if (isMobile) return children;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      {/* A closed row has no live state; a session that stopped failing still says so. */}
+      <SessionTooltipContent
+        conversation={conversation}
+        hostsById={hostsById}
+        hasError={conversation.status === "failed"}
+        state={conversation.status === "failed" ? { kind: "error" } : null}
+      />
+    </Tooltip>
+  );
+}
+
+const aeClosedHover: AeTree.AeClosedHover = (conversation, link) => (
+  <AeClosedRowHover conversation={conversation}>{link}</AeClosedRowHover>
+);
+
 // Max gap between the first click and the dblclick of one double-click.
 // Browsers pair clicks within ~500ms; the margin absorbs event-loop delay.
 const DOUBLE_CLICK_PAIR_WINDOW_MS = 750;
@@ -4920,7 +4953,7 @@ function ConversationRowImpl({
   const showDraftIndicator = hasDraft && !isActive;
   const showSharedIndicator = !isOwner;
   // A family lead keeps fixed right-hand slots (aeLeadRowSlots.ts): its thinking
-  // spinner has a slot of its own, so only the other markers share the time slot.
+  // spinner takes the time's place, so only the other markers count as indicators.
   const leadSlots = AeTree.useAeLeadSlots(conversation.id);
   const leadSpinner =
     leadSlots.slots && (sessionState?.kind === "running" || sessionState?.kind === "starting");
@@ -4929,9 +4962,6 @@ function ConversationRowImpl({
   const hasSessionIndicator = (sessionState !== null || showDraftIndicator) && !leadSpinner;
   // The "Show → Updated" timestamp takes the indicator slot only when it's free.
   const show = useContext(SidebarShowContext);
-  const showUpdated = show.includes("updated") && !hasSessionIndicator;
-  const hasTrailingIndicator = hasSessionIndicator || showSharedIndicator || showUpdated;
-  const familyReserve = AeTree.useAeFamilyMarkerReserve(conversation.id);
   const leadGeometry = aeLeadRowGeometry({
     shared: showSharedIndicator,
     wide:
@@ -4942,8 +4972,14 @@ function ConversationRowImpl({
             ? "scheduled"
             : "badge"
           : null,
-    spinner: leadSpinner || leadSlots.foldedRunning,
+    marker: hasSessionIndicator,
+    spinner: leadSlots.slots && (leadSpinner || leadSlots.foldedRunning),
   });
+  // A lead's spinner in the time slot replaces the time.
+  const showUpdated =
+    show.includes("updated") && !hasSessionIndicator && !leadGeometry.spinnerInTime;
+  const hasTrailingIndicator = hasSessionIndicator || showSharedIndicator || showUpdated;
+  const familyReserve = AeTree.useAeFamilyMarkerReserve(conversation.id);
   const metaEnvironment = show.includes("environment") ? (
     <SessionEnvironmentLabel conversation={conversation} hostsById={hostsById} />
   ) : null;
@@ -5453,11 +5489,16 @@ function ConversationRowImpl({
           <SessionUpdatedLabel updatedAt={conversation.updated_at} />
         </span>
       ) : null}
-      {!selectionMode && leadSlots.slots && (leadSpinner || leadSlots.foldedRunning) && (
+      {!selectionMode && leadSlots.slots && leadGeometry.spinnerRight !== null && (
         <span
           data-testid="ae-lead-spinner"
-          className={cn(AE_LEAD_SLOT_FADE_OUT, overlayTop, AE_LEAD_SPINNER_SLOT)}
-          style={{ right: AE_LEAD_SPINNER_RIGHT }}
+          data-in-time={leadGeometry.spinnerInTime}
+          className={cn(
+            AE_LEAD_SLOT_FADE_OUT,
+            overlayTop,
+            leadGeometry.spinnerInTime ? AE_LEAD_TIME_SLOT : AE_LEAD_SPINNER_SLOT,
+          )}
+          style={{ right: leadGeometry.spinnerRight }}
         >
           {leadSpinner && sessionState !== null ? (
             <SessionStateBadge state={sessionState} />

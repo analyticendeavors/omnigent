@@ -10,7 +10,11 @@ import type { SessionState } from "@/hooks/useSessionState";
 import { useAeRoles } from "@/hooks/useAeRoles";
 import { aeAgentRole, aeFormatCost, aeFormatTokens, aeRoleName } from "@/lib/aeAgentRole";
 import { AE_MODEL_FAMILY_BG, aeModelFamily, useAeSessionUsages } from "@/lib/aeAgentUsage";
-import { type AeFamily, aeOrchParent } from "@/lib/aeFamily";
+import type { Conversation } from "@/hooks/useConversations";
+import { aeFamilyParent, aeOrchParent } from "@/lib/aeFamily";
+import { AE_FAMILY_BADGES } from "@/lib/aeFamilyBadge";
+import { type AeRaiseDetail, aeModelPointText, aeRaiseDetail } from "@/lib/aeModelChange";
+import { relativeTime } from "@/lib/relativeTime";
 import { aeIsClosedMember } from "@/lib/aeFamilyClosed";
 import { aeSpendLabel, useAeSpendDisplay } from "@/lib/aeSpendDisplay";
 import { AeFamilyContext } from "@/lib/aeFamilyView";
@@ -130,11 +134,36 @@ function FamilyRow({
   );
 }
 
+/** The sessions under *id* in its family: its children, theirs, and so on. */
+function descendantsOf(members: readonly Conversation[], id: string): Conversation[] {
+  const childrenOf = new Map<string, Conversation[]>();
+  for (const m of members) {
+    const parent = aeFamilyParent(m.labels);
+    if (!parent || parent === m.id) continue;
+    const list = childrenOf.get(parent);
+    if (list) list.push(m);
+    else childrenOf.set(parent, [m]);
+  }
+  const out: Conversation[] = [];
+  const seen = new Set([id]);
+  const walk = (at: string) => {
+    for (const c of childrenOf.get(at) ?? []) {
+      if (seen.has(c.id)) continue;
+      seen.add(c.id);
+      out.push(c);
+      walk(c.id);
+    }
+  };
+  walk(id);
+  return out;
+}
+
 /**
- * A lead's family, as its own block above the status (2026-10-26, replacing
- * the grey "leads N sessions · family X" line): its preset, its sessions with
- * how many are open, and the family total as Spend shows sets it. The lead row
- * itself shows only its name (patch 0184), so this is where the counts live.
+ * A family's block above the status (2026-10-26): on a lead, its preset, its
+ * sessions open and closed, the family total as Spend shows sets it, and the open
+ * sessions by name; on a child that started sessions of its own, the same for
+ * those. The lead row itself shows only its name (patch 0184), so this is where
+ * the counts live.
  */
 function AeFamilyBlock({
   sessionId,
@@ -147,49 +176,101 @@ function AeFamilyBlock({
 }) {
   const { families } = useContext(AeFamilyContext);
   const familyRole = families.byRow.get(sessionId);
-  const lead =
-    familyRole?.isLead === true && familyRole.family.members.length > 1 ? familyRole.family : null;
+  if (!familyRole) return null;
+  const { family } = familyRole;
+  const isLead = familyRole.isLead && family.members.length > 1;
+  const under = isLead ? [] : descendantsOf(family.members, sessionId);
+  if (!isLead && under.length === 0) return null;
+  const self = family.members.find((m) => m.id === sessionId);
   // Its own component, so a session that leads nothing reads no roles or usage.
-  return lead ? (
-    <FamilyBlockBody sessionId={sessionId} lead={lead} labels={labels} updatedAt={updatedAt} />
-  ) : null;
+  return (
+    <FamilyBlockBody
+      sessionId={sessionId}
+      heading={isLead ? "Family" : "Its sessions"}
+      members={isLead ? family.members : self ? [self, ...under] : under}
+      isLead={isLead}
+      labels={labels}
+      updatedAt={updatedAt}
+    />
+  );
+}
+
+/** Open sessions the block names; "+N more" covers the rest. */
+const MAX_NAMED = 4;
+
+type MemberState = "waiting" | "working" | "idle";
+
+function memberState(c: Conversation): MemberState {
+  if ((c.pending_elicitations_count ?? 0) > 0) return "waiting";
+  if (c.turn_active === true || c.status === "running") return "working";
+  return "idle";
+}
+
+const STATE_TEXT: Record<MemberState, string> = {
+  waiting: "waits on you",
+  working: "working",
+  idle: "idle",
+};
+const STATE_RANK: Record<MemberState, number> = { waiting: 0, working: 1, idle: 2 };
+
+/** "3 open · 6 closed", leaving out a side that is zero. */
+export function aeFamilyCountText(open: number, closed: number): string {
+  if (closed <= 0) return `${open} open`;
+  if (open <= 0) return `${closed} closed`;
+  return `${open} open \u00b7 ${closed} closed`;
 }
 
 function FamilyBlockBody({
   sessionId,
-  lead,
+  heading,
+  members,
+  isLead,
   labels,
   updatedAt,
 }: {
   sessionId: string;
-  lead: AeFamily;
+  heading: string;
+  /** The sessions it covers, the hovered one included. */
+  members: readonly Conversation[];
+  isLead: boolean;
   labels: Record<string, string> | undefined;
   updatedAt: number;
 }) {
   const { tree } = useContext(AeFamilyContext);
   const roles = useAeRoles();
   const mode = useAeSpendDisplay();
-  // A lead's total is its family's sessions, each read once.
+  // The total is every covered session's use, each read once.
   const usage = useAeSessionUsages(
-    lead.members.map((m) => ({ id: m.id, stamp: m.id === sessionId ? updatedAt : 0 })),
+    members.map((m) => ({ id: m.id, stamp: m.id === sessionId ? updatedAt : 0 })),
   );
-  // Grouping > Family also counts archived children, as its "N closed" row does.
-  const treeLead = tree?.leads.get(sessionId);
-  const others = lead.members.filter((m) => m.id !== sessionId);
+  const others = members.filter((m) => m.id !== sessionId);
+  const openOthers = others.filter((m) => !aeIsClosedMember(m));
+  // Grouping > Family also counts a lead's archived children, as its "N closed" row does.
+  const treeLead = isLead ? tree?.leads.get(sessionId) : undefined;
   const count = treeLead?.count ?? others.length;
-  const open = treeLead
-    ? (treeLead.closed?.open ?? treeLead.count)
-    : others.filter((m) => !aeIsClosedMember(m)).length;
+  const open = treeLead ? (treeLead.closed?.open ?? treeLead.count) : openOthers.length;
   const spend = aeSpendLabel(usage.values(), mode);
-  const presetId = labels?.["ae.preset"];
+  const spendRows =
+    spend && mode === "both" && spend.parts
+      ? [spend.parts.tokens, spend.parts.cost].filter((p): p is NonNullable<typeof p> => !!p)
+      : spend
+        ? [spend]
+        : [];
+  const presetId = isLead ? labels?.["ae.preset"] : undefined;
   const preset = roles.data?.presets.find((p) => p.id === presetId)?.title ?? null;
+  const named = [...openOthers].sort(
+    (a, b) =>
+      STATE_RANK[memberState(a)] - STATE_RANK[memberState(b)] || b.updated_at - a.updated_at,
+  );
+  const shown = named.slice(0, MAX_NAMED);
   return (
     <div
       className="mt-2.5 flex flex-col gap-1 border-t border-border pt-2.5 text-sm"
       data-testid="ae-hover-family"
+      data-kind={isLead ? "family" : "own"}
     >
       <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        Family
+        {heading}
       </p>
       {preset && (
         // Truncates in the narrow card; the title holds the whole name.
@@ -198,18 +279,102 @@ function FamilyBlockBody({
         </FamilyRow>
       )}
       <FamilyRow label="Sessions" testId="ae-hover-family-sessions">
-        {count}, {open} open
+        {aeFamilyCountText(open, count - open)}
       </FamilyRow>
-      {spend && (
+      {spendRows.map((row) => (
         <FamilyRow
-          label={spend.unit === "estimated" ? "Cost" : "Tokens"}
-          testId="ae-hover-family-spend"
-          title={spend.title}
+          key={row.unit}
+          label={row.unit === "estimated" ? "Cost" : "Tokens"}
+          testId={
+            spendRows.length > 1
+              ? `ae-hover-family-spend-${row.unit === "estimated" ? "cost" : "tokens"}`
+              : "ae-hover-family-spend"
+          }
+          title={row.title}
         >
-          {spend.long.replace(/ tokens$/, "")}
+          {row.long.replace(/ tokens$/, "")}
         </FamilyRow>
+      ))}
+      {shown.length > 0 && (
+        <ul className="mt-1 flex flex-col gap-1" data-testid="ae-hover-family-open">
+          {shown.map((m) => {
+            const state = memberState(m);
+            const role = aeAgentRole({ labels: m.labels });
+            const badge = role ? AE_FAMILY_BADGES[role] : undefined;
+            const raised = aeRaiseDetail(m.labels, null) !== null;
+            return (
+              <li key={m.id} className="flex min-w-0 items-center gap-1.5" data-state={state}>
+                {badge ? (
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "flex size-4 shrink-0 items-center justify-center rounded text-[10px] font-bold",
+                      badge.className,
+                    )}
+                  >
+                    {badge.letter}
+                  </span>
+                ) : (
+                  <span aria-hidden="true" className="size-4 shrink-0" />
+                )}
+                <span className="min-w-0 flex-1 truncate">{m.title ?? m.id}</span>
+                <span
+                  className={cn(
+                    "shrink-0 text-xs",
+                    state === "waiting" ? "text-brand-accent" : "text-muted-foreground",
+                  )}
+                >
+                  {STATE_TEXT[state]}
+                  {raised && (
+                    <span className="ml-1 text-amber-500" title="Raised above where it started">
+                      {"\u2191"}
+                    </span>
+                  )}
+                </span>
+              </li>
+            );
+          })}
+          {named.length > shown.length && (
+            <li className="text-xs text-muted-foreground" data-testid="ae-hover-family-more">
+              +{named.length - shown.length} more
+            </li>
+          )}
+        </ul>
       )}
     </div>
+  );
+}
+
+/**
+ * A raised helper's change: where it started, when and how often it was raised,
+ * and why (2026-10-26). The row's arrow only says that it was raised.
+ */
+function RaiseLine({ raise }: { raise: AeRaiseDetail }) {
+  const ago = raise.at !== null ? relativeTime(raise.at * 1000) : "";
+  const parts = [
+    `Raised from ${aeModelPointText(raise.start)}`,
+    ago ? (ago === "now" ? "just now" : `${ago} ago`) : null,
+    raise.capReached ? "cap reached" : raise.raises > 1 ? `${raise.raises} raises` : null,
+  ].filter(Boolean);
+  return (
+    <>
+      <p className="truncate text-xs text-muted-foreground" data-testid="ae-hover-raise-line">
+        <span aria-hidden="true" className="mr-1 text-amber-500">
+          {"\u2191"}
+        </span>
+        {parts.join(" \u00b7 ")}
+      </p>
+      {raise.reason && (
+        // Two lines at most; the title holds the whole reason.
+        <p
+          className="line-clamp-2 text-xs text-muted-foreground"
+          data-testid="ae-hover-raise-reason"
+          title={raise.reason}
+        >
+          {raise.reason}
+        </p>
+      )}
+    </>
   );
 }
 
@@ -238,6 +403,10 @@ function AeRoleLine({
   if (lead || !started) return null;
   const own = usage.get(sessionId);
   const ownSpend = own ? aeSpendLabel([own], mode) : null;
+  const raise = aeRaiseDetail(
+    labels,
+    own ? { model: own.model ?? null, effort: own.effort ?? null } : null,
+  );
   const detail = [
     own?.model ? agentModelLabel(own.model) : null,
     own?.effort,
@@ -270,6 +439,7 @@ function AeRoleLine({
         )}
         <span className="min-w-0 truncate">{detail.join(" · ")}</span>
       </p>
+      {raise && <RaiseLine raise={raise} />}
       {familyRole?.parentTitle && (
         <p className="truncate text-xs text-muted-foreground" data-testid="ae-hover-started-by">
           Started by {familyRole.parentTitle}

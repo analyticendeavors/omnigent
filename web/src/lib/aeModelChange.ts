@@ -269,6 +269,50 @@ function parseModelLast(label: string | undefined): Last | null {
   }
 }
 
+/** What a helper's labels say about its raises, for the hover card's raise line. */
+export interface AeRaiseDetail {
+  /** Where it started (`ae.model_start`). */
+  start: AeModelPoint;
+  /** Where the last change left it, when `ae.model_last` names one. */
+  now: AeModelPoint | null;
+  /** The last change's reason and time (epoch seconds), when recorded. */
+  reason: string;
+  at: number | null;
+  raises: number;
+  cap: number | null;
+  capReached: boolean;
+}
+
+/**
+ * A raised helper's start, last change and raise count, or null when it was never
+ * raised or now runs at or below where it started. `current` is what it runs on
+ * now when usage has landed; without it the last change's target stands in.
+ */
+export function aeRaiseDetail(
+  labels: Readonly<Record<string, string>> | null | undefined,
+  current: AeModelPoint | null,
+): AeRaiseDetail | null {
+  const start = parseAeModelStart(labels?.["ae.model_start"]);
+  if (!start) return null;
+  const last = parseModelLast(labels?.["ae.model_last"]);
+  const raises = aeLabelCount(labels?.["ae.raises"]) ?? 0;
+  const known = current && (current.model || current.effort) ? current : null;
+  // An undone change is settled in the labels at once, while usage can lag a read
+  // behind, so the undo's point wins over usage then.
+  const now = last?.undone ? (last.undo ?? last.from) : (known ?? last?.to ?? null);
+  if (!now || !aeRunsAboveStart(now, start)) return null;
+  const cap = aeLabelCount(labels?.["ae.raise_cap"]);
+  return {
+    start,
+    now,
+    reason: last?.kind === "raise" && !last.undone ? last.reason : "",
+    at: last?.kind === "raise" && !last.undone ? last.at : null,
+    raises,
+    cap,
+    capReached: raises >= 1 && cap !== null && raises >= cap,
+  };
+}
+
 export interface AeRaiseMarks {
   raised: boolean;
   capReached: boolean;

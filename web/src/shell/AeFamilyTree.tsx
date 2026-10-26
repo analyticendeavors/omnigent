@@ -10,10 +10,12 @@ import { ArchiveIcon, ChevronDownIcon, ChevronRightIcon, GhostIcon, InfoIcon } f
 import {
   type KeyboardEvent,
   type MouseEvent,
+  type ReactElement,
   type ReactNode,
   createContext,
   useContext,
 } from "react";
+import type { Conversation } from "@/hooks/useConversations";
 import { aeAgentRole, aeRoleName } from "@/lib/aeAgentRole";
 import { useAeSessionUsages } from "@/lib/aeAgentUsage";
 import { AE_FAMILY_COLORS, aeFamilyHint } from "@/lib/aeFamily";
@@ -178,7 +180,12 @@ function FoldChevron({ lead, slotTop }: { lead: AeTreeLead; slotTop?: string }) 
     stop(event);
     toggleAeFamilyFold(root, !lead.folded);
   };
-  const label = `${lead.folded ? "Show" : "Hide"} ${lead.count} session${lead.count === 1 ? "" : "s"}`;
+  // Sessions not closed (reference or archived); `closed` is null when none are.
+  const open = lead.closed?.open ?? lead.count;
+  const label =
+    `${lead.folded ? "Show" : "Hide"} ${lead.count} session${lead.count === 1 ? "" : "s"}` +
+    (lead.closed && open > 0 ? `, ${open} open` : "") +
+    (lead.folded && lead.needsResponse ? ", one waits on you" : "");
   return (
     <span
       role="button"
@@ -212,14 +219,20 @@ function FoldChevron({ lead, slotTop }: { lead: AeTreeLead; slotTop?: string }) 
         if (event.key === "Enter" || event.key === " ") toggle(event);
       }}
     >
-      {lead.folded && lead.needsResponse && (
+      {/* Folded: the open count as a badge on the chevron's corner, pink when a hidden
+          session waits on you. A badge, so the row's time column never moves (2026-10-26). */}
+      {lead.folded && open > 0 && (
         <span
-          data-testid="ae-family-fold-waiting"
+          aria-hidden="true"
+          data-testid="ae-family-fold-count"
+          data-waiting={lead.needsResponse}
           className={cn(
-            "size-1.5 rounded-full bg-brand-accent",
-            slotTop !== undefined ? "absolute -top-0.5 -right-0.5" : "mr-0.5",
+            "-top-1.5 -right-1.5 absolute min-w-3.5 rounded-full px-[3px] text-center font-bold text-[9.5px] leading-3.5 tabular-nums ring-2 ring-sidebar",
+            lead.needsResponse ? "bg-brand-accent text-white" : "bg-foreground/25 text-foreground",
           )}
-        />
+        >
+          {open}
+        </span>
       )}
       {lead.folded && lead.running && slotTop === undefined && (
         <span
@@ -413,38 +426,47 @@ function ClosedFrame({ entry, children }: { entry: AeClosedEntry; children: Reac
 }
 
 /** A closed-group row: the "N closed" fold, a closed session, or "Show N more". */
+/** Wraps a closed session's row link in the sidebar's hover card (Sidebar.tsx owns it). */
+export type AeClosedHover = (conversation: Conversation, link: ReactElement) => ReactNode;
+
 function ClosedSlot({
   id,
   entry,
   onNavigate,
+  hover,
 }: {
   id: string;
   entry: AeClosedEntry;
   onNavigate?: (e: MouseEvent<HTMLAnchorElement>) => void;
+  hover?: AeClosedHover;
 }) {
   const { conversationId } = useParams<{ conversationId: string }>();
   const root = entry.row.family.root;
   if (entry.kind === "row") {
     const c = entry.conversation;
     const archived = c.archived === true;
+    const link = (
+      <Link
+        to={`/c/${id}`}
+        componentId="sidebar.family_closed"
+        onClick={onNavigate}
+        aria-current={conversationId === id ? "page" : undefined}
+        className={cn(CLOSED_ROW, conversationId === id && "bg-muted text-foreground")}
+      >
+        <ClosedFrame entry={entry}>
+          {archived ? (
+            <ArchiveIcon className="ui-icon mr-1.5" aria-hidden="true" />
+          ) : (
+            <AeConversationStatusIcon conversation={c} className="mr-1.5" />
+          )}
+          <span className="min-w-0 truncate">{c.title ?? c.id}</span>
+        </ClosedFrame>
+      </Link>
+    );
+    // The same hover card as an open row, so a finished helper can be read without opening it.
     return (
       <li className="group relative" data-testid="ae-family-closed-row" data-family={root}>
-        <Link
-          to={`/c/${id}`}
-          componentId="sidebar.family_closed"
-          onClick={onNavigate}
-          aria-current={conversationId === id ? "page" : undefined}
-          className={cn(CLOSED_ROW, conversationId === id && "bg-muted text-foreground")}
-        >
-          <ClosedFrame entry={entry}>
-            {archived ? (
-              <ArchiveIcon className="ui-icon mr-1.5" aria-hidden="true" />
-            ) : (
-              <AeConversationStatusIcon conversation={c} className="mr-1.5" />
-            )}
-            <span className="min-w-0 truncate">{c.title ?? c.id}</span>
-          </ClosedFrame>
-        </Link>
+        {hover ? hover(c, link) : link}
       </li>
     );
   }
@@ -488,11 +510,14 @@ export function AeFamilyTreeSlot({
   conversationId,
   section,
   onNavigate,
+  closedHover,
   children,
 }: {
   conversationId: string;
   section: string | undefined;
   onNavigate?: (e: MouseEvent<HTMLAnchorElement>) => void;
+  /** A closed session row's hover card. */
+  closedHover?: AeClosedHover;
   children: ReactNode;
 }) {
   const { tree } = useContext(AeFamilyContext);
@@ -501,7 +526,12 @@ export function AeFamilyTreeSlot({
   if (closed) {
     return (
       <InFamilies.Provider value>
-        <ClosedSlot id={conversationId} entry={closed} onNavigate={onNavigate} />
+        <ClosedSlot
+          id={conversationId}
+          entry={closed}
+          onNavigate={onNavigate}
+          hover={closedHover}
+        />
       </InFamilies.Provider>
     );
   }

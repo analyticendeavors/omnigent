@@ -303,7 +303,7 @@ describe("Grouping > Family", () => {
     // Lead plus its three listed sessions at $1.50 each (cost only, as Claude reports).
     const block = await familyBlock("Role routing build", "spend", "Cost$6.00");
     expect(within(block).getByTestId("ae-hover-family-sessions").textContent).toBe(
-      "Sessions3, 3 open",
+      "Sessions3 open",
     );
   });
 
@@ -459,7 +459,7 @@ describe("Grouping > Family", () => {
       window.localStorage.setItem("omnigent:ae-spend-display", "off");
       tokenUsage();
       renderSidebar();
-      const block = await familyBlock("Role routing build", "sessions", "Sessions3, 3 open");
+      const block = await familyBlock("Role routing build", "sessions", "Sessions3 open");
       await waitFor(() => expect(mocks.fetch).toHaveBeenCalled());
       expect(within(block).queryByTestId("ae-hover-family-spend")).toBeNull();
     });
@@ -483,6 +483,24 @@ describe("Grouping > Family", () => {
     setView({ grouping: "family" });
     renderSidebar();
     await familyBlock("Role routing build", "spend", "Tokens400k");
+  });
+
+  it("badges a folded lead's chevron with its open count, pink when one waits on you", () => {
+    useConvMock.mockImplementation(() =>
+      conversationPage(
+        ROWS.map((c) => (c.title === "Families PR" ? { ...c, pending_elicitations_count: 1 } : c)),
+      ),
+    );
+    setView({ grouping: "family" });
+    renderSidebar();
+    const chevron = () => within(rowItem("Role routing build")).getByTestId("ae-family-fold");
+    // Open families show their rows, so no badge.
+    expect(within(chevron()).queryByTestId("ae-family-fold-count")).toBeNull();
+    fireEvent.click(chevron());
+    const badge = within(chevron()).getByTestId("ae-family-fold-count");
+    expect(badge.textContent).toBe("3");
+    expect(badge.getAttribute("data-waiting")).toBe("true");
+    expect(chevron().getAttribute("aria-label")).toBe("Show 3 sessions, one waits on you");
   });
 
   it("folds a family from the lead's chevron and remembers it", () => {
@@ -534,7 +552,39 @@ describe("Grouping > Family", () => {
       view.rerenderSidebar();
       expect(closedNames()).toEqual(["Old helper"]);
       expect(JSON.parse(localStorage.getItem("omnigent:ae-family-closed-open")!)).toEqual([lead]);
-      await familyBlock("Role routing build", "sessions", "Sessions5, 4 open");
+      await familyBlock("Role routing build", "sessions", "Sessions4 open \u00b7 1 closed");
+    });
+
+    it("gives a closed row the same hover card as an open one", async () => {
+      withClosed(ref("Old helper", 5));
+      localStorage.setItem("omnigent:ae-family-closed-open", JSON.stringify([lead]));
+      setView({ grouping: "family" });
+      renderSidebar();
+      const link = screen.getByTestId("ae-family-closed-row").querySelector("a")!;
+      fireEvent.pointerMove(link, { pointerType: "mouse" });
+      const card = await screen.findByTestId("session-tooltip-content");
+      expect(card.textContent).toContain("Old helper");
+    });
+
+    it("says a closed session stopped with an error on its hover card", async () => {
+      withClosed({ ...ref("Old helper", 5), status: "failed" });
+      localStorage.setItem("omnigent:ae-family-closed-open", JSON.stringify([lead]));
+      setView({ grouping: "family" });
+      renderSidebar();
+      const link = screen.getByTestId("ae-family-closed-row").querySelector("a")!;
+      fireEvent.pointerMove(link, { pointerType: "mouse" });
+      const card = await screen.findByTestId("session-tooltip-content");
+      expect(card.textContent).toContain("Stopped with an error");
+    });
+
+    it("badges a folded family with only its open count, not the closed ones", () => {
+      withClosed(ref("Old helper", 5));
+      localStorage.setItem("omnigent:ae-family-folds", JSON.stringify([lead]));
+      setView({ grouping: "family" });
+      renderSidebar();
+      const chevron = within(rowItem("Role routing build")).getByTestId("ae-family-fold");
+      expect(within(chevron).getByTestId("ae-family-fold-count").textContent).toBe("3");
+      expect(chevron.getAttribute("aria-label")).toBe("Show 4 sessions, 3 open");
     });
 
     it("counts archived children and lists them with the open group", async () => {

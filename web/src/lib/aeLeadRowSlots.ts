@@ -1,9 +1,15 @@
 // A family lead row's fixed right-hand slots (omnigent-ae, 2026-10-26). Reading
-// right to left: the open/close chevron (20px, 4px from the edge), the time or
-// alert dot (the 34px AE_TIME_COLUMN), the thinking spinner (16px). Each slot is
-// absolutely placed from the row's right edge, so none moves when the session
-// starts thinking or the pointer arrives; the hover actions overlay the time
-// column and never reach the chevron. Rows: shell/Sidebar.tsx, AeFamilyTree.tsx.
+// right to left: the open/close chevron (20px, 4px from the edge), then the time or
+// alert dot (the 34px AE_TIME_COLUMN). Each slot is absolutely placed from the
+// row's right edge, so none moves when the pointer arrives; the hover actions
+// overlay the time column and never reach the chevron. Rows: shell/Sidebar.tsx,
+// AeFamilyTree.tsx.
+//
+// The thinking spinner (the lead's own turn, or a folded-away child's) takes the
+// time's place, since "now" is all the time would say. It used to keep a 16px slot
+// of its own on every lead row, which left about 28px of the title empty on an
+// idle row (Reid, 2026-10-26). Only when the time slot holds another marker (an
+// unseen dot, a draft, "Needs response") does the spinner sit left of it.
 
 import { AE_TIME_COLUMN } from "@/lib/aeFamilyBadge";
 
@@ -14,7 +20,7 @@ export const AE_LEAD_CHEVRON_SLOT =
 /** The time or alert-dot slot: the shared 34px column, right-aligned, left of the chevron. */
 export const AE_LEAD_TIME_SLOT = `w-[34px] justify-end ${AE_TIME_COLUMN}`;
 
-/** The thinking spinner's slot: 16px, left of the time, reserved when idle. */
+/** The thinking spinner's slot when the time slot holds another marker: 16px, left of it. */
 export const AE_LEAD_SPINNER_SLOT = "w-4 justify-center";
 
 // Geometry in px, measured from the row's right edge. Every number below comes from
@@ -24,11 +30,8 @@ const CHEVRON_RIGHT = 4;
 const CHEVRON_W = 20;
 const TIME_RIGHT = CHEVRON_RIGHT + CHEVRON_W + GAP; // 28
 const TIME_W = 34;
-const SPINNER_RIGHT = TIME_RIGHT + TIME_W + GAP; // 66
-/** Right offset of the spinner slot, px. */
-export const AE_LEAD_SPINNER_RIGHT = SPINNER_RIGHT;
+const TIME_END = TIME_RIGHT + TIME_W; // 62
 const SPINNER_W = 16;
-const SPINNER_END = SPINNER_RIGHT + SPINNER_W; // 82
 const SHARED_W = 24;
 const TITLE_GAP = 8;
 
@@ -43,6 +46,13 @@ export type AeLeadWideMarker = keyof typeof WIDE_WIDTH;
 export interface AeLeadRowGeometry {
   /** Right offset of the marker in the time slot, px. */
   markerRight: number;
+  /**
+   * Right offset of the spinner, px: the time slot's own offset when the spinner
+   * takes it, else left of the marker there; null when no spinner shows.
+   */
+  spinnerRight: number | null;
+  /** The spinner sits in the time slot, in place of the time. */
+  spinnerInTime: boolean;
   /** Right offset of the "shared" icon, px; null when the row is not shared. */
   sharedRight: number | null;
   /** The row's right padding, px: the title ends here. */
@@ -51,23 +61,27 @@ export interface AeLeadRowGeometry {
 
 /**
  * Where a lead's markers sit and how much padding the title keeps, decided by
- * (shared, wide marker, spinner shown). A narrow marker fits the 34px time slot, so
- * the stack stays at the spinner's edge. A wide marker is right-anchored at the time
- * slot and grows left over the idle spinner slot, but when the spinner is showing (a
- * folded child is running) it starts left of the spinner instead, so it never paints
- * over it. The shared icon sits left of whatever is leftmost.
+ * (shared, wide marker, another marker in the time slot, spinner showing). The
+ * spinner takes the time slot when nothing else is there; otherwise it sits left of
+ * the marker (a wide one is right-anchored at the time slot and grows left). The
+ * shared icon sits left of whatever is leftmost. An idle row keeps only the time
+ * slot, so the title runs to it.
  */
 export function aeLeadRowGeometry(opts: {
   shared: boolean;
   wide: AeLeadWideMarker | null;
+  /** The time slot holds a marker of its own (a state badge or the draft pencil). */
+  marker: boolean;
   spinner: boolean;
 }): AeLeadRowGeometry {
-  const markerRight = opts.wide !== null && opts.spinner ? SPINNER_END + GAP : TIME_RIGHT;
-  const left =
-    opts.wide === null ? SPINNER_END : Math.max(SPINNER_END, markerRight + WIDE_WIDTH[opts.wide]);
+  const markerLeft = opts.wide === null ? TIME_END : TIME_RIGHT + WIDE_WIDTH[opts.wide];
+  const spinnerInTime = opts.spinner && !opts.marker;
+  const spinnerBeside = opts.spinner && opts.marker;
+  const spinnerRight = spinnerInTime ? TIME_RIGHT : spinnerBeside ? markerLeft + GAP : null;
+  const left = spinnerBeside ? markerLeft + GAP + SPINNER_W : Math.max(markerLeft, TIME_END);
   const sharedRight = opts.shared ? left + GAP : null;
   const reserve = sharedRight === null ? left + TITLE_GAP : sharedRight + SHARED_W + TITLE_GAP;
-  return { markerRight, sharedRight, reserve };
+  return { markerRight: TIME_RIGHT, spinnerRight, spinnerInTime, sharedRight, reserve };
 }
 
 /**

@@ -1,7 +1,8 @@
 // A family lead's fixed right-hand slots, rendered (omnigent-ae, 2026-10-26): the
 // chevron never moves, the actions wrapper takes no clicks and is desktop-only,
-// a wide marker or the shared icon never lands on the spinner, and the fade
-// follows hover, focus inside the actions and an open menu.
+// a wide marker or the shared icon never lands on the spinner, the spinner takes
+// the time's place when nothing else is there (no room held for it when idle), and
+// the fade follows hover, focus inside the actions and an open menu.
 
 import type * as ActivityHooksModule from "@/hooks/aeSessionActivityHooks";
 import type * as IdentityModule from "@/lib/identity";
@@ -183,19 +184,29 @@ describe("lead row slots", () => {
     ).toBe(idle);
   });
 
-  it("puts a thinking lead's spinner in its own slot and no marker in the time slot", () => {
-    mocks.states.set(sid("Lead"), { kind: "running" });
+  it("keeps no room for a spinner on an idle lead, so the title runs to the time", () => {
     renderSidebar();
-    expect(within(lead()).getByTestId("ae-lead-spinner").style.right).toBe("66px");
-    expect(within(lead()).queryByTestId("ae-lead-time")).toBeNull();
-    expect(link().style.paddingRight).toBe("90px");
+    expect(within(lead()).queryByTestId("ae-lead-spinner")).toBeNull();
+    expect(link().style.paddingRight).toBe("70px");
   });
 
-  it("shows the folded-running spinner in the spinner slot", () => {
+  it("puts a thinking lead's spinner in the time slot, in place of the time", () => {
+    mocks.states.set(sid("Lead"), { kind: "running" });
+    renderSidebar();
+    const spinner = within(lead()).getByTestId("ae-lead-spinner");
+    expect(spinner.style.right).toBe("28px");
+    expect(spinner.getAttribute("data-in-time")).toBe("true");
+    expect(within(lead()).queryByTestId("ae-lead-time")).toBeNull();
+    expect(within(lead()).queryByTestId("session-row-updated")).toBeNull();
+    // Same reserve as idle: the title does not move when thinking starts.
+    expect(link().style.paddingRight).toBe("70px");
+  });
+
+  it("shows the folded-running spinner in the time slot", () => {
     useRows(ROWS.map((c) => (c.id === sid("Child A") ? { ...c, status: "running" as const } : c)));
     renderSidebar();
     fireEvent.click(chevron());
-    expect(within(lead()).getByTestId("ae-lead-spinner").style.right).toBe("66px");
+    expect(within(lead()).getByTestId("ae-lead-spinner").style.right).toBe("28px");
     expect(within(lead()).queryByTestId("ae-family-fold-running")).toBeNull();
   });
 
@@ -207,15 +218,15 @@ describe("lead row slots", () => {
     expect(within(lead()).getByRole("img", { name: "Shared session" }).style.right).toBe("136px");
   });
 
-  it("starts a wide marker left of the folded-running spinner", () => {
+  it("puts the folded-running spinner left of a wide marker in the time slot", () => {
     mocks.states.set(sid("Lead"), { kind: "awaiting", count: 1 });
     useRows(ROWS.map((c) => (c.id === sid("Child A") ? { ...c, status: "running" as const } : c)));
     renderSidebar();
     fireEvent.click(chevron());
-    expect(within(lead()).getByTestId("ae-lead-spinner").style.right).toBe("66px");
     const pill = within(lead()).getByTestId("ae-lead-time");
-    expect(pill.style.right).toBe("86px");
-    expect(link().style.paddingRight).toBe("198px");
+    expect(pill.style.right).toBe("28px");
+    expect(within(lead()).getByTestId("ae-lead-spinner").style.right).toBe("136px");
+    expect(link().style.paddingRight).toBe("160px");
   });
 
   it("lets focus on the chevron leave the time and spinner alone, but not focus in the actions", () => {

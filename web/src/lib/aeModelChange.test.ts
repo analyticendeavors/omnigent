@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aeRaiseMarks, aeRunsAboveStart } from "./aeModelChange";
+import { aeRaiseDetail, aeRaiseMarks, aeRunsAboveStart } from "./aeModelChange";
 
 const start = { model: "claude-sonnet-5-5", effort: "medium" };
 
@@ -69,5 +69,59 @@ describe("aeRaiseMarks long-form fallback", () => {
       { model: "claude-opus-5-5", effort: "high" },
     );
     expect(marks.title).toMatch(/: Long form\./);
+  });
+});
+
+describe("aeRaiseDetail", () => {
+  const last = (extra: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      f: ["claude-haiku-5-5", "low"],
+      t: ["claude-sonnet-5-5", "medium"],
+      k: "r",
+      r: "Second look.",
+      a: 1792979183,
+      ...extra,
+    });
+  const labels = {
+    "ae.model_start": "claude-haiku-5-5|low",
+    "ae.raises": "1",
+    "ae.raise_cap": "1",
+    "ae.model_last": last(),
+  };
+
+  it("reads the start, the last raise and the cap", () => {
+    expect(aeRaiseDetail(labels, null)).toEqual({
+      start: { model: "claude-haiku-5-5", effort: "low" },
+      now: { model: "claude-sonnet-5-5", effort: "medium" },
+      reason: "Second look.",
+      at: 1792979183,
+      raises: 1,
+      cap: 1,
+      capReached: true,
+    });
+  });
+
+  it("prefers what it runs on now over the last change's target", () => {
+    const now = { model: "claude-opus-4-8", effort: "high" };
+    expect(aeRaiseDetail(labels, now)?.now).toEqual(now);
+  });
+
+  it("is null without a start, back at the start, or after the raise was undone", () => {
+    expect(aeRaiseDetail({ "ae.raises": "1" }, null)).toBeNull();
+    expect(aeRaiseDetail(labels, { model: "claude-haiku-5-5", effort: "low" })).toBeNull();
+    expect(aeRaiseDetail({ ...labels, "ae.model_last": last({ x: 1 }) }, null)).toBeNull();
+    // Usage can still report the raised model for a read after the Undo.
+    const stale = { model: "claude-sonnet-5-5", effort: "medium" };
+    expect(aeRaiseDetail({ ...labels, "ae.model_last": last({ x: 1 }) }, stale)).toBeNull();
+  });
+
+  it("leaves out the reason and time when the last change was a lower", () => {
+    const lowered = {
+      ...labels,
+      "ae.model_last": last({ k: "l", t: ["claude-sonnet-5-5", "low"] }),
+    };
+    const detail = aeRaiseDetail(lowered, null);
+    expect(detail?.reason).toBe("");
+    expect(detail?.at).toBeNull();
   });
 });
