@@ -243,13 +243,15 @@ describe("lead row slots", () => {
     );
   });
 
-  it("fades with hover, focus inside the actions and an open menu, and matches the active row", () => {
+  it("truncates the title at the actions on hover and focus, with no fade over it", () => {
     renderSidebar();
+    expect(link().className).toContain("md:group-hover:pr-[106px]!");
+    expect(link().className).toContain(
+      "md:group-has-[:focus-visible:not([data-testid=ae-family-fold])]:pr-[106px]!",
+    );
+    expect(link().className).not.toContain("md:group-hover:pr-20");
     const cls = within(lead()).getByTestId("conversation-actions").parentElement!.className;
-    expect(cls).toContain("md:group-hover:bg-[");
-    expect(cls).toContain("md:group-has-[[aria-expanded=true]]:bg-[");
-    expect(cls).toContain("md:group-has-[:focus-visible:not([data-testid=ae-family-fold])]:bg-[");
-    expect(cls).toContain("dark:[--ae-fade-color:");
-    expect(cls).toContain("[--ae-fade-color:var(--muted)]");
+    expect(cls).not.toContain("--ae-fade-color");
+    expect(cls).not.toContain("bg-[");
   });
 });

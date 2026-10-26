@@ -2,10 +2,9 @@ import { describe, expect, it } from "vitest";
 import { AE_TIME_COLUMN } from "@/lib/aeFamilyBadge";
 import {
   AE_LEAD_ACTIONS_OVERLAY,
+  AE_LEAD_ACTIONS_RESERVE,
+  AE_LEAD_ACTIONS_RESERVE_MENU,
   AE_LEAD_CHEVRON_SLOT,
-  AE_LEAD_FADE_ACTIVE,
-  AE_LEAD_FADE_PLAIN,
-  AE_LEAD_FADE_TRIGGERS,
   AE_LEAD_SPINNER_SLOT,
   AE_LEAD_TIME_SLOT,
   aeLeadRowGeometry,
@@ -102,18 +101,17 @@ describe("lead row slots", () => {
       expect(c).toContain("right-[28px]");
       expect(c).not.toContain("right-1");
     });
-    it("fades in on hover, focus inside the actions (not the chevron) and an open menu", () => {
-      expect(AE_LEAD_FADE_TRIGGERS).toContain("md:group-hover:bg-[");
-      expect(AE_LEAD_FADE_TRIGGERS).toContain(
-        "md:group-has-[:focus-visible:not([data-testid=ae-family-fold])]:bg-[",
-      );
-      expect(AE_LEAD_FADE_TRIGGERS).toContain("md:group-has-[[aria-expanded=true]]:bg-[");
+    it("ends the title at the actions on hover, focus inside the actions (not the chevron) and an open menu", () => {
+      // 28 (chevron slot) + 2 (wrapper padding) + 3 x 24 (buttons) + 2 x 2 (gaps).
+      expect(classes(AE_LEAD_ACTIONS_RESERVE)).toEqual([
+        "md:group-hover:pr-[106px]!",
+        "md:group-has-[:focus-visible:not([data-testid=ae-family-fold])]:pr-[106px]!",
+      ]);
+      expect(AE_LEAD_ACTIONS_RESERVE_MENU).toBe("md:pr-[106px]!");
     });
-    it("takes the row's colour in light and dark, and the active colour on the open row", () => {
-      expect(AE_LEAD_FADE_PLAIN).toContain("[--ae-fade-color:var(--muted)]");
-      expect(AE_LEAD_FADE_PLAIN).toContain("dark:[--ae-fade-color:color-mix");
-      expect(AE_LEAD_FADE_ACTIVE).toContain("[--ae-fade-color:var(--sidebar-active)]");
-      expect(AE_LEAD_FADE_ACTIVE).toContain("dark:[--ae-fade-color:var(--sidebar-active)]");
+    it("lays no fade over the title", () => {
+      expect(AE_LEAD_ACTIONS_OVERLAY).not.toContain("bg-");
+      expect(AE_LEAD_ACTIONS_OVERLAY).not.toContain("pl-");
     });
   });
 });

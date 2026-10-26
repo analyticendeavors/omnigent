@@ -2,7 +2,8 @@
 // right to left: the open/close chevron (20px, 4px from the edge), then the time or
 // alert dot (the 34px AE_TIME_COLUMN). Each slot is absolutely placed from the
 // row's right edge, so none moves when the pointer arrives; the hover actions
-// overlay the time column and never reach the chevron. Rows: shell/Sidebar.tsx,
+// overlay the time column and never reach the chevron, and the title truncates at
+// their left edge. Rows: shell/Sidebar.tsx,
 // AeFamilyTree.tsx.
 //
 // The thinking spinner (the lead's own turn, or a folded-away child's) takes the
@@ -88,26 +89,21 @@ export function aeLeadRowGeometry(opts: {
  * The hover actions' wrapper: right of the chevron's slot, left of nothing. It is
  * pointer-events-none, so the row link under it keeps every click (the buttons turn
  * pointer events back on), and md and up only, so a phone has no strip over the time.
- * The fade is a background that appears with the actions (hover, focus inside the
- * actions, or an open menu) and takes its colour from --ae-fade-color, which is the
- * row's own hover colour, or the active colour on the open row.
  */
-export const AE_LEAD_ACTIONS_OVERLAY =
-  "pointer-events-none right-[28px] pl-[22px] pr-0.5 hidden md:flex";
+export const AE_LEAD_ACTIONS_OVERLAY = "pointer-events-none right-[28px] pr-0.5 hidden md:flex";
 
-// Written out in full: Tailwind finds a class only as one literal token.
-export const AE_LEAD_FADE_TRIGGERS = [
-  "md:group-hover:bg-[linear-gradient(90deg,transparent,var(--ae-fade-color)_22px),linear-gradient(90deg,transparent,var(--sidebar)_22px)]",
-  "md:group-has-[:focus-visible:not([data-testid=ae-family-fold])]:bg-[linear-gradient(90deg,transparent,var(--ae-fade-color)_22px),linear-gradient(90deg,transparent,var(--sidebar)_22px)]",
-  "md:group-has-[[aria-expanded=true]]:bg-[linear-gradient(90deg,transparent,var(--ae-fade-color)_22px),linear-gradient(90deg,transparent,var(--sidebar)_22px)]",
+// While the actions show (hover, focus inside the actions, or an open menu), the
+// title ends at the actions' left edge, as a standalone row's does with pr-20. It
+// used to run on under a fade, which left it readable behind the pin (Reid,
+// 2026-10-26). Pin, archive and kebab are three 24px buttons with two 2px gaps,
+// right of the wrapper's 2px padding: 28 + 2 + 76 = 106. `!` beats the row's inline
+// padding; written out in full for Tailwind.
+export const AE_LEAD_ACTIONS_RESERVE = [
+  "md:group-hover:pr-[106px]!",
+  "md:group-has-[:focus-visible:not([data-testid=ae-family-fold])]:pr-[106px]!",
 ].join(" ");
-
-/** Hover colour of a plain row (dark mode halves it, as the row does). */
-export const AE_LEAD_FADE_PLAIN =
-  "[--ae-fade-color:var(--muted)] dark:[--ae-fade-color:color-mix(in_oklab,var(--muted)_50%,transparent)]";
-/** The open row's colour, the same in both modes (SIDEBAR_ACTIVE_HIGHLIGHT). */
-export const AE_LEAD_FADE_ACTIVE =
-  "[--ae-fade-color:var(--sidebar-active)] dark:[--ae-fade-color:var(--sidebar-active)]";
+/** The same reserve while the row's menu is open (it is portaled, so :hover drops). */
+export const AE_LEAD_ACTIONS_RESERVE_MENU = "md:pr-[106px]!";
 
 /** The buttons inside the wrapper take clicks even though the wrapper does not. */
 export const AE_LEAD_ACTION_BUTTON = "pointer-events-auto";

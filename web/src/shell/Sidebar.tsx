@@ -267,9 +267,8 @@ import { AE_TIME_COLUMN } from "@/lib/aeFamilyBadge";
 import {
   AE_LEAD_ACTION_BUTTON,
   AE_LEAD_ACTIONS_OVERLAY,
-  AE_LEAD_FADE_ACTIVE,
-  AE_LEAD_FADE_PLAIN,
-  AE_LEAD_FADE_TRIGGERS,
+  AE_LEAD_ACTIONS_RESERVE,
+  AE_LEAD_ACTIONS_RESERVE_MENU,
   AE_LEAD_FOCUS_HIDE,
   AE_LEAD_FOCUS_SHOW,
   AE_LEAD_SLOT_FADE_OUT,
@@ -5228,12 +5227,16 @@ function ConversationRowImpl({
         // `focus-within` also fires for a plain click, which shrank the reserve
         // on the selected row while the marker stayed put, sliding the title
         // under it.
-        // A lead's slots never move: its hover actions overlay the time column.
+        // A lead's slots never move: its hover actions overlay the time column, and
+        // the title ends at their left edge.
         !selectionMode &&
-          !leadSlots.slots &&
-          "md:group-hover:pr-20 md:group-has-[:focus-visible]:pr-20",
-        !selectionMode && !leadSlots.slots && menuOpen && "md:pr-20",
-        // An open menu drops :hover (it is portaled), so keep the row lit for the fade.
+          (leadSlots.slots
+            ? AE_LEAD_ACTIONS_RESERVE
+            : "md:group-hover:pr-20 md:group-has-[:focus-visible]:pr-20"),
+        !selectionMode &&
+          menuOpen &&
+          (leadSlots.slots ? AE_LEAD_ACTIONS_RESERVE_MENU : "md:pr-20"),
+        // An open menu drops :hover (it is portaled), so keep the row lit.
         !selectionMode && leadSlots.slots && menuOpen && !isActive && "bg-muted dark:bg-muted/50",
         selectionMode && "pr-2 pl-8",
         !selectionMode && isActive && SIDEBAR_ACTIVE_HIGHLIGHT,
@@ -5551,8 +5554,6 @@ function ConversationRowImpl({
                 leadSlots.slots
                   ? cn(
                       AE_LEAD_ACTIONS_OVERLAY,
-                      AE_LEAD_FADE_TRIGGERS,
-                      isActive ? AE_LEAD_FADE_ACTIVE : AE_LEAD_FADE_PLAIN,
                       overlayTop === "top-1/2"
                         ? "inset-y-0"
                         : cn("-translate-y-1/2 h-7", overlayTop),
