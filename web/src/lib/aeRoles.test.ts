@@ -114,6 +114,11 @@ describe("aeRoles", () => {
     expect(aeRolesDoc(state as AeRolesDoc).insights).toEqual(insights);
     expect(aeParseRolesState({ ...body, insights: { enabled: "yes" } })?.insights).toBeUndefined();
     expect(aeParseRolesState({ ...body, insights: null })?.insights).toBeUndefined();
+    const often = { ...insights, frequency: "monthly" };
+    expect(aeParseRolesState({ ...body, insights: often })?.insights).toEqual(often);
+    expect(
+      aeParseRolesState({ ...body, insights: { ...insights, frequency: "daily" } })?.insights,
+    ).toEqual(insights);
     const shown = { ...insights, show: "tokens" };
     expect(aeParseRolesState({ ...body, insights: shown })?.insights).toEqual(shown);
     expect(aeParseRolesState({ ...body, insights: { ...insights, show: "x" } })?.insights).toEqual(

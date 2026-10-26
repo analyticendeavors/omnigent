@@ -142,19 +142,34 @@ export interface AeInsights {
   scope: "all" | "own";
   /** What the Admin Center Presets card shows this user; absent means both. */
   show?: AeInsightsShow;
+  /** How often the scheduled review runs; absent means every 2 weeks. */
+  frequency?: AeInsightsFrequency;
 }
 
 export type AeInsightsShow = "cost" | "tokens" | "both";
 
+export type AeInsightsFrequency = "weekly" | "biweekly" | "monthly";
+
+/** The review frequency choices, in display order. */
+export const AE_INSIGHTS_FREQUENCIES: [AeInsightsFrequency, string][] = [
+  ["weekly", "Weekly"],
+  ["biweekly", "Every 2 weeks"],
+  ["monthly", "Monthly"],
+];
+
+export const AE_INSIGHTS_FREQUENCY_DEFAULT: AeInsightsFrequency = "biweekly";
+
 function parseInsights(value: unknown): AeInsights | null {
   if (!isObject(value)) return null;
-  const { enabled, weeks, scope, show } = value;
+  const { enabled, weeks, scope, show, frequency } = value;
   if (typeof enabled !== "boolean" || typeof weeks !== "number") return null;
   if (scope !== "all" && scope !== "own") return null;
-  if (show === "cost" || show === "tokens" || show === "both") {
-    return { enabled, weeks, scope, show };
+  const out: AeInsights = { enabled, weeks, scope };
+  if (show === "cost" || show === "tokens" || show === "both") out.show = show;
+  if (frequency === "weekly" || frequency === "biweekly" || frequency === "monthly") {
+    out.frequency = frequency;
   }
-  return { enabled, weeks, scope };
+  return out;
 }
 
 /** `state` with its insights setting replaced, for the Preset insights block's save. */

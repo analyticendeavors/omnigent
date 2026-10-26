@@ -21,7 +21,10 @@ import {
 } from "@/hooks/useAePresetReview";
 import { useAeRolesSave } from "@/hooks/useAeRoles";
 import {
+  AE_INSIGHTS_FREQUENCIES,
+  AE_INSIGHTS_FREQUENCY_DEFAULT,
   type AeInsights,
+  type AeInsightsFrequency,
   type AeInsightsShow,
   type AeRolesState,
   aeModelLabel,
@@ -51,17 +54,23 @@ export function aeOwnSuggestions(all: AePresetSuggestion[] | undefined): AePrese
 function Row({
   title,
   hint,
+  hintId,
   children,
 }: {
   title: string;
   hint?: React.ReactNode;
+  hintId?: string;
   children?: React.ReactNode;
 }) {
   return (
     <div className="flex flex-col gap-2 border-t border-border px-4 py-3 first:border-t-0 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
       <div className="min-w-0 break-words">
         <div className="text-sm font-medium">{title}</div>
-        {hint ? <div className="text-xs text-muted-foreground">{hint}</div> : null}
+        {hint ? (
+          <div id={hintId} className="text-xs text-muted-foreground">
+            {hint}
+          </div>
+        ) : null}
       </div>
       {children ? (
         <div className="flex shrink-0 flex-wrap items-center gap-2">{children}</div>
@@ -183,7 +192,12 @@ export function AePresetInsightsBlock({ state }: { state: AeRolesState }) {
     weeks: insights?.weeks ?? DEFAULT_WEEKS,
     scope: insights?.scope ?? "all",
     ...(insights?.show ? { show: insights.show } : {}),
+    ...(insights?.frequency ? { frequency: insights.frequency } : {}),
   });
+  // A missing or unknown value from the server reads as the default.
+  const frequency = AE_INSIGHTS_FREQUENCIES.some(([value]) => value === insights?.frequency)
+    ? (insights?.frequency as AeInsightsFrequency)
+    : AE_INSIGHTS_FREQUENCY_DEFAULT;
 
   const runNow = async () => {
     setRunning(true);
@@ -304,8 +318,44 @@ export function AePresetInsightsBlock({ state }: { state: AeRolesState }) {
       )}
       {enabled && (
         <>
-          <Row title="How often" hint="The reviewer reads every log line since its last run.">
-            <span className="text-sm">Every 2 weeks</span>
+          <Row
+            title="How often"
+            hintId="ae-insights-frequency-hint"
+            hint={
+              "Reviews run Monday 07:00 (server time); Monthly runs on the first Monday of the month. The reviewer reads every log line since its last run." +
+              (frequency === "monthly"
+                ? " Run now counts as a review, so Run now in the middle of a month can push the next Monthly review out by up to 8 weeks."
+                : "")
+            }
+          >
+            {/* Known limit: the scheduler skips any fire more than 30 s late (MISFIRE_GRACE_TIME_S),
+                so a deploy at exactly the first-Monday 07:00 slot loses that month's review. */}
+            <div
+              role="group"
+              aria-label="Frequency"
+              aria-describedby="ae-insights-frequency-hint"
+              className="flex flex-wrap gap-1"
+            >
+              {AE_INSIGHTS_FREQUENCIES.map(([value, label]) => (
+                <Button
+                  key={value}
+                  size="sm"
+                  variant={frequency === value ? "secondary" : "outline"}
+                  aria-pressed={frequency === value}
+                  aria-disabled={saving || undefined}
+                  onClick={() =>
+                    !saving &&
+                    frequency !== value &&
+                    void change(
+                      { ...current(), frequency: value },
+                      `Reviews run ${label.toLowerCase()}.`,
+                    )
+                  }
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
           </Row>
           <Row title="Reviewer" hint={reviewerText} />
           <Row

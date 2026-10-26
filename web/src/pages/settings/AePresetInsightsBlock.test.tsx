@@ -211,6 +211,96 @@ describe("Presets card shows", () => {
   });
 });
 
+describe("review frequency", () => {
+  it("shows Every 2 weeks as pressed when nothing is saved", () => {
+    serve();
+    mount(stateOf({ insights: ON }));
+    expect(screen.getByRole("button", { name: "Every 2 weeks" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Monthly" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    // The Run now sentence shows only while Monthly is selected.
+    expect(screen.queryByText(/up to 8 weeks/)).toBeNull();
+  });
+
+  it("shows the Run now sentence, worded up to 8 weeks, only on Monthly", () => {
+    serve();
+    mount(stateOf({ insights: { ...ON, frequency: "monthly" } }));
+    expect(screen.getByText(/can push the next Monthly review out by up to 8 weeks/)).toBeTruthy();
+  });
+
+  it("an unknown frequency from the server reads as Every 2 weeks", () => {
+    serve();
+    mount(stateOf({ insights: { ...ON, frequency: "daily" as never } }));
+    expect(screen.getByRole("button", { name: "Every 2 weeks" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("ties the hint to the group with aria-describedby", () => {
+    serve();
+    mount(stateOf({ insights: ON }));
+    const group = screen.getByRole("group", { name: "Frequency" });
+    const hint = document.getElementById(group.getAttribute("aria-describedby") ?? "");
+    expect(hint?.textContent).toMatch(/07:00 \(server time\)/);
+  });
+
+  it("keeps the buttons focusable and ignores clicks while a save is running", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const calls = serve();
+    const original = mocks.fetch.getMockImplementation();
+    mocks.fetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") await gate;
+      return original?.(url, init);
+    });
+    mount(stateOf({ insights: ON }));
+    const monthly = screen.getByRole("button", { name: "Monthly" });
+    monthly.focus();
+    fireEvent.click(monthly);
+    await waitFor(() => expect(monthly).toHaveAttribute("aria-disabled", "true"));
+    expect(monthly).not.toBeDisabled();
+    expect(document.activeElement).toBe(monthly);
+    fireEvent.click(screen.getByRole("button", { name: "Weekly" }));
+    release();
+    await waitFor(() => expect(monthly).not.toHaveAttribute("aria-disabled"));
+    expect(calls.filter((c) => c.method === "PUT")).toHaveLength(1);
+  });
+
+  it("shows the saved value", () => {
+    serve();
+    mount(stateOf({ insights: { ...ON, frequency: "weekly" } }));
+    expect(screen.getByRole("button", { name: "Weekly" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("a change sends insights.frequency and keeps the other settings", async () => {
+    const calls = serve();
+    mount(stateOf({ insights: { ...ON, show: "cost" } }));
+    fireEvent.click(screen.getByRole("button", { name: "Monthly" }));
+    await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+    const put = calls.find((c) => c.method === "PUT");
+    expect(JSON.parse(put?.body ?? "{}").insights).toEqual({
+      ...ON,
+      show: "cost",
+      frequency: "monthly",
+    });
+  });
+
+  it("clicking the pressed value saves nothing", () => {
+    const calls = serve();
+    mount(stateOf({ insights: ON }));
+    fireEvent.click(screen.getByRole("button", { name: "Every 2 weeks" }));
+    expect(calls.some((c) => c.method === "PUT")).toBe(false);
+  });
+});
+
 describe("on", () => {
   it("lists how often, the reviewer, the scope, the dates and the open count", async () => {
     serve();
@@ -288,9 +378,7 @@ describe("suggestions", () => {
     });
     mount(stateOf({ insights: ON }));
     const changes = await screen.findByTestId("ae-preset-changes-sg_1");
-    expect(changes).toHaveTextContent(
-      "Builder: claude-opus-5-5 high to claude-sonnet-5-5 medium",
-    );
+    expect(changes).toHaveTextContent("Builder: claude-opus-5-5 high to claude-sonnet-5-5 medium");
   });
 
   it("an undone one offers Apply and Dismiss", async () => {
@@ -401,7 +489,10 @@ describe("the roles cache after Apply", () => {
   it("a successful Apply that carries the roles does not", async () => {
     serve({
       post: {
-        "/v1/ae/preset-suggestions/sg_1/apply": json({ ok: true, roles: stateOf({ insights: ON }) }),
+        "/v1/ae/preset-suggestions/sg_1/apply": json({
+          ok: true,
+          roles: stateOf({ insights: ON }),
+        }),
       },
     });
     const { rolesRead } = mountWithClient(stateOf({ insights: ON }));
