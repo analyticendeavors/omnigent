@@ -68,6 +68,7 @@ import { USER_SESSION_TITLE_MAX_CHARS } from "@/lib/sessionTitles";
 import { showArchiveUndoToast } from "./archiveUndoToast";
 import { unpinWithUndo } from "./unpinUndoToast";
 import { useArchiveWorktreePrompt } from "./ArchiveWorktreeDialog";
+import { useAeFamilyArchive } from "@/shell/AeFamilyArchive";
 import { cn } from "@/lib/utils";
 import { MOBILE_GLASS_SURFACE } from "./mobileGlass";
 import { conversationDisplayLabel } from "./sidebarNav";
@@ -120,6 +121,9 @@ export function HeaderConversationMenu({
   const moveToProject = useMoveToProject();
   const archive = useArchiveConversation();
   const archiveWorktreePrompt = useArchiveWorktreePrompt();
+  const familyArchive = useAeFamilyArchive(conversation, archiveWorktreePrompt.requestArchive, {
+    gate: "read",
+  });
   const deleteConversation = useStopAndDeleteConversation();
   const [menuOpen, setMenuOpen] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
@@ -206,8 +210,10 @@ export function HeaderConversationMenu({
       archive.mutate({ id: conversation.id, archived: false });
       return;
     }
-    archiveWorktreePrompt.requestArchive([conversation], (deleteWorktreeIds) =>
-      archiveNow(deleteWorktreeIds.has(conversation.id)),
+    familyArchive.archiveFamily(() =>
+      archiveWorktreePrompt.requestArchive([conversation], (deleteWorktreeIds) =>
+        archiveNow(deleteWorktreeIds.has(conversation.id)),
+      ),
     );
   };
 
@@ -446,6 +452,8 @@ export function HeaderConversationMenu({
       </DropdownMenu>
 
       {archiveWorktreePrompt.dialog}
+      {familyArchive.source}
+      {familyArchive.dialog}
       <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
         <DialogContent>
           <form onSubmit={submitRename}>

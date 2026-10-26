@@ -4741,7 +4741,9 @@ function ConversationRowImpl({
   const del = useStopAndDeleteConversation();
   const archive = useArchiveConversation();
   const archiveWorktreePrompt = useArchiveWorktreePrompt();
-  const familyArchive = useAeFamilyArchive(conversation, archiveWorktreePrompt.requestArchive);
+  const familyArchive = useAeFamilyArchive(conversation, archiveWorktreePrompt.requestArchive, {
+    gate: "tree",
+  });
   const leave = useLeaveSession();
   const moveToProject = useMoveToProject();
   // The kebab's user-facing "Stop session" action. Archiving does NOT go
@@ -5022,9 +5024,10 @@ function ConversationRowImpl({
       runUnarchive();
       return;
     }
-    if (familyArchive.archiveFamily()) return;
-    archiveWorktreePrompt.requestArchive([conversation], (deleteWorktreeIds) =>
-      archiveNow(deleteWorktreeIds.has(conversation.id)),
+    familyArchive.archiveFamily(() =>
+      archiveWorktreePrompt.requestArchive([conversation], (deleteWorktreeIds) =>
+        archiveNow(deleteWorktreeIds.has(conversation.id)),
+      ),
     );
   }
 

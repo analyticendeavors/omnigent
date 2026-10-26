@@ -28,6 +28,8 @@ const mocks = vi.hoisted(() => ({
   rename: vi.fn(),
   moveToProject: vi.fn(),
   archive: vi.fn(),
+  archiveMany: vi.fn(),
+  readSessions: vi.fn(),
   deleteConversation: vi.fn(),
   markUnread: vi.fn(),
   fork: vi.fn(),
@@ -52,6 +54,12 @@ vi.mock("@/hooks/useConversations", async (importOriginal) => {
     useRenameConversation: () => ({ mutate: mocks.rename, isPending: false }),
     useMoveToProject: () => ({ mutate: mocks.moveToProject }),
     useArchiveConversation: () => ({ mutate: mocks.archive }),
+    useBulkArchiveConversations: () => ({
+      mutate: mocks.archiveMany,
+      mutateAsync: mocks.archiveMany,
+      isPending: false,
+    }),
+    fetchConversationsPage: mocks.readSessions,
     useStopAndDeleteConversation: () => ({
       mutate: mocks.deleteConversation,
       isPending: false,
@@ -136,9 +144,21 @@ beforeEach(() => {
   mocks.isMobile = false;
   mocks.projects = [{ id: "project-1", name: "Sprint 42" }];
   vi.clearAllMocks();
+  // Archive reads the session list (open, then archived) to find the session's family; none by default.
+  sessionList([CONVERSATION]);
+  mocks.archiveMany.mockResolvedValue([]);
 });
 
 afterEach(cleanup);
+
+/** What the archive's read of the session list returns: *open* rows, and *archived* ones. */
+function sessionList(open: Conversation[], archived: Conversation[] = []) {
+  mocks.readSessions.mockImplementation(async ({ visibility }: { visibility?: string }) => ({
+    data: visibility === "archived" ? archived : open,
+    has_more: false,
+    last_id: null,
+  }));
+}
 
 describe("HeaderConversationMenu", () => {
   it("keeps an unsupported Fork visible without opening its dialog", () => {
@@ -280,22 +300,18 @@ describe("HeaderConversationMenu", () => {
     expect(mocks.rename).toHaveBeenCalledWith({ id: "conv-1", title: "Roadmap planning" });
   });
 
-  it("runs archive and delete actions for the active session", () => {
+  it("runs archive and delete actions for the active session", async () => {
     const view = renderMenu();
 
     openMenu();
     fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
     // A worktree session asks whether to delete the worktree first.
     expect(mocks.archive).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Yes, delete worktree" }));
-    // The optimistic overlay lives in the hook, and the Undo toast fires
-    // synchronously (navigating away unmounts this menu, so a mutate onSuccess
-    // callback wouldn't fire).
-    expect(mocks.archive).toHaveBeenCalledWith({
-      id: "conv-1",
-      archived: true,
-      deleteWorktree: true,
-    });
+    fireEvent.click(await screen.findByRole("button", { name: "Yes, delete worktree" }));
+    // A session with nothing under it archives alone, after the family read.
+    expect(mocks.archiveMany).toHaveBeenCalledTimes(1);
+    expect(mocks.archiveMany.mock.calls[0][0]).toMatchObject({ ids: ["conv-1"], archived: true });
+    expect([...mocks.archiveMany.mock.calls[0][0].deleteWorktreeIds]).toEqual(["conv-1"]);
 
     view.unmount();
     renderMenu();
@@ -306,6 +322,107 @@ describe("HeaderConversationMenu", () => {
     expect(mocks.deleteConversation).toHaveBeenCalledWith({
       id: "conv-1",
       deleteBranch: true,
+    });
+  });
+
+  describe("archiving a family's lead", () => {
+    const child = (id: string, status: string): Conversation => ({
+      ...CONVERSATION,
+      id,
+      title: id,
+      git_branch: null,
+      labels: { "ae.orch": "conv-1", "ae.status": status },
+    });
+    const lead: Conversation = { ...CONVERSATION, git_branch: null };
+    const withChildren = (...children: Conversation[]) => sessionList([lead, ...children]);
+    const archiveLead = () => {
+      renderMenu({ conversation: lead });
+      openMenu();
+      fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
+    };
+
+    it("archives the lead and its closed sessions at once", async () => {
+      withChildren(child("conv-a", "reference"), child("conv-b", "reference"));
+      archiveLead();
+      await waitFor(() => expect(mocks.archiveMany).toHaveBeenCalledTimes(1));
+      expect(mocks.archiveMany.mock.calls[0][0]).toMatchObject({
+        ids: ["conv-1", "conv-a", "conv-b"],
+        archived: true,
+      });
+      expect(screen.queryByTestId("ae-family-archive-confirm")).toBeNull();
+      expect(mocks.archive).not.toHaveBeenCalled();
+    });
+
+    it("asks first while a session is open, and Cancel archives nothing", async () => {
+      withChildren(child("conv-a", "reference"), child("conv-b", "working"));
+      archiveLead();
+      const confirm = await screen.findByTestId("ae-family-archive-confirm");
+      expect(confirm.textContent).toContain(
+        "Are you sure you would like to archive this? There are still open sessions.",
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      await waitFor(() => expect(screen.queryByTestId("ae-family-archive-confirm")).toBeNull());
+      expect(mocks.archiveMany).not.toHaveBeenCalled();
+      expect(mocks.archive).not.toHaveBeenCalled();
+    });
+
+    it("archives every session once the confirm is accepted", async () => {
+      withChildren(child("conv-b", "working"));
+      archiveLead();
+      await screen.findByTestId("ae-family-archive-confirm");
+      fireEvent.click(screen.getByRole("button", { name: "Archive" }));
+      expect(mocks.archiveMany.mock.calls[0][0]).toMatchObject({ ids: ["conv-1", "conv-b"] });
+    });
+
+    it("finds an open session under an archived helper", async () => {
+      // conv-b was started by conv-a, which is already archived.
+      sessionList(
+        [lead, { ...child("conv-b", "working"), labels: { "ae.orch": "conv-a" } }],
+        [{ ...child("conv-a", "reference"), archived: true }],
+      );
+      archiveLead();
+      await screen.findByTestId("ae-family-archive-confirm");
+      fireEvent.click(screen.getByRole("button", { name: "Archive" }));
+      expect(mocks.archiveMany.mock.calls[0][0]).toMatchObject({ ids: ["conv-1", "conv-b"] });
+    });
+
+    it("archives a session started by a lead alone", async () => {
+      withChildren(child("conv-a", "working"));
+      renderMenu({ conversation: child("conv-a", "working") });
+      openMenu();
+      fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
+      await waitFor(() => expect(mocks.archiveMany).toHaveBeenCalledTimes(1));
+      expect(mocks.archiveMany.mock.calls[0][0]).toMatchObject({ ids: ["conv-a"] });
+      expect(screen.queryByTestId("ae-family-archive-confirm")).toBeNull();
+    });
+
+    it("archives nothing and says so when the family can't be read", async () => {
+      const toasts: unknown[] = [];
+      const onToast = (event: Event) => toasts.push((event as CustomEvent).detail.content);
+      window.addEventListener("omnigent:toast", onToast);
+      try {
+        mocks.readSessions.mockRejectedValue(new Error("offline"));
+        archiveLead();
+        await waitFor(() =>
+          expect(toasts).toContain(
+            "Couldn't read the family's sessions, so nothing was archived. Try again.",
+          ),
+        );
+        expect(mocks.archive).not.toHaveBeenCalled();
+        expect(mocks.archiveMany).not.toHaveBeenCalled();
+      } finally {
+        window.removeEventListener("omnigent:toast", onToast);
+      }
+    });
+
+    it("reads once for a double click", async () => {
+      withChildren(child("conv-a", "reference"));
+      archiveLead();
+      openMenu();
+      fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
+      await waitFor(() => expect(mocks.archiveMany).toHaveBeenCalledTimes(1));
+      // Two slices per read: open and archived.
+      expect(mocks.readSessions).toHaveBeenCalledTimes(2);
     });
   });
 

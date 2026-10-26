@@ -1,7 +1,9 @@
 // Archive a family's lead together with its sessions (omnigent-ae, 2026-10-25).
 // In Grouping > Family, archiving a lead row archives every session under it.
 // When one of them is still open (not in the family's closed group), a confirm
-// asks first; Cancel archives nothing. The tree: lib/aeFamilyTree.ts.
+// asks first; Cancel archives nothing. The tree: lib/aeFamilyTree.ts. The chat
+// header's Archive does the same since 2026-10-25 (`gate: "read"`): it has no
+// sidebar tree, so it reads the family to learn whether the session leads one.
 //
 // The sessions to archive come from a fresh read of the session list, not the
 // sidebar's rows: those stop at the loaded pages and a search, and the tree
@@ -55,15 +57,16 @@ export function aeFamilyArchiveTargets(
   return { children, open: children.filter((c) => !aeIsClosedMember(c)).length };
 }
 
-/** The unarchived session list, newest first, up to `READ_PAGES` pages. */
-async function readSessions(queryClient: QueryClient): Promise<Conversation[]> {
+/** One slice of the session list, newest first, up to `READ_PAGES` pages. */
+async function readSlice(queryClient: QueryClient, archived: boolean): Promise<Conversation[]> {
   const rows: Conversation[] = [];
   let after: string | undefined;
   for (let page = 0; page < READ_PAGES; page += 1) {
     // eslint-disable-next-line no-await-in-loop -- each page needs the previous cursor
     const got = await fetchConversationsPage({
       searchQuery: "",
-      includeArchived: false,
+      includeArchived: archived,
+      visibility: archived ? "archived" : undefined,
       queryClient,
       limit: READ_LIMIT,
       after,
@@ -73,6 +76,21 @@ async function readSessions(queryClient: QueryClient): Promise<Conversation[]> {
     after = got.last_id ?? undefined;
   }
   return rows;
+}
+
+/**
+ * The open sessions, plus the archived ones so that a session started by an
+ * archived helper still traces back to its lead. Archived rows only link the
+ * family; `aeFamilyArchiveTargets` never archives them again.
+ */
+async function readSessions(queryClient: QueryClient): Promise<Conversation[]> {
+  const [open, archived] = await Promise.all([
+    readSlice(queryClient, false),
+    readSlice(queryClient, true),
+  ]);
+  const byId = new Map<string, Conversation>();
+  for (const c of [...archived, ...open]) byId.set(c.id, c);
+  return [...byId.values()];
 }
 
 interface Seen {
@@ -96,14 +114,19 @@ type RequestArchive = (
 ) => void;
 
 /**
- * A lead row's archive. `archiveFamily` returns false when the row is no lead
- * with sessions under it, so the caller archives the row alone. The row renders
+ * A lead's archive. `archiveFamily(alone)` archives the session with every one
+ * under it. With `gate: "tree"` (a sidebar row) only a lead in Grouping >
+ * Family's tree reads its family, and any other row calls `alone` at once; with
+ * `gate: "read"` (the chat header) every archive reads it. Once a read is done
+ * the archive runs here, never through `alone`: the caller's closure is from
+ * the click, and by then another session may be open. The caller renders
  * `source` and `dialog`.
  */
 export function useAeFamilyArchive(
   lead: Conversation,
   requestArchive: RequestArchive,
-): { archiveFamily: () => boolean; source: ReactNode; dialog: ReactNode } {
+  { gate }: { gate: "tree" | "read" },
+): { archiveFamily: (alone: () => void) => void; source: ReactNode; dialog: ReactNode } {
   const seen = useRef<Seen>({ tree: null, activeId: undefined });
   // A second Archive click while the read runs does nothing.
   const reading = useRef(false);
@@ -131,10 +154,15 @@ export function useAeFamilyArchive(
       showArchiveUndoToast(queryClient, all, navigate);
     });
 
-  const archiveFamily = () => {
-    const treeLead = seen.current.tree?.leads.get(lead.id);
-    if (!treeLead || treeLead.standIn) return false;
-    if (reading.current) return true;
+  const archiveFamily = (alone: () => void) => {
+    if (gate === "tree") {
+      const treeLead = seen.current.tree?.leads.get(lead.id);
+      if (!treeLead || treeLead.standIn) {
+        alone();
+        return;
+      }
+    }
+    if (reading.current) return;
     reading.current = true;
     readSessions(queryClient)
       .finally(() => {
@@ -149,7 +177,6 @@ export function useAeFamilyArchive(
         },
         () => showToast("Couldn't read the family's sessions, so nothing was archived. Try again."),
       );
-    return true;
   };
 
   const dialog = (
