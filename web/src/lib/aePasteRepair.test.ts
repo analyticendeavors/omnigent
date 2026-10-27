@@ -24,6 +24,29 @@ describe("repairEncodedNote", () => {
     expect(repairEncodedNote(plain, uri)).toBe(plain);
   });
 
+  it("repairs the note copied from a code block, trailing newline and all", () => {
+    // Exact clipboard of Reid's iPhone, 2026-10-27: the URL form ends in %0A.
+    const plain =
+      'THREAD: paste-test\nSTATE: Has spaces, "quotes", [brackets](url), <angle> and a dash - it\'s fine.\nQUADRANT: admin \u00b7 EST: minutes\n';
+    const uri =
+      "thread:%20paste-test%0ASTATE:%20Has%20spaces,%20%22quotes%22,%20%5Bbrackets%5D(url),%20%3Cangle%3E%20and%20a%20dash%20-%20it's%20fine.%0AQUADRANT:%20admin%20%C2%B7%20EST:%20minutes%0A";
+    expect(repairEncodedNote(plain, uri)).toBe(plain);
+  });
+
+  it("repairs whether or not either side carries the trailing newline", () => {
+    const body = "THREAD: a\nSTATE: b c";
+    const encoded = "thread:%20a%0ASTATE:%20b%20c";
+    expect(repairEncodedNote(body, `${encoded}%0A`)).toBe(body);
+    expect(repairEncodedNote(`${body}\n`, encoded)).toBe(`${body}\n`);
+    expect(repairEncodedNote(`${body}\r\n`, `${encoded}%0D%0A`)).toBe(`${body}\r\n`);
+  });
+
+  it("leaves a paste alone when only whitespace matches and the words differ", () => {
+    expect(
+      repairEncodedNote("THREAD: a\nSTATE: z z\n", "thread:%20a%0ASTATE:%20b%20c%0A"),
+    ).toBeNull();
+  });
+
   it("leaves a paste alone when the plain text is not the URI list's own decoded form", () => {
     expect(repairEncodedNote("something else", "foo:%20a%20b%20c")).toBeNull();
     expect(repairEncodedNote("", "foo:%20a%20b%20c")).toBeNull();

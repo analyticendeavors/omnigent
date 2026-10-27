@@ -24,7 +24,9 @@ function isEncodedNote(text: string): boolean {
 /** True when `plain` is `uri` decoded, ignoring case (the URL form lowercases the scheme). */
 function decodesTo(uri: string, plain: string): boolean {
   try {
-    return decodeURIComponent(uri).toLowerCase() === plain.toLowerCase();
+    // A copied block ends in a newline: the URL form keeps it as a trailing %0A
+    // while the caller trimmed `plain`, so both sides are trimmed here.
+    return decodeURIComponent(uri).trim().toLowerCase() === plain.trim().toLowerCase();
   } catch {
     return false;
   }
