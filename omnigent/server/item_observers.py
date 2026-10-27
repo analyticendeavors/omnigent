@@ -96,7 +96,14 @@ def notify_items_persisted(session_id: str, items: Sequence[ConversationItem]) -
 
 async def drain_item_observers() -> None:
     """Wait for every in-flight observer task to finish (tests and shutdown)."""
-    while _pending:
+    while True:
+        # Drop finished tasks here instead of waiting for their queued
+        # _pending.discard callback: gather over only-finished tasks completes
+        # without yielding (Python 3.12 eager path), so a loop that waited for
+        # the callback would spin forever and starve it.
+        _pending.difference_update([task for task in _pending if task.done()])
+        if not _pending:
+            return
         await asyncio.gather(*list(_pending), return_exceptions=True)
 
 

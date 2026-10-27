@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -32,6 +33,10 @@ from omnigent.server.item_observers import (
 )
 from omnigent.server.routes._sessions.helpers import _flush_relay_text
 from tests.server.helpers import create_test_agent
+
+# The timeout method is `thread`: a hang ends the worker run and the dump names
+# the test, it does not fail one test. The whole file takes about 2 seconds.
+pytestmark = pytest.mark.timeout(30)
 
 
 @pytest.fixture(autouse=True)
@@ -153,6 +158,41 @@ async def test_a_sync_observer_runs_off_the_event_loop() -> None:
     notify_items_persisted("conv_a", [_item(1, "x")])
     await drain_item_observers()
     assert loop_thread == [False]
+
+
+def test_drain_returns_when_a_finished_task_is_still_pending() -> None:
+    """A task that finished in the drainer's own loop pass must not spin drain."""
+
+    async def scenario() -> None:
+        loop = asyncio.get_running_loop()
+
+        async def quick() -> None:
+            return None
+
+        task = loop.create_task(quick())
+        item_observers._pending.add(task)
+        task.add_done_callback(item_observers._pending.discard)
+        await asyncio.sleep(0)  # task finishes this pass; its discard is queued for the next
+        assert task.done() and task in item_observers._pending
+        await drain_item_observers()
+
+    errors: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            asyncio.run(scenario())
+        except BaseException as exc:  # noqa: BLE001 - handed to the test thread below
+            errors.append(exc)
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(timeout=5)
+    hung = worker.is_alive()
+    reset_item_observers()  # empties _pending so a spinning drain exits
+    worker.join(timeout=5)
+    if errors:
+        raise errors[0]
+    assert not hung, "drain_item_observers spun on a finished task"
 
 
 def test_outside_an_event_loop_observers_are_skipped(
