@@ -1740,3 +1740,117 @@ describe("ApprovalCard — gating message emphasis", () => {
     expect(card.querySelector("strong, em")).toBeNull();
   });
 });
+
+describe("ApprovalCard — AE single-choice form shows one button per choice", () => {
+  const confirmSchema = {
+    type: "object",
+    properties: {
+      "Confirm the operation": {
+        type: "string",
+        enum: ["Yes", "No"],
+        enumNames: ["Continue the operation", "Decline the operation"],
+      },
+    },
+    required: ["Confirm the operation"],
+  };
+
+  it("renders Continue and Decline buttons and no select, and Continue posts the accept", () => {
+    const submitSpy = vi.fn().mockResolvedValue(undefined);
+    useChatStore.setState({ submitApproval: submitSpy } as Partial<
+      ReturnType<typeof useChatStore.getState>
+    >);
+    render(
+      <ApprovalCard
+        elicitationId="elic_confirm"
+        message="Confirm the operation"
+        phase="pre_tool_use"
+        policyName="claude_native_permission"
+        contentPreview=""
+        requestedSchema={confirmSchema}
+        status="pending"
+        response={null}
+      />,
+    );
+
+    const continueBtn = screen.getByRole("button", { name: "Continue the operation" });
+    expect(continueBtn.textContent).toBe("Continue");
+    expect(continueBtn.getAttribute("title")).toBe("Continue the operation");
+    expect(screen.getByRole("button", { name: "Decline the operation" }).textContent).toBe(
+      "Decline",
+    );
+    expect(screen.queryByRole("combobox")).toBeNull();
+    expect(screen.queryByRole("button", { name: /submit|reject/i })).toBeNull();
+
+    fireEvent.click(continueBtn);
+    expect(submitSpy).toHaveBeenCalledExactlyOnceWith("elic_confirm", "accept", {
+      "Confirm the operation": "Yes",
+    });
+  });
+
+  const renderChoice = (schema: Record<string, unknown>, submitSpy = vi.fn()) => {
+    useChatStore.setState({ submitApproval: submitSpy.mockResolvedValue(undefined) } as Partial<
+      ReturnType<typeof useChatStore.getState>
+    >);
+    render(
+      <ApprovalCard
+        elicitationId="elic_c"
+        message="Which environment?"
+        phase="pre_tool_use"
+        policyName="claude_native_permission"
+        contentPreview=""
+        requestedSchema={schema}
+        status="pending"
+        response={null}
+      />,
+    );
+    return submitSpy;
+  };
+  const envSchema = (extra: Record<string, unknown> = {}, required = ["Env"]) => ({
+    type: "object",
+    properties: {
+      Env: {
+        type: "string",
+        enum: ["dev", "prod"],
+        title: "Environment",
+        description: "Where to run",
+        ...extra,
+      },
+    },
+    required,
+  });
+
+  it("keeps the form for an optional enum field", () => {
+    renderChoice(envSchema({}, []));
+    expect(screen.getByRole("combobox")).toBeDefined();
+    expect(screen.queryByTestId("approval-card-choices")).toBeNull();
+  });
+
+  it("adds Reject when no choice declines, and Reject posts decline", () => {
+    const spy = renderChoice(envSchema());
+    expect(screen.getByRole("button", { name: "dev" })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+    expect(spy).toHaveBeenCalledExactlyOnceWith("elic_c", "decline", undefined);
+  });
+
+  it("shows no Reject for a Yes/No confirmation", () => {
+    renderChoice(confirmSchema);
+    expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
+  });
+
+  it("names the group by the field title and describes it", () => {
+    renderChoice(envSchema());
+    const group = screen.getByRole("group", { name: "Environment" });
+    expect(group.getAttribute("aria-describedby")).toBeTruthy();
+    expect(group.textContent).toContain("Where to run");
+  });
+
+  it("disables every button after the first tap so a double tap posts once", () => {
+    const spy = renderChoice(envSchema());
+    const dev = screen.getByRole("button", { name: "dev" });
+    fireEvent.click(dev);
+    fireEvent.click(dev);
+    expect(spy).toHaveBeenCalledExactlyOnceWith("elic_c", "accept", { Env: "dev" });
+    expect(screen.getByRole("button", { name: "prod" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Reject" }).hasAttribute("disabled")).toBe(true);
+  });
+});

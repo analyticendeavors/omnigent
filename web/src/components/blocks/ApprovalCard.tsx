@@ -47,6 +47,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useDescendantSession } from "@/hooks/useChildSessions";
+import { aeChoiceField } from "@/lib/aeChoiceButtons";
 import {
   type AskUserQuestionPayload,
   castAskUserQuestionPayload,
@@ -67,6 +68,7 @@ import {
   useScopedConversationId,
 } from "@/components/chat/conversationScope";
 import { AeApprovalPreview, aeFoldsApprovalPreview } from "./AeApprovalPreview";
+import { AeChoiceButtons } from "./AeChoiceButtons";
 import { AskUserQuestionForm, type AskUserQuestionAnswers } from "./AskUserQuestionForm";
 import { ElicitationMessage } from "./ElicitationMessage";
 import {
@@ -349,6 +351,8 @@ export function ApprovalCard({
   const schemaFormFields =
     askPayload === null && !isMultiChoice ? schemaFields(requestedSchema) : [];
   const isSchemaForm = schemaFormFields.length > 0;
+  // AE: a one-field enum of 2 to 4 values is one button per value, not a form.
+  const aeChoice = isSchemaForm ? aeChoiceField(requestedSchema) : null;
   const isCodexCommandApproval = codexCommand !== null && codexCommand !== undefined;
   // External URL: the elicitation points to a third-party page (OAuth,
   // external MCP server, etc.) — show a link. Our own /approve/...
@@ -756,6 +760,12 @@ export function ApprovalCard({
                   </a>
                 </Button>
               </div>
+            ) : aeChoice ? (
+              <AeChoiceButtons
+                field={aeChoice}
+                onChoose={submitSchemaAnswers}
+                onReject={() => submitBinary("decline")}
+              />
             ) : isSchemaForm ? (
               <ElicitationSchemaForm
                 fields={schemaFormFields}

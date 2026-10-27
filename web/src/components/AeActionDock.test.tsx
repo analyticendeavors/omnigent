@@ -883,7 +883,7 @@ describe("AeActionDock child prompts", () => {
     });
     await waitFor(() => expect(screen.queryByTestId("ae-action-dock")).toBeNull());
   });
-  it("renders an MCP server's schema form for its real payload and answers in the child", async () => {
+  it("renders an MCP server's confirmation as one button per choice and answers in the child", async () => {
     const field = "Confirm the operation";
     const mcp = {
       ...(ask as object),
@@ -910,9 +910,9 @@ describe("AeActionDock child prompts", () => {
     fireEvent.click(await screen.findByTestId("ae-dock-child-answer"));
     const prompt = await screen.findByTestId("ae-dock-child-prompt");
     expect(prompt.textContent).toContain("powerbi-modeling-sp asks");
-    expect(prompt.textContent).toContain(field);
-    fireEvent.change(within(prompt).getByRole("combobox"), { target: { value: "Yes" } });
-    fireEvent.click(within(prompt).getByRole("button", { name: /submit/i }));
+    expect(within(prompt).getByRole("button", { name: "Decline the operation" })).toBeTruthy();
+    expect(within(prompt).queryByRole("combobox")).toBeNull();
+    fireEvent.click(within(prompt).getByRole("button", { name: "Continue the operation" }));
     await waitFor(() => {
       const call = vi
         .mocked(authenticatedFetch)
