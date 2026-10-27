@@ -14,6 +14,10 @@ vi.mock("@/lib/nativeBridge", async (importOriginal) => ({
   ...(await importOriginal<typeof NativeBridge>()),
   isNativeShell: () => native,
 }));
+// A bare session URL shows the session's title; keep the lookup offline here.
+vi.mock("@/lib/sessionsApi", () => ({
+  getSessionSlim: () => Promise.reject(new Error("offline")),
+}));
 const toast = vi.fn();
 vi.mock("@/components/ui/toast", () => ({ showToast: (m: string) => toast(m) }));
 
@@ -110,7 +114,7 @@ it.each([
   `<https://omnigent.go-ae.org/c/${ID}>`,
   `https://omnigent.go-ae.org/c/${ID}`,
 ])("routes %s without the file toast", (md) => {
-  const text = md.startsWith("[") ? "docs" : md.replace(/^<|>$/g, "");
+  const text = md.startsWith("[") ? "docs" : `session ${ID.slice(0, 8)}`;
   render(
     <MemoryRouter initialEntries={["/c/other"]}>
       <QueryClientProvider client={new QueryClient()}>

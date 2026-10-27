@@ -5,6 +5,7 @@
 import type React from "react";
 import { useInRouterContext } from "react-router-dom";
 import { sessionLinkRoute } from "@/lib/aeSessionLinks";
+import { useSessionLinkTitle } from "@/lib/aeSessionTitles";
 import { withBasePath } from "@/lib/basePath";
 import { useLocation, useNavigate } from "@/lib/routing";
 import { cn } from "@/lib/utils";
@@ -20,6 +21,9 @@ type AnchorProps = React.ComponentPropsWithoutRef<"a">;
  * default, and every other anchor attribute (target, rel, aria-*) is kept.
  * A link to the session already open navigates nowhere, so repeat clicks do
  * not stack history entries.
+ *
+ * A link whose text is the session URL itself (a bare autolink) shows the
+ * session's title instead; an explicit `[text](url)` keeps its own text.
  */
 export function SessionRouteLink({
   route,
@@ -31,6 +35,8 @@ export function SessionRouteLink({
 }: AnchorProps & { route: string }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const bare = typeof children === "string" && sessionLinkRoute(children.trim()) !== null;
+  const title = useSessionLinkTitle(route, bare);
   return (
     <a
       data-streamdown="link"
@@ -38,6 +44,7 @@ export function SessionRouteLink({
       href={href}
       className={cn(SESSION_LINK_CLASS, className)}
       data-ae-session-link=""
+      title={props.title ?? (bare ? children : undefined)}
       onClick={(event) => {
         onClick?.(event);
         if (event.defaultPrevented || event.button !== 0) return;
@@ -47,7 +54,7 @@ export function SessionRouteLink({
         navigate(route);
       }}
     >
-      {children}
+      {title ?? children}
     </a>
   );
 }
