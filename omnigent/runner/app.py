@@ -85,6 +85,7 @@ from omnigent.runner.acp_subagent_sessions import (
     _mint_acp_subagent_child,
     _post_acp_subagent_tool_call,
 )
+from omnigent.runner.ae_claude_account import is_switching, wait_while_switching
 from omnigent.runner.app_support import (
     SpecResolver,
     _client_safe_error_detail,
@@ -5181,6 +5182,8 @@ def create_runner_app(
             and name not in _spec_names
         )
 
+        # A login switch is replacing the pane; start on the new one.
+        await wait_while_switching(conv)
         await _ensure_native_terminal_for_turn(conv, harness_name)
 
         startup_envelope = _fresh_session_init_envelope(conv)
@@ -6795,6 +6798,26 @@ def create_runner_app(
                 turn_in_flight=_native_turn_in_flight,
             )
 
+        if body_type == "claude_account_change":
+            from omnigent.runner.ae_claude_account import handle_claude_account_change
+
+            return await handle_claude_account_change(
+                conversation_id,
+                harness=_session_harness_name(conversation_id),
+                turn_in_flight=lambda: (
+                    conversation_id in _active_turns
+                    or _native_turn_in_flight(conversation_id)
+                    or (
+                        process_manager is not None
+                        and process_manager.has_active_turn(conversation_id)
+                    )
+                ),
+                terminal_registry=resource_registry.terminal_registry,
+                close_terminal=resource_registry.close_terminal,
+                ensure_terminal=_ensure_native_terminal_for_turn,
+                publish_event=_publish_event,
+            )
+
         if body_type == "plan_mode_change":
             harness = _session_harness_name(conversation_id)
             if harness == "codex-native":
@@ -7640,6 +7663,8 @@ def create_runner_app(
 
         async def _native_pane_is_busy(pane: PaneRef) -> bool:
             conv_id = pane.conversation_id
+            if is_switching(conv_id):
+                return True
             if conv_id in _active_turns or (
                 process_manager is not None and process_manager.has_active_turn(conv_id)
             ):

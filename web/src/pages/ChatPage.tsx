@@ -4746,7 +4746,12 @@ function SessionHarnessPicker({
     <div onKeyDown={pickModelByDigit} data-testid="composer-agent-config-content">
       {showClaudeAccounts && (
         <>
-          <AeClaudeAccountSubmenu host={accountHost} disabled={picksBusy} />
+          <AeClaudeAccountSubmenu
+            host={accountHost}
+            disabled={picksBusy}
+            sessionId={conversationId}
+            turnBusy={busy}
+          />
           {showModels && <DropdownMenuSeparator />}
         </>
       )}

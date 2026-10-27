@@ -13,8 +13,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useDetectedCredentials, useStoreCredential, type Host } from "@/hooks/useHosts";
 import { AE_MENU_NOTE_CLASS, AE_MENU_ROW_CLASS, AE_MENU_WIDTH_CLASS } from "@/lib/aeMenuRow";
+import { aePickDefaultClaudeAccount } from "@/lib/aePickDefaultClaudeAccount";
 import { AeSharedAccountMarker, aeIsSharedAccount } from "@/lib/aeSharedClaudeAccounts";
+import { isTempConvId } from "@/lib/tempConversationId";
 import { cn } from "@/lib/utils";
+import { AeChatAccountName, AeThisChatAccounts } from "./AeSessionClaudeAccountGroup";
 
 /** The row changes the host's default for new chats; a running chat keeps its login. */
 export const AE_ACCOUNT_SCOPE = "For new chats. This chat keeps the login it started with.";
@@ -23,16 +26,23 @@ export function AeClaudeAccountSubmenu({
   host,
   disabled = false,
   scope = AE_ACCOUNT_SCOPE,
+  sessionId,
+  turnBusy = false,
 }: {
   host: Host | null | undefined;
   /** Another configuration change is running. */
   disabled?: boolean;
   /** What the pick applies to, shown above the rows and as the row's tooltip. */
   scope?: string;
+  /** Inside a chat: its login gets a "This chat" group above the new-chat default. */
+  sessionId?: string | null;
+  /** A reply is running in that chat, so it cannot be switched now. */
+  turnBusy?: boolean;
 }) {
   const [error, setError] = useState<string | null>(null);
   const accounts = useDetectedCredentials(host?.host_id, !!host);
   const store = useStoreCredential(host?.host_id ?? "");
+  const pickDefault = aePickDefaultClaudeAccount(store, host?.host_id);
   if (!host) return null;
   const rows = (accounts.data ?? []).filter((row) => row.family.startsWith("claude-oauth"));
   const active = rows.find((row) => row.family === "claude-oauth-active");
@@ -44,6 +54,14 @@ export function AeClaudeAccountSubmenu({
     : rows.length === 0
       ? "Loading…"
       : (active?.source ?? "Default CLI account");
+  // A chat on provider credentials has no subscription login to switch, and a new
+  // chat's `temp:` id has no server session to switch yet.
+  const chatSession =
+    rows.length > 0 &&
+    !isTempConvId(sessionId) &&
+    !(accounts.data ?? []).some((row) => row.family.startsWith("claude-provider"))
+      ? sessionId
+      : null;
   return (
     <DropdownMenuSub>
       <DropdownMenuSubTrigger
@@ -56,10 +74,17 @@ export function AeClaudeAccountSubmenu({
           className="ml-auto min-w-0 truncate text-muted-foreground"
           data-testid="composer-claude-account-value"
         >
-          {value}
+          {sessionId && !isTempConvId(sessionId) && !unavailable ? (
+            <AeChatAccountName sessionId={sessionId} rows={rows} fallback={value} />
+          ) : (
+            value
+          )}
         </span>
       </DropdownMenuSubTrigger>
       <DropdownMenuSubContent className={cn(AE_MENU_WIDTH_CLASS, "max-h-[70vh] overflow-y-auto")}>
+        {chatSession && (
+          <AeThisChatAccounts sessionId={chatSession} rows={rows} turnBusy={turnBusy} />
+        )}
         <p
           className={cn(AE_MENU_NOTE_CLASS, "px-2 pt-1 pb-1.5 text-xs text-muted-foreground")}
           data-testid="composer-claude-account-scope"
@@ -78,14 +103,9 @@ export function AeClaudeAccountSubmenu({
               onSelect={(event) => event.preventDefault()}
               onCheckedChange={() => {
                 setError(null);
-                store.mutate(
-                  {
-                    harness: "claude-native",
-                    kind: "claude-oauth-select",
-                    account_name: accountId,
-                  },
-                  { onError: (failure) => setError(failure.message) },
-                );
+                pickDefault(accountId, row.source, {
+                  onError: (failure) => setError(failure.message),
+                });
               }}
               data-testid={`composer-claude-account-${accountId || "default"}`}
             >

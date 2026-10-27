@@ -72,3 +72,38 @@ async def test_a_failed_label_does_not_fail_the_launch(caplog: pytest.LogCapture
         await record_launch_account(client, "conv_abc", {"OMNIGENT_CLAUDE_ACCOUNT": "AE Backup"})
 
     assert "could not label session conv_abc" in caplog.text
+
+
+def test_a_chat_keeps_the_login_it_started_with() -> None:
+    from omnigent.harnesses.claude_native.ae_launch_account import locked_launch_account
+
+    # The server label (a fork's pick or a switch) wins over the last launch.
+    assert locked_launch_account("Backup", "Work", provider_auth=False) == "Backup"
+    assert locked_launch_account("", "Work", provider_auth=False) == ""
+    # No server label: the last launch's login stands, "" being the default login.
+    assert locked_launch_account(None, "Work", provider_auth=False) == "Work"
+    assert locked_launch_account(None, "", provider_auth=False) == ""
+    # A chat never launched keeps today's behaviour (the host's selected login).
+    assert locked_launch_account(None, None, provider_auth=False) is None
+    # Provider credentials own authentication, so the live label never applies.
+    assert locked_launch_account(None, "", provider_auth=True) is None
+
+
+async def test_launch_metadata_carries_the_live_label_beside_the_server_label() -> None:
+    from omnigent.onboarding.claude_accounts import CLAUDE_ACCOUNT_LABEL_KEY
+    from omnigent.runner.native.orchestration import _load_legacy_claude_launch_metadata
+
+    labels = {ACCOUNT_LIVE_LABEL: "Work", CLAUDE_ACCOUNT_LABEL_KEY: "Backup"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"labels": labels})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://server"
+    ) as client:
+        both = await _load_legacy_claude_launch_metadata(client, "conv_abc")
+        del labels[CLAUDE_ACCOUNT_LABEL_KEY]
+        live_only = await _load_legacy_claude_launch_metadata(client, "conv_abc")
+
+    assert (both.claude_account, both.live_claude_account) == ("Backup", "Work")
+    assert (live_only.claude_account, live_only.live_claude_account) == (None, "Work")

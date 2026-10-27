@@ -8057,6 +8057,8 @@ class _ClaudeSessionLaunchMetadata:
     fork_source_external_id: str | None = None
     fork_carry_history: bool = False
     claude_account: str | None = None
+    #: The login the terminal last launched on (``ae.claude_account``), which a relaunch keeps.
+    live_claude_account: str | None = None
     #: Both routing fields come from ``routing_class_from_snapshot``, so an
     #: auto-harness session always reads as routing-enabled too. Deriving them
     #: separately was the bug: a sub-agent child of a routed parent carries the
@@ -8079,6 +8081,7 @@ def _claude_launch_metadata_from_envelope(
     session_init: RunnerSessionInitEnvelope,
 ) -> _ClaudeSessionLaunchMetadata:
     """Project Claude launch metadata without server callbacks."""
+    from omnigent.harnesses.claude_native.ae_launch_account import ACCOUNT_LIVE_LABEL
     from omnigent.onboarding.claude_accounts import CLAUDE_ACCOUNT_LABEL_KEY
     from omnigent.runner.subagent_routing import routing_class_from_snapshot
     from omnigent.stores.conversation_store import (
@@ -8106,6 +8109,7 @@ def _claude_launch_metadata_from_envelope(
         ),
         fork_carry_history=snapshot.labels.get(FORK_CARRY_HISTORY_LABEL_KEY) == "1",
         claude_account=snapshot.labels.get(CLAUDE_ACCOUNT_LABEL_KEY),
+        live_claude_account=snapshot.labels.get(ACCOUNT_LIVE_LABEL),
     )
 
 
@@ -8114,6 +8118,7 @@ async def _load_legacy_claude_launch_metadata(
     session_id: str,
 ) -> _ClaudeSessionLaunchMetadata:
     """Fetch Claude launch metadata for servers predating the init envelope."""
+    from omnigent.harnesses.claude_native.ae_launch_account import ACCOUNT_LIVE_LABEL
     from omnigent.onboarding.claude_accounts import CLAUDE_ACCOUNT_LABEL_KEY
     from omnigent.runner.subagent_routing import routing_class_from_snapshot
     from omnigent.stores.conversation_store import (
@@ -8174,6 +8179,7 @@ async def _load_legacy_claude_launch_metadata(
         ),
         fork_carry_history=labels.get(FORK_CARRY_HISTORY_LABEL_KEY) == "1",
         claude_account=labels.get(CLAUDE_ACCOUNT_LABEL_KEY),
+        live_claude_account=labels.get(ACCOUNT_LIVE_LABEL),
     )
     permission_mode = _claude_launch_permission_mode(metadata.terminal_launch_args)
     _logger.info(
@@ -8882,6 +8888,7 @@ async def _auto_create_claude_terminal(
     # ambient env (the CLI path records these at prepare time; the runner
     # resolves its config only after the bridge exists).
     from omnigent.harnesses.claude_native.ae_launch_account import (
+        locked_launch_account,
         record_launch_account,
         write_launch_account,
     )
@@ -9014,6 +9021,12 @@ async def _auto_create_claude_terminal(
     if resolved_claude is not None:
         validate_claude_hook_interpreter_compatibility(resolved_claude)
 
+    # A relaunch stays on the login the chat started with, not the host's new default.
+    claude_account = locked_launch_account(
+        claude_account,
+        launch_metadata.live_claude_account,
+        provider_auth=claude_config is not None,
+    )
     claude_terminal_env_unset = _claude_terminal_env_unset(claude_config, claude_account)
     claude_terminal_env = build_native_claude_terminal_env(
         claude_config, account_name=claude_account

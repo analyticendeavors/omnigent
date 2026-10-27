@@ -7,19 +7,36 @@
 // feed is scrolled. Nothing waiting draws nothing.
 
 import { QueryClientContext, useIsMutating, useQueryClient } from "@tanstack/react-query";
-import { type RefObject, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  type RefObject,
+  forwardRef,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { ConfirmMerge, MERGED_TEXT } from "@/components/AePrCards";
 import { AePrLinkHoverCard } from "@/components/AePrLinkHoverCard";
 import { COMPOSER_CONTENT_INSET_CLASS } from "@/components/composer/ChatComposer";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { showToast } from "@/components/ui/toast";
 import { useAeActionDockItems, useAeQuestionsOnScreen } from "@/hooks/useAeActionDockItems";
 import { useAeDockLift } from "@/hooks/useAeDockLift";
 import { useAeMarkReady } from "@/hooks/useAeMarkReady";
+import { useAeSwitchClaudeAccount } from "@/hooks/useAeSwitchClaudeAccount";
 import { useAeUpdateBranch } from "@/hooks/useAeUpdateBranch";
 import {
   type AeBranchUpdate,
   type AeDockDraft,
   type AeDockItem,
+  type AeDockLimit,
   type AeDockKind,
   type AeDockWaiting,
   aeBranchUpdatePending,
@@ -32,6 +49,7 @@ import {
 } from "@/lib/aeActionDock";
 import {
   AE_ICON_ARROW_DOWN,
+  AE_ICON_ARROWS_EXCHANGE,
   AE_ICON_CHEVRON_UP,
   AE_ICON_GAUGE,
   AE_ICON_HELP_CIRCLE,
@@ -81,7 +99,12 @@ const ACTION = "h-6 shrink-0 px-2 text-xs";
 /** What the limit item's buttons do; ChatPage supplies the model menu opener. */
 export interface AeLimitActions {
   onSwitchModel?: () => void;
-  onSwitchAccount?: () => void;
+  /** Moves this chat to the login in place (it restarts and resumes). */
+  onSwitchAccount?: (account: string, label: string) => void;
+  /** Copies this chat to another login (the fork dialog). */
+  onCopyAccount?: () => void;
+  /** A switch is running. */
+  switching?: boolean;
 }
 
 /** Scroll the feed to the pending question's card. */
@@ -223,33 +246,87 @@ function NewChatButton({ inList }: { inList: boolean }) {
   );
 }
 
-function LimitButton({
-  icon,
-  label,
-  short,
-  inList,
-  onClick,
-  testId,
-}: {
-  icon: AeTablerIconNode;
-  label: string;
-  short: string;
-  inList: boolean;
-  onClick: () => void;
-  testId: string;
-}) {
+const LimitButton = forwardRef<
+  HTMLButtonElement,
+  {
+    icon: AeTablerIconNode;
+    label: string;
+    short: string;
+    inList: boolean;
+    onClick?: () => void;
+    testId: string;
+    title?: string;
+    disabled?: boolean;
+  }
+>(function LimitButton({ icon, label, short, inList, onClick, testId, title, ...rest }, ref) {
   return (
     <Button
+      ref={ref}
       variant="outline"
       className={cn(ACTION, "w-6 px-0 md:w-auto md:px-2")}
       aria-label={label}
-      title={label}
+      title={title ?? label}
       onClick={onClick}
       data-testid={testId}
+      {...rest}
     >
       <AeTablerSvg node={icon} className="size-3" />
       <span className="hidden md:inline">{inList ? label : short}</span>
     </Button>
+  );
+});
+
+/** Switch this chat's login in place: one button for one other login, else a menu of them. */
+function SwitchAccountButton({
+  item,
+  limitActions,
+  inList,
+}: {
+  item: AeDockLimit;
+  limitActions: AeLimitActions;
+  inList: boolean;
+}) {
+  const { accountChoices } = item;
+  const switchTo = limitActions.onSwitchAccount;
+  if (!switchTo || accountChoices.length === 0) return null;
+  const common = {
+    icon: AE_ICON_ARROWS_EXCHANGE,
+    label: "Switch account",
+    short: "Account",
+    inList,
+    testId: "ae-dock-limit-account",
+    disabled: limitActions.switching,
+  };
+  if (accountChoices.length === 1) {
+    const [only] = accountChoices;
+    return (
+      <LimitButton
+        {...common}
+        title={`Restart this chat on ${only.label} and resume it. The next reply re-reads the conversation (extra tokens).`}
+        onClick={() => switchTo(only.account, only.label)}
+      />
+    );
+  }
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <LimitButton
+          {...common}
+          title="Restart this chat on another login and resume it. The next reply re-reads the conversation (extra tokens)."
+        />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" data-testid="ae-dock-limit-account-menu">
+        {accountChoices.map((choice) => (
+          <DropdownMenuItem
+            key={choice.account}
+            onSelect={() => switchTo(choice.account, choice.label)}
+            data-testid={`ae-dock-limit-account-${choice.account || "default"}`}
+          >
+            {choice.label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -283,14 +360,18 @@ function ItemActions({
               testId="ae-dock-limit-model"
             />
           )}
-          {item.canSwitchAccount && limitActions.onSwitchAccount && (
+          {item.canSwitchAccount && (
+            <SwitchAccountButton item={item} limitActions={limitActions} inList={inList} />
+          )}
+          {item.canCopyAccount && limitActions.onCopyAccount && (
             <LimitButton
               icon={AE_ICON_USER_SHARE}
-              label="Switch account"
-              short="Account"
+              label="Copy to another login"
+              short="Copy"
               inList={inList}
-              onClick={limitActions.onSwitchAccount}
-              testId="ae-dock-limit-account"
+              title="Fork this chat, history included, onto another login. This chat stays where it is."
+              onClick={limitActions.onCopyAccount}
+              testId="ae-dock-limit-copy"
             />
           )}
           <NewChatButton inList={inList} />
@@ -507,10 +588,17 @@ export function AeActionDock({
 
 function Dock({ sessionId, onSwitchModel }: { sessionId?: string; onSwitchModel?: () => void }) {
   const forkDialog = useForkDialog();
+  const switchAccount = useAeSwitchClaudeAccount(sessionId);
   const limitActions: AeLimitActions = {
     onSwitchModel,
+    onSwitchAccount: (account, label) =>
+      switchAccount.mutate(account, {
+        onSuccess: () => showToast(`This chat now runs on ${label}.`),
+        onError: (failure) => showToast(failure.message),
+      }),
+    switching: switchAccount.isPending,
     // A full clone of this session, history included; the dialog's account row picks the login.
-    onSwitchAccount: forkDialog ? () => forkDialog.openForkDialog() : undefined,
+    onCopyAccount: forkDialog ? () => forkDialog.openForkDialog() : undefined,
   };
   const questionsOnScreen = useAeQuestionsOnScreen();
   const { items, dismiss } = useAeActionDockItems(sessionId, questionsOnScreen);

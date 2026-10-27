@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useDetectedCredentials, useStoreCredential, type Host } from "@/hooks/useHosts";
+import { aePickDefaultClaudeAccount } from "@/lib/aePickDefaultClaudeAccount";
 import { AeSharedAccountMarker, aeIsSharedAccount } from "@/lib/aeSharedClaudeAccounts";
 
 /** Host-owned subscription choices; no token is returned by the discovery API. */
@@ -25,6 +26,7 @@ export function ClaudeAccounts({
   const [accountLabel, setAccountLabel] = useState("");
   const accounts = useDetectedCredentials(host?.host_id, !!host);
   const store = useStoreCredential(host?.host_id ?? "");
+  const pickDefault = aePickDefaultClaudeAccount(store, host?.host_id);
   const addAccount = () => {
     if (store.isPending || !name.trim() || !token.trim()) return;
     store.mutate(
@@ -106,23 +108,16 @@ export function ClaudeAccounts({
                   }
                   disabled={store.isPending || row.family === "claude-oauth-active"}
                   onClick={() =>
-                    store.mutate(
-                      {
-                        harness: "claude-native",
-                        kind: "claude-oauth-select",
-                        account_name: accountId,
+                    pickDefault(accountId, displayLabel, {
+                      onSuccess: () => {
+                        setMessageIsError(false);
+                        setMessage("Account selected for new chats.");
                       },
-                      {
-                        onSuccess: () => {
-                          setMessageIsError(false);
-                          setMessage("Account selected for new chats.");
-                        },
-                        onError: (error) => {
-                          setMessageIsError(true);
-                          setMessage(error.message);
-                        },
+                      onError: (error) => {
+                        setMessageIsError(true);
+                        setMessage(error.message);
                       },
-                    )
+                    })
                   }
                 >
                   {displayLabel}

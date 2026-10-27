@@ -38,7 +38,10 @@ export const AE_ICON_SPARKLES = paths(
   "M16 18a2 2 0 0 1 2 2a2 2 0 0 1 2 -2a2 2 0 0 1 -2 -2a2 2 0 0 1 -2 2m0 -12a2 2 0 0 1 2 2a2 2 0 0 1 2 -2a2 2 0 0 1 -2 -2a2 2 0 0 1 -2 2m-7 12a6 6 0 0 1 6 -6a6 6 0 0 1 -6 -6a6 6 0 0 1 -6 6a6 6 0 0 1 6 6",
 );
 
-/** `user-share`: switch account. */
+/** `arrows-exchange`: switch this chat to another login. */
+export const AE_ICON_ARROWS_EXCHANGE = paths("M7 10h14l-4 -4", "M17 14h-14l4 4");
+
+/** `user-share`: copy this chat to another login. */
 export const AE_ICON_USER_SHARE = paths(
   "M8 7a4 4 0 1 0 8 0a4 4 0 0 0 -8 0",
   "M6 21v-2a4 4 0 0 1 4 -4h3",

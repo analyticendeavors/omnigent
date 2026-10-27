@@ -23,6 +23,7 @@ import {
   aeRelabelSharedClaudeAccount,
   aeRemoveSharedClaudeAccount,
 } from "@/lib/aeSharedClaudeAccounts";
+import { aePickDefaultClaudeAccount } from "@/lib/aePickDefaultClaudeAccount";
 import { AE_PENCIL_ICON } from "@/lib/aePolicyEdit";
 import { AeTablerSvg } from "@/lib/aeTablerIcon";
 import type { AeTablerIconNode } from "@/lib/aeTablerIconData";
@@ -79,6 +80,7 @@ export function AeSharedClaudeAccountsGroup({
   onChanged: () => void;
 }) {
   const store = useStoreCredential(hostId);
+  const pickDefault = aePickDefaultClaudeAccount(store, hostId);
   const invalidateAllHosts = useInvalidateDetectedCredentials();
   const [list, setList] = useState<AeSharedClaudeAccountList | null>(null);
   const [readError, setReadError] = useState<string | null>(null);
@@ -261,17 +263,10 @@ export function AeSharedClaudeAccountsGroup({
                     className="h-auto min-h-8 min-w-0 flex-1 whitespace-normal break-words"
                     disabled={store.isPending || busy || isSelected}
                     onClick={() =>
-                      store.mutate(
-                        {
-                          harness: "claude-native",
-                          kind: "claude-oauth-select",
-                          account_name: row.account,
-                        },
-                        {
-                          onSuccess: () => say("Account selected for new chats.", false),
-                          onError: (error) => say(error.message, true),
-                        },
-                      )
+                      pickDefault(row.account, row.label, {
+                        onSuccess: () => say("Account selected for new chats.", false),
+                        onError: (error) => say(error.message, true),
+                      })
                     }
                   >
                     {row.label}

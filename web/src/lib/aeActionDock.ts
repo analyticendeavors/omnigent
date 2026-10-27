@@ -2,7 +2,7 @@
 // first. Pure, so ordering, badges, hiding and the deploy lifecycle are
 // unit-tested (aeActionDock.test.ts). omnigent-ae, 2026-10-20.
 
-import { type AeLimitGate, aeLimitGateShort } from "@/lib/aeLimitGate";
+import { type AeAccountChoice, type AeLimitGate, aeLimitGateShort } from "@/lib/aeLimitGate";
 import { type AePrDeploy, aeHasDeployState } from "@/lib/aePrDeploy";
 import { type AePrReceipt, aePrReceipt } from "@/lib/aePrReceipt";
 import { type AePrCard, aeCiText, aeReadyToMerge } from "@/lib/aePrs";
@@ -100,8 +100,12 @@ export interface AeDockDeploy extends ItemBase {
 export interface AeDockLimit extends ItemBase {
   kind: "limit";
   gate: AeLimitGate;
-  /** A fork onto another account is possible: a Claude session, another login, fork allowed. */
+  /** The chat can move to another login in place: a Claude session with another login to go to. */
   canSwitchAccount: boolean;
+  /** The logins it can move to. */
+  accountChoices: AeAccountChoice[];
+  /** A copy on another login is possible too: the same, and a fork is allowed. */
+  canCopyAccount: boolean;
 }
 
 export type AeDockItem =

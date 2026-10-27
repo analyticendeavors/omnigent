@@ -598,14 +598,20 @@ const TWO_LOGINS = [
   { family: "claude-oauth-active", source: "AE Default", env_var: "" },
   { family: "claude-oauth", source: "Personal", env_var: "personal" },
 ];
+const THREE_LOGINS = [...TWO_LOGINS, { family: "claude-oauth", source: "Shared", env_var: "team" }];
 
 function serveLimits(answer: () => unknown, logins: unknown[] = TWO_LOGINS) {
-  vi.mocked(authenticatedFetch).mockImplementation((input: URL | RequestInfo) => {
-    const path = String(input);
-    if (path.startsWith("/v1/ae/limits")) return json(answer());
-    if (path.includes("/credentials/detected")) return json({ credentials: logins });
-    return json({ error: { message: "nope" } }, 404);
-  });
+  vi.mocked(authenticatedFetch).mockImplementation(
+    (input: URL | RequestInfo, init?: RequestInit) => {
+      const path = String(input);
+      if (init?.method === "PUT" && path.endsWith("/claude-account")) {
+        return json({ account: JSON.parse(String(init.body)).account, relaunched: true });
+      }
+      if (path.startsWith("/v1/ae/limits")) return json(answer());
+      if (path.includes("/credentials/detected")) return json({ credentials: logins });
+      return json({ error: { message: "nope" } }, 404);
+    },
+  );
 }
 
 function Where() {
@@ -657,6 +663,7 @@ describe("AeActionDock usage gate", () => {
     expect(lead.textContent).toContain("AE Default is at 92% of its weekly limit, resets");
     expect(within(lead).getByTestId("ae-dock-limit-model")).toBeTruthy();
     expect(await within(lead).findByTestId("ae-dock-limit-account")).toBeTruthy();
+    expect(within(lead).getByTestId("ae-dock-limit-copy")).toBeTruthy();
     expect(within(lead).getByTestId("ae-dock-limit-new")).toBeTruthy();
     expect(within(lead).getByTestId("ae-dock-dismiss")).toBeTruthy();
   });
@@ -673,11 +680,38 @@ describe("AeActionDock usage gate", () => {
     const { onSwitchModel, openForkDialog } = renderLimitDock();
     fireEvent.click(await screen.findByTestId("ae-dock-limit-model"));
     expect(onSwitchModel).toHaveBeenCalledTimes(1);
+    // The primary button moves this chat in place; the fork dialog is the second action.
     fireEvent.click(await screen.findByTestId("ae-dock-limit-account"));
+    await waitFor(() =>
+      expect(authenticatedFetch).toHaveBeenCalledWith(
+        "/v1/ae/sessions/s1/claude-account",
+        expect.objectContaining({ method: "PUT", body: JSON.stringify({ account: "personal" }) }),
+      ),
+    );
+    expect(openForkDialog).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByTestId("ae-dock-limit-copy"));
     expect(openForkDialog).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("where").textContent).toBe("/c/s1");
     fireEvent.click(screen.getByTestId("ae-dock-limit-new"));
     expect(screen.getByTestId("where").textContent).toBe("/");
+  });
+
+  it("opens a menu of logins when more than one other login exists", async () => {
+    serveLimits(() => limitsAnswer(95), THREE_LOGINS);
+    renderLimitDock();
+    const button = await screen.findByTestId("ae-dock-limit-account");
+    expect(authenticatedFetch).not.toHaveBeenCalledWith(
+      "/v1/ae/sessions/s1/claude-account",
+      expect.anything(),
+    );
+    fireEvent.pointerDown(button, { button: 0, pointerType: "mouse" });
+    fireEvent.click(await screen.findByTestId("ae-dock-limit-account-team"));
+    await waitFor(() =>
+      expect(authenticatedFetch).toHaveBeenCalledWith(
+        "/v1/ae/sessions/s1/claude-account",
+        expect.objectContaining({ body: JSON.stringify({ account: "team" }) }),
+      ),
+    );
   });
 
   it("hides Switch account with no other login", async () => {
@@ -704,7 +738,7 @@ describe("AeActionDock usage gate", () => {
     ["cannot be forked", { canFork: false }],
     ["has a fork restriction", { disabledReason: "Forking is off for this session." }],
   ] as const) {
-    it(`hides Switch account when the session ${why}`, async () => {
+    it(`hides Copy to another login when the session ${why}`, async () => {
       serveLimits(() => limitsAnswer(95));
       renderLimitDock(opts);
       await screen.findByTestId("ae-dock-limit-new");
@@ -713,7 +747,8 @@ describe("AeActionDock usage gate", () => {
           expect.stringContaining("/credentials/detected"),
         ),
       );
-      expect(screen.queryByTestId("ae-dock-limit-account")).toBeNull();
+      expect(screen.getByTestId("ae-dock-limit-account")).toBeTruthy();
+      expect(screen.queryByTestId("ae-dock-limit-copy")).toBeNull();
     });
   }
 

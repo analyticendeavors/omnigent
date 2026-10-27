@@ -9,13 +9,13 @@ import { useAePickedClaudeAccount } from "@/hooks/useAePickedClaudeAccount";
 import { useDetectedCredentials } from "@/hooks/useHosts";
 import { useSession } from "@/hooks/useSession";
 import type { AeDockLimit } from "@/lib/aeActionDock";
+import { aeChatAccount } from "@/lib/aeClaudeAccount";
 import {
   type AeLimitDismissal,
-  aeHasOtherClaudeAccount,
   aeLimitGate,
   aeLimitGateDismiss,
+  aeOtherClaudeAccounts,
 } from "@/lib/aeLimitGate";
-import { AE_CLAUDE_ACCOUNT_LABEL } from "@/shell/AeForkClaudeAccount";
 import { useForkDialog } from "@/shell/ForkDialogContext";
 import { useChatStore } from "@/store/chatStore";
 
@@ -76,10 +76,9 @@ export function useAeLimitGate(sessionId: string | undefined): {
     Boolean(forkDialog?.canFork) &&
     !forkDialog?.disabledReason &&
     forkDialog?.currentSessionId === sessionId;
-  const canSwitchAccount =
-    claude &&
-    forkable &&
-    aeHasOtherClaudeAccount(credentials.data ?? [], session?.labels?.[AE_CLAUDE_ACCOUNT_LABEL]);
+  const accountChoices = claude
+    ? aeOtherClaudeAccounts(credentials.data ?? [], aeChatAccount(session?.labels))
+    : [];
   return {
     item: {
       kind: "limit",
@@ -87,7 +86,9 @@ export function useAeLimitGate(sessionId: string | undefined): {
       anchor: `limit:${gate.windowKey}`,
       order: 0,
       gate,
-      canSwitchAccount,
+      canSwitchAccount: accountChoices.length > 0,
+      accountChoices,
+      canCopyAccount: accountChoices.length > 0 && forkable,
     },
     dismiss: () => {
       // Another chat may have dismissed since this one mounted: start from storage.

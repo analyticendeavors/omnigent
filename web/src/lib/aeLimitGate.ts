@@ -190,6 +190,39 @@ export function aeLimitGateShort(gate: AeLimitGate): string {
 export interface AeLimitCredentialRow {
   family: string;
   env_var?: string | null;
+  /** The login's display name. */
+  source?: string | null;
+}
+
+/** A Claude login a chat can move to. */
+export interface AeAccountChoice {
+  /** The login's id; "" is the default login. */
+  account: string;
+  label: string;
+}
+
+/**
+ * The Claude logins other than the one this chat runs on, in the host's order;
+ * none on a host signed in with provider credentials. `currentAccount` is the
+ * chat's login; without one it runs on the host's selected login.
+ */
+export function aeOtherClaudeAccounts(
+  rows: readonly AeLimitCredentialRow[],
+  currentAccount: string | null | undefined,
+): AeAccountChoice[] {
+  if (rows.some((row) => row.family.startsWith("claude-provider"))) return [];
+  const logins = rows.filter((row) => row.family.startsWith("claude-oauth"));
+  const active = logins.find((row) => row.family === "claude-oauth-active");
+  const current = currentAccount ?? active?.env_var ?? "";
+  const seen = new Set<string>();
+  const choices: AeAccountChoice[] = [];
+  for (const row of logins) {
+    const account = row.env_var ?? "";
+    if (account === current || seen.has(account)) continue;
+    seen.add(account);
+    choices.push({ account, label: row.source || (account === "" ? "Default login" : account) });
+  }
+  return choices;
 }
 
 /**

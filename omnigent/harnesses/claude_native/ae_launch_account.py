@@ -33,6 +33,28 @@ _logger = logging.getLogger(__name__)
 ACCOUNT_LIVE_LABEL = "ae.claude_account"
 
 
+def locked_launch_account(
+    server_label: str | None, live_label: str | None, *, provider_auth: bool
+) -> str | None:
+    """
+    The login a terminal launches on: a chat stays on the one it started with.
+
+    The server's label (a fork's pick, or a switch made in place) wins. Without
+    one, the live label of the last launch keeps a restart (a deploy, an idle
+    close) from moving the chat to the host's new default. A chat with no label
+    yet, or one on provider credentials, launches as before.
+
+    :param server_label: ``omnigent.claude_native.account``, or ``None``.
+    :param live_label: ``ae.claude_account`` from the last launch, or ``None``.
+    :param provider_auth: Whether the launch carries provider credentials.
+    :returns: The account name (``""`` is the default login), or ``None`` for the
+        host's selected login.
+    """
+    if server_label is not None or provider_auth:
+        return server_label
+    return live_label
+
+
 def write_launch_account(bridge_dir: Path, terminal_env: Mapping[str, str]) -> None:
     """
     Record the account the terminal is about to run on.
