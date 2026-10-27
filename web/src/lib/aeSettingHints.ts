@@ -60,6 +60,11 @@ export const AE_SETTING_HINTS = {
     hint: `Watches, polls and commits. Auto lets the lead choose. ${EFFORT}`,
     source: "tooltip",
   },
+  "reviewer.older": {
+    label: "Older models",
+    hint: "Earlier versions sit under Older models. The group with the model you use now opens on its own, so it is never hidden.",
+    source: "tooltip",
+  },
   "reviewer.add": {
     label: "Adding reviewers",
     hint: "Adds a reviewer, up to 3. The new one is Codex on its Sol model if ready, else a Claude model not used yet. The x removes one.",

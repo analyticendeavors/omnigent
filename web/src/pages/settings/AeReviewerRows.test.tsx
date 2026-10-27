@@ -19,6 +19,15 @@ vi.mock("@/hooks/useHosts", () => ({
   }),
 }));
 
+/** Opens a picker and returns its list. */
+const openList = (trigger: HTMLElement) => {
+  fireEvent.click(trigger);
+  return screen.getByRole("tree");
+};
+/** Picks the option with this name in an open list. */
+const pickOption = (list: HTMLElement, name: string) =>
+  fireEvent.click(within(list).getByRole("treeitem", { name }));
+
 const efforts = (...names: string[]) => names.map((reasoningEffort) => ({ reasoningEffort }));
 const FIVE = efforts("low", "medium", "high", "xhigh", "max");
 const SIX = efforts("low", "medium", "high", "xhigh", "max", "ultra");
@@ -223,10 +232,18 @@ describe("AeReviewerRows", () => {
   it("lists agents in the slot picker, greys those needing setup, and picks one", () => {
     const onSave = vi.fn();
     render(<Harness initial={sonnet} onSave={onSave} />);
-    const picker = screen.getByRole("combobox", { name: "Reviewer model" });
-    expect(screen.getByRole("option", { name: "Gemini CLI (needs setup)" })).toBeDisabled();
-    expect(screen.getByRole("option", { name: "Auto (the lead picks)" })).toBeInTheDocument();
-    fireEvent.change(picker, { target: { value: "codex:gpt-6-astra" } });
+    const list = openList(screen.getByRole("button", { name: /^Reviewer model/ }));
+    expect(within(list).getByRole("treeitem", { name: /^Gemini CLI/ })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(within(list).getByRole("treeitem", { name: /^Gemini CLI/ })).toHaveTextContent(
+      "needs setup",
+    );
+    expect(
+      within(list).getByRole("treeitem", { name: "Auto (the lead picks)" }),
+    ).toBeInTheDocument();
+    pickOption(list, "GPT-6-Astra");
     expect(onSave).toHaveBeenLastCalledWith({
       mode: "multi",
       reviewers: [
@@ -256,8 +273,8 @@ describe("AeReviewerRows", () => {
         onSave={vi.fn()}
       />,
     );
-    const second = screen.getAllByRole("combobox", { name: /^Reviewer 2 model/ })[0];
-    expect(second.querySelector('option[value="__auto"]')).toBeNull();
+    const second = screen.getAllByRole("button", { name: /^Reviewer 2 model/ })[0];
+    expect(within(openList(second)).queryByRole("treeitem", { name: /Auto/ })).toBeNull();
     expect(screen.getByTestId("ae-reviewer-tag-2")).toHaveTextContent("Needs setup");
     expect(screen.getByRole("link", { name: "Set up" })).toHaveAttribute(
       "href",
@@ -353,8 +370,8 @@ describe("AeReviewerRows", () => {
       />,
     );
     expect(screen.queryByTestId("ae-reviewer-tag-2")).not.toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: /^Reviewer 2 model/ })).toHaveValue(
-      "codex:gpt-6-sol",
+    expect(screen.getByRole("button", { name: /^Reviewer 2 model/ })).toHaveTextContent(
+      "GPT-6-Sol",
     );
   });
 });
@@ -367,24 +384,23 @@ describe("Codex reviewers in the one dropdown", () => {
       { mode: "agent" as const, agent: "codex-id", name: "Codex", model, effort } as never,
     ],
   });
-  const second = () => screen.getByRole("combobox", { name: /^Reviewer 2 model/ });
+  const second = () => screen.getByRole("button", { name: /^Reviewer 2 model/ });
   const barOf = () =>
     within(screen.getByRole("radiogroup", { name: "Reviewer 2 effort" })).getAllByRole("radio");
 
   it("lists the three latest Codex models by the host's names, with no versions or notes", () => {
     render(<Harness initial={codexSlot("gpt-6-sol", "high")} onSave={vi.fn()} />);
-    const group = second().querySelector<HTMLElement>(
-      'optgroup[label="Run through Codex, as a child session"]',
-    );
-    expect(Array.from(group?.querySelectorAll("option") ?? []).map((o) => o.textContent)).toEqual([
-      "GPT-6-Astra",
-      "GPT-6-Sol",
-      "GPT-6-Luna",
-    ]);
+    expect(second()).toHaveTextContent("GPT-6-Sol");
+    const list = openList(second());
+    const codexNames = within(list)
+      .getAllByRole("treeitem")
+      .map((o) => o.textContent)
+      .filter((t) => t?.startsWith("GPT-6"));
+    expect(codexNames).toEqual(["GPT-6-Astra", "GPT-6-Sol", "GPT-6-Luna"]);
+    expect(within(list).getByText("Run through Claude, as a subagent")).toBeInTheDocument();
     expect(
-      second().querySelector('optgroup[label="Run through Claude, as a subagent"]'),
-    ).not.toBeNull();
-    expect(second()).toHaveValue("codex:gpt-6-sol");
+      within(list).getByRole("treeitem", { name: /^Older models, collapsed/ }),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("ae-reviewer-tool-2")).toHaveTextContent("Codex");
     expect(screen.queryByTestId("ae-reviewer-tool-1")).not.toBeInTheDocument();
   });
@@ -408,8 +424,13 @@ describe("Codex reviewers in the one dropdown", () => {
 
   it("shows the host's default model by name for a slot saved without one", () => {
     render(<Harness initial={codexSlot(null, null)} onSave={vi.fn()} />);
-    expect(second()).toHaveValue("codex:gpt-5.6-sol");
-    expect(within(second()).getByRole("option", { name: "GPT-5.6-Sol" })).toBeInTheDocument();
+    expect(second()).toHaveTextContent("GPT-5.6-Sol");
+    // The default model is an older one, so the Codex fold opens on it.
+    const list = openList(second());
+    expect(within(list).getByRole("treeitem", { name: "GPT-5.6-Sol" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     // The default model's own default effort is the one filled.
     expect(barOf().filter((r) => r.getAttribute("aria-checked") === "true")).toHaveLength(1);
     expect(barOf()[0]).toHaveAttribute("aria-checked", "true");
@@ -419,16 +440,22 @@ describe("Codex reviewers in the one dropdown", () => {
     const { unmount } = render(
       <Harness initial={codexSlot("gpt-5.6-terra", "max")} onSave={vi.fn()} />,
     );
-    expect(second()).toHaveValue("codex:gpt-5.6-terra");
-    expect(within(second()).getByRole("option", { name: "GPT-5.6-Terra" })).toBeInTheDocument();
+    expect(second()).toHaveTextContent("GPT-5.6-Terra");
+    expect(
+      within(openList(second())).getByRole("treeitem", { name: "GPT-5.6-Terra" }),
+    ).toBeInTheDocument();
     unmount();
     catalog.pending = true;
     render(<Harness initial={codexSlot(null, null)} onSave={vi.fn()} />);
-    expect(second()).toHaveValue("codex:");
+    expect(second()).toHaveTextContent("Codex, default model");
+    const list = openList(second());
     expect(
-      within(second()).getByRole("option", { name: "Codex, default model" }),
+      within(list).getByRole("treeitem", { name: "Codex, default model" }),
     ).toBeInTheDocument();
-    expect(within(second()).getByRole("option", { name: "Loading Codex models" })).toBeDisabled();
+    expect(within(list).getByRole("treeitem", { name: "Loading Codex models" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
     expect(screen.queryByText("GPT-6-Sol")).not.toBeInTheDocument();
   });
 
@@ -445,7 +472,7 @@ describe("Codex reviewers in the one dropdown", () => {
   it("moves a Claude row to a Codex model and keeps the effort when the model offers it", () => {
     const onSave = vi.fn();
     render(<Harness initial={{ mode: "multi", reviewers: [sonnet, sonnet] }} onSave={onSave} />);
-    fireEvent.change(second(), { target: { value: "codex:gpt-6-luna" } });
+    pickOption(openList(second()), "GPT-6-Luna");
     expect(onSave).toHaveBeenLastCalledWith({
       mode: "multi",
       reviewers: [
@@ -465,7 +492,7 @@ describe("Codex reviewers in the one dropdown", () => {
   it("changes the model and the effort through the same two controls", () => {
     const onSave = vi.fn();
     render(<Harness initial={codexSlot("gpt-6-sol", "max")} onSave={onSave} />);
-    fireEvent.change(second(), { target: { value: "codex:gpt-6-luna" } });
+    pickOption(openList(second()), "GPT-6-Luna");
     expect(onSave).toHaveBeenLastCalledWith(
       expect.objectContaining({
         reviewers: [sonnet, expect.objectContaining({ model: "gpt-6-luna", effort: "max" })],
@@ -498,11 +525,13 @@ describe("Codex reviewers in the one dropdown", () => {
 
   it("keeps the Codex group out when Codex is not ready, and greys it under Other agents", () => {
     render(<Harness initial={sonnet} options={[setup(codex)]} onSave={vi.fn()} />);
-    const select = screen.getByRole("combobox", { name: "Reviewer model" });
-    expect(
-      select.querySelector('optgroup[label="Run through Codex, as a child session"]'),
-    ).toBeNull();
-    expect(within(select).getByRole("option", { name: "Codex (needs setup)" })).toBeDisabled();
+    const list = openList(screen.getByRole("button", { name: /^Reviewer model/ }));
+    expect(within(list).queryByText("Run through Codex, as a child session")).toBeNull();
+    expect(within(list).getByRole("treeitem", { name: /^Codex/ })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(within(list).getByRole("treeitem", { name: /^Codex/ })).toHaveTextContent("needs setup");
   });
 
   it("shows six steps for a model that offers ultra, and five for one that does not", () => {
@@ -538,7 +567,7 @@ describe("Codex reviewers in the one dropdown", () => {
   it("names the tool in the dropdown's label for a Codex row", () => {
     render(<Harness initial={codexSlot("gpt-6-sol", "high")} onSave={vi.fn()} />);
     expect(
-      screen.getByRole("combobox", { name: "Reviewer 2 model, GPT-6-Sol, runs through Codex" }),
+      screen.getByRole("button", { name: "Reviewer 2 model, GPT-6-Sol, runs through Codex" }),
     ).toBeInTheDocument();
   });
 
@@ -559,29 +588,56 @@ describe("Codex reviewers in the one dropdown", () => {
       const { unmount } = render(
         <Harness initial={codexSlot("gpt-6-sol", "high")} hostStatus="offline" onSave={vi.fn()} />,
       );
-      expect(second()).toHaveValue("codex:gpt-6-sol");
-      expect((second() as HTMLSelectElement).selectedOptions[0]).toBeDefined();
+      expect(second()).toHaveTextContent(/gpt-6-sol/i);
       unmount();
     }
     // Ready but with no list: still its own option, never Auto or the first Claude model.
     catalog.pending = true;
     render(<Harness initial={codexSlot("gpt-6-sol", "high")} onSave={vi.fn()} />);
-    expect(second()).toHaveValue("codex:gpt-6-sol");
-    expect((second() as HTMLSelectElement).selectedOptions[0]).toHaveTextContent("gpt-6-sol");
+    expect(second()).toHaveTextContent("gpt-6-sol");
+    expect(within(openList(second())).getByRole("treeitem", { selected: true })).toHaveTextContent(
+      "gpt-6-sol",
+    );
   });
 
-  it("lists models that do not parse after the latest three", () => {
+  it("renames the trigger after a pick, and sorts a stored Claude model the catalog lacks", () => {
+    render(
+      <Harness
+        initial={{
+          mode: "multi",
+          reviewers: [sonnet, { mode: "fixed", model: "claude-opus-4-1", effort: "low" }],
+        }}
+        onSave={vi.fn()}
+      />,
+    );
+    expect(second()).toHaveAccessibleName("Reviewer 2 model, Opus 4.1");
+    const list = openList(second());
+    // Older than the newest Opus, so it sits in the fold, which opens for it.
+    expect(
+      within(list).getByRole("treeitem", { name: /^Older models, expanded/ }),
+    ).toBeInTheDocument();
+    expect(within(list).getByRole("treeitem", { name: "Opus 4.1" })).toHaveAttribute(
+      "aria-level",
+      "2",
+    );
+    pickOption(list, "Opus 5.5");
+    expect(second()).toHaveAccessibleName("Reviewer 2 model, Opus 5.5");
+  });
+
+  it("explains the Older models fold with a hint in the open list", () => {
+    render(<Harness initial={codexSlot("gpt-6-sol", "high")} onSave={vi.fn()} />);
+    const list = openList(second());
+    expect(screen.getByTestId("ae-hint-reviewer.older")).toBeInTheDocument();
+    expect(within(list).queryByTestId("ae-hint-reviewer.older")).toBeNull();
+  });
+
+  it("keeps models that do not parse reachable in the Older models fold", () => {
     catalog.rows = [...HOST_MODELS, codexModel("Experimental")];
     render(<Harness initial={codexSlot("gpt-6-sol", "high")} onSave={vi.fn()} />);
-    const group = second().querySelector<HTMLElement>(
-      'optgroup[label="Run through Codex, as a child session"]',
-    );
-    expect(Array.from(group?.querySelectorAll("option") ?? []).map((o) => o.textContent)).toEqual([
-      "GPT-6-Astra",
-      "GPT-6-Sol",
-      "GPT-6-Luna",
-      "Experimental",
-    ]);
+    const list = openList(second());
+    expect(within(list).queryByRole("treeitem", { name: "Experimental" })).toBeNull();
+    fireEvent.click(within(list).getByRole("treeitem", { name: /^Older models, collapsed/ }));
+    expect(within(list).getByRole("treeitem", { name: "Experimental" })).toBeInTheDocument();
   });
 
   it("disables Add reviewer with a reason until the Codex list arrives, and saves no empty pick", () => {

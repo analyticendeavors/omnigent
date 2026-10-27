@@ -69,3 +69,11 @@ describe("the setting hints", () => {
     expect(AE_SETTING_HINTS["insights.reviewer"].hint).toContain(AE_INSIGHTS_COST_CAP);
   });
 });
+
+describe("the Older models hint", () => {
+  it("says what the fold holds and that the current model's group opens by itself", () => {
+    const { hint } = AE_SETTING_HINTS["reviewer.older"];
+    expect(hint).toMatch(/opens on its own/);
+    expect(hint.length).toBeLessThanOrEqual(AE_HINT_MAX);
+  });
+});

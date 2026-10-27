@@ -186,8 +186,9 @@ describe("AeRolesSettingsSection", () => {
     const form = await screen.findByTestId("ae-preset-form");
     const page = document.body.textContent ?? "";
     const prefixes = ["roles.", "rules.", "reviewer.", "preset.", "insights."];
-    const ids = (Object.keys(AE_SETTING_HINTS) as AeSettingHintId[]).filter((id) =>
-      prefixes.some((prefix) => id.startsWith(prefix)),
+    // "reviewer.older" sits inside the model picker's list, which exists only while it is open (AeReviewerRows.test.tsx).
+    const ids = (Object.keys(AE_SETTING_HINTS) as AeSettingHintId[]).filter(
+      (id) => id !== "reviewer.older" && prefixes.some((prefix) => id.startsWith(prefix)),
     );
     expect(ids.length).toBeGreaterThan(20);
     for (const id of ids) {
