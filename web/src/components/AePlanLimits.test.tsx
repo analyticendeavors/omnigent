@@ -4,6 +4,7 @@ import {
   cleanup,
   fireEvent,
   render as rtlRender,
+  renderHook,
   screen,
   waitFor,
   within,
@@ -11,6 +12,14 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
+
+// The picked-account lookup reads the session and the host's logins; its own suite covers it.
+const picked = vi.hoisted(() => ({
+  value: { account: undefined as string | undefined, ready: true },
+}));
+vi.mock("@/hooks/useAePickedClaudeAccount", () => ({
+  useAePickedClaudeAccount: () => picked.value,
+}));
 
 import { authenticatedFetch } from "@/lib/identity";
 import { useChatStore } from "@/store/chatStore";
@@ -33,6 +42,7 @@ import {
   formatResetShort,
   formatTokens,
   limitTone,
+  useAeLimits,
   windowLabel,
 } from "./AePlanLimits";
 import type { AeSessionContextsState } from "./aeSessionContext";
@@ -222,6 +232,57 @@ describe("fetchAeLimits", () => {
       "/v1/ae/limits",
       "/v1/ae/limits",
       "/v1/ae/limits?session_id=conv%20a%2F1",
+    ]);
+  });
+
+  it("adds account when one is picked, empty for the default login", async () => {
+    await fetchAeLimits("conv_a", "shared:AE Backup");
+    await fetchAeLimits("conv_a", "");
+    await fetchAeLimits(null, "Work");
+    await fetchAeLimits("conv_a", null);
+    expect(vi.mocked(authenticatedFetch).mock.calls.map(([url]) => url)).toEqual([
+      "/v1/ae/limits?session_id=conv_a&account=shared%3AAE%20Backup",
+      "/v1/ae/limits?session_id=conv_a&account=",
+      "/v1/ae/limits?account=Work",
+      "/v1/ae/limits?session_id=conv_a",
+    ]);
+  });
+});
+
+describe("useAeLimits account hint", () => {
+  beforeEach(() => {
+    vi.mocked(authenticatedFetch).mockReset();
+    vi.mocked(authenticatedFetch).mockImplementation(() =>
+      Promise.resolve(new Response(JSON.stringify(ANSWER))),
+    );
+  });
+  afterEach(cleanup);
+
+  it("keeps the first hint seen for a session, so a later pick does not move it", async () => {
+    const { result, rerender } = renderHook(
+      ({ account }: { account?: string }) => useAeLimits(true, "conv_hint_a", account),
+      { wrapper: QueryWrapper, initialProps: { account: "Backup" } as { account?: string } },
+    );
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    rerender({ account: "" });
+    rerender({ account: undefined });
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    expect(vi.mocked(authenticatedFetch).mock.calls.map(([url]) => url)).toEqual([
+      "/v1/ae/limits?session_id=conv_hint_a&account=Backup",
+    ]);
+  });
+
+  it("asks without an account until a hint arrives, then once with it", async () => {
+    const { rerender } = renderHook(
+      ({ account }: { account?: string }) => useAeLimits(true, "conv_hint_b", account),
+      { wrapper: QueryWrapper, initialProps: {} as { account?: string } },
+    );
+    await waitFor(() => expect(authenticatedFetch).toHaveBeenCalledTimes(1));
+    rerender({ account: "Backup" });
+    await waitFor(() => expect(authenticatedFetch).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(authenticatedFetch).mock.calls.map(([url]) => url)).toEqual([
+      "/v1/ae/limits?session_id=conv_hint_b",
+      "/v1/ae/limits?session_id=conv_hint_b&account=Backup",
     ]);
   });
 });

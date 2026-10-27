@@ -3,6 +3,7 @@ import type { AeLimitWindow, AeLimitsAnswer } from "@/components/AePlanLimits";
 import {
   AE_LIMIT_GATE_PERCENT,
   aeHasOtherClaudeAccount,
+  aePickedClaudeAccount,
   aeHeadlineWindows,
   aeLimitGate,
   aeLimitGateShort,
@@ -203,5 +204,27 @@ describe("aeHasOtherClaudeAccount", () => {
       false,
     );
     expect(aeHasOtherClaudeAccount([], undefined)).toBe(false);
+  });
+});
+
+describe("aePickedClaudeAccount", () => {
+  const login = (family: string, env_var: string | null) => ({ family, source: "x", env_var });
+
+  it("names the selected login, empty for the default", () => {
+    expect(
+      aePickedClaudeAccount([
+        login("claude-oauth", ""),
+        login("claude-oauth-active", "shared:AE Backup"),
+      ]),
+    ).toBe("shared:AE Backup");
+    expect(aePickedClaudeAccount([login("claude-oauth-active", null)])).toBe("");
+    expect(aePickedClaudeAccount([login("claude-oauth", "")])).toBe("");
+  });
+
+  it("names nothing without a Claude login or on a provider gateway", () => {
+    expect(aePickedClaudeAccount([])).toBeUndefined();
+    expect(
+      aePickedClaudeAccount([login("claude-provider", null), login("claude-oauth-active", "A")]),
+    ).toBeUndefined();
   });
 });

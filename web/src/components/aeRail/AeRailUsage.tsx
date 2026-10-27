@@ -1,6 +1,7 @@
 // The rail's Usage section: both plans' limits, the session's own plan first
 // and tagged, with the same rows as the usage popover.
 
+import { useAePickedClaudeAccount } from "@/hooks/useAePickedClaudeAccount";
 import { type AeRailSectionProps, useAeRailSectionActive } from "@/lib/aeSessionRail";
 import { useChatStore } from "@/store/chatStore";
 import {
@@ -46,7 +47,11 @@ export function AeRailUsage({ sessionId }: AeRailSectionProps) {
   // The store's harness belongs to its own conversation; another session's is unknown here.
   const harness = useChatStore((s) => (s.conversationId === sessionId ? s.sessionHarness : null));
   const active = useAeRailSectionActive("usage");
-  const { data, error, loading } = useAeLimits(active, sessionId);
+  const picked = useAePickedClaudeAccount(
+    sessionId,
+    active && aeLimitsHarnessFor(harness) === "claude",
+  );
+  const { data, error, loading } = useAeLimits(active && picked.ready, sessionId, picked.account);
   const now = useAeRailNow(active);
   const inUse = aeLimitsHarnessFor(harness);
   const order: AeHarness[] = inUse === "codex" ? ["codex", "claude"] : ["claude", "codex"];

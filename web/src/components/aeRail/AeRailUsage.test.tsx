@@ -5,6 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
 
+// The picked-account lookup reads the session and the host's logins; its own suite covers it.
+const picked = vi.hoisted(() => ({
+  value: { account: undefined as string | undefined, ready: true },
+}));
+vi.mock("@/hooks/useAePickedClaudeAccount", () => ({
+  useAePickedClaudeAccount: () => picked.value,
+}));
+
 import { authenticatedFetch } from "@/lib/identity";
 import { useAeSessionRailStore } from "@/lib/aeSessionRail";
 import { useChatStore } from "@/store/chatStore";
@@ -86,6 +94,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   useChatStore.setState({ sessionHarness: null });
+  picked.value = { account: undefined, ready: true };
 });
 
 describe("usageSummary", () => {
@@ -173,5 +182,29 @@ describe("AeRailUsage", () => {
       "/v1/ae/limits?session_id=conv_a",
       "/v1/ae/limits?session_id=conv%20b",
     ]);
+  });
+
+  it("sends the picked account for a chat that has no reading yet", async () => {
+    useChatStore.setState({ conversationId: "conv_new", sessionHarness: "claude-native" });
+    picked.value = { account: "shared:AE Backup", ready: true };
+    render(<AeRailUsage sessionId="conv_new" />);
+    await waitFor(() => expect(screen.getAllByTestId("ae-limits-harness")).toHaveLength(2));
+    expect(vi.mocked(authenticatedFetch).mock.calls.map(([url]) => String(url))).toEqual([
+      "/v1/ae/limits?session_id=conv_new&account=shared%3AAE%20Backup",
+    ]);
+  });
+
+  it("waits for the host's logins before asking, so the default's numbers never flash", async () => {
+    useChatStore.setState({ conversationId: "conv_wait", sessionHarness: "claude-native" });
+    picked.value = { account: undefined, ready: false };
+    const view = render(<AeRailUsage sessionId="conv_wait" />);
+    expect(authenticatedFetch).not.toHaveBeenCalled();
+    picked.value = { account: "", ready: true };
+    view.rerender(<AeRailUsage sessionId="conv_wait" />);
+    await waitFor(() =>
+      expect(vi.mocked(authenticatedFetch).mock.calls.map(([url]) => String(url))).toEqual([
+        "/v1/ae/limits?session_id=conv_wait&account=",
+      ]),
+    );
   });
 });

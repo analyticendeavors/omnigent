@@ -1153,6 +1153,64 @@ async def test_auto_create_claude_terminal_seeds_trust_with_launch_env(
 
 
 @pytest.mark.parametrize(
+    "login,expected",
+    [(None, ""), ("AE Backup", "AE Backup")],
+)
+async def test_auto_create_claude_terminal_records_the_account_before_the_first_render(
+    bridge_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    login: str | None,
+    expected: str,
+) -> None:
+    """
+    The bridge dir names the terminal's account before the statusLine shim runs.
+
+    The shim writes ``claude_account`` on Claude Code's first render, so a new
+    chat's usage was read for the wrong login until its first reply.
+
+    :param login: The account env the launch resolves; ``None`` is the default login.
+    :param expected: What ``claude_account`` holds (empty for the default login).
+    """
+    from unittest.mock import Mock
+
+    from omnigent.harnesses.claude_native.status import CLAUDE_ACCOUNT_FILE
+    from omnigent.runner.resource_registry import SessionResourceRegistry
+
+    if login is not None:
+        monkeypatch.setattr(
+            "omnigent.onboarding.claude_accounts.account_env_for_launch",
+            lambda env, account_name=None: {"OMNIGENT_CLAUDE_ACCOUNT": login},
+        )
+    from omnigent.harnesses.claude_native import ae_launch_account
+
+    real = ae_launch_account.write_launch_account
+    stamped: list[Path] = []
+
+    def record(bridge: Path, env: object) -> None:
+        real(bridge, env)  # type: ignore[arg-type]
+        stamped.append(bridge)
+
+    monkeypatch.setattr(ae_launch_account, "write_launch_account", record)
+    seen: list[str] = []
+
+    def launch(*_args: object, **_kwargs: object) -> None:
+        # The terminal has not started, so no render has happened: only the launch wrote it.
+        assert len(stamped) == 1
+        seen.append((stamped[0] / CLAUDE_ACCOUNT_FILE).read_text(encoding="utf-8"))
+        raise RuntimeError("stop after launch")
+
+    registry = Mock(spec=SessionResourceRegistry)
+    registry.launch_required_terminal.side_effect = launch
+
+    with pytest.raises(RuntimeError, match="stop after launch"):
+        await _auto_create_claude_terminal_for_test(
+            monkeypatch, session_id="conv_account_stamp", workspace=bridge_dir, registry=registry
+        )
+
+    assert seen == [expected]
+
+
+@pytest.mark.parametrize(
     "subagent_started,turn_started",
     [(True, True), (True, False), (False, True), (False, False)],
 )

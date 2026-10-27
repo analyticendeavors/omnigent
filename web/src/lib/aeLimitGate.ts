@@ -209,3 +209,16 @@ export function aeHasOtherClaudeAccount(
   const current = currentAccount ?? active?.env_var ?? "";
   return logins.some((row) => (row.env_var ?? "") !== current);
 }
+
+/**
+ * The Claude login new chats start on: the host's selected row (`""` is the
+ * default login), as the account picker shows it. `undefined` when the host
+ * lists no Claude login or the chat runs on a provider gateway, where no login
+ * names the chat's account.
+ */
+export function aePickedClaudeAccount(rows: readonly AeLimitCredentialRow[]): string | undefined {
+  if (rows.some((row) => row.family.startsWith("claude-provider"))) return undefined;
+  const logins = rows.filter((row) => row.family.startsWith("claude-oauth"));
+  if (logins.length === 0) return undefined;
+  return logins.find((row) => row.family === "claude-oauth-active")?.env_var ?? "";
+}

@@ -5,6 +5,7 @@
 import { useState } from "react";
 import { useAeLimits } from "@/components/AePlanLimits";
 import { aeLimitsHarnessFor } from "@/components/aeSessionContext";
+import { useAePickedClaudeAccount } from "@/hooks/useAePickedClaudeAccount";
 import { useDetectedCredentials } from "@/hooks/useHosts";
 import { useSession } from "@/hooks/useSession";
 import type { AeDockLimit } from "@/lib/aeActionDock";
@@ -56,7 +57,12 @@ export function useAeLimitGate(sessionId: string | undefined): {
   const harness = useChatStore((s) =>
     sessionId && s.conversationId === sessionId ? aeLimitsHarnessFor(s.sessionHarness) : null,
   );
-  const { data } = useAeLimits(Boolean(sessionId && harness), sessionId);
+  const picked = useAePickedClaudeAccount(sessionId, harness === "claude");
+  const { data } = useAeLimits(
+    Boolean(sessionId && harness) && picked.ready,
+    sessionId,
+    picked.account,
+  );
   const [dismissed, setDismissed] = useState(() => readDismissed() ?? []);
   const gate = aeLimitGate(data, harness, Date.now(), dismissed);
   const claude = gate?.harness === "claude";

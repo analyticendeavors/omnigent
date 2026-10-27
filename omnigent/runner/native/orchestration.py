@@ -8881,6 +8881,7 @@ async def _auto_create_claude_terminal(
     # ``/model`` conversion reads THIS session's pins, not the runner's
     # ambient env (the CLI path records these at prepare time; the runner
     # resolves its config only after the bridge exists).
+    from omnigent.harnesses.claude_native.ae_launch_account import write_launch_account
     from omnigent.harnesses.claude_native.bridge import record_model_vocabulary
     from omnigent.harnesses.claude_native.main import stored_claude_picker_values
 
@@ -9011,6 +9012,11 @@ async def _auto_create_claude_terminal(
         validate_claude_hook_interpreter_compatibility(resolved_claude)
 
     claude_terminal_env_unset = _claude_terminal_env_unset(claude_config, claude_account)
+    claude_terminal_env = build_native_claude_terminal_env(
+        claude_config, account_name=claude_account
+    )
+    # Name the account before the first render, so usage readers do not wait for the shim.
+    await asyncio.to_thread(write_launch_account, bridge_dir, claude_terminal_env)
 
     # Inherit the agent's os_env so its sandbox (e.g. ``type: none``),
     # egress_rules and env_passthrough are honoured. Without ``sandbox`` here
@@ -9029,7 +9035,7 @@ async def _auto_create_claude_terminal(
         # Tool Search env plus ucode gateway env (ANTHROPIC_BASE_URL
         # etc.) when derived. Empty provider config still forces
         # ENABLE_TOOL_SEARCH=true so MCP schemas are loaded on demand.
-        env=build_native_claude_terminal_env(claude_config, account_name=claude_account),
+        env=claude_terminal_env,
         # Names to strip (see ``_claude_terminal_env_unset``). Dropping
         # ``DATABRICKS_CONFIG_PROFILE`` matters because Claude's MCP servers
         # inherit this env and several build ``WorkspaceClient`` without pinning

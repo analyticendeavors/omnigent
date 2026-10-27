@@ -17,6 +17,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
+import { useAePickedClaudeAccount } from "@/hooks/useAePickedClaudeAccount";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { type AeTone, contextTone } from "@/lib/aeContextTone";
 import { useAeSessionRailStore } from "@/lib/aeSessionRail";
@@ -177,14 +178,38 @@ export function limitTone(pct: number): AeTone {
   return "normal";
 }
 
-/** With a session id the server answers for the account that session runs on. */
-export async function fetchAeLimits(sessionId?: string | null): Promise<AeLimitsAnswer> {
-  const path = sessionId
-    ? `${AE_LIMITS_PATH}?session_id=${encodeURIComponent(sessionId)}`
-    : AE_LIMITS_PATH;
+/**
+ * With a session id the server answers for the account that session runs on.
+ * `account` is the login picked for new chats (`""` for the default login): the
+ * server uses it for a chat it has no reading for yet, and ignores it once the
+ * chat has one.
+ */
+export async function fetchAeLimits(
+  sessionId?: string | null,
+  account?: string | null,
+): Promise<AeLimitsAnswer> {
+  const params: string[] = [];
+  if (sessionId) params.push(`session_id=${encodeURIComponent(sessionId)}`);
+  if (account != null) params.push(`account=${encodeURIComponent(account)}`);
+  const path = params.length ? `${AE_LIMITS_PATH}?${params.join("&")}` : AE_LIMITS_PATH;
   const res = await authenticatedFetch(path, { method: "GET" });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`.trim());
   return (await res.json()) as AeLimitsAnswer;
+}
+
+/** The first account hint seen per session: a later pick changes new chats, not this one. */
+const frozenAccounts = new Map<string, string>();
+const FROZEN_ACCOUNTS_KEEP = 200;
+
+function freezeAccount(sessionId: string | null | undefined, account: string | undefined) {
+  if (!sessionId) return account;
+  const held = frozenAccounts.get(sessionId);
+  if (held !== undefined || account === undefined) return held;
+  frozenAccounts.set(sessionId, account);
+  if (frozenAccounts.size > FROZEN_ACCOUNTS_KEEP) {
+    frozenAccounts.delete(frozenAccounts.keys().next().value as string);
+  }
+  return account;
 }
 
 /**
@@ -1071,19 +1096,22 @@ export function AePlanLimitsPanel({
 /**
  * `GET /v1/ae/limits` while `active`, then once a minute; one shared query per
  * session. Sessions on different Claude accounts never share a reading, so the
- * session id is part of the cache key.
+ * session id is part of the cache key, and so is the account hint (the login
+ * picked for new chats, frozen at the first one seen for that session).
  */
 export function useAeLimits(
   active: boolean,
   sessionId?: string | null,
+  account?: string,
 ): {
   data?: AeLimitsAnswer;
   error?: unknown;
   loading: boolean;
 } {
+  const named = freezeAccount(sessionId, account);
   const query = useQuery({
-    queryKey: ["ae-limits", sessionId ?? null],
-    queryFn: () => fetchAeLimits(sessionId),
+    queryKey: ["ae-limits", sessionId ?? null, named ?? null],
+    queryFn: () => fetchAeLimits(sessionId, named),
     enabled: active,
     refetchInterval: active ? MINUTE : false,
     staleTime: MINUTE / 2,
@@ -1212,7 +1240,8 @@ function AePlanLimitsPopoverBody({
   onShowRail: () => void;
 }) {
   const identity = aeContextIdentity(harness, model);
-  const { data, error, loading } = useAeLimits(true, conversationId);
+  const picked = useAePickedClaudeAccount(conversationId, isClaudeCode(harness));
+  const { data, error, loading } = useAeLimits(picked.ready, conversationId, picked.account);
   const sessions = useAeSessionContexts(true, conversationId, 60_000, identity);
   // A cached category snapshot shows at once; a stale one refreshes.
   const snapshot = useAeContextSnapshot(conversationId, {
