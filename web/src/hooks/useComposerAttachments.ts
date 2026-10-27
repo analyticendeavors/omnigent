@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { validateAttachments } from "@/lib/attachments";
+import { repairEncodedNote } from "@/lib/aePasteRepair";
 
 export interface UseComposerAttachmentsOptions {
   /**
@@ -92,6 +93,17 @@ export function useComposerAttachments({
 
   const onPaste = useCallback(
     (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const repaired = repairEncodedNote(e.clipboardData?.getData("text/plain") ?? "");
+      if (repaired !== null) {
+        e.preventDefault();
+        // insertText keeps the controlled textarea's state and undo stack in step.
+        if (!document.execCommand("insertText", false, repaired)) {
+          const field = e.currentTarget;
+          field.setRangeText(repaired, field.selectionStart, field.selectionEnd, "end");
+          field.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        return;
+      }
       const items = e.clipboardData?.items;
       if (!items) return;
       const pasted: File[] = [];

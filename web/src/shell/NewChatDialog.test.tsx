@@ -8492,7 +8492,7 @@ describe("NewChatLandingScreen paste", () => {
     for (const file of files) {
       items.push({ kind: "file", type: file.type, getAsFile: () => file });
     }
-    return { clipboardData: { items } };
+    return { clipboardData: { items, getData: () => "" } };
   }
 
   it("leaves a text-only paste to the browser", () => {

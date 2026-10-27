@@ -43,7 +43,8 @@ function pasteEvent({
     // they must be skipped, not attached.
     items.push({ kind: "file", type: "image/png", getAsFile: () => null });
   }
-  const event = { clipboardData: { items }, preventDefault };
+  const getData = (type: string) => (type === "text/plain" ? (text ?? "") : "");
+  const event = { clipboardData: { items, getData }, preventDefault };
   return {
     event: event as unknown as React.ClipboardEvent<HTMLTextAreaElement>,
     preventDefault,
@@ -152,6 +153,19 @@ describe("useComposerAttachments", () => {
     act(() => result.current.onPaste(event));
 
     expect(preventDefault).not.toHaveBeenCalled();
+    expect(result.current.files).toEqual([]);
+  });
+
+  it("onPaste inserts a note the clipboard encoded as a URL, decoded", () => {
+    const insertText = vi.fn(() => true);
+    Object.defineProperty(document, "execCommand", { configurable: true, value: insertText });
+    const { result } = renderHook(() => useComposerAttachments());
+    const { event, preventDefault } = pasteEvent({ text: "thread:%20a-b%0ASTATE:%20ok" });
+
+    act(() => result.current.onPaste(event));
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(insertText).toHaveBeenCalledWith("insertText", false, "thread: a-b\nSTATE: ok");
     expect(result.current.files).toEqual([]);
   });
 
