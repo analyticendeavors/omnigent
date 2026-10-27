@@ -22,11 +22,13 @@ import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { type AeTone, contextTone } from "@/lib/aeContextTone";
 import { useAeSessionRailStore } from "@/lib/aeSessionRail";
 import { authenticatedFetch } from "@/lib/identity";
+import { isTempConvId } from "@/lib/tempConversationId";
 import { AeTablerSvg } from "@/lib/aeTablerIcon";
 import type { AeTablerIconNode } from "@/lib/aeTablerIconData";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chatStore";
 import { AeRailIcon } from "./aeRail/aeRailUi";
+import { type AeLimitAccountRow, AeLimitsAccountMenu, aeAccountKey } from "./AeLimitsAccountMenu";
 import {
   type AeContextEntry,
   type AeContextReading,
@@ -182,14 +184,18 @@ export function limitTone(pct: number): AeTone {
  * With a session id the server answers for the account that session runs on.
  * `account` is the login picked for new chats (`""` for the default login): the
  * server uses it for a chat it has no reading for yet, and ignores it once the
- * chat has one.
+ * chat has one. With no session (or a new chat's `temp:` id) the server
+ * answers for that login alone, which the card's subscription switcher uses.
  */
 export async function fetchAeLimits(
   sessionId?: string | null,
   account?: string | null,
 ): Promise<AeLimitsAnswer> {
   const params: string[] = [];
-  if (sessionId) params.push(`session_id=${encodeURIComponent(sessionId)}`);
+  // A new chat's `temp:` id names no server session: ask for the picked login alone.
+  if (sessionId && !isTempConvId(sessionId)) {
+    params.push(`session_id=${encodeURIComponent(sessionId)}`);
+  }
   if (account != null) params.push(`account=${encodeURIComponent(account)}`);
   const path = params.length ? `${AE_LIMITS_PATH}?${params.join("&")}` : AE_LIMITS_PATH;
   const res = await authenticatedFetch(path, { method: "GET" });
@@ -202,7 +208,8 @@ const frozenAccounts = new Map<string, string>();
 const FROZEN_ACCOUNTS_KEEP = 200;
 
 function freezeAccount(sessionId: string | null | undefined, account: string | undefined) {
-  if (!sessionId) return account;
+  // A new chat's pick can still change, so its hint is not frozen.
+  if (!sessionId || isTempConvId(sessionId)) return account;
   const held = frozenAccounts.get(sessionId);
   if (held !== undefined || account === undefined) return held;
   frozenAccounts.set(sessionId, account);
@@ -851,17 +858,7 @@ const EMPTY_TEXT: Record<AeHarness, string> = {
     "as the box user.",
 };
 
-/** One plan's limits: the popover shows the session's own, the rail both. */
-export function AeLimitsHarnessBlock({
-  harness,
-  snapshot,
-  now,
-  inUse = false,
-  lead = false,
-  short = false,
-  infoOpen,
-  onInfoOpenChange,
-}: {
+interface AeLimitsBlockProps {
   harness: AeHarness;
   snapshot: AeLimitSnapshot | null | undefined;
   now: number;
@@ -873,6 +870,37 @@ export function AeLimitsHarnessBlock({
   short?: boolean;
   infoOpen?: boolean;
   onInfoOpenChange?: (open: boolean) => void;
+}
+
+/**
+ * One plan's limits: the popover shows the session's own, the rail both.
+ * With `sessionId`, the Claude block's account name is a menu of the box's
+ * Claude logins (see `AeSwitchedBlock`); Codex and a block with no session are plain.
+ */
+export function AeLimitsHarnessBlock(props: AeLimitsBlockProps & { sessionId?: string | null }) {
+  const { sessionId, ...block } = props;
+  if (sessionId && block.harness === "claude" && block.snapshot) {
+    return <AeSwitchedBlock sessionId={sessionId} {...block} />;
+  }
+  return <AeLimitsBlockView {...block} />;
+}
+
+function AeLimitsBlockView({
+  harness,
+  snapshot,
+  now,
+  inUse = false,
+  lead = false,
+  short = false,
+  infoOpen,
+  onInfoOpenChange,
+  accountMenu,
+  pending,
+}: AeLimitsBlockProps & {
+  /** Replaces the account name in the header. */
+  accountMenu?: ReactNode;
+  /** What to say while there is no snapshot to draw, instead of "No reading yet". */
+  pending?: string;
 }) {
   return (
     <section
@@ -891,13 +919,20 @@ export function AeLimitsHarnessBlock({
                 <span data-testid="ae-limits-plan">{snapshot.plan}</span>
               </>
             )}
-            {(snapshot?.account_label || snapshot?.account) && (
+            {accountMenu ? (
               <>
                 {" · "}
-                <span data-testid="ae-limits-account">
-                  {snapshot.account_label || snapshot.account}
-                </span>
+                {accountMenu}
               </>
+            ) : (
+              (snapshot?.account_label || snapshot?.account) && (
+                <>
+                  {" · "}
+                  <span data-testid="ae-limits-account">
+                    {snapshot.account_label || snapshot.account}
+                  </span>
+                </>
+              )
             )}
           </>
         }
@@ -932,7 +967,7 @@ export function AeLimitsHarnessBlock({
           data-testid="ae-limits-empty"
           title={EMPTY_TEXT[harness]}
         >
-          No reading yet
+          {pending ?? "No reading yet"}
         </p>
       ) : (
         <>
@@ -961,6 +996,65 @@ export function AeLimitsHarnessBlock({
         </>
       )}
     </section>
+  );
+}
+
+export const AE_LIMIT_ACCOUNTS_PATH = "/v1/ae/limits/accounts";
+
+async function fetchAeLimitAccounts(): Promise<AeLimitAccountRow[]> {
+  const res = await authenticatedFetch(AE_LIMIT_ACCOUNTS_PATH, { method: "GET" });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`.trim());
+  const body = (await res.json()) as { accounts?: AeLimitAccountRow[] };
+  return Array.isArray(body.accounts) ? body.accounts.filter((a) => a.harness === "claude") : [];
+}
+
+/**
+ * The Claude block with a subscription switcher: the account name opens a menu
+ * of every Claude login, and picking one shows that login's usage while the
+ * chat stays on its own. The pick is this chat's alone and ends with it.
+ */
+function AeSwitchedBlock({ sessionId, ...block }: AeLimitsBlockProps & { sessionId: string }) {
+  const own = block.snapshot;
+  const ownKey = aeAccountKey(own?.account);
+  const [picked, setPicked] = useState<{ sessionId: string; key: string } | null>(null);
+  useEffect(() => setPicked(null), [sessionId]);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const accounts = useQuery({
+    queryKey: ["ae-limit-accounts"],
+    queryFn: fetchAeLimitAccounts,
+    enabled: menuOpen,
+    staleTime: MINUTE / 2,
+    retry: false,
+  });
+  const rows = accounts.data ?? [];
+  const selectedKey = picked?.sessionId === sessionId ? picked.key : ownKey;
+  const viewingOther = selectedKey !== ownKey;
+  const other = useAeLimits(viewingOther, null, selectedKey);
+  const shown = viewingOther ? other.data?.harnesses.claude : own;
+  const label = viewingOther
+    ? (shown?.account_label ??
+      rows.find((r) => aeAccountKey(r.account) === selectedKey)?.label ??
+      (selectedKey || null))
+    : own?.account_label || own?.account || null;
+  return (
+    <AeLimitsBlockView
+      {...block}
+      snapshot={shown}
+      inUse={block.inUse && !viewingOther}
+      pending={
+        other.error ? "Could not load that login's usage." : viewingOther ? "Loading…" : undefined
+      }
+      accountMenu={
+        <AeLimitsAccountMenu
+          rows={rows}
+          ownKey={ownKey}
+          selectedKey={selectedKey}
+          label={label}
+          onOpenChange={setMenuOpen}
+          onSelect={(key) => setPicked({ sessionId, key })}
+        />
+      }
+    />
   );
 }
 
@@ -1072,6 +1166,7 @@ export function AePlanLimitsPanel({
           <AeLimitsHarnessBlock
             harness={primary}
             snapshot={data?.harnesses[primary]}
+            sessionId={conversationId}
             now={now}
             lead
             {...planInfo}

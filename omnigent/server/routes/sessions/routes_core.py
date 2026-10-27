@@ -41,6 +41,7 @@ from omnigent.entities import (
 )
 from omnigent.entities.permission import SessionPermission
 from omnigent.errors import ErrorCategory, ErrorCode, ErrorImpact, ErrorPhase, OmnigentError
+from omnigent.harnesses.claude_native.ae_launch_account import ACCOUNT_LIVE_LABEL
 from omnigent.models.model_override import validate_model_override
 from omnigent.runner.identity import (
     RUNNER_TUNNEL_TOKEN_HEADER,
@@ -186,6 +187,10 @@ from omnigent.server.routes._sessions.orchestration import (
     _spawn_archive_stop,
     _validate_session_model_selection,
     ensure_runner_connected,
+)
+from omnigent.server.routes.sessions.ae_live_account_label import (
+    reject_live_account_seed,
+    require_live_account_authority,
 )
 from omnigent.server.schemas import (
     AutomaticSessionRenameRequest,
@@ -1008,6 +1013,7 @@ def register_core_routes(
         )
         _reject_reserved_cost_control_label_seed(parsed_metadata.labels)
         _reject_server_reserved_label_seed(parsed_metadata.labels)
+        reject_live_account_seed(parsed_metadata.labels)
 
         inherited_runner_id: str | None = None
         parent_conv = None
@@ -2384,6 +2390,17 @@ def register_core_routes(
                 )
         if body.labels:
             _reject_server_reserved_label_seed(body.labels)
+            if ACCOUNT_LIVE_LABEL in body.labels:
+                _conv_for_live = await asyncio.to_thread(
+                    conversation_store.get_conversation, session_id
+                )
+                require_live_account_authority(
+                    body.labels,
+                    tunnel_token=request.headers.get(RUNNER_TUNNEL_TOKEN_HEADER),
+                    bound_runner_id=_conv_for_live.runner_id if _conv_for_live else None,
+                    allowed_tunnel_tokens=runner_tunnel_tokens,
+                    multi_user=permission_store is not None,
+                )
             # Advisor-owned cost_control.* labels are written only by the
             # session's bound runner; gate them on runner proof BEFORE any
             # store mutation so a rejected request leaves the session untouched.

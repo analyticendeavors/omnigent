@@ -235,6 +235,17 @@ describe("fetchAeLimits", () => {
     ]);
   });
 
+  it("sends a new chat's temp id as the account alone, never as session_id", async () => {
+    await fetchAeLimits("temp:abc123", "shared:AE Backup");
+    await fetchAeLimits("temp:abc123", "");
+    await fetchAeLimits("temp:abc123");
+    expect(vi.mocked(authenticatedFetch).mock.calls.map(([url]) => url)).toEqual([
+      "/v1/ae/limits?account=shared%3AAE%20Backup",
+      "/v1/ae/limits?account=",
+      "/v1/ae/limits",
+    ]);
+  });
+
   it("adds account when one is picked, empty for the default login", async () => {
     await fetchAeLimits("conv_a", "shared:AE Backup");
     await fetchAeLimits("conv_a", "");
@@ -269,6 +280,20 @@ describe("useAeLimits account hint", () => {
     await waitFor(() => expect(result.current.data).toBeDefined());
     expect(vi.mocked(authenticatedFetch).mock.calls.map(([url]) => url)).toEqual([
       "/v1/ae/limits?session_id=conv_hint_a&account=Backup",
+    ]);
+  });
+
+  it("follows a new chat's changed pick instead of freezing the first one", async () => {
+    const { result, rerender } = renderHook(
+      ({ account }: { account?: string }) => useAeLimits(true, "temp:new-chat", account),
+      { wrapper: QueryWrapper, initialProps: { account: "Backup" } as { account?: string } },
+    );
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    rerender({ account: "" });
+    await waitFor(() => expect(authenticatedFetch).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(authenticatedFetch).mock.calls.map(([url]) => url)).toEqual([
+      "/v1/ae/limits?account=Backup",
+      "/v1/ae/limits?account=",
     ]);
   });
 
@@ -318,6 +343,115 @@ describe("AeLimitsHarnessBlock account", () => {
       />,
     );
     expect(screen.queryByTestId("ae-limits-account")).toBeNull();
+  });
+});
+
+describe("AeLimitsHarnessBlock subscription switcher", () => {
+  const claude = ANSWER.harnesses.claude!;
+  const win = (used: number) => [{ ...claude.windows[0], used_percent: used }];
+  const OWN = {
+    ...claude,
+    plan: "Max",
+    windows: win(11),
+    account: null,
+    account_label: "AE Default",
+  };
+  const BACKUP = {
+    ...claude,
+    plan: null,
+    windows: win(64),
+    account: "shared:AE Backup",
+    account_label: "AE Backup",
+  };
+  const ACCOUNTS = {
+    accounts: [
+      { harness: "claude", account: null, label: "AE Default", plan: "Max" },
+      { harness: "claude", account: "shared:AE Backup", label: "AE Backup", plan: null },
+      { harness: "codex", account: null, label: "Codex", plan: "Pro" },
+    ],
+  };
+  const urls = () => vi.mocked(authenticatedFetch).mock.calls.map(([url]) => String(url));
+
+  beforeEach(() => {
+    vi.mocked(authenticatedFetch).mockReset();
+    vi.mocked(authenticatedFetch).mockImplementation((input) => {
+      const url = String(input);
+      if (url.startsWith("/v1/ae/limits/accounts")) {
+        return Promise.resolve(new Response(JSON.stringify(ACCOUNTS)));
+      }
+      const body = url.includes("account=shared%3AAE%20Backup") ? BACKUP : OWN;
+      return Promise.resolve(
+        new Response(JSON.stringify({ now: iso(NOW), harnesses: { claude: body } })),
+      );
+    });
+  });
+  afterEach(cleanup);
+
+  const block = (sessionId: string) => (
+    <AeLimitsHarnessBlock harness="claude" snapshot={OWN} now={NOW} inUse sessionId={sessionId} />
+  );
+  const openMenu = () =>
+    fireEvent.keyDown(screen.getByTestId("ae-limits-account-menu"), { key: "Enter" });
+
+  it("turns the account name into a menu with a tooltip, and fetches nothing until opened", () => {
+    render(block("conv_a"));
+    const trigger = screen.getByTestId("ae-limits-account-menu");
+    expect(trigger.textContent).toBe("AE Default");
+    expect(trigger.getAttribute("title")).toMatch(/This chat stays on its own login/);
+    expect(urls()).toEqual([]);
+  });
+
+  it("lists the Claude logins, marks this chat's, and leaves Codex out", async () => {
+    render(block("conv_a"));
+    openMenu();
+    const options = await screen.findAllByTestId("ae-limits-account-option");
+    expect(options.map((o) => o.textContent)).toEqual(["AE DefaultMaxThis chat", "AE Backup"]);
+    expect(options.map((o) => o.getAttribute("role"))).toEqual(["menuitemradio", "menuitemradio"]);
+    expect(options[0].getAttribute("aria-checked")).toBe("true");
+    expect(urls()).toEqual(["/v1/ae/limits/accounts"]);
+  });
+
+  it("shows another login's usage without the session and hides the This session chip", async () => {
+    render(block("conv_a"));
+    expect(screen.getByTestId("ae-limits-in-use")).toBeTruthy();
+    openMenu();
+    fireEvent.click((await screen.findAllByTestId("ae-limits-account-option"))[1]);
+    await waitFor(() =>
+      expect(screen.getByTestId("ae-limits-account-menu").textContent).toBe("AE Backup"),
+    );
+    await waitFor(() =>
+      expect(screen.getAllByTestId("ae-limit-window")[0].textContent).toContain("64"),
+    );
+    expect(urls()).toContain("/v1/ae/limits?account=shared%3AAE%20Backup");
+    expect(urls().some((u) => u.includes("session_id"))).toBe(false);
+    expect(screen.queryByTestId("ae-limits-in-use")).toBeNull();
+    // Back to the chat's own login: its own reading and the chip return.
+    openMenu();
+    fireEvent.click((await screen.findAllByTestId("ae-limits-account-option"))[0]);
+    await waitFor(() => expect(screen.getByTestId("ae-limits-in-use")).toBeTruthy());
+    expect(screen.getAllByTestId("ae-limit-window")[0].textContent).toContain("11");
+  });
+
+  it("goes back to the chat's own login when the chat changes", async () => {
+    const view = render(block("conv_a"));
+    openMenu();
+    fireEvent.click((await screen.findAllByTestId("ae-limits-account-option"))[1]);
+    await waitFor(() =>
+      expect(screen.getByTestId("ae-limits-account-menu").textContent).toBe("AE Backup"),
+    );
+    view.rerender(block("conv_b"));
+    await waitFor(() =>
+      expect(screen.getByTestId("ae-limits-account-menu").textContent).toBe("AE Default"),
+    );
+    expect(screen.getByTestId("ae-limits-in-use")).toBeTruthy();
+  });
+
+  it("stays plain for Codex and for a block with no session", () => {
+    render(<AeLimitsHarnessBlock harness="codex" snapshot={OWN} now={NOW} sessionId="conv_a" />);
+    expect(screen.queryByTestId("ae-limits-account-menu")).toBeNull();
+    cleanup();
+    render(<AeLimitsHarnessBlock harness="claude" snapshot={OWN} now={NOW} />);
+    expect(screen.queryByTestId("ae-limits-account-menu")).toBeNull();
   });
 });
 

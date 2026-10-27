@@ -10525,6 +10525,9 @@ async def _create_session_from_existing_agent(
 
     _reject_reserved_cost_control_label_seed(body.labels)
     _reject_server_reserved_label_seed(body.labels)
+    from omnigent.server.routes.sessions.ae_live_account_label import reject_live_account_seed
+
+    reject_live_account_seed(body.labels)
 
     agent = await validate_session_agent(
         user_id=user_id,

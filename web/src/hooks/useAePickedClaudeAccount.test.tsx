@@ -6,10 +6,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   session: { session: null as { hostId?: string } | null, isLoading: false },
   credentials: { data: undefined as unknown, isSuccess: false, isError: false, isFetching: false },
+  hostsAsked: [] as unknown[],
+  sessionsAsked: [] as unknown[],
 }));
-vi.mock("@/hooks/useSession", () => ({ useSession: () => mocks.session }));
-vi.mock("@/hooks/useHosts", () => ({ useDetectedCredentials: () => mocks.credentials }));
+vi.mock("@/hooks/useSession", () => ({
+  useSession: (id: unknown) => {
+    mocks.sessionsAsked.push(id);
+    return mocks.session;
+  },
+}));
+vi.mock("@/hooks/useHosts", () => ({
+  useDetectedCredentials: (hostId: unknown) => {
+    mocks.hostsAsked.push(hostId);
+    return mocks.credentials;
+  },
+}));
 
+import { useChatStore } from "@/store/chatStore";
 import { useAePickedClaudeAccount } from "./useAePickedClaudeAccount";
 
 const wrapper = ({ children }: { children: ReactNode }) => (
@@ -17,6 +30,9 @@ const wrapper = ({ children }: { children: ReactNode }) => (
 );
 
 beforeEach(() => {
+  mocks.hostsAsked = [];
+  mocks.sessionsAsked = [];
+  useChatStore.setState({ conversationId: null, sessionHostId: null });
   mocks.session = { session: { hostId: "h1" }, isLoading: false };
   mocks.credentials = { data: undefined, isSuccess: false, isError: false, isFetching: false };
 });
@@ -75,5 +91,26 @@ describe("useAePickedClaudeAccount", () => {
     };
     rerender();
     expect(result.current).toEqual({ account: "", ready: true });
+  });
+
+  it("names a new chat's pick from the host the composer seeded, with no session read", () => {
+    useChatStore.setState({ conversationId: "temp:abc", sessionHostId: "h-seeded" });
+    mocks.session = { session: null, isLoading: false };
+    mocks.credentials = {
+      data: [{ family: "claude-oauth-active", source: "AE Backup", env_var: "shared:AE Backup" }],
+      isSuccess: true,
+      isError: false,
+      isFetching: false,
+    };
+    const { result } = renderHook(() => useAePickedClaudeAccount("temp:abc", true), { wrapper });
+    expect(result.current).toEqual({ account: "shared:AE Backup", ready: true });
+    expect(mocks.hostsAsked).toEqual(["h-seeded"]);
+    expect(mocks.sessionsAsked.every((id) => id === null)).toBe(true);
+  });
+
+  it("waits for the logins of a new chat's seeded host", () => {
+    useChatStore.setState({ conversationId: "temp:def", sessionHostId: "h-seeded" });
+    const { result } = renderHook(() => useAePickedClaudeAccount("temp:def", true), { wrapper });
+    expect(result.current).toEqual({ account: undefined, ready: false });
   });
 });

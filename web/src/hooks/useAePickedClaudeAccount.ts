@@ -6,6 +6,8 @@
 import { useDetectedCredentials } from "@/hooks/useHosts";
 import { useSession } from "@/hooks/useSession";
 import { aePickedClaudeAccount } from "@/lib/aeLimitGate";
+import { isTempConvId } from "@/lib/tempConversationId";
+import { useChatStore } from "@/store/chatStore";
 
 /**
  * @param sessionId - The chat the usage panel is for; its host is asked.
@@ -20,10 +22,16 @@ export function useAePickedClaudeAccount(
   enabled: boolean,
 ): { account: string | undefined; ready: boolean } {
   const on = enabled && Boolean(sessionId);
-  const { session, isLoading } = useSession(on ? sessionId : null);
-  const credentials = useDetectedCredentials(session?.hostId, on);
+  // A new chat's `temp:` id has no server session yet: its host is the one the composer seeded.
+  const temp = isTempConvId(sessionId);
+  const { session, isLoading } = useSession(on && !temp ? sessionId : null);
+  const seededHostId = useChatStore((s) =>
+    s.conversationId === sessionId ? s.sessionHostId : null,
+  );
+  const hostId = temp ? seededHostId : session?.hostId;
+  const credentials = useDetectedCredentials(hostId, on);
   if (!on) return { account: undefined, ready: true };
-  const hostKnown = Boolean(session?.hostId);
+  const hostKnown = Boolean(hostId);
   // Cached logins from before a pick are stale while a refetch is in flight: wait it out,
   // or the session's first hint (frozen for good) would be the previous pick.
   const settled = (credentials.isSuccess || credentials.isError) && !credentials.isFetching;

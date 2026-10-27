@@ -72,6 +72,7 @@ export function AeRailUsage({ sessionId }: AeRailSectionProps) {
               key={h}
               harness={h}
               snapshot={data.harnesses[h]}
+              sessionId={sessionId}
               now={now}
               inUse={inUse === h}
               short

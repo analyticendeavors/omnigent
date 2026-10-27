@@ -8881,7 +8881,10 @@ async def _auto_create_claude_terminal(
     # ``/model`` conversion reads THIS session's pins, not the runner's
     # ambient env (the CLI path records these at prepare time; the runner
     # resolves its config only after the bridge exists).
-    from omnigent.harnesses.claude_native.ae_launch_account import write_launch_account
+    from omnigent.harnesses.claude_native.ae_launch_account import (
+        record_launch_account,
+        write_launch_account,
+    )
     from omnigent.harnesses.claude_native.bridge import record_model_vocabulary
     from omnigent.harnesses.claude_native.main import stored_claude_picker_values
 
@@ -9131,6 +9134,8 @@ async def _auto_create_claude_terminal(
         with contextlib.suppress(Exception):
             await asyncio.to_thread(ClaudeDebugLogFollower(bridge_dir).close, session_id)
         raise
+    # Label the login only once the terminal runs on it; a refused launch leaves the old label.
+    await record_launch_account(server_client, session_id, claude_terminal_env)
     if reset_pick_after_launch:
         await _clear_session_model_override(session_id, server_client)
     # Surface the terminal on the live SSE stream so an already-connected

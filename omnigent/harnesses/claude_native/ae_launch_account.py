@@ -6,6 +6,10 @@ until a new session's first reply the box could not say which login it runs on
 and the Usage panel showed the default login's numbers for a session on a
 backup account. The runner writes the same file once, before the terminal
 starts, from the environment it just built for it.
+
+It also labels the session with the same account, so the box learns the login at
+every launch (a relaunch after a deploy can land on another login) instead of
+waiting for the host relay's next post.
 """
 
 from __future__ import annotations
@@ -13,12 +17,20 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import urllib.parse
 from collections.abc import Mapping
 from pathlib import Path
+
+import httpx
 
 from omnigent.harnesses.claude_native.status import CLAUDE_ACCOUNT_FILE
 
 _logger = logging.getLogger(__name__)
+
+# The login the session's terminal last launched on; "" is the default login. The
+# out-of-tree limits router reads this key by the same string (ACCOUNT_LIVE_LABEL
+# in ae_omni_policies.limits); keep the two in step.
+ACCOUNT_LIVE_LABEL = "ae.claude_account"
 
 
 def write_launch_account(bridge_dir: Path, terminal_env: Mapping[str, str]) -> None:
@@ -43,3 +55,34 @@ def write_launch_account(bridge_dir: Path, terminal_env: Mapping[str, str]) -> N
         _logger.warning("could not record the Claude account in %s: %s", bridge_dir, exc)
         with contextlib.suppress(OSError):
             tmp.unlink()
+
+
+async def record_launch_account(
+    server_client: httpx.AsyncClient,
+    session_id: str,
+    terminal_env: Mapping[str, str],
+) -> None:
+    """
+    Label the session with the login its terminal is launching on; never fails a launch.
+
+    :param server_client: The runner's Omnigent client.
+    :param session_id: Session id, e.g. ``"conv_abc123"``.
+    :param terminal_env: The environment the terminal launches with.
+    """
+    account = terminal_env.get("OMNIGENT_CLAUDE_ACCOUNT", "")
+    try:
+        resp = await server_client.patch(
+            f"/v1/sessions/{urllib.parse.quote(session_id, safe='')}",
+            json={"labels": {ACCOUNT_LIVE_LABEL: account}},
+            params={"include_usage": "false"},
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+    except Exception:  # noqa: BLE001 - a failed label must not sink the launch
+        _logger.warning(
+            "claude-native: could not label session %s with its account; the Usage "
+            "panel falls back to the host relay until it reports",
+            session_id,
+            exc_info=True,
+            extra={"session_id": session_id},
+        )

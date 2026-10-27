@@ -1191,6 +1191,12 @@ async def test_auto_create_claude_terminal_records_the_account_before_the_first_
         stamped.append(bridge)
 
     monkeypatch.setattr(ae_launch_account, "write_launch_account", record)
+    labelled: list[tuple[str, str]] = []
+
+    async def label(_client: object, session_id: str, env: dict[str, str]) -> None:
+        labelled.append((session_id, env.get("OMNIGENT_CLAUDE_ACCOUNT", "")))
+
+    monkeypatch.setattr(ae_launch_account, "record_launch_account", label)
     seen: list[str] = []
 
     def launch(*_args: object, **_kwargs: object) -> None:
@@ -1208,6 +1214,40 @@ async def test_auto_create_claude_terminal_records_the_account_before_the_first_
         )
 
     assert seen == [expected]
+    # The launch failed, so the chat is not labelled with a login it never ran on.
+    assert labelled == []
+
+
+async def test_auto_create_claude_terminal_labels_the_account_once_the_terminal_started(
+    bridge_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A started terminal labels the session with the login it runs on."""
+    from unittest.mock import Mock
+
+    from omnigent.harnesses.claude_native import ae_launch_account
+    from omnigent.runner.resource_registry import SessionResourceRegistry
+
+    labelled: list[str] = []
+
+    async def label(_client: object, session_id: str, _env: dict[str, str]) -> None:
+        labelled.append(session_id)
+
+    monkeypatch.setattr(ae_launch_account, "record_launch_account", label)
+
+    def stop(*_args: object, **_kwargs: object) -> None:
+        # The first step after the label; the launch itself already succeeded.
+        assert labelled == ["conv_account_started"]
+        raise RuntimeError("stop after label")
+
+    monkeypatch.setattr("omnigent.entities.session_resources.session_resource_view_to_dict", stop)
+    registry = Mock(spec=SessionResourceRegistry)
+    registry.launch_required_terminal.return_value = object()
+
+    with pytest.raises(RuntimeError, match="stop after label"):
+        await _auto_create_claude_terminal_for_test(
+            monkeypatch, session_id="conv_account_started", workspace=bridge_dir, registry=registry
+        )
 
 
 @pytest.mark.parametrize(

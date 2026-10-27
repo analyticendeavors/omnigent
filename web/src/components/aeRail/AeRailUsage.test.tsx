@@ -184,6 +184,15 @@ describe("AeRailUsage", () => {
     ]);
   });
 
+  it("gives the Claude block a subscription menu and leaves Codex's header plain", async () => {
+    useChatStore.setState({ conversationId: "conv_menu", sessionHarness: "claude-native" });
+    render(<AeRailUsage sessionId="conv_menu" />);
+    await waitFor(() => expect(screen.getAllByTestId("ae-limits-harness")).toHaveLength(2));
+    const [claude, codex] = screen.getAllByTestId("ae-limits-harness");
+    expect(within(claude).getByTestId("ae-limits-account-menu")).toBeTruthy();
+    expect(within(codex).queryByTestId("ae-limits-account-menu")).toBeNull();
+  });
+
   it("sends the picked account for a chat that has no reading yet", async () => {
     useChatStore.setState({ conversationId: "conv_new", sessionHarness: "claude-native" });
     picked.value = { account: "shared:AE Backup", ready: true };
