@@ -3050,3 +3050,99 @@ def test_route_turn_follows_a_clear_rotation_onto_the_new_session(
     assert _run_route_turn(bridge_dir, {"prompt": "hello"}, monkeypatch) == 0
     assert urls == ["http://127.0.0.1:54321/v1/sessions/conv_replacement/route-turn"]
     assert turn_routing_marker_session(bridge_dir) == "conv_replacement"
+
+
+def _mcp_payload(**over: object) -> dict[str, object]:
+    return {
+        "hook_event_name": "Elicitation",
+        "mcp_server_name": "powerbi-modeling-sp",
+        "message": "Delete the table?",
+        "mode": "form",
+        "requested_schema": {"type": "object", "properties": {}},
+        **over,
+    }
+
+
+def _mcp_bridge(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setattr("omnigent.harnesses.claude_native.bridge._TRUSTED_PARENT", tmp_path)
+    monkeypatch.setattr("omnigent.harnesses.claude_native.bridge._BRIDGE_ROOT", tmp_path / "root")
+    bridge_dir = prepare_bridge_dir("conv_old", bridge_id="bridge_mcp", workspace=tmp_path)
+    write_active_session_id(bridge_dir, "conv_new")
+    build_hook_settings(
+        bridge_dir,
+        ap_server_url="http://127.0.0.1:8787",
+        ap_auth_headers={"Authorization": "Bearer xyz"},
+    )
+    return bridge_dir
+
+
+def test_mcp_elicitation_hook_posts_to_the_active_session_and_prints_the_answer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from omnigent.harnesses.claude_native import ae_mcp_elicitation_hook as hook_module
+
+    posted: dict[str, object] = {}
+    answer = '{"hookSpecificOutput":{"hookEventName":"Elicitation","action":"accept"}}'
+
+    def fake_post(url: str, headers: dict[str, str], payload: dict[str, object], *a, **kw):
+        import httpx
+
+        posted.update(url=url, headers=headers, payload=payload)
+        return httpx.Response(200, text=answer, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(
+        "omnigent.harnesses.claude_native.hook._post_hook_with_reattach", fake_post
+    )
+    bridge_dir = _mcp_bridge(tmp_path, monkeypatch)
+    payload = _mcp_payload()
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+    assert claude_native_hook.main(["mcp-elicitation", "--bridge-dir", str(bridge_dir)]) == 0
+    assert posted["url"] == "http://127.0.0.1:8787/v1/sessions/conv_new/hooks/ae-mcp-elicitation"
+    assert posted["payload"] == payload
+    assert posted["headers"] == {"Authorization": "Bearer xyz"}
+    assert capsys.readouterr().out == answer
+    assert hook_module.main is not None
+
+
+@pytest.mark.parametrize("case", ["unreachable", "url-mode", "bad-json", "raises"])
+def test_mcp_elicitation_hook_exits_zero_with_no_output_when_it_cannot_answer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    case: str,
+) -> None:
+    calls: list[str] = []
+
+    def fake_post(url: str, *a, **kw):
+        calls.append(url)
+        if case == "raises":
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "omnigent.harnesses.claude_native.hook._post_hook_with_reattach", fake_post
+    )
+    bridge_dir = _mcp_bridge(tmp_path, monkeypatch)
+    body = (
+        "{not json"
+        if case == "bad-json"
+        else json.dumps(
+            _mcp_payload(**({"mode": "url", "url": "https://x"} if case == "url-mode" else {}))
+        )
+    )
+    monkeypatch.setattr(sys, "stdin", io.StringIO(body))
+    assert claude_native_hook.main(["mcp-elicitation", "--bridge-dir", str(bridge_dir)]) == 0
+    assert capsys.readouterr().out == ""
+    # URL mode and bad JSON never reach the server.
+    assert bool(calls) == (case in ("unreachable", "raises"))
+
+
+def test_mcp_elicitation_hook_turns_bad_arguments_into_exit_zero_with_no_output(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """argparse would exit 2, which Claude Code reads as a silent decline."""
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+    assert claude_native_hook.main(["mcp-elicitation", "--no-such-flag"]) == 0
+    assert claude_native_hook.main(["mcp-elicitation"]) == 0
+    assert capsys.readouterr().out == ""

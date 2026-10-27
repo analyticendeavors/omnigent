@@ -2498,6 +2498,29 @@ def build_hook_settings(
             "timeout": 86400,
         }
         hooks["PermissionRequest"] = [{"hooks": [permission_hook]}]
+        # An MCP server's own question (omnigent-ae, 2026-10-27). With no hook Claude shows its
+        # TUI dialog only; this parks it as a web card. Same day-long wait as above.
+        hooks["Elicitation"] = [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": _python_hook_command(
+                            [
+                                python,
+                                "-I",
+                                "-m",
+                                "omnigent.harnesses.claude_native.hook",
+                                "mcp-elicitation",
+                                "--bridge-dir",
+                                str(bridge_dir),
+                            ]
+                        ),
+                        "timeout": 86400,
+                    }
+                ]
+            }
+        ]
 
         # Policy-gate native Claude Code tools, not just relay/MCP tools.
         # The hook is a bare curl against the relay's evaluate-policy

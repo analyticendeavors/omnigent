@@ -13065,3 +13065,26 @@ def test_hold_approval_wait_marker_refreshes_until_released(
     settled = len(touches)
     time.sleep(0.1)
     assert len(touches) == settled, "the refresher must stop when the block exits"
+
+
+def test_augment_claude_args_registers_the_mcp_elicitation_hook_only_with_a_server(
+    tmp_path: Path,
+) -> None:
+    """The Elicitation hook rides with the server URL and waits a day, like PermissionRequest."""
+    bare = _load_invocation_settings(
+        augment_claude_args((), bridge_dir=tmp_path, python_executable="/venv/bin/python")
+    )
+    assert "Elicitation" not in bare["hooks"]
+    args = augment_claude_args(
+        (),
+        bridge_dir=tmp_path,
+        python_executable="/venv/bin/python",
+        ap_server_url="http://127.0.0.1:8787/",
+        ap_auth_headers={"Authorization": "Bearer xyz"},
+    )
+    entries = _load_invocation_settings(args)["hooks"]["Elicitation"]
+    assert len(entries) == 1 and "matcher" not in entries[0]
+    (hook,) = entries[0]["hooks"]
+    assert hook["type"] == "command" and hook["timeout"] == 86400
+    assert "omnigent.harnesses.claude_native.hook mcp-elicitation" in hook["command"]
+    assert "Bearer xyz" not in hook["command"]

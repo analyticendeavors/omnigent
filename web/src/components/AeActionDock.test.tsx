@@ -883,4 +883,45 @@ describe("AeActionDock child prompts", () => {
     });
     await waitFor(() => expect(screen.queryByTestId("ae-action-dock")).toBeNull());
   });
+  it("renders an MCP server's schema form for its real payload and answers in the child", async () => {
+    const field = "Confirm the operation";
+    const mcp = {
+      ...(ask as object),
+      elicitationId: "mcp1",
+      targetSessionId: "conv_pbi",
+      familyChild: { title: "Halcyon Orbital" },
+      message: "powerbi-modeling-sp asks: Delete table Sales?",
+      policyName: "claude_native_permission",
+      askUserQuestion: null,
+      requestedSchema: {
+        type: "object",
+        properties: {
+          [field]: {
+            type: "string",
+            enum: ["Yes", "No"],
+            enumNames: ["Continue the operation", "Decline the operation"],
+          },
+        },
+        required: [field],
+      },
+    } as unknown as AnyBlock;
+    vi.mocked(authenticatedFetch).mockImplementation(() => json({ queued: false }, 202));
+    renderChildDock([mcp]);
+    fireEvent.click(await screen.findByTestId("ae-dock-child-answer"));
+    const prompt = await screen.findByTestId("ae-dock-child-prompt");
+    expect(prompt.textContent).toContain("powerbi-modeling-sp asks");
+    expect(prompt.textContent).toContain(field);
+    fireEvent.change(within(prompt).getByRole("combobox"), { target: { value: "Yes" } });
+    fireEvent.click(within(prompt).getByRole("button", { name: /submit/i }));
+    await waitFor(() => {
+      const call = vi
+        .mocked(authenticatedFetch)
+        .mock.calls.find(([path]) => String(path).includes("/resolve"))!;
+      expect(call[0]).toBe("/v1/sessions/conv_pbi/elicitations/mcp1/resolve");
+      expect(JSON.parse(String(call[1]?.body))).toEqual({
+        action: "accept",
+        content: { [field]: "Yes" },
+      });
+    });
+  });
 });

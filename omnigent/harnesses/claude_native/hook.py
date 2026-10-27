@@ -192,6 +192,10 @@ def main(argv: list[str] | None = None) -> int:
         return observe_main(raw_argv[1:])
     if raw_argv and raw_argv[0] == "permission-request":
         return _main_permission_request(raw_argv[1:])
+    if raw_argv and raw_argv[0] == "mcp-elicitation":
+        from omnigent.harnesses.claude_native.ae_mcp_elicitation_hook import main as mcp_main
+
+        return mcp_main(raw_argv[1:])
     if raw_argv and raw_argv[0] == "ask-user-question":
         # Retired PreToolUse forwarder: settings written before the upgrade
         # still name it until the terminal restarts. Exit 0 with no output so

@@ -1015,6 +1015,17 @@ def create_sessions_router(
         permission_store=permission_store,
     )
 
+    from omnigent.server.routes.sessions.routes_ae_mcp_elicitation import (
+        register_ae_mcp_elicitation_routes,
+    )
+
+    register_ae_mcp_elicitation_routes(
+        router,
+        conversation_store=conversation_store,
+        auth_provider=auth_provider,
+        permission_store=permission_store,
+    )
+
     from omnigent.server.routes.sessions.routes_ae_fast_mode import register_ae_fast_mode_routes
 
     register_ae_fast_mode_routes(
