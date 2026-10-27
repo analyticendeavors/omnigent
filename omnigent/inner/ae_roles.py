@@ -575,7 +575,10 @@ def render_roles(roles: object) -> str | None:
                     setting.get(role), preset.get("rules"), current, _model
                 )
                 if role == "reviewer"
-                else f"{role} {_model(setting.get(role), current)}"
+                else f"{role} "
+                + ae_reviewers.worker_text(
+                    role, setting.get(role), preset.get("rules"), current, _model, brief=True
+                )
                 for role in ROLES
                 if role != "lead"
                 or not isinstance(setting.get(role), dict)
@@ -613,7 +616,14 @@ def render_roles(roles: object) -> str | None:
                 setting.get(role), preset.get("rules"), current, _model
             )
             continue
-        lines.append(f"- {_ROLE_LABELS[role]}: {_model(setting.get(role), current)}.")
+        shown = (
+            _model(setting.get(role), current)
+            if role == "lead"
+            else ae_reviewers.worker_text(
+                role, setting.get(role), preset.get("rules"), current, _model
+            )
+        )
+        lines.append(f"- {_ROLE_LABELS[role]}: {shown}.")
     lines.append(_rules(preset.get("rules")))
     return "\n".join(lines)
 

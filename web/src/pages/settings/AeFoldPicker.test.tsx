@@ -49,6 +49,24 @@ const tabbable = () =>
   screen.getAllByRole("treeitem").filter((el) => el.getAttribute("tabindex") === "0");
 
 describe("AeFoldPicker", () => {
+  it("lists every top option above the groups", () => {
+    render(
+      <AeFoldPicker
+        value="__session"
+        ariaLabel="Lead model"
+        groups={groups}
+        top={[
+          opt("Auto (the lead picks)", { value: "__auto" }),
+          opt("Session model", { value: "__session" }),
+        ]}
+        onPick={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Lead model/ }));
+    const items = screen.getAllByRole("treeitem").map((el) => el.textContent);
+    expect(items.slice(0, 2)).toEqual(["Auto (the lead picks)", "Session model"]);
+  });
+
   it("is a plain button that names the current model and a dialog it controls", () => {
     render(<Harness />);
     expect(trigger()).toHaveAccessibleName("Reviewer 2 model, Fable 5.1");

@@ -60,7 +60,7 @@ export function AeFoldPicker({
   ariaLabel,
   nameSuffix = "",
   groups,
-  auto,
+  top,
   disabled,
   triggerClassName,
   nameClassName,
@@ -73,8 +73,8 @@ export function AeFoldPicker({
   /** Said after the current model in the trigger's name, e.g. ", runs through Codex". */
   nameSuffix?: string;
   groups: readonly AeFoldGroup[];
-  /** An option above the groups (the first reviewer's "Auto"). */
-  auto?: AeFoldOption;
+  /** Options above the groups: "Auto", and for the lead "Session model". */
+  top?: readonly AeFoldOption[];
   disabled?: boolean;
   /** Padding for the dot and tag the row draws over the trigger. */
   triggerClassName?: string;
@@ -100,9 +100,11 @@ export function AeFoldPicker({
     seen.add(key);
     return key;
   };
-  const autoEntry: Entry | null = auto
-    ? { key: keyOf("auto", auto), option: auto, level: 1 }
-    : null;
+  const topEntries: Entry[] = (top ?? []).map((option) => ({
+    key: keyOf("top", option),
+    option,
+    level: 1,
+  }));
   const sections = groups
     .filter((g) => g.options.length > 0 || g.older.length > 0)
     .map((group) => {
@@ -129,7 +131,7 @@ export function AeFoldPicker({
     });
 
   const focusable: Focusable[] = [];
-  if (autoEntry) focusable.push({ kind: "option", ...autoEntry });
+  for (const e of topEntries) focusable.push({ kind: "option", ...e });
   for (const s of sections) {
     for (const e of s.latest) focusable.push({ kind: "option", ...e });
     if (s.group.older.length > 0) {
@@ -139,10 +141,9 @@ export function AeFoldPicker({
   }
   // Only the first row holding the value is the selected one.
   const selectedKey = focusable.find((f) => f.kind === "option" && f.option.value === value)?.key;
-  const current = [
-    ...(auto ? [auto] : []),
-    ...groups.flatMap((g) => [...g.options, ...g.older]),
-  ].find((o) => o.value === value);
+  const current = [...(top ?? []), ...groups.flatMap((g) => [...g.options, ...g.older])].find(
+    (o) => o.value === value,
+  );
   const currentLabel = current?.label ?? "Unavailable model";
   const tabbableKey =
     (activeKey && focusable.some((f) => f.key === activeKey) ? activeKey : null) ??
@@ -261,7 +262,7 @@ export function AeFoldPicker({
         onFocus={() => setActiveKey(e.key)}
         className={cn(
           ROW,
-          e.key.startsWith("auto/") ? "pl-2" : e.level === 2 ? "pl-8" : "pl-5",
+          e.key.startsWith("top/") ? "pl-2" : e.level === 2 ? "pl-8" : "pl-5",
           selected && "font-semibold shadow-[inset_3px_0_0_0_currentColor]",
           option.disabled && cn("cursor-not-allowed hover:bg-transparent", QUIET),
         )}
@@ -340,7 +341,7 @@ export function AeFoldPicker({
           data-testid="ae-fold-list"
           onKeyDown={onKeyDown}
         >
-          {autoEntry && optionRow(autoEntry)}
+          {topEntries.map(optionRow)}
           {sections.map((s) => (
             <div key={s.group.id}>
               <div id={s.head} className="px-2 pt-2 pb-1 text-xs font-semibold text-foreground">

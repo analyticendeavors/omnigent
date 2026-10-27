@@ -12,14 +12,8 @@ import type { AeRoleModelChoice } from "@/hooks/useAeRoleModels";
 import { type AeCodexCatalog, useAeCodexCatalog } from "@/hooks/useAeCodexCatalog";
 import type { AeModelUpdatesState } from "@/hooks/useAeModelUpdates";
 import { type Host, useHostModelOptions } from "@/hooks/useHosts";
-import {
-  aeCodexDefaultEffort,
-  aeCodexEfforts,
-  aeCodexLabel,
-  aeNewCodexReviewerModel,
-} from "@/lib/aeCodexModels";
-import { aeClaudeFoldSplit, aeCodexFoldSplit } from "@/lib/aeModelFold";
-import { aeClaudeCodeDefaultEffort, aeClaudeEffortLabel } from "@/lib/aeEffortDefault";
+import { aeCodexDefaultEffort, aeNewCodexReviewerModel } from "@/lib/aeCodexModels";
+import { aeClaudeEffortLabel } from "@/lib/aeEffortDefault";
 import {
   AE_REVIEW_MERGE_OPTIONS,
   AE_REVIEWER_UNAVAILABLE_OPTIONS,
@@ -34,41 +28,22 @@ import {
   aeAgentNameOf,
   aeAgentSetupHref,
   aeIsCodexAgent,
-  aeIsCodexSlot,
   aeReviewerAgentOption,
   aeReviewerAgents,
-  aeReviewerAgentStatus,
   aeReviewerList,
   aeReviewerRowLabel,
   aeReviewerUnavailableOf,
   aeReviewMergeOf,
   aeWriteReviewers,
 } from "@/lib/aeReviewers";
-import {
-  AE_ROLE_EFFORTS,
-  AE_ROLE_LABELS,
-  type AeRoleEffort,
-  type AeRoleRules,
-  aeHelpersOf,
-  aeModelDotClass,
-  aeModelLabel,
-} from "@/lib/aeRoles";
-import type { AeAgentEffort } from "@/lib/aeRoleBase";
+import { AE_ROLE_LABELS, type AeRoleEffort, type AeRoleRules, aeHelpersOf } from "@/lib/aeRoles";
 import type { AeTeamOption } from "@/lib/aeTeamOptions";
-import {
-  codexEffortLevelsForModel,
-  comparableModelId,
-  findNativeModelOption,
-} from "@/lib/codexNativeModels";
+import { codexEffortLevelsForModel, comparableModelId } from "@/lib/codexNativeModels";
 import type { NativeModelOption } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { AeUpdateChip } from "./AeModelUpdates";
-import { AeEffortBar, AeSegmented } from "./AeRolesControls";
-import { AeFoldPicker, type AeFoldGroup, type AeFoldOption } from "./AeFoldPicker";
-
-const AUTO = "__auto";
-const AGENT = "agent:";
-const CODEX = "codex:";
+import { AeSegmented } from "./AeRolesControls";
+import { aeRoleModelPick } from "./AeRoleModelPicker";
 
 const GRID =
   "grid grid-cols-[5.5rem_1fr] items-center gap-x-3 gap-y-2 @lg/roles:grid-cols-[7rem_minmax(0,14rem)_1fr]";
@@ -203,41 +178,6 @@ function SlotRow({
 }) {
   const slot = slots[index];
   const label = `Reviewer ${index + 1}`;
-  const fixed = slot.mode === "fixed" ? slot : null;
-  const agentSlot = slot.mode === "agent" ? slot : null;
-  const listed = fixed
-    ? models.find((m) => comparableModelId(m.value) === comparableModelId(fixed.model))
-    : undefined;
-  const agentState = agentSlot ? aeReviewerAgentStatus(agentSlot, options, host) : null;
-  const agentOption = agentState?.option ?? null;
-  // The live id when the slot was stored under another one (matched by registered name).
-  const agentId = agentSlot ? (agentOption?.agent.id ?? agentSlot.agent) : "";
-  // A Codex slot shows its model in the one dropdown, like a Claude row; its
-  // models come from the host (the stored one, else the host's default).
-  const codexSlot = agentSlot && aeIsCodexSlot(agentSlot, agentOption) ? agentSlot : null;
-  const defaultRow = codex.rows.find((row) => row.isDefault) ?? null;
-  const codexRow = codexSlot
-    ? codexSlot.model
-      ? findNativeModelOption(codex.rows, codexSlot.model)
-      : defaultRow
-    : null;
-  const codexValue = codexSlot
-    ? `${CODEX}${codexRow ? rowValue(codexRow) : (codexSlot.model ?? "")}`
-    : "";
-  // Everything the host lists, when Codex is ready to pick from (latest on top, the rest in the fold).
-  const pickable = codex.ready ? codex.rows : [];
-  // The saved value always has its own option, whatever the agent's state or the list's.
-  const codexOffered = codexSlot && !pickable.some((row) => row === codexRow);
-  const value = fixed
-    ? (listed?.value ?? fixed.model)
-    : codexSlot
-      ? codexValue
-      : agentSlot
-        ? `${AGENT}${agentId}`
-        : AUTO;
-  const rest = options.filter((o) => !(codex.ready && o.agent.id === codex.option?.agent.id));
-  const ready = rest.filter((o) => o.readiness.selectable && o.primary);
-  const needSetup = rest.filter((o) => !o.readiness.selectable);
   const usedBy = (model: string) => {
     const at = slots.findIndex(
       (s, i) =>
@@ -247,140 +187,25 @@ function SlotRow({
     );
     return at < 0 ? "" : `used by Reviewer ${at + 1}`;
   };
-  const choose = (next: string) => {
-    if (next === AUTO) return onChange({ mode: "auto" });
-    if (next.startsWith(CODEX)) {
-      const model = next.slice(CODEX.length);
-      const named = codexSlot ?? codex.option;
-      if (!model || !named) return;
-      const target = findNativeModelOption(codex.rows, model);
-      const offered = aeCodexEfforts(target);
-      const current = codexSlot?.effort ?? fixed?.effort ?? null;
-      const effort =
-        current && (offered.length === 0 || offered.includes(current))
-          ? current
-          : aeCodexDefaultEffort(target);
-      if (codexSlot) return onChange({ ...codexSlot, model, effort });
-      const option = codex.option as AeTeamOption;
-      return onChange({
-        mode: "agent",
-        agent: option.agent.id,
-        agent_name: aeAgentNameOf(option.agent.name),
-        name: Array.from(option.name).slice(0, AE_AGENT_NAME_MAX).join("") || "Agent",
-        model,
-        effort,
-      });
-    }
-    if (next.startsWith(AGENT)) {
-      const id = next.slice(AGENT.length);
-      const option = options.find((o) => o.agent.id === id);
-      if (!option) return;
-      return onChange({
-        mode: "agent",
-        agent: id,
-        agent_name: aeAgentNameOf(option.agent.name),
-        name: Array.from(option.name).slice(0, AE_AGENT_NAME_MAX).join("") || "Agent",
-        model: null,
-        effort: null,
-      });
-    }
-    const carried = fixed?.effort ?? (agentSlot?.effort === "ultra" ? "max" : agentSlot?.effort);
-    const effort =
-      carried ?? ((aeClaudeCodeDefaultEffort(next) as AeRoleEffort | null) || "medium");
-    onChange({ mode: "fixed", model: next, effort });
-  };
-  // The bar offers the levels this row's model offers: all five for Claude, the model's own for Codex.
-  const codexLevels = aeCodexEfforts(codexRow);
-  const resolved = codexLevels.length > 0;
-  const baseLevels: readonly AeAgentEffort[] = codexSlot
-    ? resolved
-      ? codexLevels
-      : aeAgentEfforts(agentOption?.agent.harness)
-    : AE_ROLE_EFFORTS;
-  const storedEffort = codexSlot?.effort ?? null;
-  // A stored effort the model no longer offers is shown as it is, as an extra step marked unavailable.
-  const stray = storedEffort && !baseLevels.includes(storedEffort) ? storedEffort : null;
-  const barLevels: readonly AeAgentEffort[] = stray ? [...baseLevels, stray] : baseLevels;
-  const barEffort: AeAgentEffort | null =
-    storedEffort ?? (codexRow ? aeCodexDefaultEffort(codexRow) : null);
-  const barUnavailable = resolved ? stray : null;
-  // A stored model the catalog lacks is sorted like any other: older than its family's newest goes
-  // under Older models (which then opens), newer goes on top.
-  const strayModel =
-    fixed && !listed ? { value: fixed.model, label: aeModelLabel(fixed.model) } : null;
-  const claudeSplit = aeClaudeFoldSplit(strayModel ? [...models, strayModel] : models);
-  const strayFirst = (list: readonly AeRoleModelChoice[]) =>
-    strayModel
-      ? [...list.filter((m) => m === strayModel), ...list.filter((m) => m !== strayModel)]
-      : list;
-  const codexSplit = aeCodexFoldSplit(codex.ready ? codex.rows : []);
-  const codexOption = (row: NativeModelOption): AeFoldOption => ({
-    value: `${CODEX}${rowValue(row)}`,
-    label: aeCodexLabel(row),
-    id: row.id,
+  const pick = aeRoleModelPick({
+    setting: slot,
+    groups: "all",
+    auto: index === 0,
+    ariaLabel: index === 0 ? "Reviewer model" : `${label} model`,
+    barLabel: index === 0 ? "Reviewer" : label,
+    toolTestId: `ae-reviewer-tool-${index + 1}`,
+    models,
+    options,
+    codex,
+    host,
+    disabled,
+    usedBy,
+    // A reviewer slot never offers the session model, so the pick is always a slot.
+    onChange: (next) => onChange(next as AeReviewerSlot),
   });
-  const claudeOption = (model: AeRoleModelChoice): AeFoldOption => ({
-    value: model.value,
-    label: model.label,
-    note: usedBy(model.value) || undefined,
-  });
-  const pickerGroups: AeFoldGroup[] = [
-    {
-      id: "claude",
-      label: "Run through Claude, as a subagent",
-      options: [...strayFirst(claudeSplit.latest).map(claudeOption)],
-      older: claudeSplit.older.map(claudeOption),
-    },
-    ...(codex.ready || codexSlot
-      ? [
-          {
-            id: "codex",
-            label: "Run through Codex, as a child session",
-            options: [
-              ...(codexOffered
-                ? [
-                    {
-                      value: codexValue,
-                      label: codexRow
-                        ? aeCodexLabel(codexRow)
-                        : codexSlot?.model || "Codex, default model",
-                    },
-                  ]
-                : []),
-              ...codexSplit.latest.map(codexOption),
-              ...(codex.ready && codex.loading
-                ? [{ value: "__codex_loading", label: "Loading Codex models", disabled: true }]
-                : []),
-              ...(codex.ready && codex.failed
-                ? [{ value: "__codex_failed", label: "Codex models unavailable", disabled: true }]
-                : []),
-            ],
-            older: codexSplit.older.map(codexOption),
-          },
-        ]
-      : []),
-    {
-      id: "agents",
-      label: "Other agents",
-      options: [
-        ...(agentSlot && !codexSlot && !ready.some((o) => o.agent.id === agentId)
-          ? [{ value, label: agentSlot.name }]
-          : []),
-        ...ready.map((o) => ({ value: `${AGENT}${o.agent.id}`, label: o.name })),
-        ...needSetup
-          .filter((o) => o.agent.id !== agentId)
-          .map((o) => ({
-            value: `${AGENT}${o.agent.id}`,
-            label: o.name,
-            note: "needs setup",
-            disabled: true,
-          })),
-      ],
-      older: [],
-    },
-  ];
+  const { agentSlot, agentState, trigger, bar } = pick;
+  const agentOption = agentState?.option ?? null;
   const { hint } = AE_ROLE_LABELS.reviewer;
-  const dotModel = fixed ? fixed.model : codexRow ? rowValue(codexRow) : (codexSlot?.model ?? "");
   return (
     <div data-testid={`ae-reviewer-slot-${index + 1}`} className={cn(GRID, index > 0 && "pt-2")}>
       {index === 0 ? (
@@ -394,57 +219,11 @@ function SlotRow({
       ) : (
         <div className="pr-1 text-right text-xs font-medium text-muted-foreground">{index + 1}</div>
       )}
-      <div className="relative flex min-w-0 items-center">
-        {(fixed || codexSlot) && (
-          <span
-            aria-hidden="true"
-            className={cn(
-              "pointer-events-none absolute left-2.5 size-2 rounded-full",
-              aeModelDotClass(dotModel),
-            )}
-          />
-        )}
-        {codexSlot && (
-          <span
-            aria-hidden="true"
-            data-testid={`ae-reviewer-tool-${index + 1}`}
-            className="pointer-events-none absolute right-7 rounded-full bg-muted px-1.5 py-px text-[11px] font-medium text-foreground"
-          >
-            Codex
-          </span>
-        )}
-        <AeFoldPicker
-          ariaLabel={index === 0 ? "Reviewer model" : `${label} model`}
-          nameSuffix={codexSlot ? ", runs through Codex" : ""}
-          value={value}
-          disabled={disabled}
-          auto={index === 0 ? { value: AUTO, label: "Auto (the lead picks)" } : undefined}
-          groups={pickerGroups}
-          headingHint={<AeHint id="reviewer.older" />}
-          onPick={choose}
-          triggerClassName={cn("pr-2", fixed || codexSlot ? "pl-6" : "pl-2")}
-          nameClassName={codexSlot ? "mr-[4.25rem]" : undefined}
-        />
-      </div>
+      {trigger}
       <div className="col-start-2 flex min-w-0 items-center justify-between gap-2 @lg/roles:col-start-3">
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 @[480px]/roles:flex-nowrap">
-          {fixed || codexSlot ? (
-            <AeEffortBar
-              role={index === 0 ? "Reviewer" : label}
-              effort={fixed ? fixed.effort : barEffort}
-              levels={fixed ? AE_ROLE_EFFORTS : barLevels}
-              unavailable={fixed ? null : barUnavailable}
-              onChange={(effort) =>
-                onChange(
-                  fixed
-                    ? { ...fixed, effort: effort as AeRoleEffort }
-                    : codexSlot
-                      ? { ...codexSlot, effort }
-                      : slot,
-                )
-              }
-              disabled={disabled}
-            />
+          {bar ? (
+            bar
           ) : agentSlot ? (
             <AgentDetails
               slot={agentSlot}

@@ -167,6 +167,15 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
+/** The model picker's trigger for a role row. */
+const modelTrigger = (role: string) =>
+  screen.getByRole("button", { name: new RegExp(`^${role} model`) });
+/** Opens a role row's picker and picks the option with this name. */
+const pickModel = (role: string, name: string) => {
+  fireEvent.click(modelTrigger(role));
+  fireEvent.click(within(screen.getByRole("tree")).getByRole("treeitem", { name }));
+};
+
 describe("AeRolesSettingsSection", () => {
   it("renders a hint for every Roles control in the inventory", async () => {
     const two = {
@@ -212,11 +221,12 @@ describe("AeRolesSettingsSection", () => {
     const row = within(screen.getByTestId("ae-roles-row"));
     expect(row.getByRole("button", { name: "Balanced, your default, open" })).toBeInTheDocument();
     expect(row.getAllByRole("button", { name: "2 more presets" })[0]).toBeInTheDocument();
-    expect(editor().getByLabelText("Planner model")).toHaveValue(OPUS);
-    expect(editor().getByLabelText("Lead model")).toHaveValue("__session");
+    expect(modelTrigger("Planner")).toHaveTextContent("Opus 5.5");
+    expect(modelTrigger("Lead")).toHaveTextContent("Session model");
     expect(screen.queryByTestId("ae-roles-top-tier")).not.toBeInTheDocument();
     // The catalog's 1M Fable row and the plain one are one choice.
-    const options = within(editor().getByLabelText("Builder model")).getAllByRole("option");
+    fireEvent.click(modelTrigger("Builder"));
+    const options = within(screen.getByRole("tree")).getAllByRole("treeitem");
     expect(options.map((o) => o.textContent)).toEqual([
       "Auto (the lead picks)",
       "Sonnet 5.5",
@@ -234,7 +244,7 @@ describe("AeRolesSettingsSection", () => {
     expect(save).toBeDisabled();
     const builderEffort = editor().getByRole("radiogroup", { name: "Builder effort" });
     fireEvent.click(within(builderEffort).getByRole("radio", { name: "High" }));
-    fireEvent.change(editor().getByLabelText("Helper model"), { target: { value: "__auto" } });
+    pickModel("Helper", "Auto (the lead picks)");
     fireEvent.click(
       within(editor().getByTestId("ae-rule-raise")).getByRole("radio", { name: "Ask first" }),
     );
@@ -431,7 +441,7 @@ describe("AeRolesSettingsSection", () => {
     );
     fireEvent.click(editor().getByRole("button", { name: "Save" }));
     await waitFor(() => expect(editor().getByRole("button", { name: "Saving…" })).toBeDisabled());
-    expect(editor().getByLabelText("Helper model")).toBeDisabled();
+    expect(modelTrigger("Helper")).toBeDisabled();
     expect(
       within(editor().getByRole("radiogroup", { name: "Builder effort" })).getByRole("radio", {
         name: "Low",
@@ -447,7 +457,7 @@ describe("AeRolesSettingsSection", () => {
     expect(screen.getByRole("button", { name: "New preset" })).toBeDisabled();
     release(json({}));
     await waitFor(() => expect(mocks.showToast).toHaveBeenCalledWith("Saved Balanced."));
-    expect(editor().getByLabelText("Helper model")).not.toBeDisabled();
+    expect(modelTrigger("Helper")).not.toBeDisabled();
   });
 
   it("reorders with a grip's arrow keys and pins to the top group", async () => {

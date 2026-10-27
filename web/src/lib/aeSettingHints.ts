@@ -42,7 +42,7 @@ export const AE_SETTING_HINTS = {
   },
   "roles.planner": {
     label: "Planner",
-    hint: `Does design and root-cause work. Auto lets the lead choose. ${EFFORT}`,
+    hint: `Design, root cause. Claude, Codex or Auto. Codex is skipped on Own subagents only. ${EFFORT}`,
     source: "tooltip",
   },
   "roles.reviewer": {
@@ -52,12 +52,12 @@ export const AE_SETTING_HINTS = {
   },
   "roles.builder": {
     label: "Builder",
-    hint: `Writes code. Auto lets the lead choose. ${EFFORT}`,
+    hint: `Writes code. Claude, Codex or Auto. Codex is skipped on Own subagents only. ${EFFORT}`,
     source: "tooltip",
   },
   "roles.helper": {
     label: "Helper",
-    hint: `Watches, polls and commits. Auto lets the lead choose. ${EFFORT}`,
+    hint: `Watches, polls, commits. Claude, Codex or Auto. Codex is skipped on Own subagents only. ${EFFORT}`,
     source: "tooltip",
   },
   "reviewer.older": {

@@ -13,10 +13,13 @@ import {
   aeModelLabel,
 } from "@/lib/aeRoleBase";
 import {
+  type AeReviewerAgentSlot,
   type AeReviewerSetting,
   type AeReviewerUnavailable,
   type AeReviewMerge,
+  aeParseAgentSlot,
   aeParseReviewerMulti,
+  aeReviewerAgents,
   aeReviewerList,
   aeReviewerRowLabel,
   aeReviewerSummary,
@@ -106,9 +109,20 @@ export const AE_PRESET_TITLE_MAX = 40;
 export const AE_PRESET_DESCRIPTION_MAX = 120;
 export const AE_PRESET_WHEN_MAX = 400;
 
+/**
+ * What the Planner, Builder and Helper rows hold (2026-10-26): Auto, a Claude model, or a
+ * Codex session (an agent slot; the server refuses any other agent there).
+ */
+export type AeWorkerSetting = AeRoleSetting | AeReviewerAgentSlot;
+export const AE_WORKER_ROLES = ["planner", "builder", "helper"] as const;
+
 /** The Reviewer role may hold one to three reviewers (aeReviewers.ts). */
 export type AeRoleTable = {
-  [K in AeRoleId]: K extends "reviewer" ? AeReviewerSetting : AeRoleSetting;
+  [K in AeRoleId]: K extends "reviewer"
+    ? AeReviewerSetting
+    : K extends (typeof AE_WORKER_ROLES)[number]
+      ? AeWorkerSetting
+      : AeRoleSetting;
 };
 
 export interface AeRoleRules {
@@ -270,8 +284,15 @@ function parsePreset(value: unknown): AeRolePreset | null {
       continue;
     }
     const setting = parseSetting(roles[role]);
-    if (!setting) return null;
-    table[role] = setting;
+    if (role === "lead") {
+      if (!setting) return null;
+      table.lead = setting;
+      continue;
+    }
+    // A worker may also be a Codex session. A saved session setting still reads as before.
+    const worker = setting ?? aeParseAgentSlot(roles[role]);
+    if (!worker) return null;
+    table[role] = worker;
   }
   const { raise_or_lower, lead_steps_down, auto_raises } = rules;
   if (!(AE_RAISE_MODES as readonly unknown[]).includes(raise_or_lower)) return null;
@@ -489,7 +510,7 @@ export function aeTopModel(models: readonly string[]): string | null {
  */
 export function aeIsTopTierEverywhere(roles: AeRoleTable, catalog: readonly string[]): boolean {
   // Agent reviewers run on another provider's models, so only Claude slots count.
-  const settings = AE_ROLE_IDS.flatMap((role): (AeRoleSetting | { mode: "agent" })[] =>
+  const settings = AE_ROLE_IDS.flatMap((role): (AeWorkerSetting | { mode: "agent" })[] =>
     role === "reviewer" ? aeReviewerList(roles.reviewer) : [roles[role]],
   ).filter((s) => s.mode !== "agent");
   if (!settings.every((s) => s.mode === "fixed" && s.effort === "max")) return false;
@@ -498,6 +519,16 @@ export function aeIsTopTierEverywhere(roles: AeRoleTable, catalog: readonly stri
   if (!top) return false;
   const target = comparableModelId(top);
   return models.every((m) => comparableModelId(m) === target);
+}
+
+/** The ids of every agent the table names (reviewers, and Codex planner, builder or helper). */
+export function aeRoleAgents(roles: AeRoleTable): string[] {
+  return [
+    ...aeReviewerAgents(roles.reviewer).map((r) => r.slot.agent),
+    ...AE_WORKER_ROLES.flatMap((role) =>
+      roles[role].mode === "agent" ? [(roles[role] as AeReviewerAgentSlot).agent] : [],
+    ),
+  ];
 }
 
 /** One line for a preset's role mix: "Opus 5.5 plans, Sonnet 5.5 reviews, ...". */
@@ -512,9 +543,11 @@ export function aeRoleSummary(roles: AeRoleTable): string {
     const value =
       setting.mode === "fixed"
         ? `${aeModelLabel(setting.model)} ${setting.effort}`
-        : setting.mode === "session"
-          ? "session model"
-          : "auto";
+        : setting.mode === "agent"
+          ? [setting.name, setting.model, setting.effort].filter(Boolean).join(" ")
+          : setting.mode === "session"
+            ? "session model"
+            : "auto";
     parts.push(`${AE_ROLE_LABELS[role].label} ${value}`);
   }
   return parts.join(" · ");

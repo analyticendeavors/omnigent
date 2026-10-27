@@ -828,3 +828,41 @@ def test_the_shared_sanitizer_strips_line_separators() -> None:
     source = Path(ae_text.__file__).read_text(encoding="utf-8")
     assert not any(ord(ch) in (0x2028, 0x2029) for ch in source)
     assert "\\u2028" in source
+
+
+# ── Codex planner, builder and helper (2026-10-26) ─────────────────────────
+
+
+def _with_worker(role: str, slot: dict[str, Any], **rules: Any) -> dict[str, Any]:
+    preset = copy.deepcopy(BALANCED)
+    preset["roles"][role] = slot
+    preset["rules"] = {**preset["rules"], **rules}
+    return preset
+
+
+def test_a_codex_builder_says_how_to_start_it_with_its_own_role() -> None:
+    preset = _with_worker("builder", {**CODEX, "model": "gpt-5.6-sol"})
+    text = render_roles({"preset": preset, "custom": False, "current": CURRENT}) or ""
+    [line] = [x for x in text.split("\n") if x.startswith("- Builder")]
+    assert 'create_session with role "builder", harness "codex", model gpt-5.6-sol' in line
+    assert "a title naming the task" in line and "review" not in line
+
+
+def test_a_codex_helper_is_skipped_under_own_subagents_only() -> None:
+    preset = _with_worker("helper", CODEX, helpers="own")
+    text = render_roles({"preset": preset, "custom": False, "current": CURRENT}) or ""
+    [line] = [x for x in text.split("\n") if x.startswith("- Helper")]
+    assert "Codex skipped: this preset keeps work with your own subagents" in line
+    assert "create_session" not in line
+
+
+def test_lead_picks_names_a_codex_planner_with_its_role() -> None:
+    preset = _with_worker("planner", CODEX)
+    text = render_roles({"lead_picks": True, "presets": [preset], "current": CURRENT}) or ""
+    assert 'planner Codex (fresh session: create_session role "planner", harness "codex"' in text
+
+
+def test_worker_agent_slots_get_the_live_id_by_name() -> None:
+    preset = _with_worker("builder", {**CODEX, "agent": "stale"})
+    out = ae_reviewers.resolve_agents({"preset": preset}, lambda name: "live-id")
+    assert out["preset"]["roles"]["builder"]["agent"] == "live-id"

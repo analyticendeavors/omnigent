@@ -16,7 +16,8 @@ single finding stay with reviewer 1. The preset's rules pick how results are
 shown (``review_merge``) and what happens when a reviewer cannot start
 (``reviewer_unavailable``). A preset whose Helpers rule keeps work with the
 lead's own subagents (``own``) cannot start child sessions, so its agent slots
-are named as skipped.
+are named as skipped. The planner, builder and helper settings may also be a Codex
+slot (2026-10-26, :func:`worker_text`); the same rule skips it.
 
 :func:`ae_roles.render_roles` calls :func:`reviewer_lines` for the preset in
 force and :func:`reviewers_short` for each lead-picks line.
@@ -68,6 +69,9 @@ def _agent_name(slot: dict[str, object]) -> str:
     return _text(slot.get("name"), 40) or "the agent"
 
 
+WORKERS = ("planner", "builder", "helper")
+
+
 def resolve_agents(roles: dict[str, Any], lookup: Callable[[str], str | None]) -> dict[str, Any]:
     """*roles* (resolved notice metadata) with each agent slot's id looked up by its name.
 
@@ -98,10 +102,13 @@ def resolve_agents(roles: dict[str, Any], lookup: Callable[[str], str | None]) -
 
     def preset_of(preset: object) -> object:
         setting = preset.get("roles") if isinstance(preset, dict) else None
-        if not isinstance(setting, dict) or "reviewer" not in setting:
+        if not isinstance(setting, dict):
             return preset
         assert isinstance(preset, dict)
-        return {**preset, "roles": {**setting, "reviewer": settled(setting["reviewer"])}}
+        changed = {
+            role: settled(setting[role]) for role in ("reviewer", *WORKERS) if role in setting
+        }
+        return {**preset, "roles": {**setting, **changed}} if changed else preset
 
     resolved = dict(roles)
     if isinstance(roles.get("preset"), dict):
@@ -111,7 +118,7 @@ def resolve_agents(roles: dict[str, Any], lookup: Callable[[str], str | None]) -
     return resolved
 
 
-def _agent(slot: dict[str, object], *, brief: bool = False) -> str:
+def _agent(slot: dict[str, object], *, brief: bool = False, role: str = "reviewer") -> str:
     """An agent slot: who it is and how to start it, with only the arguments it fixes."""
     agent = _text(slot.get("agent"), 128)
     model = _text(slot.get("model"), 128)
@@ -119,7 +126,7 @@ def _agent(slot: dict[str, object], *, brief: bool = False) -> str:
     codex = _is_codex(slot)
     # A Codex reviewer started by create_session joins the lead's family (capped, listed,
     # raisable); one started by sys_session_create is a bare child outside it.
-    args = ['role "reviewer"', 'harness "codex"'] if codex else [f"agent_id {agent}"]
+    args = [f'role "{role}"', 'harness "codex"'] if codex else [f"agent_id {agent}"]
     if model:
         args.append(f"model {model}")
     if effort:
@@ -127,17 +134,22 @@ def _agent(slot: dict[str, object], *, brief: bool = False) -> str:
     defaults = [word for word, value in (("model", model), ("effort", effort)) if not value]
     default = f"; its default {' and '.join(defaults)}" if defaults else ""
     if codex:
-        title = ", a title naming the review round, and workspace the repo under review"
+        if role == "reviewer":
+            title = ", a title naming the review round, and workspace the repo under review"
+        else:
+            title = ", a title naming the task, and workspace the task's repo"
         if brief:
             return f"{_agent_name(slot)} (fresh session: create_session {', '.join(args)}{title})"
         return (
-            f"{_agent_name(slot)} agent (a fresh session each review: create_session with "
+            f"{_agent_name(slot)} agent (a fresh session each "
+            f"{'review' if role == 'reviewer' else 'task'}: create_session with "
             f"{', '.join(args)}{title}{default})"
         )
     if brief:
         return f"{_agent_name(slot)} (fresh child session: sys_session_create {', '.join(args)})"
     return (
-        f"{_agent_name(slot)} agent (a fresh child session each review: "
+        f"{_agent_name(slot)} agent (a fresh child session each "
+        f"{'review' if role == 'reviewer' else 'task'}: "
         f"sys_session_create with {', '.join(args)}{default})"
     )
 
@@ -159,6 +171,30 @@ def _split(
         else ""
     )
     return usable, note
+
+
+def worker_text(
+    role: str,
+    setting: object,
+    rules: object,
+    current: object,
+    model_text: ModelText,
+    *,
+    brief: bool = False,
+) -> str:
+    """A planner, builder or helper setting as notice text (Claude model, or a Codex session).
+
+    A Codex slot says how to start it with this *role*; under the Helpers rule ``own`` it
+    is named as skipped, since the lead cannot start child sessions then.
+    """
+    if not isinstance(setting, dict) or not _is_agent(setting):
+        return model_text(setting, current)
+    if isinstance(rules, dict) and rules.get("helpers") == OWN:
+        return (
+            f"{_agent_name(setting)} skipped: this preset keeps work with your own "
+            "subagents, so use a native subagent of your pick"
+        )
+    return _agent(setting, brief=brief, role=role)
 
 
 def reviewer_lines(

@@ -8,6 +8,8 @@ import {
   aeIsTopTierEverywhere,
   aeOneLine,
   aeParseRolesState,
+  aeRoleAgents,
+  aeRoleSummary,
   aeRolesDoc,
   aePresetId,
   aeRestoreStarters,
@@ -149,5 +151,43 @@ describe("aeRoles", () => {
     expect(title).toBe(`${"😀".repeat(35)} copy`);
     const short = { ...preset("b"), title: "Plan" };
     expect(aeDuplicatePreset(doc([short]), short).doc.presets[1].title).toBe("Plan copy");
+  });
+});
+
+describe("a Codex planner, builder or helper", () => {
+  const codex = {
+    mode: "agent",
+    agent: "codex-id",
+    agent_name: "codex-native-ui",
+    name: "Codex",
+    model: "gpt-5.6-sol",
+    effort: "high",
+  };
+  const withBuilder = (builder: unknown) => {
+    const base = preset("a");
+    return { ...base, roles: { ...base.roles, builder } };
+  };
+
+  it("parses, lists its agent and reads in the summary", () => {
+    const state = aeParseRolesState({
+      revision: 1,
+      default_preset: "a",
+      apply_start_on: true,
+      presets: [withBuilder(codex)],
+    });
+    const parsed = state?.presets[0];
+    expect(parsed?.roles.builder).toMatchObject({ mode: "agent", model: "gpt-5.6-sol" });
+    expect(aeRoleAgents(parsed!.roles)).toEqual(["codex-id"]);
+    expect(aeRoleSummary(parsed!.roles)).toContain("Builder Codex gpt-5.6-sol high");
+  });
+
+  it("still reads a worker saved on the session model", () => {
+    const state = aeParseRolesState({
+      revision: 1,
+      default_preset: "a",
+      apply_start_on: true,
+      presets: [withBuilder({ mode: "session" })],
+    });
+    expect(state?.presets[0].roles.builder).toEqual({ mode: "session" });
   });
 });

@@ -96,25 +96,28 @@ function parseSlot(value: unknown, index: number): AeReviewerSlot | null {
     if (typeof value.model !== "string" || !value.model || !isEffort(value.effort)) return null;
     return { mode: "fixed", model: value.model, effort: value.effort };
   }
-  if (value.mode === "agent") {
-    const { agent, name, model, effort, agent_name: agentName } = value;
-    if (typeof agent !== "string" || !agent) return null;
-    if (agentName != null && (typeof agentName !== "string" || !AGENT_NAME_PATTERN.test(agentName)))
-      return null;
-    if (typeof name !== "string" || !name || Array.from(name).length > AE_AGENT_NAME_MAX)
-      return null;
-    if (model != null && (typeof model !== "string" || !model)) return null;
-    if (effort != null && !isAgentEffort(effort)) return null;
-    return {
-      mode: "agent",
-      agent,
-      agent_name: typeof agentName === "string" ? agentName : null,
-      name,
-      model: typeof model === "string" ? model : null,
-      effort: isAgentEffort(effort) ? effort : null,
-    };
-  }
+  if (value.mode === "agent") return aeParseAgentSlot(value);
   return null;
+}
+
+/** An agent slot (the reviewer's, or a Codex planner, builder or helper), or null when malformed. */
+export function aeParseAgentSlot(value: unknown): AeReviewerAgentSlot | null {
+  if (!isObject(value) || value.mode !== "agent") return null;
+  const { agent, name, model, effort, agent_name: agentName } = value;
+  if (typeof agent !== "string" || !agent) return null;
+  if (agentName != null && (typeof agentName !== "string" || !AGENT_NAME_PATTERN.test(agentName)))
+    return null;
+  if (typeof name !== "string" || !name || Array.from(name).length > AE_AGENT_NAME_MAX) return null;
+  if (model != null && (typeof model !== "string" || !model)) return null;
+  if (effort != null && !isAgentEffort(effort)) return null;
+  return {
+    mode: "agent",
+    agent,
+    agent_name: typeof agentName === "string" ? agentName : null,
+    name,
+    model: typeof model === "string" ? model : null,
+    effort: isAgentEffort(effort) ? effort : null,
+  };
 }
 
 /** The multi shape, or null when `value` is not a well-formed one (1 to 3 slots). */

@@ -40,12 +40,8 @@ import {
   aeSessionsLockedHint,
 } from "@/lib/aeTeamPresets";
 import { aeAnnouncePresetLead, aeSwitchPresetLead } from "@/lib/aeLeadModelChat";
-import {
-  aeReviewerAgents,
-  aeReviewerMemberNote,
-  aeReviewerNumberOf,
-  aeReviewerNumbers,
-} from "@/lib/aeReviewers";
+import { aeRoleAgents } from "@/lib/aeRoles";
+import { aeReviewerMemberNote, aeReviewerNumberOf, aeReviewerNumbers } from "@/lib/aeReviewers";
 import { AeSessionPresetRow } from "./AeSessionPresetRow";
 import { AeSessionPresetPill } from "./composer/AeSessionPresetPill";
 import { Button } from "./ui/button";
@@ -408,9 +404,7 @@ export function AeTeamControl({
       session.agentId,
       ...saved.members.map((member) => member.agentId),
       // The agents the shown preset's reviewers name, so none reads "Not found" when deduped.
-      ...(choice?.kind === "preset"
-        ? aeReviewerAgents(choice.preset.roles.reviewer).map((r) => r.slot.agent)
-        : []),
+      ...(choice?.kind === "preset" ? aeRoleAgents(choice.preset.roles) : []),
     ],
   });
   const { data: hosts = [], isSuccess: hostsLoaded } = useHosts({

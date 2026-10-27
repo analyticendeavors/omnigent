@@ -124,6 +124,10 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+/** The model picker's trigger for a role row. */
+const modelTrigger = (role: string) =>
+  screen.getByRole("button", { name: new RegExp(`^${role} model`) });
+
 describe("the update nudge in the preset editor", () => {
   it("shows a banner and a chip on each row with a newer model in its family", () => {
     render(<Editor />);
@@ -227,12 +231,33 @@ describe("the update nudge in the preset editor", () => {
     expect(screen.getByTestId("ae-model-update-batch")).toHaveTextContent("Updated 2 models");
   });
 
+  it("offers Codex for a Planner but only Claude models and the session for the Lead", () => {
+    render(<Editor />);
+    fireEvent.click(modelTrigger("Planner"));
+    const planner = within(screen.getByRole("tree"));
+    expect(planner.getByText("Run through Codex, as a child session")).toBeInTheDocument();
+    expect(planner.queryByText("Other agents")).not.toBeInTheDocument();
+    fireEvent.click(planner.getByRole("treeitem", { name: "GPT-6-Sol" }));
+    expect(latest.roles.planner).toMatchObject({
+      mode: "agent",
+      agent: "16a06503889b0c3034496821afd41b9e",
+      agent_name: "codex-native-ui",
+      name: "Codex",
+      model: "gpt-6-sol",
+    });
+    fireEvent.click(modelTrigger("Lead"));
+    const lead = within(screen.getByRole("tree"));
+    expect(lead.getByRole("treeitem", { name: "Session model" })).toBeInTheDocument();
+    expect(lead.getByText("Claude models")).toBeInTheDocument();
+    expect(lead.queryByText("Run through Codex, as a child session")).not.toBeInTheDocument();
+  });
+
   it("drops the Updated note when the row is changed by hand afterwards", () => {
     render(<Editor />);
     fireEvent.click(screen.getByRole("button", { name: "Update Planner to Opus 5.6" }));
-    fireEvent.change(screen.getByLabelText("Planner model"), {
-      target: { value: "claude-haiku-5-5" },
-    });
+    fireEvent.click(modelTrigger("Planner"));
+    fireEvent.click(screen.getAllByRole("treeitem", { name: /^Older models, collapsed/ })[0]);
+    fireEvent.click(screen.getByRole("treeitem", { name: /haiku/i }));
     expect(screen.queryByTestId("ae-model-updated-planner")).not.toBeInTheDocument();
   });
 

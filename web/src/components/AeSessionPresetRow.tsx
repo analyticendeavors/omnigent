@@ -282,6 +282,8 @@ export function AeSessionPresetRow({
                 role={role}
                 setting={shown.roles[role]}
                 models={models}
+                agents={reviewerAgents}
+                ownHelpers={aeHelpersOf(shown.rules) === "own"}
                 disabled={disabled || saving}
                 onChange={(setting) => setRoles({ ...shown.roles, [role]: setting })}
               />

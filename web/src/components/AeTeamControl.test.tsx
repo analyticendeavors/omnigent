@@ -200,6 +200,15 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+/** The model picker's trigger for a role row. */
+const modelTrigger = (role: string) =>
+  screen.getByRole("button", { name: new RegExp(`^${role} model`) });
+/** Opens a role row's picker and picks the option with this name. */
+const pickModel = (role: string, name: string) => {
+  fireEvent.click(modelTrigger(role));
+  fireEvent.click(within(screen.getByRole("tree")).getByRole("treeitem", { name }));
+};
+
 describe("composer team picker", () => {
   it("keeps a loading entry point and lets failed metadata be retried", () => {
     const client = new QueryClient();
@@ -636,7 +645,7 @@ describe("roles preset per session", () => {
     openPicker();
     // A non-lead row edit on the same preset: the roles are saved, the model is left alone.
     fireEvent.click(screen.getByRole("button", { name: "Customize" }));
-    fireEvent.change(screen.getByLabelText("Planner model"), { target: { value: "__auto" } });
+    pickModel("Planner", "Auto (the lead picks)");
     fireEvent.click(saveButton());
     await waitFor(() => expect(saveAeTeam).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
@@ -690,7 +699,7 @@ describe("roles preset per session", () => {
     mount();
     openPicker();
     fireEvent.click(screen.getByRole("button", { name: "Customize" }));
-    fireEvent.change(screen.getByLabelText("Planner model"), { target: { value: "__auto" } });
+    pickModel("Planner", "Auto (the lead picks)");
     expect(screen.getByRole("radio", { name: "Balanced, edited" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Save as preset" }));
     expect(screen.getByLabelText("New preset name")).toHaveValue("Balanced edited");

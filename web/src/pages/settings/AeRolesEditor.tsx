@@ -11,7 +11,6 @@ import type { AeRoleModelChoice } from "@/hooks/useAeRoleModels";
 import { useAeCodexCatalog } from "@/hooks/useAeCodexCatalog";
 import { useAeModelUpdates } from "@/hooks/useAeModelUpdates";
 import { useAeReviewerAgents } from "@/hooks/useAeReviewerAgents";
-import { aeClaudeCodeDefaultEffort } from "@/lib/aeEffortDefault";
 import {
   AE_AUTO_RAISES_MAX,
   AE_COMING_LATER,
@@ -19,20 +18,17 @@ import {
   AE_ROLE_IDS,
   AE_ROLE_LABELS,
   type AeRaiseMode,
-  type AeRoleEffort,
   type AeRoleId,
   type AeRolePreset,
   type AeRoleRules,
-  type AeRoleSetting,
+  type AeWorkerSetting,
   type AeRoleTable,
   aeHelpersOf,
-  aeModelDotClass,
-  aeModelLabel,
+  aeRoleAgents,
 } from "@/lib/aeRoles";
-import { comparableModelId } from "@/lib/codexNativeModels";
-import { cn } from "@/lib/utils";
-import { AeEffortBar, AeRolePresetTile, AeSegmented, AeStepper } from "./AeRolesControls";
-import { aeReviewerAgents } from "@/lib/aeReviewers";
+import { AeRolePresetTile, AeSegmented, AeStepper } from "./AeRolesControls";
+import type { AeReviewerAgents } from "@/hooks/useAeReviewerAgents";
+import { aeRoleModelPick } from "./AeRoleModelPicker";
 import { AeUpdateBanner, AeUpdateChip } from "./AeModelUpdates";
 import { AeReviewerRowsView, AeReviewSettings } from "./AeReviewerRows";
 
@@ -42,9 +38,6 @@ export interface AeRoleDraft {
   roles: AeRoleTable;
   rules: AeRoleRules;
 }
-
-const AUTO = "__auto";
-const SESSION = "__session";
 
 const RAISE_OPTIONS: { value: AeRaiseMode; label: string }[] = [
   { value: "off", label: "Off" },
@@ -61,37 +54,43 @@ export function AeRoleRow({
   role,
   setting,
   models,
+  agents,
   onChange,
   disabled,
   chip = null,
+  ownHelpers = false,
 }: {
-  role: AeRoleId;
-  setting: AeRoleSetting;
+  role: Exclude<AeRoleId, "reviewer">;
+  setting: AeWorkerSetting;
   models: readonly AeRoleModelChoice[];
-  onChange: (setting: AeRoleSetting) => void;
+  /** The agents and host the Codex group reads (Settings reads them once for all rows). */
+  agents: AeReviewerAgents;
+  onChange: (setting: AeWorkerSetting) => void;
   disabled: boolean;
   /** The update chip, on the bar's line. */
   chip?: React.ReactNode;
+  /** Helpers is "own subagents only": a Codex session here is skipped by the lead. */
+  ownHelpers?: boolean;
 }) {
   const { label, hint } = AE_ROLE_LABELS[role];
-  const fixed = setting.mode === "fixed" ? setting : null;
-  const listed = fixed
-    ? models.find((m) => comparableModelId(m.value) === comparableModelId(fixed.model))
-    : undefined;
-  const value = fixed
-    ? (listed?.value ?? fixed.model)
-    : setting.mode === "session"
-      ? SESSION
-      : AUTO;
-  const choose = (next: string) => {
-    if (next === AUTO) onChange({ mode: "auto" });
-    else if (next === SESSION) onChange({ mode: "session" });
-    else {
-      const effort =
-        fixed?.effort ?? ((aeClaudeCodeDefaultEffort(next) as AeRoleEffort | null) || "medium");
-      onChange({ mode: "fixed", model: next, effort });
-    }
-  };
+  const codex = useAeCodexCatalog(agents);
+  // The Lead is the session itself (Claude models and the session's own); the helpers it
+  // starts can also be Codex sessions. Other agents are for reviewers only.
+  const pick = aeRoleModelPick({
+    setting,
+    groups: role === "lead" ? "claude" : "claude+codex",
+    auto: true,
+    session: role === "lead",
+    ariaLabel: `${label} model`,
+    barLabel: label,
+    toolTestId: `ae-role-tool-${role}`,
+    models,
+    options: agents.options,
+    codex,
+    host: agents.host,
+    disabled,
+    onChange,
+  });
   return (
     <div
       data-testid={`ae-role-row-${role}`}
@@ -104,51 +103,19 @@ export function AeRoleRow({
         </div>
         <div className="text-xs leading-tight text-muted-foreground">{hint}</div>
       </div>
-      <label className="relative flex min-w-0 items-center">
-        <span className="sr-only">{`${label} model`}</span>
-        {fixed && (
-          <span
-            aria-hidden="true"
-            className={cn(
-              "pointer-events-none absolute left-2.5 size-2 rounded-full",
-              aeModelDotClass(fixed.model),
-            )}
-          />
-        )}
-        <select
-          aria-label={`${label} model`}
-          value={value}
-          disabled={disabled}
-          onChange={(e) => choose(e.target.value)}
-          className={cn(
-            "w-full min-w-0 rounded-md border border-input bg-background py-1.5 pr-2 text-sm text-foreground",
-            fixed ? "pl-6" : "pl-2",
-          )}
-        >
-          <option value={AUTO}>Auto (the lead picks)</option>
-          {role === "lead" && <option value={SESSION}>Session model</option>}
-          {fixed && !listed && <option value={fixed.model}>{aeModelLabel(fixed.model)}</option>}
-          {models.map((model) => (
-            <option key={model.value} value={model.value}>
-              {model.label}
-            </option>
-          ))}
-        </select>
-      </label>
+      {pick.trigger}
       <div className="col-start-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 @lg/roles:col-start-3 @[480px]/roles:flex-nowrap">
-        {fixed ? (
-          <AeEffortBar
-            role={label}
-            effort={fixed.effort}
-            onChange={(effort) => onChange({ ...fixed, effort })}
-            disabled={disabled}
-          />
-        ) : (
+        {pick.bar ?? (
           <span className="text-xs text-muted-foreground">
             {setting.mode === "session" ? "The session's model and effort" : "The lead chooses"}
           </span>
         )}
         {chip}
+        {ownHelpers && pick.codexSlot && (
+          <span data-testid={`ae-role-skipped-${role}`} className="text-xs text-amber-500">
+            Skipped: Helpers is Own subagents only
+          </span>
+        )}
       </div>
     </div>
   );
@@ -228,15 +195,12 @@ export function AeRolesEditor({
   onDuplicate: () => void;
   onDelete: () => void;
 }) {
-  const setRole = (role: Exclude<AeRoleId, "reviewer">, setting: AeRoleSetting) =>
+  const setRole = (role: Exclude<AeRoleId, "reviewer">, setting: AeWorkerSetting) =>
     onChange({ ...draft, roles: { ...draft.roles, [role]: setting } });
   const setRules = (rules: Partial<AeRoleRules>) =>
     onChange({ ...draft, rules: { ...draft.rules, ...rules } });
   // The update nudge: a chip per row on an older model, never applied without a click.
-  const agents = useAeReviewerAgents(
-    undefined,
-    aeReviewerAgents(draft.roles.reviewer).map((r) => r.slot.agent),
-  );
+  const agents = useAeReviewerAgents(undefined, aeRoleAgents(draft.roles));
   const codex = useAeCodexCatalog(agents);
   const claudeIds = useMemo(() => models.map((m) => m.value), [models]);
   const updates = useAeModelUpdates(preset.id, draft.roles, claudeIds, codex.rows, (roles) =>
@@ -320,9 +284,11 @@ export function AeRolesEditor({
               role={role}
               setting={draft.roles[role]}
               models={models}
+              agents={agents}
               onChange={(setting) => setRole(role, setting)}
               disabled={saving}
               chip={<AeUpdateChip rowKey={role} state={updates} disabled={saving} />}
+              ownHelpers={aeHelpersOf(draft.rules) === "own"}
             />
           ),
         )}
