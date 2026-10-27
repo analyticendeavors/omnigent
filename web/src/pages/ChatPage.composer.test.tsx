@@ -2851,7 +2851,8 @@ describe("Composer shared visible controls", () => {
     expect(leading).toContainElement(screen.getByRole("button", { name: "Add" }));
     const harnessPicker = screen.getByTestId("composer-config-gear");
     expect(screen.queryByTestId("composer-settings")).toBeNull();
-    expect(trailing.firstElementChild).toContainElement(harnessPicker);
+    // The team control sits in a wrapper span ahead of the picker's div (patch 0212).
+    expect(trailing.querySelector(":scope > div")).toContainElement(harnessPicker);
     expect(actions.children).toHaveLength(3);
     expect(workspace).toHaveClass("mx-3", "h-7", "md:h-[37px]", "rounded-t-2xl");
     expect(textarea().closest("form")).toHaveClass(

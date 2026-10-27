@@ -1,3 +1,4 @@
+import { COMPOSER_TIGHT_TIERS } from "@/lib/aeComposerTight";
 import {
   forwardRef,
   useLayoutEffect,
@@ -202,16 +203,34 @@ function useCollapsedComposerLabels(
       // Not laid out yet (hidden, or jsdom): keep the current verdict.
       if (!(available > 0)) return;
       delete row.dataset.labels;
-      const gap = Math.max(parseFloat(style.columnGap) || 0, COMPOSER_LABELS_MIN_GAP_PX);
-      if (leading.scrollWidth + trailing.scrollWidth + gap > available)
-        row.dataset.labels = "collapsed";
+      for (const tier of COMPOSER_TIGHT_TIERS) row.removeAttribute(`data-${tier}`);
+      const needed = () => leading.scrollWidth + trailing.scrollWidth;
+      if (needed() + Math.max(parseFloat(style.columnGap) || 0, COMPOSER_LABELS_MIN_GAP_PX) <= available)
+        return;
+      row.dataset.labels = "collapsed";
+      // Icons alone still overflow the row's real gap (a narrow pane or a small
+      // phone): squeeze the gaps first, then hide secondary controls, one tier at
+      // a time until the groups fit. `style` is live, so the gap is read afresh.
+      for (const tier of COMPOSER_TIGHT_TIERS) {
+        // 1 px of tolerance: the widths are rounded, and a fit that close is a fit.
+        if (needed() + (parseFloat(style.columnGap) || 0) <= available + 1) break;
+        row.setAttribute(`data-${tier}`, "");
+      }
     };
     measure();
     if (typeof ResizeObserver === "undefined") return;
     const resizeObserver = new ResizeObserver(measure);
     resizeObserver.observe(width);
     const mutationObserver = new MutationObserver(measure);
-    mutationObserver.observe(row, { childList: true, characterData: true, subtree: true });
+    // A host going offline or a take starting changes which controls a tight row
+    // keeps; none of these attributes is one the measure writes, so it cannot loop.
+    mutationObserver.observe(row, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["data-host-status", "aria-pressed", "aria-busy"],
+    });
     return () => {
       resizeObserver.disconnect();
       mutationObserver.disconnect();
@@ -499,7 +518,7 @@ export const ComposerActionRow = forwardRef<HTMLDivElement, ComponentPropsWithou
       <div
         ref={ref}
         className={cn(
-          "group/composer-actions @container/composer-actions relative flex min-w-0 flex-nowrap items-center justify-between gap-2 pt-1 pb-2",
+          "group/composer-actions @container/composer-actions relative flex min-w-0 flex-nowrap items-center justify-between gap-2 data-[snug]:gap-0 pt-1 pb-2",
           COMPOSER_CONTENT_INSET_CLASS,
           className,
         )}
@@ -517,7 +536,7 @@ export const ComposerActionGroup = forwardRef<
     <div
       ref={ref}
       className={cn(
-        "flex min-w-0 items-center gap-1",
+        "flex min-w-0 items-center gap-1 group-data-[snug]/composer-actions:gap-0.5",
         side === "left" ? "flex-none overflow-visible" : "ml-auto max-w-full shrink-0",
         className,
       )}

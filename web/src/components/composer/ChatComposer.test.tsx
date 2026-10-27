@@ -384,6 +384,7 @@ describe("ChatComposer label collapse", () => {
   // Width of a group once its label is hidden and only the icon remains.
   const ICON_WIDTH = 40;
   const ROW_PADDING = 16;
+  const TIER_SAVING = 10;
 
   afterEach(() => {
     StubResizeObserver.callbacks = [];
@@ -414,8 +415,13 @@ describe("ChatComposer label collapse", () => {
     for (const group of [screen.getByTestId("leading"), screen.getByTestId("trailing")]) {
       Object.defineProperty(group, "scrollWidth", {
         configurable: true,
-        get: () =>
-          row.dataset.labels === "collapsed" ? ICON_WIDTH : (group.textContent?.length ?? 0) * 10,
+        get: () => {
+          if (row.dataset.labels !== "collapsed") return (group.textContent?.length ?? 0) * 10;
+          // Each tier saves width in the trailing group, as the real CSS does.
+          const saved = group === screen.getByTestId("trailing") ? TIER_SAVING : 0;
+          const tiers = ["snug", "tight", "tighter"].filter((tier) => tier in row.dataset).length;
+          return ICON_WIDTH - saved * tiers;
+        },
       });
     }
     return { row, layout, rerender: (next: typeof actions) => view.rerender(composer(next)) };
@@ -450,6 +456,53 @@ describe("ChatComposer label collapse", () => {
     layout.rowWidth = 180 + 150 + COMPOSER_LABELS_MIN_GAP_PX + ROW_PADDING;
     fireResize();
     expect(row).not.toHaveAttribute("data-labels");
+  });
+
+  it("squeezes the row first, then marks it tight, then tighter, only while the icons overflow", () => {
+    const { row, layout } = renderMeasuredComposer({
+      leading: <span>Bypass permissions</span>,
+      trailing: <span>Fable 5.1 xHigh</span>,
+    });
+    const tiers = () => ["snug", "tight", "tighter"].map((tier) => tier in row.dataset);
+    // The fit test allows 1 px of rounding. jsdom's column gap is 0, so two icons need 2 x 40 = 80 (the 24 px label gap does not count).
+    layout.rowWidth = 2 * ICON_WIDTH + ROW_PADDING;
+    fireResize();
+    expect(row).toHaveAttribute("data-labels", "collapsed");
+    expect(tiers()).toEqual([false, false, false]);
+    layout.rowWidth = 2 * ICON_WIDTH + ROW_PADDING - 2;
+    fireResize();
+    expect(tiers()).toEqual([true, false, false]);
+    layout.rowWidth = 2 * ICON_WIDTH + ROW_PADDING - TIER_SAVING - 2;
+    fireResize();
+    expect(tiers()).toEqual([true, true, false]);
+    layout.rowWidth = 2 * ICON_WIDTH + ROW_PADDING - 2 * TIER_SAVING - 2;
+    fireResize();
+    expect(tiers()).toEqual([true, true, true]);
+    layout.rowWidth = 2 * ICON_WIDTH + ROW_PADDING;
+    fireResize();
+    expect(tiers()).toEqual([false, false, false]);
+  });
+
+  it("re-measures a tight row when the host badge goes offline, so it comes back", async () => {
+    const { row, layout } = renderMeasuredComposer({
+      leading: <span>Bypass permissions</span>,
+      trailing: <span data-testid="host" data-host-status="online" />,
+    });
+    const host = screen.getByTestId("host");
+    // The trailing group sheds 10 px when snug, and 30 more while tight hides an online badge.
+    Object.defineProperty(screen.getByTestId("trailing"), "scrollWidth", {
+      configurable: true,
+      get: () =>
+        ICON_WIDTH -
+        ("snug" in row.dataset ? TIER_SAVING : 0) -
+        ("tight" in row.dataset && host.dataset.hostStatus === "online" ? 30 : 0),
+    });
+    layout.rowWidth = 60 + ROW_PADDING;
+    fireResize();
+    expect(row).toHaveAttribute("data-tight");
+    expect(row).not.toHaveAttribute("data-tighter");
+    host.dataset.hostStatus = "offline";
+    await waitFor(() => expect(row).toHaveAttribute("data-tighter"));
   });
 
   it("re-measures when the controls inside the row change", async () => {

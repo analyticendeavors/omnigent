@@ -232,6 +232,11 @@ import {
   type WorkspaceFile,
 } from "@/hooks/useWorkspaceChangedFiles";
 import { ComposerMicButton } from "@/components/ComposerMicButton";
+import {
+  COMPOSER_TIGHT_HOST_WRAPPER_CLASS,
+  COMPOSER_TIGHT_MIC_CLASS,
+  COMPOSER_TIGHTER_WRAPPER_CLASS,
+} from "@/lib/aeComposerTight";
 import { ComposerAttachments } from "@/components/ComposerAttachments";
 import { isCostRoutingSession, isSubagentRoutingSession } from "@/components/CostRoutingControl";
 import {
@@ -3883,12 +3888,14 @@ function ComposerImpl(
                 }
               />
               {!subAgentLabel && composerSessionId && (
-                <HostBadge
-                  sessionId={composerSessionId}
-                  appearance="composer"
-                  readOnly={isReadOnly}
-                  onReconnect={onShowReconnectHelp}
-                />
+                <span className={COMPOSER_TIGHT_HOST_WRAPPER_CLASS}>
+                  <HostBadge
+                    sessionId={composerSessionId}
+                    appearance="composer"
+                    readOnly={isReadOnly}
+                    onReconnect={onShowReconnectHelp}
+                  />
+                </span>
               )}
               {(showClaudePermissionMode || showCodexApprovalMode) && (
                 <ComposerPermissionPicker
@@ -3908,12 +3915,14 @@ function ComposerImpl(
           trailing: (
             <>
               {composerSessionId && (
-                <SessionTeamControl
-                  key={composerSessionId}
-                  sessionId={composerSessionId}
-                  disabled={isReadOnly || unreachable || configBusy}
-                  working={isWorking}
-                />
+                <span className={COMPOSER_TIGHTER_WRAPPER_CLASS}>
+                  <SessionTeamControl
+                    key={composerSessionId}
+                    sessionId={composerSessionId}
+                    disabled={isReadOnly || unreachable || configBusy}
+                    working={isWorking}
+                  />
+                </span>
               )}
               <div className="flex min-w-0 items-center rounded-lg">
                 <SessionHarnessPicker
@@ -3948,7 +3957,7 @@ function ComposerImpl(
                 />
               </div>
               <ComposerMicButton
-                className="size-8 md:size-7"
+                className={cn("size-8 md:size-7", COMPOSER_TIGHT_MIC_CLASS)}
                 enableHotkey
                 disabled={disabled || isReadOnly || hasPendingElicitation || composerLockedByBtw}
                 onVoiceStart={() => {
