@@ -106,7 +106,10 @@ export function useComposerAttachments({
         addFiles(pasted);
         return;
       }
-      const repaired = repairEncodedNote(e.clipboardData?.getData("text/plain") ?? "");
+      const repaired = repairEncodedNote(
+        e.clipboardData?.getData("text/plain") ?? "",
+        e.clipboardData?.getData("text/uri-list") ?? "",
+      );
       if (repaired !== null) {
         e.preventDefault();
         // insertText keeps the controlled textarea's state and undo stack in step.

@@ -25,7 +25,9 @@ function pasteEvent({
   text,
   files = [],
   nullFile = false,
+  uriList,
 }: {
+  uriList?: string;
   text?: string;
   files?: File[];
   nullFile?: boolean;
@@ -43,7 +45,8 @@ function pasteEvent({
     // they must be skipped, not attached.
     items.push({ kind: "file", type: "image/png", getAsFile: () => null });
   }
-  const getData = (type: string) => (type === "text/plain" ? (text ?? "") : "");
+  const getData = (type: string) =>
+    type === "text/plain" ? (text ?? "") : type === "text/uri-list" ? (uriList ?? "") : "";
   const event = { clipboardData: { items, getData }, preventDefault };
   return {
     event: event as unknown as React.ClipboardEvent<HTMLTextAreaElement>,
@@ -167,6 +170,21 @@ describe("useComposerAttachments", () => {
     expect(preventDefault).toHaveBeenCalledTimes(1);
     expect(insertText).toHaveBeenCalledWith("insertText", false, "thread: a-b\nSTATE: ok");
     expect(result.current.files).toEqual([]);
+  });
+
+  it("onPaste inserts text/plain when the URI list carries the encoded note", () => {
+    const insertText = vi.fn(() => true);
+    Object.defineProperty(document, "execCommand", { configurable: true, value: insertText });
+    const { result } = renderHook(() => useComposerAttachments());
+    const { event, preventDefault } = pasteEvent({
+      text: "THREAD: a\nSTATE: b c",
+      uriList: "thread:%20a%0ASTATE:%20b%20c",
+    });
+
+    act(() => result.current.onPaste(event));
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(insertText).toHaveBeenCalledWith("insertText", false, "THREAD: a\nSTATE: b c");
   });
 
   it("onPaste falls back to a range insert when execCommand throws", () => {

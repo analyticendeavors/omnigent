@@ -16,6 +16,25 @@ describe("repairEncodedNote", () => {
     );
   });
 
+  it("prefers the exact text/plain note when the URI list carries the encoded copy", () => {
+    // What an iPhone sends: both formats, and the browser would insert the second.
+    const plain = "THREAD: paste-test\nSTATE: Test note, it's fine.\nNEXT: Check the line breaks.";
+    const uri =
+      "thread:%20paste-test%0ASTATE:%20Test%20note,%20it's%20fine.%0ANEXT:%20Check%20the%20line%20breaks.";
+    expect(repairEncodedNote(plain, uri)).toBe(plain);
+  });
+
+  it("leaves a paste alone when the plain text is not the URI list's own decoded form", () => {
+    expect(repairEncodedNote("something else", "foo:%20a%20b%20c")).toBeNull();
+    expect(repairEncodedNote("", "foo:%20a%20b%20c")).toBeNull();
+    expect(repairEncodedNote("https://a.b/c", "foo:%20a%20b%20c")).toBeNull();
+  });
+
+  it("leaves a paste alone when plain and URI list are the same ordinary URL", () => {
+    expect(repairEncodedNote("https://a.b/c d", "https://a.b/c%20d")).toBeNull();
+    expect(repairEncodedNote("hello", "")).toBeNull();
+  });
+
   it("leaves real URLs and ordinary text alone", () => {
     expect(repairEncodedNote("https://a.b/c%20d")).toBeNull();
     expect(repairEncodedNote("mailto:me@a.b?subject=hi%20there")).toBeNull();
