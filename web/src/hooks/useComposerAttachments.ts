@@ -93,17 +93,6 @@ export function useComposerAttachments({
 
   const onPaste = useCallback(
     (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-      const repaired = repairEncodedNote(e.clipboardData?.getData("text/plain") ?? "");
-      if (repaired !== null) {
-        e.preventDefault();
-        // insertText keeps the controlled textarea's state and undo stack in step.
-        if (!document.execCommand("insertText", false, repaired)) {
-          const field = e.currentTarget;
-          field.setRangeText(repaired, field.selectionStart, field.selectionEnd, "end");
-          field.dispatchEvent(new Event("input", { bubbles: true }));
-        }
-        return;
-      }
       const items = e.clipboardData?.items;
       if (!items) return;
       const pasted: File[] = [];
@@ -115,6 +104,24 @@ export function useComposerAttachments({
       if (pasted.length > 0) {
         e.preventDefault();
         addFiles(pasted);
+        return;
+      }
+      const repaired = repairEncodedNote(e.clipboardData?.getData("text/plain") ?? "");
+      if (repaired !== null) {
+        e.preventDefault();
+        // insertText keeps the controlled textarea's state and undo stack in step.
+        let inserted = false;
+        try {
+          inserted = document.execCommand("insertText", false, repaired);
+        } catch {
+          // Deprecated API; the range fallback below covers an engine that throws.
+        }
+        if (!inserted) {
+          const field = e.currentTarget;
+          field.setRangeText(repaired, field.selectionStart, field.selectionEnd, "end");
+          field.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        return;
       }
     },
     [addFiles],

@@ -169,6 +169,23 @@ describe("useComposerAttachments", () => {
     expect(result.current.files).toEqual([]);
   });
 
+  it("onPaste falls back to a range insert when execCommand throws", () => {
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: () => {
+        throw new Error("nope");
+      },
+    });
+    const { result } = renderHook(() => useComposerAttachments());
+    const { event } = pasteEvent({ text: "thread:%20ok%0Aa:%20b" });
+    const field = document.createElement("textarea");
+    (event as unknown as { currentTarget: HTMLTextAreaElement }).currentTarget = field;
+
+    act(() => result.current.onPaste(event));
+
+    expect(field.value).toBe("thread: ok\na: b");
+  });
+
   it("onPaste ignores non-file kinds and null file payloads", () => {
     const { result } = renderHook(() => useComposerAttachments());
     const { event, preventDefault } = pasteEvent({ text: "hi", nullFile: true });

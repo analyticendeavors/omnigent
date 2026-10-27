@@ -81,3 +81,29 @@ it("looks a session up once for repeated links", async () => {
   await screen.findAllByText("Once");
   expect(getSessionSlim).toHaveBeenCalledTimes(1);
 });
+
+it("keeps explicit text that names a different session than the href", () => {
+  const other = "https://omnigent.go-ae.org/c/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  link(other);
+  expect(screen.getByRole("link").textContent).toBe(other);
+  expect(getSessionSlim).not.toHaveBeenCalled();
+});
+
+it("never shows the first session's title after the link is reused for another", async () => {
+  getSessionSlim.mockImplementation((id: string) =>
+    id === ID ? Promise.resolve({ title: "First" }) : Promise.reject(new Error("403")),
+  );
+  const second = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  const node = (id: string) => (
+    <MemoryRouter>
+      <SessionRouteLink route={`/c/${id}`} href={`https://x.ts.net:8010/c/${id}`}>
+        {`https://x.ts.net:8010/c/${id}`}
+      </SessionRouteLink>
+    </MemoryRouter>
+  );
+  const view = render(node(ID));
+  await screen.findByText("First");
+  view.rerender(node(second));
+  await vi.waitFor(() => expect(getSessionSlim).toHaveBeenCalledWith(second));
+  expect(screen.getByRole("link").textContent).toBe("session bbbbbbbb");
+});

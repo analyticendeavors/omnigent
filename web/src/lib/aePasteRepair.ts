@@ -6,11 +6,15 @@
 // undo. The scheme's case is lost for good; everything else is restored.
 
 const ENCODED_NOTE = /^[a-z][a-z0-9+.-]*:(?:%20|%0A)\S*$/;
+// A note has many words; a custom URL with one escaped space (obsidian:%20Note)
+// is left alone.
+const ESCAPED_BREAK = /%20|%0A/g;
 
 /** The decoded text for a note the clipboard encoded as a URL, else null. */
 export function repairEncodedNote(pasted: string): string | null {
   const text = pasted.trim();
   if (!ENCODED_NOTE.test(text)) return null;
+  if ((text.match(ESCAPED_BREAK)?.length ?? 0) < 3) return null;
   try {
     return decodeURIComponent(text);
   } catch {

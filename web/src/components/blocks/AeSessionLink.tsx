@@ -35,7 +35,8 @@ export function SessionRouteLink({
 }: AnchorProps & { route: string }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const bare = typeof children === "string" && sessionLinkRoute(children.trim()) !== null;
+  // Bare only when the text is the very session the href points at.
+  const bare = typeof children === "string" && sessionLinkRoute(children.trim()) === route;
   const title = useSessionLinkTitle(route, bare);
   return (
     <a

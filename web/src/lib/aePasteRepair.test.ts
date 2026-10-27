@@ -22,6 +22,7 @@ describe("repairEncodedNote", () => {
     expect(repairEncodedNote("thread: already plain")).toBeNull();
     expect(repairEncodedNote("hello%20world")).toBeNull();
     expect(repairEncodedNote("")).toBeNull();
+    expect(repairEncodedNote("obsidian:%20Note")).toBeNull();
   });
 
   it("returns null for a malformed escape", () => {
