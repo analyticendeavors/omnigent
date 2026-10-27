@@ -10,6 +10,8 @@ import {
   aeDeployTrack,
   aeDockArrange,
   aeDockBadgeLabel,
+  aeDockChildPrompts,
+  aeDockChildPromptText,
   aeDockDeploys,
   aeDockDrafts,
   aeDockMerges,
@@ -384,5 +386,60 @@ describe("deploy text", () => {
     expect(aeAgo("2026-10-18T19:00:00Z", NOW)).toBe("2d ago");
     expect(aeHolderName("you@example.com")).toBe("you");
     expect(aeHolderName("local")).toBe("local");
+  });
+});
+
+describe("a child's prompt in the dock", () => {
+  const child = (id: string, title: string, over = {}) => ({
+    id,
+    childId: `conv_${id}`,
+    childTitle: title,
+    message: "Approve?",
+    askUserQuestion: { questions: [{ question: "Keep the Fuel Cost measure?" }] },
+    ...over,
+  });
+
+  it("ranks right after a question and ahead of a limit or a merge, oldest first", () => {
+    const arranged = aeDockArrange(
+      [
+        ...aeDockDeploys([], new Map(), {}, new Set(), NOW),
+        ...aeDockMerges([]),
+        ...aeDockChildPrompts([child("c1", "Halcyon Orbital"), child("c2", "Brightwater")]),
+        ...aeDockQuestions([{ id: "q1" }]),
+      ],
+      new Set(),
+    );
+    expect(arranged.map((item) => item.key)).toEqual([
+      "question:q1",
+      "childPrompt:c1",
+      "childPrompt:c2",
+    ]);
+  });
+
+  it("is never hidden as an on-screen question", () => {
+    const arranged = aeDockArrange(aeDockChildPrompts([child("c1", "Halcyon")]), new Set(["c1"]));
+    expect(arranged).toHaveLength(1);
+  });
+
+  it("reads 'Title: question' on the bar and '2 child prompts' as a badge", () => {
+    const items = aeDockChildPrompts([
+      child("c1", "Halcyon Orbital"),
+      child("c2", "Brightwater", {
+        askUserQuestion: null,
+        message: "Allow Bash: pbi-tools deploy ./model?",
+      }),
+    ]);
+    expect(aeDockChildPromptText(items[0]!)).toBe("Halcyon Orbital: Keep the Fuel Cost measure?");
+    expect(aeDockChildPromptText(items[1]!)).toBe(
+      "Brightwater: Allow Bash: pbi-tools deploy ./model?",
+    );
+    expect(aeDockBadgeLabel(items)).toBe("2 child prompts");
+    expect(aeDockBadgeLabel(items.slice(0, 1))).toBe("Child prompt");
+    const summary = aeDockSummary(
+      aeDockArrange([...aeDockMerges([]), ...items], new Set()),
+      clock,
+    )!;
+    expect(summary.lead.kind).toBe("childPrompt");
+    expect(summary.more).toBe(1);
   });
 });

@@ -64,6 +64,7 @@ import {
 } from "@/components/chat/chatBubbleParts";
 import { SCROLL_RESTORE_BUDGET_MS } from "@/shell/useScrollRestore";
 import { useAePublishDockQuestions } from "@/hooks/useAeActionDockItems";
+import { aeWithoutFamilyPrompts } from "@/lib/aeFamilyPrompts";
 
 export interface TranscriptProps {
   hostId: string | null | undefined;
@@ -132,7 +133,9 @@ function TranscriptImpl({
   sandboxLaunching,
   spacerMeasureRef,
 }: TranscriptProps) {
-  const blocks = useChatStore((s) => s.blocks);
+  const storeBlocks = useChatStore((s) => s.blocks);
+  // A family child's prompt lives in the action dock, not in this feed (omnigent-ae).
+  const blocks = useMemo(() => aeWithoutFamilyPrompts(storeBlocks), [storeBlocks]);
   const pendingUserMessages = useChatStore((s) => s.pendingUserMessages);
   const activeResponse = useChatStore((s) => s.activeResponse);
   const interruptedResponseIds = useChatStore((s) => s.interruptedResponseIds);

@@ -780,3 +780,107 @@ describe("AeActionDock usage gate", () => {
     expect(await screen.findByTestId("ae-dock-limit-new")).toBeTruthy();
   });
 });
+
+describe("AeActionDock child prompts", () => {
+  const ask = {
+    type: "elicitation",
+    ctx: { agent: null, depth: 0, turn: 1, timestamp: 0, responseId: "r1", itemId: "i1" },
+    elicitationId: "fam1",
+    targetSessionId: "conv_child",
+    familyChild: { title: "Halcyon Orbital" },
+    message: "Keep it?",
+    phase: "tool_call",
+    policyName: "",
+    contentPreview: "",
+    requestedSchema: {},
+    status: "pending",
+    response: null,
+    askUserQuestion: {
+      questions: [
+        {
+          question: "Keep the Fuel Cost measure?",
+          header: "Measure",
+          multiSelect: false,
+          options: [{ label: "Keep it" }, { label: "Drop it" }],
+        },
+      ],
+    },
+  } as unknown as AnyBlock;
+  const permission = {
+    ...(ask as object),
+    elicitationId: "fam2",
+    targetSessionId: "conv_other",
+    familyChild: { title: "Brightwater" },
+    message: "Allow Bash: pbi-tools deploy ./model?",
+    askUserQuestion: null,
+  } as unknown as AnyBlock;
+
+  function renderChildDock(blocks: AnyBlock[]) {
+    useChatStore.setState({ conversationId: "s1", blocks });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(["github-info", "s1"], { available: true, prs: [] });
+    return render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <ComposerWorkspaceBar data-testid="composer-workspace-controls">
+            <AeActionDock sessionId="s1" />
+          </ComposerWorkspaceBar>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("leads with the child's title and question, and badges nothing else", async () => {
+    renderChildDock([ask]);
+    const lead = await screen.findByTestId("ae-dock-lead");
+    expect(lead.textContent).toContain("Halcyon Orbital: Keep the Fuel Cost measure?");
+    expect(screen.queryByTestId("ae-dock-jump")).toBeNull();
+  });
+
+  it("opens a tray with each prompt's real card, the child's title and an open link", async () => {
+    renderChildDock([ask, permission]);
+    fireEvent.click(await screen.findByTestId("ae-dock-caret"));
+    const cards = await screen.findAllByTestId("ae-dock-child-prompt");
+    expect(cards).toHaveLength(2);
+    expect(cards[0]!.textContent).toContain("Halcyon Orbital");
+    expect(cards[0]!.textContent).toContain("Keep the Fuel Cost measure?");
+    expect(within(cards[0]!).getByText("Keep it")).toBeTruthy();
+    expect(cards[1]!.textContent).toContain("Brightwater");
+    expect(cards[1]!.textContent).toContain("pbi-tools deploy");
+    expect(within(cards[1]!).getAllByRole("button").length).toBeGreaterThan(0);
+    const links = screen.getAllByTestId("ae-dock-child-open");
+    expect(links[0]!.getAttribute("href")).toBe("/c/conv_child");
+    expect(links[1]!.getAttribute("href")).toBe("/c/conv_other");
+    // A tall prompt scrolls inside the tray, which gets up to half the screen.
+    expect(screen.getByTestId("ae-dock-list").className).toContain("max-h-[50vh]");
+  });
+
+  it("the strip's Answer opens the tray", async () => {
+    renderChildDock([ask]);
+    fireEvent.click(await screen.findByTestId("ae-dock-child-answer"));
+    expect(await screen.findByTestId("ae-dock-child-prompt")).toBeTruthy();
+  });
+
+  it("answers in the child, not in this chat, and the line leaves the dock", async () => {
+    vi.mocked(authenticatedFetch).mockImplementation(() => json({ queued: false }, 202));
+    renderChildDock([ask]);
+    fireEvent.click(await screen.findByTestId("ae-dock-child-answer"));
+    const prompt = await screen.findByTestId("ae-dock-child-prompt");
+    fireEvent.click(within(prompt).getByText("Keep it"));
+    fireEvent.click(within(prompt).getByRole("button", { name: /submit/i }));
+    await waitFor(() =>
+      expect(authenticatedFetch).toHaveBeenCalledWith(
+        "/v1/sessions/conv_child/elicitations/fam1/resolve",
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+    const call = vi
+      .mocked(authenticatedFetch)
+      .mock.calls.find(([path]) => String(path).includes("/resolve"))!;
+    expect(JSON.parse(String(call[1]?.body))).toEqual({
+      action: "accept",
+      content: { "Keep the Fuel Cost measure?": "Keep it" },
+    });
+    await waitFor(() => expect(screen.queryByTestId("ae-action-dock")).toBeNull());
+  });
+});

@@ -923,6 +923,7 @@ function* processEvent(state: ReducerState, event: StreamEvent): Generator<AnyBl
             : ctx(state),
         elicitationId: event.elicitationId,
         targetSessionId: event.targetSessionId,
+        ...(event.familyChild ? { familyChild: event.familyChild } : {}),
         message: event.message,
         phase: event.phase,
         policyName: event.policyName,

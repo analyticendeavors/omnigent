@@ -1077,6 +1077,9 @@ export function parseEvent(rawType: string, data: Record<string, unknown>): Stre
       elicitationId,
       targetSessionId:
         typeof targetSessionId === "string" && targetSessionId ? targetSessionId : null,
+      ...(p.ae_family_child === true
+        ? { familyChild: { title: String(p.ae_requester_title ?? "") } }
+        : {}),
       message: String(p.message ?? ""),
       requestedSchema:
         requestedSchema && typeof requestedSchema === "object" && !Array.isArray(requestedSchema)

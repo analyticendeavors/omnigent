@@ -44,6 +44,26 @@ describe("useApproveHotkey", () => {
     required: ["branch"],
   };
 
+  it("never accepts a family child's prompt it cannot show, and does not reach past it", () => {
+    blocks = [
+      { ...pending, elicitationId: "own" },
+      {
+        ...pending,
+        elicitationId: "child",
+        targetSessionId: "conv_child",
+        familyChild: { title: "Halcyon" },
+      },
+    ];
+    renderHook(() => useApproveHotkey(true));
+    press();
+    expect(submitApproval).toHaveBeenCalledTimes(1);
+    expect(submitApproval).toHaveBeenCalledWith("own", "accept");
+    submitApproval.mockClear();
+    blocks = [blocks[1]];
+    press();
+    expect(submitApproval).not.toHaveBeenCalled();
+  });
+
   it("does not accept a prompt that asks for fields", () => {
     // The card disables Submit until the required fields are answered. A
     // keystroke that accepts anyway walks around that gate and sends the

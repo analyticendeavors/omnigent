@@ -17,6 +17,7 @@ import {
   useState,
 } from "react";
 import { ConfirmMerge, MERGED_TEXT } from "@/components/AePrCards";
+import { AeDockChildPrompt } from "@/components/AeDockChildPrompt";
 import { AePrLinkHoverCard } from "@/components/AePrLinkHoverCard";
 import { COMPOSER_CONTENT_INSET_CLASS } from "@/components/composer/ChatComposer";
 import { Button } from "@/components/ui/button";
@@ -41,6 +42,7 @@ import {
   type AeDockWaiting,
   aeBranchUpdatePending,
   aeDeployText,
+  aeDockChildPromptText,
   aeDockCountText,
   aeDockSummary,
   aeDraftText,
@@ -87,6 +89,7 @@ const WAITING_TONE: Partial<Record<AeReceiptTone, string>> = {
 
 const KIND_STYLE: Record<AeDockKind, { icon: AeTablerIconNode; tone: string; tint: string }> = {
   question: { icon: AE_ICON_HELP_CIRCLE, tone: AMBER, tint: "bg-amber-500/15" },
+  childPrompt: { icon: AE_ICON_HELP_CIRCLE, tone: AMBER, tint: "bg-amber-500/15" },
   limit: { icon: AE_ICON_GAUGE, tone: RED, tint: "bg-red-500/15" },
   merge: { icon: AE_ICON_PR_OPEN, tone: GREEN, tint: "bg-emerald-500/15" },
   draft: { icon: AE_ICON_PR_DRAFT, tone: MUTED, tint: "bg-muted" },
@@ -156,6 +159,14 @@ function ItemBody({ item, now, expanded }: { item: AeDockItem; now: number; expa
     return (
       <span className="min-w-0 truncate" title={item.text} data-ae-lead-text="">
         {item.text}
+      </span>
+    );
+  }
+  if (item.kind === "childPrompt") {
+    const text = aeDockChildPromptText(item);
+    return (
+      <span className="min-w-0 truncate" title={text} data-ae-lead-text="">
+        {text}
       </span>
     );
   }
@@ -335,6 +346,7 @@ function ItemActions({
   confirming,
   onMerge,
   onDismiss,
+  onOpenTray,
   limitActions,
   inList,
 }: {
@@ -342,6 +354,8 @@ function ItemActions({
   confirming: boolean;
   onMerge: () => void;
   onDismiss: () => void;
+  /** Opens the tray at this item's kind. */
+  onOpenTray: () => void;
   limitActions: AeLimitActions;
   /** A line of the opened list, not the strip. */
   inList: boolean;
@@ -393,6 +407,18 @@ function ItemActions({
         >
           Jump to it
           <AeTablerSvg node={AE_ICON_ARROW_DOWN} className="size-3" />
+        </Button>
+      );
+    case "childPrompt":
+      // The answer is the real card in the tray; the strip has no room for its buttons.
+      return (
+        <Button
+          variant="outline"
+          className={ACTION}
+          onClick={onOpenTray}
+          data-testid="ae-dock-child-answer"
+        >
+          Answer
         </Button>
       );
     case "merge":
@@ -643,6 +669,8 @@ function Dock({ sessionId, onSwitchModel }: { sessionId?: string; onSwitchModel?
 
   const summary = aeDockSummary(items);
   const confirmOpen = items.some((item) => item.key === confirming);
+  // A child's prompt carries a whole card, so the opened list gets up to half the screen too.
+  const tallList = confirmOpen || items.some((item) => item.kind === "childPrompt");
   // The item being confirmed went away (merged elsewhere, or its card came on
   // screen): drop the confirm, and the tray if it was opened only for it.
   useEffect(() => {
@@ -694,6 +722,7 @@ function Dock({ sessionId, onSwitchModel }: { sessionId?: string; onSwitchModel?
         setConfirming((key) => (key === item.key ? null : item.key));
       }}
       onDismiss={() => dismiss(item.anchor)}
+      onOpenTray={() => toggle(true, item.kind)}
       limitActions={limitActions}
     />
   );
@@ -783,8 +812,8 @@ function Dock({ sessionId, onSwitchModel }: { sessionId?: string; onSwitchModel?
             className={cn(
               "relative",
               "overflow-y-auto overscroll-contain",
-              // Four lines; a confirm gets up to half the screen to show whole.
-              confirmOpen ? "max-h-[50vh]" : "max-h-[120px]",
+              // Four lines; a confirm or a child's prompt gets up to half the screen to show whole.
+              tallList ? "max-h-[50vh]" : "max-h-[120px]",
             )}
             data-testid="ae-dock-list"
           >
@@ -795,12 +824,16 @@ function Dock({ sessionId, onSwitchModel }: { sessionId?: string; onSwitchModel?
                 className={cn(index > 0 && "border-t border-border/60")}
                 data-testid="ae-dock-line"
               >
-                <div className="flex h-[30px] min-w-0 items-center gap-2">
-                  <ItemIcon item={item} />
-                  <ItemBody item={item} now={now} expanded />
-                  <span className="flex-1" />
-                  {actions(item, true)}
-                </div>
+                {item.kind === "childPrompt" ? (
+                  <AeDockChildPrompt item={item} />
+                ) : (
+                  <div className="flex h-[30px] min-w-0 items-center gap-2">
+                    <ItemIcon item={item} />
+                    <ItemBody item={item} now={now} expanded />
+                    <span className="flex-1" />
+                    {actions(item, true)}
+                  </div>
+                )}
                 {confirmFor(item)}
               </li>
             ))}

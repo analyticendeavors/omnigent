@@ -102,7 +102,7 @@ from omnigent.runtime import (
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.runtime.policies.engine import PolicyEngine
 from omnigent.runtime.tool_output import cap_tool_output
-from omnigent.server import presence, session_live_state, shutdown_state
+from omnigent.server import ae_family_prompts, presence, session_live_state, shutdown_state
 from omnigent.server._elicitation_registry import (
     _harness_elicitation_owners,
     _harness_parked_elicitations,
@@ -1580,6 +1580,7 @@ def _publish_elicitation_request_to_ancestors(
     mirrored = _targeted_elicitation_event(event, target_session_id=session_id)
     for ancestor_id in _ancestor_session_ids(conv_store, session_id):
         session_stream.publish(ancestor_id, mirrored)
+    ae_family_prompts.publish_request(conv_store, session_id, mirrored)
 
 
 def _publish_elicitation_resolved_to_ancestors(
@@ -1604,6 +1605,7 @@ def _publish_elicitation_resolved_to_ancestors(
     """
     for ancestor_id in _ancestor_session_ids(conv_store, session_id):
         _publish_elicitation_resolved(ancestor_id, elicitation_id, action=action, reason=reason)
+    ae_family_prompts.publish_resolved(conv_store, session_id, elicitation_id, action, reason)
 
 
 @restart_on_stale_cursor
@@ -1684,6 +1686,7 @@ def _pending_elicitation_snapshot_for_session(
             if isinstance(elicitation_id, str):
                 seen.add(elicitation_id)
             events.append(_targeted_elicitation_event(event, target_session_id=child.id))
+    events.extend(ae_family_prompts.pending_for(conv_store, conv, events))
     return events
 
 

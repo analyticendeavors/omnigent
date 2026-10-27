@@ -634,6 +634,8 @@ export interface ElicitationBlock {
    * ancestor chat; null/undefined means use the active session.
    */
   targetSessionId?: string | null;
+  /** Set for a family child's prompt (omnigent-ae): the child's title; it shows in the dock only. */
+  familyChild?: { title: string } | null;
   /** Human-readable message describing what's being gated. */
   message: string;
   /** "input" | "tool_call" | "tool_result" | "output". */

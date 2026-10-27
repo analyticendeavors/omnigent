@@ -262,6 +262,7 @@ import {
 } from "@/lib/backgroundSessionTitlesPreferences";
 import { AE_ROLES_SETTINGS } from "@/lib/aeRoles";
 import { AE_CHAT_SETTINGS, AeChatSettingsSection } from "./settings/AeChatSettingsSection";
+import { AeChildPromptSettings } from "./settings/AeChildPromptSettings";
 import { AeRolesSettingsSection } from "./settings/AeRolesSettingsSection";
 import { SettingsAiAccountsSection } from "./settings/SettingsAiAccountsSection";
 import { SettingsHarnessesSection } from "./settings/SettingsHarnessesSection";
@@ -1737,6 +1738,7 @@ function GeneralSection() {
         </SettingsGroup>
         <SettingsGroup title="Sessions" testId="settings-group-sessions">
           <BackgroundSessionTitlesControl />
+          <AeChildPromptSettings />
         </SettingsGroup>
         <SettingsGroup title="Terminal" testId="settings-group-terminal">
           <TerminalClipboardControl />

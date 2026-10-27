@@ -7,15 +7,18 @@ import { type AePrDeploy, aeHasDeployState } from "@/lib/aePrDeploy";
 import { type AePrReceipt, aePrReceipt } from "@/lib/aePrReceipt";
 import { type AePrCard, aeCiText, aeReadyToMerge } from "@/lib/aePrs";
 
-export type AeDockKind = "question" | "limit" | "merge" | "draft" | "waiting" | "deploy";
+export type AeDockKind =
+  "question" | "childPrompt" | "limit" | "merge" | "draft" | "waiting" | "deploy";
 
 /**
- * Urgency: a question blocks the agent, a usage limit is about to, a merge
+ * Urgency: a question blocks the agent, and so does a prompt from a session this chat
+ * started (listed right after it), a usage limit is about to, a merge
  * waits on a click, a draft on a click before review, an open pull request
  * that is not ready on checks or a person, a deploy only on time.
  */
 export const AE_DOCK_KINDS: readonly AeDockKind[] = [
   "question",
+  "childPrompt",
   "limit",
   "merge",
   "draft",
@@ -55,6 +58,19 @@ interface ItemBase {
 
 export interface AeDockQuestion extends ItemBase {
   kind: "question";
+  text: string;
+}
+
+/**
+ * A prompt a session this chat started is waiting on (omnigent-ae, 2026-10-27). The tray
+ * renders its real card from the chat store by `anchor` (the elicitation id) and resolves
+ * it in the child.
+ */
+export interface AeDockChildPrompt extends ItemBase {
+  kind: "childPrompt";
+  childId: string;
+  childTitle: string;
+  /** The question, the command or the prompt's first line. */
   text: string;
 }
 
@@ -109,7 +125,13 @@ export interface AeDockLimit extends ItemBase {
 }
 
 export type AeDockItem =
-  AeDockQuestion | AeDockLimit | AeDockMerge | AeDockDraft | AeDockWaiting | AeDockDeploy;
+  | AeDockQuestion
+  | AeDockChildPrompt
+  | AeDockLimit
+  | AeDockMerge
+  | AeDockDraft
+  | AeDockWaiting
+  | AeDockDeploy;
 
 /** "owner/repo#123", a pull request item's anchor. */
 export function aeDockPrAnchor(repo: string, number: number): string {
@@ -145,6 +167,31 @@ export function aeDockQuestions(sources: readonly AeDockQuestionSource[]): AeDoc
     order,
     text: aeDockQuestionText(source),
   }));
+}
+
+export interface AeDockChildPromptSource extends AeDockQuestionSource {
+  /** The child session that owns the prompt; the verdict is posted to it. */
+  childId: string;
+  childTitle: string;
+}
+
+export function aeDockChildPrompts(
+  sources: readonly AeDockChildPromptSource[],
+): AeDockChildPrompt[] {
+  return sources.map((source, order) => ({
+    kind: "childPrompt",
+    key: `childPrompt:${source.id}`,
+    anchor: source.id,
+    order,
+    childId: source.childId,
+    childTitle: source.childTitle,
+    text: aeDockQuestionText(source),
+  }));
+}
+
+/** "Halcyon Orbital: Keep the measure?", the bar's line for a child's prompt. */
+export function aeDockChildPromptText(item: AeDockChildPrompt): string {
+  return item.childTitle ? `${item.childTitle}: ${item.text}` : item.text;
 }
 
 export interface AeDockPr {
@@ -317,6 +364,8 @@ export function aeDockBadgeLabel(
   switch (first.kind) {
     case "question":
       return many ? `${items.length} questions` : "Question waiting";
+    case "childPrompt":
+      return many ? `${items.length} child prompts` : "Child prompt";
     case "limit":
       return aeLimitGateShort(first.gate);
     case "merge":

@@ -190,6 +190,12 @@ export interface ElicitationRequest {
    * a sub-agent prompt into its parent chat.
    */
   targetSessionId?: string | null;
+  /**
+   * Set when the prompt belongs to a family child (a session its lead started), mirrored
+   * into the lead's stream with the child's title (omnigent-ae). It shows in the lead's
+   * action dock, never in its transcript.
+   */
+  familyChild?: { title: string } | null;
   message: string;
   /** A restricted subset of JSON Schema. Empty `{}` for binary approve/reject. */
   requestedSchema: Record<string, unknown>;

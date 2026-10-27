@@ -26,6 +26,8 @@ const CHOICES = [
   "insights.scope",
   "chat.spend_display",
   "chat.pin_family",
+  "family.child_prompts",
+  "family.relay",
 ] as const;
 
 describe("the setting hints", () => {

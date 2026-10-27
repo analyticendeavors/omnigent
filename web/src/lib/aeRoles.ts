@@ -201,6 +201,10 @@ export interface AeRolesDoc {
   starters_seen?: string[];
   /** Absent until the user sets it. */
   insights?: AeInsights;
+  /** Show the prompts of sessions this chat started in its action dock; absent reads as on. */
+  child_prompts?: boolean;
+  /** Let the lead pass an answer to a child's question; absent reads as on. */
+  child_relay?: boolean;
 }
 
 /** What `GET` and `PUT /v1/ae/roles` answer. */
@@ -331,8 +335,17 @@ function parsePresets(value: unknown): AeRolePreset[] | null {
 /** The server's roles state, or null when the body is not one. */
 export function aeParseRolesState(value: unknown): AeRolesState | null {
   if (!isObject(value)) return null;
-  const { revision, default_preset, apply_start_on, presets, starters, starters_seen, insights } =
-    value;
+  const {
+    revision,
+    default_preset,
+    apply_start_on,
+    presets,
+    starters,
+    starters_seen,
+    insights,
+    child_prompts,
+    child_relay,
+  } = value;
   if (typeof revision !== "number" || !Number.isInteger(revision) || revision < 0) return null;
   if (typeof default_preset !== "string") return null;
   const list = parsePresets(presets);
@@ -347,6 +360,8 @@ export function aeParseRolesState(value: unknown): AeRolesState | null {
       ? { starters_seen: starters_seen as string[] }
       : {}),
     ...(parseInsights(insights) ? { insights: parseInsights(insights) as AeInsights } : {}),
+    ...(typeof child_prompts === "boolean" ? { child_prompts } : {}),
+    ...(typeof child_relay === "boolean" ? { child_relay } : {}),
   };
 }
 
@@ -359,6 +374,8 @@ export function aeRolesDoc(state: AeRolesDoc): AeRolesDoc {
     presets: state.presets,
     ...(state.starters_seen ? { starters_seen: state.starters_seen } : {}),
     ...(state.insights ? { insights: state.insights } : {}),
+    ...(state.child_prompts !== undefined ? { child_prompts: state.child_prompts } : {}),
+    ...(state.child_relay !== undefined ? { child_relay: state.child_relay } : {}),
   };
 }
 

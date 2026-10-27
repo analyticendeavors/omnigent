@@ -170,6 +170,16 @@ export const AE_SETTING_HINTS = {
     hint: "Yes: also pins its open sessions, or none if pin spots run short. No (default): lead only. Unpinning removes all pinned members, closed too.",
     source: "existing",
   },
+  "family.child_prompts": {
+    label: "Child prompts in this chat",
+    hint: "Questions and permission prompts from sessions this chat started show in its action dock, with their buttons. Default: on.",
+    source: "existing",
+  },
+  "family.relay": {
+    label: "Lead relays answers to child questions",
+    hint: "The lead may pass your answer to a child's question. It can never approve tool use or MCP writes for a child. Default: on.",
+    source: "existing",
+  },
   "chat.suggestion_keys": {
     label: "Suggestion keys",
     hint: "Next and Previous step through the composer's suggestions when it offers several. Defaults Alt+] and Alt+[. Change records a new combo.",

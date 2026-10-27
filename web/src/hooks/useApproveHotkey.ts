@@ -21,6 +21,7 @@
 // keystroke that expressed send intent must never resolve a permission
 // prompt that mounted moments earlier.
 
+import { aeIsFamilyPrompt } from "@/lib/aeFamilyPrompts";
 import { useEffect } from "react";
 
 import { schemaFields } from "@/components/blocks/ElicitationSchemaForm";
@@ -69,12 +70,16 @@ export function useApproveHotkey(isMac = isMacPlatform()): void {
       const { blocks, submitApproval } = useChatStore.getState();
       // Newest-first: accept the most recent still-pending prompt that takes a
       // plain verdict. Skip AskUserQuestion (needs an explicit choice).
+      // A family child's prompt lives in the dock, not on screen, so it never takes this chord.
       // The newest pending prompt is the one on screen. Searching past it for
       // an older binary one would accept something the person cannot see while
       // they are filling in a form.
       const newest = [...blocks]
         .reverse()
-        .find((b): b is ElicitationBlock => b.type === "elicitation" && b.status === "pending");
+        .find(
+          (b): b is ElicitationBlock =>
+            b.type === "elicitation" && b.status === "pending" && !aeIsFamilyPrompt(b),
+        );
       if (!newest) return;
       const takesAPlainVerdict =
         !newest.askUserQuestion && schemaFields(newest.requestedSchema).length === 0;

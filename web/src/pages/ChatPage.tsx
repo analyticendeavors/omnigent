@@ -1,3 +1,4 @@
+import { aeParksThisTurn } from "@/lib/aeFamilyPrompts";
 import { SelectionPopup } from "@/components/chat/SelectionPopup";
 import { useLoadedConversations } from "@/hooks/useSidebarData";
 import { useConversationRedirect } from "@/hooks/useConversationRedirect";
@@ -651,7 +652,8 @@ export function ChatPage() {
   // the flag is unchanged, so `blocks` reference churn on every streaming
   // frame no longer re-renders this root — only an elicitation edge does.
   const hasPendingElicitation = useChatStore((s) =>
-    s.blocks.some((b) => b.type === "elicitation" && b.status === "pending"),
+    // A mirrored child prompt (omnigent-ae) does not park this session's turn.
+    s.blocks.some((b) => aeParksThisTurn(b, s.conversationId)),
   );
 
   // Single-session snapshot (shared cache with chatStore.bindStream).

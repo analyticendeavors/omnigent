@@ -10,6 +10,7 @@ import { useAeLimitGate } from "@/hooks/useAeLimitGate";
 import { fetchPullRequestInfo } from "@/hooks/usePullRequests";
 import {
   type AeDeployTrack,
+  type AeDockChildPromptSource,
   type AeDockItem,
   type AeDockPr,
   type AeDockQuestionSource,
@@ -18,6 +19,7 @@ import {
   type AeBranchUpdate,
   aeBranchUpdatePending,
   aeDockArrange,
+  aeDockChildPrompts,
   aeDockDeploys,
   aeDockDrafts,
   aeDockWaiting,
@@ -28,6 +30,7 @@ import {
 import { type AePrDeploy, aeHasDeployState, aePrDeployQuery } from "@/lib/aePrDeploy";
 import { type AePrCard, aePrUrlsIn, fetchAePrCard, parseAePrUrl } from "@/lib/aePrs";
 import type { AnyBlock } from "@/lib/blocks";
+import { aeFamilyPrompts } from "@/lib/aeFamilyPrompts";
 import { useChatStore } from "@/store/chatStore";
 
 // ── pending questions, published by the transcript ─────────────────────
@@ -82,6 +85,34 @@ export function useAePublishDockQuestions(
 function useDockQuestions(conversationId: string | undefined) {
   const current = useSyncExternalStore(subscribe, () => published);
   return (conversationId && current.get(conversationId)) || NONE;
+}
+
+// ── prompts of sessions this chat started ──────────────────────────────
+
+/**
+ * The family children's pending prompts as a JSON string, so the store subscription compares
+ * by value and a streamed token never re-renders the dock. Empty when there are none.
+ */
+function childPromptsKey(sessionId: string | undefined): string {
+  const { conversationId, blocks } = useChatStore.getState();
+  if (!sessionId || conversationId !== sessionId) return "";
+  const sources = aeFamilyPrompts(blocks).map((block) => ({
+    id: block.elicitationId,
+    childId: block.targetSessionId!,
+    childTitle: block.familyChild?.title ?? "",
+    message: block.message,
+    askUserQuestion: block.askUserQuestion,
+    codexCommand: block.codexCommand,
+  }));
+  return sources.length ? JSON.stringify(sources) : "";
+}
+
+function useDockChildPrompts(sessionId: string | undefined) {
+  const key = useChatStore(() => childPromptsKey(sessionId));
+  return useMemo(
+    () => aeDockChildPrompts(key ? (JSON.parse(key) as AeDockChildPromptSource[]) : []),
+    [key],
+  );
 }
 
 // ── pull requests in the transcript ────────────────────────────────────
@@ -261,10 +292,12 @@ export function useAeActionDockItems(
   }, [track, now]);
 
   const questions = useDockQuestions(sessionId);
+  const childPrompts = useDockChildPrompts(sessionId);
   const limit = useAeLimitGate(sessionId);
   const items = aeDockArrange(
     [
       ...aeDockQuestions(questions),
+      ...childPrompts,
       ...(limit.item ? [limit.item] : []),
       ...aeDockMerges(withCards),
       ...aeDockDrafts(withCards),
