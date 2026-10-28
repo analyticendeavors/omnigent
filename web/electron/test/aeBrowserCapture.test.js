@@ -59,9 +59,16 @@ function setup({ attached = false, captures = ["full"], active = null, visible =
     view,
     boundsController: { resync: () => log.push(["resync"]) },
   };
-  const registry = { activeConversationId: () => active };
+  let live = entry;
+  const registry = {
+    activeConversationId: () => active,
+    get: (id) => (id === "c1" ? live : null),
+  };
   const state = () => ({ bounds, vis, children });
-  return { log, view, win, entry, registry, state };
+  const close = () => {
+    live = null;
+  };
+  return { log, view, win, entry, registry, state, close };
 }
 
 const run = (s, extra = {}) =>
@@ -129,6 +136,44 @@ describe("captureBrowserView", () => {
     assert.equal(s.state().children.length, 1);
     assert.ok(s.log.some((l) => l[0] === "resync"));
     assert.ok(!s.log.some((l) => l[0] === "remove"));
+    // The staging position is undone before resync, which applies nothing
+    // until the pane has sent bounds.
+    assert.deepEqual(s.state().bounds, { x: 5, y: 6, width: 300, height: 200 });
+  });
+
+  it("counts slow empty captures against the retry budget", async () => {
+    const s = setup({ active: "other", captures: ["empty"] });
+    const slow = s.view.webContents.capturePage;
+    s.view.webContents.capturePage = () =>
+      new Promise((resolve) => {
+        setTimeout(() => resolve(slow()), 30);
+      });
+    const r = await run(s, { maxWaitMs: 50 });
+    assert.equal(r.ok, false);
+    assert.ok(s.log.filter((l) => l[0] === "capture").length <= 3);
+    assert.equal(s.state().children.length, 0);
+  });
+
+  it("refuses a view that was closed before its queued capture started", async () => {
+    const s = setup({ active: "other" });
+    s.close();
+    const r = await run(s);
+    assert.equal(r.ok, false);
+    assert.match(r.error, /was closed/);
+    assert.ok(!s.log.some((l) => l[0] === "add" || l[0] === "capture"));
+  });
+
+  it("removes a staged view whose chat was closed mid-capture, even if reopened", async () => {
+    const s = setup({ active: "c1", captures: ["empty", "full"] });
+    // Closed and reopened as a new entry for the same chat while staged.
+    const r = await run(s, {
+      wait: async () => {
+        s.close();
+      },
+    });
+    assert.equal(r.ok, true);
+    assert.equal(s.state().children.length, 0);
+    assert.ok(!s.log.some((l) => l[0] === "resync"));
   });
 
   it("times out on a hang and cleans up", async () => {

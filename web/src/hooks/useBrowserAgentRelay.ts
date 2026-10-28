@@ -100,6 +100,9 @@ export const SNAPSHOT_JS = `(() => {
   window.__omni_snapshot_id__ = snapshotId;
   let nextRef = 0;
   const lines = [];
+  // Hidden subtrees are walked now, so bound the work on a huge page.
+  let visits = 0;
+  let truncated = false;
 
   const TAG_ROLE = {
     a: 'link', button: 'button', textarea: 'textbox', select: 'combobox',
@@ -172,8 +175,9 @@ export const SNAPSHOT_JS = `(() => {
       (rect.height === 0 && style.overflowY !== 'visible');
   }
 
-  function walk(el, depth) {
+  function walk(el, depth, frames = 0) {
     if (!el || el.nodeType !== 1 || !el.getBoundingClientRect) return;
+    if (lines.length >= 2000 || ++visits > 50000) { truncated = true; return; }
     const style = (el.ownerDocument && el.ownerDocument.defaultView || window).getComputedStyle(el);
     const rect = el.getBoundingClientRect();
     if (hidesSubtree(style, rect)) return;
@@ -193,21 +197,24 @@ export const SNAPSHOT_JS = `(() => {
       childDepth = depth + 1;
     }
     for (const child of el.children) {
-      walk(child, childDepth);
+      walk(child, childDepth, frames);
     }
     if (el.shadowRoot) {
-      for (const child of el.shadowRoot.children) walk(child, childDepth);
+      for (const child of el.shadowRoot.children) walk(child, childDepth, frames);
     }
     const tag = el.tagName && el.tagName.toLowerCase();
-    if (tag === 'iframe' || tag === 'frame') {
+    // At most 3 nested frames, so a page that embeds itself cannot recurse.
+    // A frame's document does not inherit the frame's own visibility.
+    if ((tag === 'iframe' || tag === 'frame') && visible && frames < 3) {
       try {
         const body = el.contentDocument && el.contentDocument.body;
-        if (body) walk(body, childDepth);
+        if (body) walk(body, childDepth, frames + 1);
       } catch (e) { /* cross-origin frame */ }
     }
   }
 
   if (document.body) walk(document.body, 0);
+  if (truncated) lines.push('- note "snapshot truncated: the page is too large"');
 
   return JSON.stringify({
     snapshot_id: snapshotId,

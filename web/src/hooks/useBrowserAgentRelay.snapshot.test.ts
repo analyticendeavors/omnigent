@@ -88,6 +88,24 @@ describe("SNAPSHOT_JS visibility walk", () => {
     expect(snapshot().tree).toContain('button "InFrame"');
   });
 
+  it("skips the document of a visibility:hidden iframe", () => {
+    document.body.innerHTML = `<iframe style="visibility:hidden"></iframe><button>Shown</button>`;
+    const frame = document.querySelector("iframe")!;
+    (frame.contentWindow as unknown as Window & typeof globalThis).Element.prototype.getBoundingClientRect =
+      Element.prototype.getBoundingClientRect;
+    frame.contentDocument!.body.innerHTML = `<button>InHiddenFrame</button>`;
+    const { tree } = snapshot();
+    expect(tree).toContain('button "Shown"');
+    expect(tree).not.toContain("InHiddenFrame");
+  });
+
+  it("stops at 2000 lines and says the snapshot was truncated", () => {
+    document.body.innerHTML = "<button>b</button>".repeat(2100);
+    const lines = snapshot().tree.split("\n");
+    expect(lines).toHaveLength(2001);
+    expect(lines[2000]).toBe('- note "snapshot truncated: the page is too large"');
+  });
+
   it("keeps refs for portal content in window.__omni_refs__", () => {
     document.body.innerHTML = `<div data-size="0x0">${DIALOG}</div>`;
     const { tree } = snapshot();

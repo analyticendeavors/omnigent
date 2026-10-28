@@ -38,12 +38,12 @@ function isEmptyImage(image) {
 }
 
 /** Race one capturePage() call against a timeout. Throws a tagged error on timeout. */
-function capturePageWithTimeout(view, timeoutMs) {
+function capturePageWithTimeout(view, timeoutMs, budgetMs = timeoutMs) {
   let timer = null;
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => {
       const err = new Error(
-        `screenshot timed out after ${Math.round(timeoutMs / 1000)} s: the browser view did not paint. ` +
+        `screenshot timed out after ${Math.round(budgetMs / 1000)} s: the browser view did not paint. ` +
           "Open this chat's browser pane in the Omnigent desktop app and retry.",
       );
       err.aeTimeout = true;
@@ -74,7 +74,13 @@ function contentSize(win) {
   return { width: 0, height: 0 };
 }
 
+const CLOSED_ERROR = "this chat's browser view was closed";
+
 async function captureOnce({ registry, conversationId, entry, win, timeoutMs, retryMs, maxWaitMs, wait }) {
+  // A capture queued behind another may start after the chat's view was closed
+  // (or closed and reopened as a new entry); never stage a dead view.
+  const isLive = () => registry.get(conversationId) === entry;
+  if (!isLive()) return { ok: false, error: CLOSED_ERROR };
   const view = entry.view;
   const toResult = (image) => ({
     ok: true,
@@ -96,19 +102,21 @@ async function captureOnce({ registry, conversationId, entry, win, timeoutMs, re
     if (!savedVisible) view.setVisible(true);
     win.contentView.addChildView(view, 0);
 
-    let image = await capturePageWithTimeout(view, timeoutMs);
-    let waited = 0;
-    while (isEmptyImage(image) && waited < maxWaitMs) {
+    // One clock for the whole capture: retries start only within maxWaitMs and
+    // share timeoutMs, so slow empty paints cannot keep the view staged for minutes.
+    const start = Date.now();
+    const remaining = () => Math.max(1, timeoutMs - (Date.now() - start));
+    let image = await capturePageWithTimeout(view, remaining(), timeoutMs);
+    while (isEmptyImage(image) && Date.now() - start < maxWaitMs) {
       // Sequential on purpose: each retry follows the previous paint attempt.
       // oxlint-disable-next-line no-await-in-loop
       await wait(retryMs);
-      waited += retryMs;
       // oxlint-disable-next-line no-await-in-loop
-      image = await capturePageWithTimeout(view, timeoutMs);
+      image = await capturePageWithTimeout(view, remaining(), timeoutMs);
     }
     return isEmptyImage(image) ? { ok: false, error: EMPTY_ERROR } : toResult(image);
   } finally {
-    if (registry.activeConversationId() !== conversationId) {
+    if (!isLive() || registry.activeConversationId() !== conversationId) {
       try {
         win.contentView.removeChildView(view);
       } catch {
@@ -122,7 +130,10 @@ async function captureOnce({ registry, conversationId, entry, win, timeoutMs, re
       }
     } else {
       // The user switched to this chat mid-capture; setActive re-attached it.
+      // Undo the staging position first: resync applies nothing until the pane
+      // has sent bounds.
       try {
+        view.setBounds(savedBounds);
         entry.boundsController.resync();
       } catch {
         /* view destroyed */
