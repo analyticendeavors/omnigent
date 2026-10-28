@@ -5,8 +5,14 @@ import { AeClaudeAccountSubmenu } from "./AeClaudeAccountSubmenu";
 import { DropdownMenu, DropdownMenuContent } from "@/components/ui/dropdown-menu";
 import type { Host } from "@/hooks/useHosts";
 import { dismissAeMoveAll } from "@/lib/aeMoveAllChats";
+import { dismissAeSwitchFamily, useAeSwitchFamilyRequest } from "@/lib/aeSwitchFamily";
 
 vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
+const familyRows = vi.hoisted(() => ({ rows: [] as unknown[] }));
+vi.mock("@/lib/aeFamilyRead", () => ({
+  aeReadFamilySessions: () => Promise.resolve(familyRows.rows),
+  aeFamilyOf: () => [],
+}));
 import { authenticatedFetch } from "@/lib/identity";
 
 const mutate = vi.fn();
@@ -26,10 +32,18 @@ const json = (body: unknown, status = 200) =>
 
 let qc: QueryClient;
 
+function Asked() {
+  const ask = useAeSwitchFamilyRequest();
+  return (
+    <span data-testid="ask">{ask ? `${ask.account}|${ask.label}|${ask.childCount}` : ""}</span>
+  );
+}
+
 function renderMenu(turnBusy = false, sessionId = "s1") {
   qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
+      <Asked />
       <DropdownMenu open>
         <DropdownMenuContent>
           <AeClaudeAccountSubmenu host={host} sessionId={sessionId} turnBusy={turnBusy} />
@@ -44,6 +58,8 @@ beforeEach(() => {
   mutate.mockReset();
   vi.mocked(authenticatedFetch).mockReset();
   dismissAeMoveAll();
+  dismissAeSwitchFamily();
+  familyRows.rows = [];
   labels = { "ae.claude_account": "AE Backup" };
   rows = [
     { family: "claude-oauth-active", source: "AE Default", env_var: "" },
@@ -95,6 +111,14 @@ describe("Account submenu inside a chat", () => {
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ["session", "s1"] });
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ["ae-limits", "s1"] });
     });
+  });
+
+  it("asks about the child chats, and sends nothing yet, when the chat has some", async () => {
+    familyRows.rows = [{ id: "kid", object: "conversation", labels: { "ae.orch": "s1" } }];
+    renderMenu();
+    fireEvent.click(screen.getByTestId("composer-claude-account-chat-default"));
+    await waitFor(() => expect(screen.getByTestId("ask").textContent).toBe("|AE Default|1"));
+    expect(authenticatedFetch).not.toHaveBeenCalled();
   });
 
   it("names a removed login as unavailable, never as the host's active one", () => {

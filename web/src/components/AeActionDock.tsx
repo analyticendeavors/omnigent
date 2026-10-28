@@ -68,6 +68,7 @@ import { aeLimitGateShort, aeLimitGateText } from "@/lib/aeLimitGate";
 import { AE_ADMIN_CENTER_PATH } from "@/lib/aePrDeploy";
 import type { AeReceiptTone } from "@/lib/aePrReceipt";
 import { aeCiText } from "@/lib/aePrs";
+import { aeSwitchOrAsk } from "@/lib/aeSwitchFamily";
 import { AeTablerSvg } from "@/lib/aeTablerIcon";
 import type { AeTablerIconNode } from "@/lib/aeTablerIconData";
 import { Link, useNavigate } from "@/lib/routing";
@@ -627,13 +628,19 @@ export function AeActionDock({
 function Dock({ sessionId, onSwitchModel }: { sessionId?: string; onSwitchModel?: () => void }) {
   const forkDialog = useForkDialog();
   const switchAccount = useAeSwitchClaudeAccount(sessionId);
+  const queryClient = useQueryClient();
   const limitActions: AeLimitActions = {
     onSwitchModel,
     onSwitchAccount: (account, label) =>
-      switchAccount.mutate(account, {
-        onSuccess: () => showToast(`This chat now runs on ${label}.`),
-        onError: (failure) => showToast(failure.message),
-      }),
+      aeSwitchOrAsk(queryClient, { sessionId: sessionId ?? "", account, label }, () =>
+        switchAccount.mutate(
+          { account },
+          {
+            onSuccess: () => showToast(`This chat now runs on ${label}.`),
+            onError: (failure) => showToast(failure.message),
+          },
+        ),
+      ),
     switching: switchAccount.isPending,
     // A full clone of this session, history included; the dialog's account row picks the login.
     onCopyAccount: forkDialog ? () => forkDialog.openForkDialog() : undefined,

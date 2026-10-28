@@ -23,11 +23,27 @@ export const AE_THIS_CHAT_BUSY_HINT =
 export const AE_MOVE_ALL_CAUTION =
   "Each moved chat restarts on the new login and resumes its conversation; its next reply re-reads the conversation, which costs extra tokens on that subscription. Chats that are mid-reply are skipped.";
 
+export interface AeChildOutcome {
+  id: string;
+  title: string;
+  /** Why the child did not switch; absent on a moved child. */
+  reason?: string;
+}
+
+/** What the server did with the chat's family children (`include_children` on the switch). */
+export interface AeChildrenAnswer {
+  moved: AeChildOutcome[];
+  skipped: AeChildOutcome[];
+  pending: AeChildOutcome[];
+}
+
 export interface AeSwitchAnswer {
   account: string;
   /** False when no runner is bound (the next launch uses the login) or the restart is unconfirmed. */
   relaunched: boolean;
   pending?: boolean;
+  /** Present only when the switch asked for the children too. */
+  children?: AeChildrenAnswer;
 }
 
 export interface AeMoveAllAnswer {
@@ -54,13 +70,14 @@ export function aeChatAccount(
 export async function putAeClaudeAccount(
   sessionId: string,
   account: string,
+  includeChildren = false,
 ): Promise<AeSwitchAnswer> {
   const res = await authenticatedFetch(
     `/v1/ae/sessions/${encodeURIComponent(sessionId)}/claude-account`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ account }),
+      body: JSON.stringify(includeChildren ? { account, include_children: true } : { account }),
     },
   );
   if (!res.ok) throw await apiErrorFromResponse(res);
@@ -98,4 +115,35 @@ export function aeMoveAllSummary(answer: AeMoveAllAnswer): string {
     parts.push(`${answer.skipped.length} skipped: ${why.join(", ")}`);
   }
   return parts.length === 0 ? moved : `${moved}; ${parts.join("; ")}`;
+}
+
+const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+
+/**
+ * The toast after a switch: "This chat now runs on X; 2 child chats moved; 1 skipped:
+ * Reviewer is mid-reply". Without a `children` answer it is the plain one-chat line.
+ */
+export function aeSwitchSummary(label: string, answer: AeSwitchAnswer): string {
+  const own = `This chat now runs on ${label}`;
+  const kids = answer.children;
+  if (!kids) return `${own}.`;
+  const parts = [own];
+  if (kids.moved.length > 0) parts.push(`${plural(kids.moved.length, "child chat")} moved`);
+  if (kids.pending.length > 0) {
+    parts.push(
+      `${kids.pending.length} still switching: ${kids.pending.map((c) => c.title).join(", ")}`,
+    );
+  }
+  if (kids.skipped.length > 0) {
+    const why = kids.skipped.map((c) =>
+      c.reason === "mid-reply" ? `${c.title} is mid-reply` : `${c.title}: ${c.reason ?? "skipped"}`,
+    );
+    parts.push(`${kids.skipped.length} skipped: ${why.join(", ")}`);
+  }
+  return parts.join("; ");
+}
+
+/** The chats a switch touched besides the one asked about, to re-read their logins. */
+export function aeSwitchedChildIds(answer: AeSwitchAnswer): string[] {
+  return [...(answer.children?.moved ?? []), ...(answer.children?.pending ?? [])].map((c) => c.id);
 }

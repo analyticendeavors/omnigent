@@ -4,10 +4,17 @@ import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
+// The family read behind Switch account; the rows are the session list it would find.
+const familyRows = vi.hoisted(() => ({ rows: [] as unknown[] }));
+vi.mock("@/lib/aeFamilyRead", () => ({
+  aeReadFamilySessions: () => Promise.resolve(familyRows.rows),
+  aeFamilyOf: () => [],
+}));
 
 import { useAePublishDockQuestions } from "@/hooks/useAeActionDockItems";
 import type { AnyBlock } from "@/lib/blocks";
 import { authenticatedFetch } from "@/lib/identity";
+import { dismissAeSwitchFamily, useAeSwitchFamilyRequest } from "@/lib/aeSwitchFamily";
 import type { AePrCard } from "@/lib/aePrs";
 import { ForkDialogContextProvider } from "@/shell/ForkDialogContext";
 import { useChatStore } from "@/store/chatStore";
@@ -614,6 +621,13 @@ function serveLimits(answer: () => unknown, logins: unknown[] = TWO_LOGINS) {
   );
 }
 
+function Asked() {
+  const ask = useAeSwitchFamilyRequest();
+  return (
+    <span data-testid="ask">{ask ? `${ask.sessionId}|${ask.account}|${ask.childCount}` : ""}</span>
+  );
+}
+
 function Where() {
   return <span data-testid="where">{useLocation().pathname}</span>;
 }
@@ -643,6 +657,7 @@ function renderLimitDock({
           value={{ currentSessionId: "s1", canFork, disabledReason, openForkDialog }}
         >
           <Where />
+          <Asked />
           <ComposerWorkspaceBar data-testid="composer-workspace-controls">
             <AeActionDock sessionId="s1" onSwitchModel={noModelMenu ? undefined : onSwitchModel} />
           </ComposerWorkspaceBar>
@@ -654,7 +669,10 @@ function renderLimitDock({
 }
 
 describe("AeActionDock usage gate", () => {
-  afterEach(() => useChatStore.setState({ sessionHarness: null }));
+  afterEach(() => {
+    useChatStore.setState({ sessionHarness: null });
+    familyRows.rows = [];
+  });
 
   it("leads with the limit and its three buttons", async () => {
     serveLimits(() => limitsAnswer(92));
@@ -694,6 +712,42 @@ describe("AeActionDock usage gate", () => {
     expect(screen.getByTestId("where").textContent).toBe("/c/s1");
     fireEvent.click(screen.getByTestId("ae-dock-limit-new"));
     expect(screen.getByTestId("where").textContent).toBe("/");
+  });
+
+  it("asks about the child chats instead of switching when the chat has some", async () => {
+    familyRows.rows = [
+      { id: "kid", object: "conversation", labels: { "ae.orch": "s1" } },
+      { id: "grandkid", object: "conversation", labels: { "ae.orch": "kid" } },
+    ];
+    serveLimits(() => limitsAnswer(95));
+    renderLimitDock();
+    fireEvent.click(await screen.findByTestId("ae-dock-limit-account"));
+    await waitFor(() => expect(screen.getByTestId("ask").textContent).toBe("s1|personal|2"));
+    expect(authenticatedFetch).not.toHaveBeenCalledWith(
+      "/v1/ae/sessions/s1/claude-account",
+      expect.anything(),
+    );
+    act(() => dismissAeSwitchFamily());
+  });
+
+  it("switches at once when the chat has no children", async () => {
+    familyRows.rows = [
+      {
+        id: "fork",
+        object: "conversation",
+        labels: { "ae.orch": "s1", "omnigent.fork.source_id": "s1" },
+      },
+    ];
+    serveLimits(() => limitsAnswer(95));
+    renderLimitDock();
+    fireEvent.click(await screen.findByTestId("ae-dock-limit-account"));
+    await waitFor(() =>
+      expect(authenticatedFetch).toHaveBeenCalledWith(
+        "/v1/ae/sessions/s1/claude-account",
+        expect.objectContaining({ body: JSON.stringify({ account: "personal" }) }),
+      ),
+    );
+    expect(screen.getByTestId("ask").textContent).toBe("");
   });
 
   it("opens a menu of logins when more than one other login exists", async () => {

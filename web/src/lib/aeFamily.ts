@@ -268,6 +268,32 @@ export function aeFamilies(rows: readonly Conversation[], orphans = false): AeFa
   return { byRoot, byRow };
 }
 
+/**
+ * The sessions a lead started, and the ones those started, among *rows*: `ae.orch`
+ * only, nearest first, never a fork (it copies its source's `ae.orch`) and never an
+ * archived row. Mirrors `ae_omni_policies.sessions.children_of`; the server also
+ * checks owners, so this is the count a switch asks about, not a promise.
+ */
+export function aeFamilyChildren(rows: readonly Conversation[], id: string): Conversation[] {
+  const found: Conversation[] = [];
+  const seen = new Set([id]);
+  let level = [id];
+  for (let depth = 0; depth < MAX_DEPTH && level.length > 0; depth += 1) {
+    const parents = new Set(level);
+    level = [];
+    for (const row of rows) {
+      if (seen.has(row.id) || row.archived === true) continue;
+      if (value(row.labels, AE_FORK_SOURCE_KEY) !== null) continue;
+      const parent = aeOrchParent(row.labels);
+      if (parent === null || !parents.has(parent)) continue;
+      seen.add(row.id);
+      found.push(row);
+      level.push(row.id);
+    }
+  }
+  return found;
+}
+
 /** The dot's hover text: who started the row, or how many the lead started. */
 export function aeFamilyHint(role: AeFamilyRole): string {
   const others = role.family.members.length - 1;

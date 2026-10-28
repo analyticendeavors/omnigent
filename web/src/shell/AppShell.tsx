@@ -13,6 +13,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Outlet, useLocation, useParams, useRebasePath, useSearchParams } from "@/lib/routing";
 import { AeMoveAllChatsDialog } from "@/shell/AeMoveAllChatsDialog";
+import { AeSwitchFamilyDialog } from "@/shell/AeSwitchFamilyDialog";
 import { CANVAS_CONVERSATION_MIN_WIDTH, CanvasWorkspace } from "@/canvas/CanvasWorkspace";
 import { isCanvasPathname } from "@/canvas/canvasNavigation";
 import { useCanvasSidebar } from "@/canvas/useCanvasSidebar";
@@ -2870,6 +2871,7 @@ export function AppShell() {
             }}
           />
           <AeMoveAllChatsDialog />
+          <AeSwitchFamilyDialog />
           <AeReloadNotice />
         </ForkDialogContextProvider>
       </TerminalFirstContextProvider>
