@@ -63,6 +63,7 @@ import {
 } from "@/lib/aeActionDockIcons";
 import { AE_ICON_CHEVRON_DOWN } from "@/lib/aeAgentsIcons";
 import { AE_ICON_CHECK, AE_ICON_MERGE, AE_ICON_PR_DRAFT, AE_ICON_PR_OPEN } from "@/lib/aePrIcons";
+import { AeLimitHoverCard } from "@/components/AeLimitHoverCard";
 import { aeLimitGateShort, aeLimitGateText } from "@/lib/aeLimitGate";
 import { AE_ADMIN_CENTER_PATH } from "@/lib/aePrDeploy";
 import type { AeReceiptTone } from "@/lib/aePrReceipt";
@@ -126,11 +127,17 @@ function ItemIcon({ item }: { item: AeDockItem }) {
     : item.kind === "waiting"
       ? (WAITING_TONE[item.receipt.tone] ?? style.tone)
       : style.tone;
-  return (
+  const icon = (
     <AeTablerSvg
       node={live ? AE_ICON_CHECK : style.icon}
       className={cn("size-3.5 shrink-0", tone)}
     />
+  );
+  if (item.kind !== "limit") return icon;
+  return (
+    <AeLimitHoverCard gate={item.gate} windows={item.windows}>
+      {icon}
+    </AeLimitHoverCard>
   );
 }
 

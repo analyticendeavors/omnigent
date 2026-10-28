@@ -2,6 +2,7 @@
 // first. Pure, so ordering, badges, hiding and the deploy lifecycle are
 // unit-tested (aeActionDock.test.ts). omnigent-ae, 2026-10-20.
 
+import type { AeLimitWindow } from "@/components/AePlanLimits";
 import { type AeAccountChoice, type AeLimitGate, aeLimitGateShort } from "@/lib/aeLimitGate";
 import { type AePrDeploy, aeHasDeployState } from "@/lib/aePrDeploy";
 import { type AePrReceipt, aePrReceipt } from "@/lib/aePrReceipt";
@@ -116,6 +117,8 @@ export interface AeDockDeploy extends ItemBase {
 export interface AeDockLimit extends ItemBase {
   kind: "limit";
   gate: AeLimitGate;
+  /** Every window on the chat's login, for the icon's hover card. */
+  windows?: readonly AeLimitWindow[];
   /** The chat can move to another login in place: a Claude session with another login to go to. */
   canSwitchAccount: boolean;
   /** The logins it can move to. */

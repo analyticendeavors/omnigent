@@ -86,6 +86,7 @@ export function useAeLimitGate(sessionId: string | undefined): {
       anchor: `limit:${gate.windowKey}`,
       order: 0,
       gate,
+      windows: data?.harnesses?.[gate.harness]?.windows,
       canSwitchAccount: accountChoices.length > 0,
       accountChoices,
       canCopyAccount: accountChoices.length > 0 && forkable,
