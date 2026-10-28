@@ -2413,6 +2413,16 @@ main[data-shell-header="hidden"] .extension-view-host {
   padding-top: 0;
 }
 
+/* Native shells float the header at safe-top minus 0.5rem, so an extension
+ * page must start below that band or the header covers its top controls. */
+@media (width < 48rem) {
+  :is([data-ios-native], [data-android-native])
+    main[data-shell-header="visible"]
+    .extension-view-host {
+    padding-top: calc(var(--omnigent-header-height) + max(0px, var(--omnigent-safe-top) - 0.5rem));
+  }
+}
+
 main[data-shell-header="hidden"] .extension-view-status {
   top: 0;
 }
