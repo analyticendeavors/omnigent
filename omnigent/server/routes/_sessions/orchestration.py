@@ -143,6 +143,7 @@ from omnigent.server.bundles import (
     validate_agent_bundle,
 )
 from omnigent.server.creation_logging import creation_metadata, creation_stage, session_created
+from omnigent.server.elicitation_observers import notify_elicitation_resolved
 from omnigent.server.host_registry import HostConnection, HostRegistry, RunnerExitReports
 from omnigent.server.item_observers import notify_items_persisted
 from omnigent.server.managed_hosts import (
@@ -2277,6 +2278,8 @@ async def _resolve_elicitation(
     # matches, no resolved event published) rather than 500-ing the
     # client — the runner forward still fires so the runner can reject.
     elicitation_id = data.get("elicitation_id", "")
+    # Before anything below clears the pending index, so an observer can read the prompt.
+    notify_elicitation_resolved(session_id, data)
     harness_future = _harness_elicitation_registry.get(elicitation_id)
     if harness_future is not None and not harness_future.done():
         # Only the session that owns this elicitation
