@@ -35,7 +35,7 @@ export function AeChoiceButtons({
           {field.description}
         </span>
       )}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex min-w-0 flex-wrap gap-2">
         {field.choices.map((choice, index) => (
           <Button
             key={choice.value}
@@ -47,6 +47,8 @@ export function AeChoiceButtons({
                   ? "outline"
                   : "secondary"
             }
+            // A long label wraps inside the card instead of running past the screen.
+            className="h-auto min-h-7 max-w-full min-w-0 shrink justify-start py-0.5 text-left whitespace-normal"
             title={choice.fullLabel}
             aria-label={choice.fullLabel}
             disabled={sent}
