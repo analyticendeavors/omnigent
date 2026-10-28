@@ -30,7 +30,7 @@ export function AeLimitHoverCard({
   // A touch opens or closes on pointer-up: Radix's trigger cancels touchstart, which can swallow the click.
   const touched = useRef(false);
   const rows = aeLimitHoverRows(windows ?? [], gate);
-  if (rows.length === 0) return <>{children}</>;
+  if (rows.length === 0) return <span className="contents">{children}</span>;
   return (
     <HoverCard open={open} onOpenChange={setOpen} openDelay={150} closeDelay={100}>
       <HoverCardTrigger asChild>
