@@ -349,6 +349,7 @@ function Meter({
 function SectionHeader({
   title,
   tag,
+  control,
   right,
   info,
   infoLabel,
@@ -357,6 +358,8 @@ function SectionHeader({
 }: {
   title: ReactNode;
   tag?: ReactNode;
+  /** A control that stays whole beside the title; the title truncates first (omnigent-ae, 2026-10-28). */
+  control?: ReactNode;
   right?: ReactNode;
   info?: string;
   infoLabel?: string;
@@ -371,7 +374,7 @@ function SectionHeader({
     <div className="flex flex-col gap-0.5">
       <div className="flex items-center gap-2">
         <h3 className="flex min-w-0 items-center gap-1 text-sm font-medium text-foreground">
-          <span className="min-w-0 truncate">{title}</span>
+          <span className={cn("min-w-0 truncate", control && "min-w-[7ch]")}>{title}</span>
           {info && (
             <button
               type="button"
@@ -386,6 +389,7 @@ function SectionHeader({
             </button>
           )}
           {tag}
+          {control}
         </h3>
         {right && <span className="ml-auto shrink-0">{right}</span>}
       </div>
@@ -897,7 +901,7 @@ function AeLimitsBlockView({
   accountMenu,
   pending,
 }: AeLimitsBlockProps & {
-  /** Replaces the account name in the header. */
+  /** The account chip, placed beside the title instead of inside it. */
   accountMenu?: ReactNode;
   /** What to say while there is no snapshot to draw, instead of "No reading yet". */
   pending?: string;
@@ -919,20 +923,13 @@ function AeLimitsBlockView({
                 <span data-testid="ae-limits-plan">{snapshot.plan}</span>
               </>
             )}
-            {accountMenu ? (
+            {!accountMenu && (snapshot?.account_label || snapshot?.account) && (
               <>
                 {" · "}
-                {accountMenu}
+                <span data-testid="ae-limits-account">
+                  {snapshot.account_label || snapshot.account}
+                </span>
               </>
-            ) : (
-              (snapshot?.account_label || snapshot?.account) && (
-                <>
-                  {" · "}
-                  <span data-testid="ae-limits-account">
-                    {snapshot.account_label || snapshot.account}
-                  </span>
-                </>
-              )
             )}
           </>
         }
@@ -946,6 +943,7 @@ function AeLimitsBlockView({
             </span>
           ) : null
         }
+        control={accountMenu}
         info={lead ? PLAN_INFO : undefined}
         infoLabel="About plan limits"
         infoOpen={infoOpen}
@@ -1009,6 +1007,27 @@ async function fetchAeLimitAccounts(): Promise<AeLimitAccountRow[]> {
 }
 
 /**
+ * The second line of a menu row: that login's all-models weekly percentage in
+ * the window's tone. Nothing while loading, on an error, with no such window, or once it has reset.
+ * Mounted only while the menu is open, so each row fetches once per opening.
+ * omnigent-ae, 2026-10-28.
+ */
+function AeAccountWeekly({ accountKey, now }: { accountKey: string; now: number }) {
+  const { data } = useAeLimits(true, null, accountKey);
+  const w = data?.harnesses.claude?.windows.find((x) => x.label === "Weekly, all models");
+  // A window past its reset reports last week's number, so it shows no line.
+  if (!w || (w.resets_at !== null && Date.parse(w.resets_at) <= now)) return null;
+  return (
+    <span className="text-xs text-muted-foreground" data-testid="ae-limits-account-weekly">
+      {"Weekly "}
+      <span className={cn("tabular-nums", TONE_TEXT[limitTone(w.used_percent)])}>
+        {Math.round(w.used_percent)}%
+      </span>
+    </span>
+  );
+}
+
+/**
  * The Claude block with a subscription switcher: the account name opens a menu
  * of every Claude login, and picking one shows that login's usage while the
  * chat stays on its own. The pick is this chat's alone and ends with it.
@@ -1052,6 +1071,7 @@ function AeSwitchedBlock({ sessionId, ...block }: AeLimitsBlockProps & { session
           label={label}
           onOpenChange={setMenuOpen}
           onSelect={(key) => setPicked({ sessionId, key })}
+          renderDetail={(key) => <AeAccountWeekly accountKey={key} now={block.now} />}
         />
       }
     />

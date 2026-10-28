@@ -359,7 +359,10 @@ describe("AeLimitsHarnessBlock subscription switcher", () => {
   const BACKUP = {
     ...claude,
     plan: null,
-    windows: win(64),
+    windows: [
+      ...win(64),
+      { ...claude.windows[1], label: "Weekly, all models", used_percent: 81.4 },
+    ],
     account: "shared:AE Backup",
     account_label: "AE Backup",
   };
@@ -404,11 +407,76 @@ describe("AeLimitsHarnessBlock subscription switcher", () => {
   it("lists the Claude logins, marks this chat's, and leaves Codex out", async () => {
     render(block("conv_a"));
     openMenu();
-    const options = await screen.findAllByTestId("ae-limits-account-option");
-    expect(options.map((o) => o.textContent)).toEqual(["AE DefaultMaxThis chat", "AE Backup"]);
+    await screen.findAllByTestId("ae-limits-account-option");
+    await waitFor(() =>
+      expect(screen.getAllByTestId("ae-limits-account-option").map((o) => o.textContent)).toEqual([
+        "AE DefaultMaxThis chat",
+        "AE BackupWeekly 81%",
+      ]),
+    );
+    const options = screen.getAllByTestId("ae-limits-account-option");
     expect(options.map((o) => o.getAttribute("role"))).toEqual(["menuitemradio", "menuitemradio"]);
     expect(options[0].getAttribute("aria-checked")).toBe("true");
-    expect(urls()).toEqual(["/v1/ae/limits/accounts"]);
+    expect(urls()).toContain("/v1/ae/limits/accounts");
+  });
+
+  it("keeps the account chip outside the truncating title span, whole", () => {
+    render(block("conv_a"));
+    const trigger = screen.getByTestId("ae-limits-account-menu");
+    const title = screen.getByTestId("ae-limits-plan").closest(".truncate");
+    expect(title).toBeTruthy();
+    expect(title?.contains(trigger)).toBe(false);
+    expect(trigger.className).toContain("border");
+    expect(trigger.querySelector("svg")?.getAttribute("class")).toContain("shrink-0");
+    expect(trigger.getAttribute("title")).toMatch(/^AE Default\. View another subscription/);
+    expect(screen.getByTestId("ae-limits-account").getAttribute("title")).toBeNull();
+  });
+
+  it("shows each login's all-models weekly use, and nothing without that window", async () => {
+    render(block("conv_a"));
+    openMenu();
+    await screen.findAllByTestId("ae-limits-account-option");
+    const weekly = await screen.findAllByTestId("ae-limits-account-weekly");
+    expect(weekly.map((w) => w.textContent)).toEqual(["Weekly 81%"]);
+    const [own, backup] = screen.getAllByTestId("ae-limits-account-option");
+    expect(own.querySelector('[data-testid="ae-limits-account-weekly"]')).toBeNull();
+    expect(backup.querySelector('[data-testid="ae-limits-account-weekly"]')).toBeTruthy();
+    expect(urls()).toContain("/v1/ae/limits?account=");
+    expect(urls()).toContain("/v1/ae/limits?account=shared%3AAE%20Backup");
+  });
+
+  it("leaves line two out once the weekly window has reset", async () => {
+    const base = vi.mocked(authenticatedFetch).getMockImplementation()!;
+    vi.mocked(authenticatedFetch).mockImplementation(async (input, init) => {
+      const res = await base(input, init);
+      if (!String(input).includes("account=shared")) return res;
+      const body = (await res.json()) as typeof ANSWER;
+      const c = body.harnesses.claude!;
+      c.windows = c.windows.map((w) => ({ ...w, resets_at: iso(NOW - 60_000) }));
+      return new Response(JSON.stringify(body));
+    });
+    render(block("conv_a"));
+    openMenu();
+    await screen.findAllByTestId("ae-limits-account-option");
+    await waitFor(() => expect(urls().some((u) => u.includes("account=shared"))).toBe(true));
+    await new Promise<void>((r) => {
+      setTimeout(r, 50);
+    });
+    expect(screen.queryByTestId("ae-limits-account-weekly")).toBeNull();
+  });
+
+  it("leaves line two out when a login's usage fails to load", async () => {
+    const base = vi.mocked(authenticatedFetch).getMockImplementation()!;
+    vi.mocked(authenticatedFetch).mockImplementation((input, init) =>
+      String(input).includes("account=shared")
+        ? Promise.resolve(new Response("{}", { status: 500 }))
+        : base(input, init),
+    );
+    render(block("conv_a"));
+    openMenu();
+    await screen.findAllByTestId("ae-limits-account-option");
+    await waitFor(() => expect(urls().some((u) => u.includes("account=shared"))).toBe(true));
+    expect(screen.queryByTestId("ae-limits-account-weekly")).toBeNull();
   });
 
   it("shows another login's usage without the session and hides the This session chip", async () => {
@@ -449,9 +517,13 @@ describe("AeLimitsHarnessBlock subscription switcher", () => {
   it("stays plain for Codex and for a block with no session", () => {
     render(<AeLimitsHarnessBlock harness="codex" snapshot={OWN} now={NOW} sessionId="conv_a" />);
     expect(screen.queryByTestId("ae-limits-account-menu")).toBeNull();
+    expect(screen.getByTestId("ae-limits-account").textContent).toBe("AE Default");
     cleanup();
     render(<AeLimitsHarnessBlock harness="claude" snapshot={OWN} now={NOW} />);
     expect(screen.queryByTestId("ae-limits-account-menu")).toBeNull();
+    expect(screen.getByTestId("ae-limits-plan").parentElement?.textContent).toContain(
+      "Claude Code · Max · AE Default",
+    );
   });
 });
 

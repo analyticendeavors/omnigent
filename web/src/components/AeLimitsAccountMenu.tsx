@@ -1,7 +1,10 @@
 // The Usage card's subscription switcher: the Claude account name in the card's
 // header, as a menu of every Claude login the box knows. Picking one shows that
 // account's usage; the chat itself stays on its own login. omnigent-ae, 2026-10-27.
+// Since 2026-10-28 the trigger is a bordered chip beside the title (not inside its
+// truncating span), and each row carries a second line from `renderDetail`.
 
+import type { ReactNode } from "react";
 import { ChevronDownIcon } from "lucide-react";
 import {
   DropdownMenu,
@@ -33,6 +36,7 @@ export function AeLimitsAccountMenu({
   label,
   onOpenChange,
   onSelect,
+  renderDetail,
 }: {
   /** Claude logins; empty until the menu is first opened. */
   rows: readonly AeLimitAccountRow[];
@@ -44,6 +48,8 @@ export function AeLimitsAccountMenu({
   label: string | null;
   onOpenChange: (open: boolean) => void;
   onSelect: (key: string) => void;
+  /** A second muted line under a row's label; null renders nothing. */
+  renderDetail?: (key: string) => ReactNode;
 }) {
   return (
     <DropdownMenu onOpenChange={onOpenChange}>
@@ -51,10 +57,13 @@ export function AeLimitsAccountMenu({
         <button
           type="button"
           data-testid="ae-limits-account-menu"
-          title={TRIGGER_HELP}
-          className="inline-flex max-w-full cursor-pointer items-center gap-0.5 rounded-sm align-baseline outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+          title={`${label ?? "Default login"}. ${TRIGGER_HELP}`}
+          className="-my-0.5 inline-flex max-w-full min-w-0 shrink-[0.0001] cursor-pointer items-center gap-0.5 rounded-md border border-border bg-muted/40 px-2 py-0.5 text-xs font-normal text-foreground outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50"
         >
-          <span className="truncate" data-testid={label ? "ae-limits-account" : undefined}>
+          <span
+            className="min-w-0 truncate pr-0.5"
+            data-testid={label ? "ae-limits-account" : undefined}
+          >
             {label ?? "Default login"}
           </span>
           <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" aria-hidden />
@@ -75,17 +84,22 @@ export function AeLimitsAccountMenu({
                 data-testid="ae-limits-account-option"
                 className="gap-2"
               >
-                <span>{row.label}</span>
-                {row.plan && <span className="text-muted-foreground">{row.plan}</span>}
-                {key === ownKey && (
-                  <span
-                    className="rounded border border-border px-1 text-xs text-muted-foreground"
-                    data-testid="ae-limits-account-own"
-                    title="This chat runs on this login."
-                  >
-                    This chat
+                <span className="flex min-w-0 flex-col">
+                  <span className="flex items-center gap-2">
+                    <span>{row.label}</span>
+                    {row.plan && <span className="text-muted-foreground">{row.plan}</span>}
+                    {key === ownKey && (
+                      <span
+                        className="rounded border border-border px-1 text-xs text-muted-foreground"
+                        data-testid="ae-limits-account-own"
+                        title="This chat runs on this login."
+                      >
+                        This chat
+                      </span>
+                    )}
                   </span>
-                )}
+                  {renderDetail?.(key)}
+                </span>
               </DropdownMenuRadioItem>
             );
           })}
