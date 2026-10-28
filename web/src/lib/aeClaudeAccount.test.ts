@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aeChatAccount, aeMoveAllSummary } from "./aeClaudeAccount";
+import { aeChatAccount, aeMoveAllSummary, aeSwitchSummary } from "./aeClaudeAccount";
 import { aeOtherClaudeAccounts } from "./aeLimitGate";
 import { askAeMoveAll, dismissAeMoveAll } from "./aeMoveAllChats";
 
@@ -52,5 +52,48 @@ describe("askAeMoveAll", () => {
   it("is a store the shell's dialog reads", () => {
     askAeMoveAll({ account: "", label: "AE Default", hostId: undefined });
     dismissAeMoveAll();
+  });
+});
+
+describe("aeSwitchSummary", () => {
+  const own = { account: "B", relaunched: true };
+
+  it("is the plain line when the children were not asked for", () => {
+    expect(aeSwitchSummary("Backup", own)).toBe("This chat now runs on Backup.");
+  });
+
+  it("counts moved children and names each skipped or slow one", () => {
+    expect(
+      aeSwitchSummary("Backup", {
+        ...own,
+        children: {
+          moved: [
+            { id: "a", title: "Builder" },
+            { id: "b", title: "Docs" },
+          ],
+          skipped: [{ id: "c", title: "Reviewer", reason: "mid-reply" }],
+          pending: [{ id: "d", title: "Slow", reason: "still switching" }],
+        },
+      }),
+    ).toBe(
+      "This chat now runs on Backup; 2 child chats moved; 1 still switching: Slow; 1 skipped: Reviewer is mid-reply",
+    );
+  });
+
+  it("says nothing extra when no child needed a move, and keeps a skip's own reason", () => {
+    const none = { moved: [], skipped: [], pending: [] };
+    expect(aeSwitchSummary("Backup", { ...own, children: none })).toBe(
+      "This chat now runs on Backup",
+    );
+    expect(
+      aeSwitchSummary("Backup", {
+        ...own,
+        children: {
+          ...none,
+          moved: [{ id: "a", title: "Builder" }],
+          skipped: [{ id: "c", title: "Docs", reason: "needs a host" }],
+        },
+      }),
+    ).toBe("This chat now runs on Backup; 1 child chat moved; 1 skipped: Docs: needs a host");
   });
 });

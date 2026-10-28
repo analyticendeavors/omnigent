@@ -4,6 +4,7 @@
 // refused while a reply runs, or when the server says no; the reason shows
 // under the rows. The "New chats" heading below it belongs to the same split.
 
+import { useQueryClient } from "@tanstack/react-query";
 import {
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
@@ -21,6 +22,7 @@ import {
   aeChatAccount,
 } from "@/lib/aeClaudeAccount";
 import { AE_MENU_NOTE_CLASS } from "@/lib/aeMenuRow";
+import { aeSwitchOrAsk } from "@/lib/aeSwitchFamily";
 import { AeSharedAccountMarker, aeIsSharedAccount } from "@/lib/aeSharedClaudeAccounts";
 import { cn } from "@/lib/utils";
 
@@ -71,6 +73,7 @@ export function AeThisChatAccounts({
 }) {
   const { session } = useSession(sessionId);
   const change = useAeSwitchClaudeAccount(sessionId);
+  const queryClient = useQueryClient();
   const current = aeChatAccount(session?.labels);
   const disabled = turnBusy || change.isPending;
   return (
@@ -93,7 +96,12 @@ export function AeThisChatAccounts({
               className={cn(RADIO_ROW_CLASS, "flex items-center gap-2")}
               onSelect={(event) => {
                 event.preventDefault();
-                if (accountId !== current) change.mutate(accountId);
+                if (accountId === current) return;
+                aeSwitchOrAsk(
+                  queryClient,
+                  { sessionId, account: accountId, label: row.source },
+                  () => change.mutate({ account: accountId }),
+                );
               }}
               data-testid={`composer-claude-account-chat-${accountId || "default"}`}
             >

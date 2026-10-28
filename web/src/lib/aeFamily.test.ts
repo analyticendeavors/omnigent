@@ -3,6 +3,7 @@ import type { Conversation } from "@/hooks/useConversations";
 import {
   AE_FAMILY_COLORS,
   aeFamilies,
+  aeFamilyChildren,
   aeFamilyHint,
   assignFamilyColors,
   familySlotChain,
@@ -115,5 +116,26 @@ describe("assignFamilyColors", () => {
     } finally {
       Storage.prototype.getItem = original;
     }
+  });
+});
+
+describe("aeFamilyChildren", () => {
+  it("walks ae.orch down to grandchildren, nearest first, and skips forks and archived rows", () => {
+    const rows = [
+      row("lead"),
+      row("grand", { "ae.orch": "kid" }),
+      row("kid", { "ae.orch": "lead" }),
+      row("fork", { "ae.orch": "lead", "omnigent.fork.source_id": "kid" }),
+      { ...row("gone", { "ae.orch": "lead" }), archived: true },
+      row("other", { "ae.orch": "elsewhere" }),
+      row("alone", { "ae.orch": "1" }),
+    ];
+    expect(aeFamilyChildren(rows, "lead").map((c) => c.id)).toEqual(["kid", "grand"]);
+    expect(aeFamilyChildren(rows, "alone")).toEqual([]);
+  });
+
+  it("ends on an ae.orch loop and never lists the chat itself", () => {
+    const rows = [row("a", { "ae.orch": "b" }), row("b", { "ae.orch": "a" })];
+    expect(aeFamilyChildren(rows, "a").map((c) => c.id)).toEqual(["b"]);
   });
 });
