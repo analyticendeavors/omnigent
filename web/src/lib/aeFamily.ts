@@ -283,7 +283,7 @@ export function aeFamilyChildren(rows: readonly Conversation[], id: string): Con
     level = [];
     for (const row of rows) {
       if (seen.has(row.id) || row.archived === true) continue;
-      if (value(row.labels, AE_FORK_SOURCE_KEY) !== null) continue;
+      if (value(row.labels, AE_FORK_SOURCE_KEY) !== null || row.parent_session_id != null) continue;
       const parent = aeOrchParent(row.labels);
       if (parent === null || !parents.has(parent)) continue;
       seen.add(row.id);

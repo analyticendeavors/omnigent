@@ -127,6 +127,7 @@ describe("aeFamilyChildren", () => {
       row("kid", { "ae.orch": "lead" }),
       row("fork", { "ae.orch": "lead", "omnigent.fork.source_id": "kid" }),
       { ...row("gone", { "ae.orch": "lead" }), archived: true },
+      { ...row("sub", { "ae.orch": "lead" }), parent_session_id: "lead" },
       row("other", { "ae.orch": "elsewhere" }),
       row("alone", { "ae.orch": "1" }),
     ];

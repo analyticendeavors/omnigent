@@ -35,6 +35,8 @@ export interface AeChildrenAnswer {
   moved: AeChildOutcome[];
   skipped: AeChildOutcome[];
   pending: AeChildOutcome[];
+  /** Set when the cascade itself failed after the chat switched; no child was attempted. */
+  error?: string;
 }
 
 export interface AeSwitchAnswer {
@@ -127,6 +129,7 @@ export function aeSwitchSummary(label: string, answer: AeSwitchAnswer): string {
   const own = `This chat now runs on ${label}`;
   const kids = answer.children;
   if (!kids) return `${own}.`;
+  if (kids.error) return `${own}; its child chats were not switched`;
   const parts = [own];
   if (kids.moved.length > 0) parts.push(`${plural(kids.moved.length, "child chat")} moved`);
   if (kids.pending.length > 0) {

@@ -80,6 +80,15 @@ describe("aeSwitchSummary", () => {
     );
   });
 
+  it("says the children were not switched when the cascade failed", () => {
+    expect(
+      aeSwitchSummary("Backup", {
+        ...own,
+        children: { moved: [], skipped: [], pending: [], error: "children not attempted" },
+      }),
+    ).toBe("This chat now runs on Backup; its child chats were not switched");
+  });
+
   it("says nothing extra when no child needed a move, and keeps a skip's own reason", () => {
     const none = { moved: [], skipped: [], pending: [] };
     expect(aeSwitchSummary("Backup", { ...own, children: none })).toBe(

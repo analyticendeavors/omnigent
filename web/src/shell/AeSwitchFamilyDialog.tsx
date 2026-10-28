@@ -23,14 +23,18 @@ import {
 import { dismissAeSwitchFamily, useAeSwitchFamilyRequest } from "@/lib/aeSwitchFamily";
 
 export function AeSwitchFamilyDialog() {
-  const request = useAeSwitchFamilyRequest();
+  const live = useAeSwitchFamilyRequest();
+  // Keep the last question so the text does not go blank while the dialog fades out.
+  const lastRef = useRef(live);
+  if (live) lastRef.current = live;
+  const request = live ?? lastRef.current;
   const queryClient = useQueryClient();
   const bothRef = useRef<HTMLButtonElement>(null);
   const count = request?.childCount ?? 0;
   const chats = `${count} child ${count === 1 ? "chat" : "chats"}`;
   const run = (includeChildren: boolean) => {
-    if (!request) return;
-    const { sessionId, account, label } = request;
+    if (!live) return;
+    const { sessionId, account, label } = live;
     dismissAeSwitchFamily();
     // Not the mutation hook: it reads its session id from the request, which is gone by now.
     putAeClaudeAccount(sessionId, account, includeChildren).then(
@@ -40,7 +44,7 @@ export function AeSwitchFamilyDialog() {
         }
         const kids = answer.children;
         // A skipped or slow child stays on screen until dismissed, so it can be retried.
-        const lingers = kids && (kids.skipped.length > 0 || kids.pending.length > 0);
+        const lingers = kids && (kids.error || kids.skipped.length > 0 || kids.pending.length > 0);
         showToast(aeSwitchSummary(label, answer), lingers ? { duration: 0 } : undefined);
       },
       (failure: unknown) => {
@@ -50,7 +54,7 @@ export function AeSwitchFamilyDialog() {
     );
   };
   return (
-    <Dialog open={request !== null} onOpenChange={(open) => !open && dismissAeSwitchFamily()}>
+    <Dialog open={live !== null} onOpenChange={(open) => !open && dismissAeSwitchFamily()}>
       <DialogContent
         data-testid="ae-switch-family-dialog"
         onOpenAutoFocus={(event) => {

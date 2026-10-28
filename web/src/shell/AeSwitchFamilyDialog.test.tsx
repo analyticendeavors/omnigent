@@ -92,6 +92,34 @@ describe("AeSwitchFamilyDialog", () => {
     await waitFor(() => expect(screen.queryByTestId("ae-switch-family-dialog")).toBeNull());
   });
 
+  it("keeps a failed cascade on screen with the not-switched line", async () => {
+    vi.mocked(authenticatedFetch).mockImplementation(() =>
+      json({
+        account: "shared:Backup",
+        relaunched: true,
+        children: { moved: [], skipped: [], pending: [], error: "children not attempted" },
+      }),
+    );
+    ask();
+    fireEvent.click(await screen.findByTestId("ae-switch-family-both"));
+    await waitFor(() =>
+      expect(showToast).toHaveBeenCalledWith(
+        "This chat now runs on Backup; its child chats were not switched",
+        { duration: 0 },
+      ),
+    );
+  });
+
+  it("keeps the login and count in the text after the question is dismissed", async () => {
+    ask(2);
+    expect(
+      await screen.findByText(/This chat has 2 child chats\. Each moved chat restarts on Backup/),
+    ).toBeTruthy();
+    act(() => dismissAeSwitchFamily());
+    expect(screen.queryByText(/This chat has 0 child chats/)).toBeNull();
+    expect(screen.queryByText(/restarts on undefined/)).toBeNull();
+  });
+
   it("a clean family toast uses the default duration", async () => {
     vi.mocked(authenticatedFetch).mockImplementation(() =>
       json({
