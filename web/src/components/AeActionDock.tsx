@@ -239,8 +239,10 @@ function DismissButton({
 }
 
 /**
- * Icon and label from md up, the icon alone on a phone. The strip shows the
- * short label so the limit's own words keep their room; the list the full one.
+ * Icon and label from md up, the icon alone on a phone. The short label in the
+ * strip and the list alike: the list's full labels ("Copy to another login")
+ * pushed its row wider than the tray and drew a sideways scrollbar. The full
+ * words stay in the aria-label and the tooltip.
  */
 /** Its own component so only a shown limit item needs a router (composer tests render without one). */
 function NewChatButton({ inList }: { inList: boolean }) {
@@ -272,10 +274,7 @@ const LimitButton = forwardRef<
     title?: string;
     disabled?: boolean;
   }
->(function LimitButton(
-  { icon, label, short, inList, hideOnPhone, onClick, testId, title, ...rest },
-  ref,
-) {
+>(function LimitButton({ icon, label, short, hideOnPhone, onClick, testId, title, ...rest }, ref) {
   return (
     <Button
       ref={ref}
@@ -288,7 +287,7 @@ const LimitButton = forwardRef<
       {...rest}
     >
       <AeTablerSvg node={icon} className="size-3" />
-      <span className="hidden md:inline">{inList ? label : short}</span>
+      <span className="hidden md:inline">{short}</span>
     </Button>
   );
 });
@@ -817,7 +816,7 @@ function Dock({ sessionId, onSwitchModel }: { sessionId?: string; onSwitchModel?
             ref={listRef}
             className={cn(
               "relative",
-              "overflow-y-auto overscroll-contain",
+              "overflow-x-hidden overflow-y-auto overscroll-contain",
               // Four lines; a confirm or a child's prompt gets up to half the screen to show whole.
               tallList ? "max-h-[50vh]" : "max-h-[120px]",
             )}
