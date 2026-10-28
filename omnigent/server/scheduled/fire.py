@@ -67,6 +67,7 @@ from omnigent.server.routes._session_create_validation import (
     validate_session_model_metadata,
     validate_session_permission_mode,
 )
+from omnigent.server.scheduled.checkin_relay import relay_checkin
 from omnigent.server.scheduled.retention import notify_fire_observers
 from omnigent.server.scheduled.task_project import file_fired_session
 from omnigent.server.schemas import SessionEventInput
@@ -151,6 +152,9 @@ class FireDeps:
     # ``None`` (tests, embedders) leaves every fired session private.
     app_state: Any | None = None
     project_store: Any | None = None
+    # Posts a check-in into the session it names (see ``checkin_relay``); ``None``
+    # always fires a fresh session.
+    post_session_message: Any | None = None
 
 
 @dataclass
@@ -387,6 +391,9 @@ async def _run_fire_for_task(
                 error=f"owner {task.user_id!r} registration is no longer active; task disabled",
                 error_code="owner_deleted",
             )
+            return
+        if await relay_checkin(deps, task):
+            await _record_run(deps, task, None, scheduled_at, status="succeeded")
             return
         managed = task.execution_target == "managed_sandbox"
         if not managed and task.execution_target != "connected_host":
