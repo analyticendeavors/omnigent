@@ -20,13 +20,18 @@ export function aeScreenShift(
   return Math.round(fitted - left);
 }
 
+/** The width the user can see: the visual viewport shrinks under pinch-zoom on iOS. */
+function visibleWidth(): number {
+  return window.visualViewport?.width ?? window.innerWidth;
+}
+
 /** Shift `node` inside the screen now and whenever Radix repositions its wrapper. */
 export function aeKeepOnScreen(node: HTMLElement): () => void {
   const wrapper = node.parentElement;
   if (!wrapper) return () => {};
   const fit = () => {
     const box = wrapper.getBoundingClientRect();
-    const shift = aeScreenShift(box.left, box.width, window.innerWidth);
+    const shift = aeScreenShift(box.left, box.width, visibleWidth());
     node.style.position = "relative";
     node.style.left = shift === 0 ? "" : `${shift}px`;
   };
@@ -35,10 +40,12 @@ export function aeKeepOnScreen(node: HTMLElement): () => void {
   const observer = new MutationObserver(fit);
   observer.observe(wrapper, { attributes: true, attributeFilter: ["style"] });
   window.addEventListener("resize", fit);
+  window.visualViewport?.addEventListener("resize", fit);
   return () => {
     cancelAnimationFrame(frame);
     observer.disconnect();
     window.removeEventListener("resize", fit);
+    window.visualViewport?.removeEventListener("resize", fit);
   };
 }
 

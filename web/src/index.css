@@ -2413,14 +2413,26 @@ main[data-shell-header="hidden"] .extension-view-host {
   padding-top: 0;
 }
 
-/* Native shells float the header at safe-top minus 0.5rem, so an extension
- * page must start below that band or the header covers its top controls. */
-@media (width < 48rem) {
-  :is([data-ios-native], [data-android-native])
-    main[data-shell-header="visible"]
-    .extension-view-host {
-    padding-top: calc(var(--omnigent-header-height) + max(0px, var(--omnigent-safe-top) - 0.5rem));
+/* Native shells float the header at safe-top minus 0.5rem (3.5rem tall, 3rem from
+ * md up), so an extension page and its loading overlay start below that band or
+ * the header covers their top controls. */
+:is([data-ios-native], [data-android-native]) main[data-shell-header="visible"] {
+  --ae-extension-top: calc(3.5rem + max(0px, var(--omnigent-safe-top) - 0.5rem));
+}
+@media (width >= 48rem) {
+  :is([data-ios-native], [data-android-native]) main[data-shell-header="visible"] {
+    --ae-extension-top: calc(3rem + max(0px, var(--omnigent-safe-top) - 0.5rem));
   }
+}
+:is([data-ios-native], [data-android-native])
+  main[data-shell-header="visible"]
+  .extension-view-host {
+  padding-top: var(--ae-extension-top);
+}
+:is([data-ios-native], [data-android-native])
+  main[data-shell-header="visible"]
+  .extension-view-status {
+  top: var(--ae-extension-top);
 }
 
 main[data-shell-header="hidden"] .extension-view-status {
