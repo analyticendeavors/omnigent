@@ -1,6 +1,7 @@
 import * as React from "react";
 import * as DropdownMenuPrimitive from "radix-ui/dropdown-menu";
 
+import { useAeKeepOnScreen } from "@/lib/aeKeepOnScreen";
 import { getEmbedRoot } from "@/lib/host";
 import { cn } from "@/lib/utils";
 import { CheckIcon, ChevronRightIcon } from "lucide-react";
@@ -241,6 +242,7 @@ const DropdownMenuSubContent = React.forwardRef<
   { className, sideOffset = 6, collisionPadding = 8, ...props },
   ref,
 ) {
+  const keepOnScreen = useAeKeepOnScreen(ref);
   // Portal the sub-flyout (Radix doesn't by default) for the same reason as
   // DropdownMenuContent. Without it, the sub-content's position:fixed popper
   // wrapper renders inside the parent menu's [role="menu"] box. The dark-mode
@@ -252,12 +254,12 @@ const DropdownMenuSubContent = React.forwardRef<
   return (
     <DropdownMenuPrimitive.Portal container={getEmbedRoot() ?? undefined}>
       <DropdownMenuPrimitive.SubContent
-        ref={ref}
+        ref={keepOnScreen}
         data-slot="dropdown-menu-sub-content"
         sideOffset={sideOffset}
         collisionPadding={collisionPadding}
         className={cn(
-          "z-50 w-max min-w-[96px] origin-(--radix-dropdown-menu-content-transform-origin) overflow-hidden whitespace-nowrap rounded-[12px] border border-border bg-popover p-2 text-popover-foreground shadow-menu duration-150 ease-[cubic-bezier(0.16,1,0.3,1)] data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "z-50 w-max min-w-[96px] max-w-[calc(100vw-1rem)] origin-(--radix-dropdown-menu-content-transform-origin) overflow-hidden whitespace-nowrap rounded-[12px] border border-border bg-popover p-2 text-popover-foreground shadow-menu duration-150 ease-[cubic-bezier(0.16,1,0.3,1)] data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className,
         )}
         {...props}
