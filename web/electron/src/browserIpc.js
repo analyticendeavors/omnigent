@@ -9,6 +9,7 @@
 
 const crypto = require("node:crypto");
 const { buildDesignModeScript } = require("./designModeScript");
+const { captureBrowserView } = require("./aeBrowserCapture");
 
 // Max age of a real native input event for a design-mode submit marker to be
 // honored (see the gesture gate below). Covers click/Enter → console.log.
@@ -255,6 +256,8 @@ function makeDesignModeInputHandler(gestureState) {
  * @param {(event: Electron.IpcMainInvokeEvent) =>
  *          (import('./browserViewRegistry').Registry | null)} deps.getRegistryForEvent
  *        Resolves the sender window's own browser-view registry.
+ * @param {(event: Electron.IpcMainInvokeEvent) => (Electron.BrowserWindow | null)} [deps.getHostWindowForEvent]
+ *        Resolves the sender's host window; screenshots stage a detached view in it.
  */
 function registerBrowserIpc({
   ipcMain,
@@ -263,6 +266,7 @@ function registerBrowserIpc({
   getAgentContextForEvent = () => null,
   recoverAgentNavigationForEvent = async () => false,
   getAgentNavigationHintForEvent = () => null,
+  getHostWindowForEvent = () => null,
 }) {
   /**
    * Resolve the sender's registry after the privileged-origin gate. Returns
@@ -410,13 +414,12 @@ function registerBrowserIpc({
     const { conversationId } = args ?? {};
     const entry = g.registry.get(conversationId);
     if (!entry) return { ok: false, error: "No browser view" };
-    try {
-      const image = await entry.view.webContents.capturePage();
-      const dataUrl = `data:image/png;base64,${image.toPNG().toString("base64")}`;
-      return { ok: true, dataUrl };
-    } catch (e) {
-      return { ok: false, error: e && e.message ? e.message : String(e) };
-    }
+    return captureBrowserView({
+      registry: g.registry,
+      conversationId,
+      entry,
+      win: getHostWindowForEvent(event),
+    });
   });
 
   // Run relay-template JS in the conversation's view. PRIVATE to the relay's

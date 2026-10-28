@@ -94,7 +94,7 @@ function jsNumber(n: number): string {
  *  Snapshot REPLACES the ref map — two agents on one page collide (known limit,
  *  but the snapshot_id check turns a mis-click into a clean error).
  *  Returns JSON: `{ snapshot_id, url, title, tree }`. */
-const SNAPSHOT_JS = `(() => {
+export const SNAPSHOT_JS = `(() => {
   const snapshotId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : ('snap-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10));
   window.__omni_refs__ = new Map();
   window.__omni_snapshot_id__ = snapshotId;
@@ -162,20 +162,24 @@ const SNAPSHOT_JS = `(() => {
     return text.trim().replace(/\\s+/g, ' ').slice(0, 80);
   }
 
-  function isVisible(el) {
-    if (!el.getBoundingClientRect) return false;
-    const style = window.getComputedStyle(el);
-    if (style.display === 'none' || style.visibility === 'hidden') return false;
-    if (style.opacity === '0') return false;
-    const rect = el.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0;
+  // A zero-size or display:contents box (e.g. a modal portal root) does not hide
+  // its position:fixed children; only display:none, opacity:0 or a clipped
+  // zero-area box does. The element itself is emitted only when it is visible.
+  function hidesSubtree(style, rect) {
+    if (style.display === 'none' || style.opacity === '0') return true;
+    if (style.display === 'contents') return false;
+    return (rect.width === 0 && style.overflowX !== 'visible') ||
+      (rect.height === 0 && style.overflowY !== 'visible');
   }
 
   function walk(el, depth) {
-    if (!(el instanceof Element)) return;
-    if (!isVisible(el)) return;
+    if (!el || el.nodeType !== 1 || !el.getBoundingClientRect) return;
+    const style = (el.ownerDocument && el.ownerDocument.defaultView || window).getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    if (hidesSubtree(style, rect)) return;
+    const visible = style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
     const role = getRole(el);
-    const picked = role !== null && role !== 'generic';
+    const picked = visible && role !== null && role !== 'generic';
     let childDepth = depth;
     if (picked) {
       const ref = ++nextRef;
@@ -190,6 +194,16 @@ const SNAPSHOT_JS = `(() => {
     }
     for (const child of el.children) {
       walk(child, childDepth);
+    }
+    if (el.shadowRoot) {
+      for (const child of el.shadowRoot.children) walk(child, childDepth);
+    }
+    const tag = el.tagName && el.tagName.toLowerCase();
+    if (tag === 'iframe' || tag === 'frame') {
+      try {
+        const body = el.contentDocument && el.contentDocument.body;
+        if (body) walk(body, childDepth);
+      } catch (e) { /* cross-origin frame */ }
     }
   }
 

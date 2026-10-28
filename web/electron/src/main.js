@@ -4827,6 +4827,7 @@ function registerIpc() {
     ipcMain,
     isPinnedOriginSender,
     getRegistryForEvent: browserRegistryForSender,
+    getHostWindowForEvent: (event) => BrowserWindow.fromWebContents(event.sender),
     getAgentContextForEvent: (event, sourceHostId) => ({
       serverTarget: arcaTarget(windowArcaServerUrl(BrowserWindow.fromWebContents(event.sender))),
       sourceHostId: typeof sourceHostId === "string" ? sourceHostId : null,
