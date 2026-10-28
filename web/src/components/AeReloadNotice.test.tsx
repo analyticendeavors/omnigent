@@ -49,7 +49,7 @@ describe("AeReloadNotice", () => {
     await tick(AE_BUILD_CHECK_INTERVAL_MS * 3);
     expect(mocks.toast).toHaveBeenCalledTimes(1);
     const [title, options] = mocks.toast.mock.calls[0];
-    expect(title).toBe("OmniGent was updated.");
+    expect(title).toBe("Omnigent was updated.");
     expect(options).toMatchObject({
       id: "ae-reload-notice",
       description: "Reload to get the new version.",

@@ -7,7 +7,7 @@ import { startBuildCheck } from "@/lib/aeBuildCheck";
 const TOAST_ID = "ae-reload-notice";
 
 /**
- * Shows one persistent "OmniGent was updated" toast when the server serves a
+ * Shows one persistent "Omnigent was updated" toast when the server serves a
  * newer build than this tab runs (patch 0214). Renders nothing itself and never
  * reloads on its own. "Later" dismisses it for that build; a different, newer
  * build shows it again.
@@ -19,7 +19,7 @@ export function AeReloadNotice() {
       embedded
         ? undefined
         : startBuildCheck(() => {
-            toast("OmniGent was updated.", {
+            toast("Omnigent was updated.", {
               id: TOAST_ID,
               description: "Reload to get the new version.",
               duration: Number.POSITIVE_INFINITY,
