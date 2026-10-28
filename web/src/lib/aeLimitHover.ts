@@ -22,25 +22,33 @@ export interface AeLimitHoverRow {
   level: AeLimitLevel;
 }
 
+/** Takes the raw reading: the gate compares it, not the rounded figure, to its threshold. */
 export function aeLimitLevel(percent: number): AeLimitLevel {
   if (percent >= AE_LIMIT_GATE_PERCENT) return "warn";
   return percent >= AMBER_PERCENT ? "mid" : "ok";
 }
 
-/** The server labels a weekly row "Weekly, Sonnet"; the popover reads "Weekly · Sonnet". */
+/** The server labels a weekly row "Weekly, Sonnet"; the card reads "Weekly · Sonnet" (the popover keeps the comma). */
 function rowLabel(w: AeLimitWindow): string {
   return w.label.replace(/^(Weekly), /, "$1 · ");
 }
 
 /**
  * The 5-hour window, the all-models weekly window, then every other window
- * fullest first. Windows with no usable percentage are left out.
+ * fullest first. Windows with no usable percentage are left out, and so are
+ * those whose reset has passed: their reading is the old window's, which the
+ * gate skips too.
  */
 export function aeLimitHoverRows(
   windows: readonly AeLimitWindow[],
   gate: AeLimitGate,
+  now: number = Date.now(),
 ): AeLimitHoverRow[] {
-  const usable = windows.filter((w) => Number.isFinite(w.used_percent));
+  const usable = windows.filter((w) => {
+    if (!Number.isFinite(w.used_percent)) return false;
+    const at = w.resets_at ? Date.parse(w.resets_at) : Number.NaN;
+    return !Number.isFinite(at) || at > now;
+  });
   const { five, week } = aeHeadlineWindows(usable);
   const head = [five, week].filter((w): w is AeLimitWindow => w !== null);
   const rest = usable
@@ -54,7 +62,7 @@ export function aeLimitHoverRows(
       percent,
       resetsAt: w.resets_at,
       isGate: w.id === gate.windowId,
-      level: aeLimitLevel(percent),
+      level: aeLimitLevel(w.used_percent),
     };
   });
 }

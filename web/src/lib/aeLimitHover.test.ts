@@ -4,6 +4,7 @@ import type { AeLimitGate } from "./aeLimitGate";
 import { aeLimitHoverRows, aeLimitLevel } from "./aeLimitHover";
 
 const RESET = "2026-10-30T09:00:00Z";
+const NOW = Date.parse("2026-10-28T12:00:00Z");
 
 function win(id: string, label: string, used: number, minutes: number | null): AeLimitWindow {
   return { id, label, used_percent: used, resets_at: RESET, window_minutes: minutes };
@@ -35,7 +36,7 @@ describe("aeLimitLevel", () => {
 
 describe("aeLimitHoverRows", () => {
   it("puts the 5-hour and all-models weekly rows first, then the rest fullest first", () => {
-    const rows = aeLimitHoverRows(WINDOWS, GATE);
+    const rows = aeLimitHoverRows(WINDOWS, GATE, NOW);
     expect(rows.map((r) => r.id)).toEqual([
       "five_hour",
       "seven_day",
@@ -45,7 +46,7 @@ describe("aeLimitHoverRows", () => {
   });
 
   it("reads Weekly, X as Weekly · X, rounds, and marks the gate's own window", () => {
-    const rows = aeLimitHoverRows(WINDOWS, GATE);
+    const rows = aeLimitHoverRows(WINDOWS, GATE, NOW);
     expect(rows.map((r) => r.label)).toEqual([
       "5-hour",
       "Weekly · all models",
@@ -57,9 +58,25 @@ describe("aeLimitHoverRows", () => {
     expect(rows.map((r) => r.level)).toEqual(["ok", "warn", "warn", "ok"]);
   });
 
+  it("drops a window whose reset has passed", () => {
+    const old = { ...win("five_hour", "5-hour", 97, 300), resets_at: "2026-10-28T12:00:00Z" };
+    const rows = aeLimitHoverRows(
+      [old, ...WINDOWS.slice(0, 3)],
+      GATE,
+      Date.parse("2026-10-28T13:00:00Z"),
+    );
+    expect(rows.map((r) => r.id)).not.toContain("five_hour");
+  });
+
+  it("colours by the raw reading, as the gate compares it", () => {
+    const rows = aeLimitHoverRows([win("seven_day", "Weekly, all models", 89.6, 10080)], GATE, NOW);
+    expect(rows[0]!.percent).toBe(90);
+    expect(rows[0]!.level).toBe("mid");
+  });
+
   it("drops a window with no usable percentage and answers [] for none", () => {
     const bad = { ...win("x", "Weekly, X", Number.NaN, 10080) };
-    expect(aeLimitHoverRows([bad], GATE)).toEqual([]);
-    expect(aeLimitHoverRows([], GATE)).toEqual([]);
+    expect(aeLimitHoverRows([bad], GATE, NOW)).toEqual([]);
+    expect(aeLimitHoverRows([], GATE, NOW)).toEqual([]);
   });
 });

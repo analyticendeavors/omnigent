@@ -2,7 +2,7 @@
 // chat's login. Hover opens it on a desktop; a tap does on a phone, which has
 // no hover. omnigent-ae, 2026-10-28.
 
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useId, useRef, useState } from "react";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import type { AeLimitWindow } from "@/components/AePlanLimits";
 import { aeLimitResetClock, type AeLimitGate } from "@/lib/aeLimitGate";
@@ -25,23 +25,50 @@ export function AeLimitHoverCard({
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const cardId = useId();
+  const trigger = useRef<HTMLButtonElement>(null);
+  // A touch opens or closes on pointer-up: Radix's trigger cancels touchstart, which can swallow the click.
+  const touched = useRef(false);
   const rows = aeLimitHoverRows(windows ?? [], gate);
   if (rows.length === 0) return <>{children}</>;
   return (
     <HoverCard open={open} onOpenChange={setOpen} openDelay={150} closeDelay={100}>
       <HoverCardTrigger asChild>
         <button
+          ref={trigger}
           type="button"
+          aria-expanded={open}
+          aria-controls={open ? cardId : undefined}
           className="flex shrink-0 items-center rounded-md p-0.5 hover:bg-muted"
           aria-label={`Usage for ${gate.label}`}
-          // A tap opens it; a mouse already did on hover, so a click never closes it.
-          onClick={() => setOpen(true)}
+          onPointerUp={(e) => {
+            if (e.pointerType !== "touch") return;
+            touched.current = true;
+            setOpen((o) => !o);
+          }}
+          // A mouse already opened it on hover, so its click never closes it; a touch handled the tap above.
+          onClick={() => {
+            if (touched.current) touched.current = false;
+            else setOpen(true);
+          }}
           data-testid="ae-dock-limit-icon"
         >
           {children}
         </button>
       </HoverCardTrigger>
-      <HoverCardContent side="top" align="start" className="w-72" data-testid="ae-dock-limit-card">
+      <HoverCardContent
+        id={cardId}
+        role="region"
+        aria-label={`Usage for ${gate.label}`}
+        side="top"
+        align="start"
+        className="w-72"
+        // The icon's own tap toggles; an outside press on it must not close the card first.
+        onPointerDownOutside={(e) => {
+          if (e.target instanceof Node && trigger.current?.contains(e.target)) e.preventDefault();
+        }}
+        data-testid="ae-dock-limit-card"
+      >
         <div className="mb-2 text-xs font-semibold">{gate.label}</div>
         <ul className="flex flex-col gap-2">
           {rows.map((row) => (
