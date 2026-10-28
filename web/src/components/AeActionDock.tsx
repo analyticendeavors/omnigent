@@ -251,6 +251,7 @@ function NewChatButton({ inList }: { inList: boolean }) {
       label="New chat"
       short="New chat"
       inList={inList}
+      hideOnPhone={!inList}
       onClick={() => navigate("/")}
       testId="ae-dock-limit-new"
     />
@@ -264,17 +265,22 @@ const LimitButton = forwardRef<
     label: string;
     short: string;
     inList: boolean;
+    /** A phone strip is too narrow for it: it would spill over the badges. The list keeps it. */
+    hideOnPhone?: boolean;
     onClick?: () => void;
     testId: string;
     title?: string;
     disabled?: boolean;
   }
->(function LimitButton({ icon, label, short, inList, onClick, testId, title, ...rest }, ref) {
+>(function LimitButton(
+  { icon, label, short, inList, hideOnPhone, onClick, testId, title, ...rest },
+  ref,
+) {
   return (
     <Button
       ref={ref}
       variant="outline"
-      className={cn(ACTION, "w-6 px-0 md:w-auto md:px-2")}
+      className={cn(ACTION, "w-6 px-0 md:w-auto md:px-2", hideOnPhone && "hidden md:inline-flex")}
       aria-label={label}
       title={title ?? label}
       onClick={onClick}
@@ -751,7 +757,7 @@ function Dock({ sessionId, onSwitchModel }: { sessionId?: string; onSwitchModel?
         ) : (
           <span
             className={cn(
-              "flex min-w-0 items-center gap-1.5 md:gap-2",
+              "flex min-w-0 items-center gap-1.5 overflow-hidden md:gap-2",
               liveNotice && "h-6 rounded-md bg-emerald-500/15 pr-0.5 pl-1.5",
             )}
             data-testid={liveNotice ? "ae-dock-live" : undefined}
