@@ -1736,6 +1736,7 @@ def create_app(
         # the run — all fire-and-forget so the timer re-arms immediately.
         scheduled_task_scheduler: ScheduledTaskScheduler | None = None
         if scheduled_task_store is not None:
+            from omnigent.server.scheduled.checkin_relay import build_session_poster
             from omnigent.server.scheduled.fire import FireDeps, build_on_fire, build_run_now
 
             fire_deps = FireDeps(
@@ -1758,6 +1759,7 @@ def create_app(
                 managed_launches=app_inst.state.managed_launches,
                 app_state=app_inst.state,
                 project_store=project_store,
+                post_session_message=build_session_poster(app_inst, auth_provider),
             )
             on_fire = build_on_fire(fire_deps)
             # The manual "run now" trigger reuses the same fire path (dispatch /
