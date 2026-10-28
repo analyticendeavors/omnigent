@@ -43,6 +43,13 @@ describe("aeScreenShift", () => {
     expect(aeScreenShift(-73, 192, 440)).toBe(81);
   });
 
+  it("keeps a box inside a visible band that starts right of the page's left edge", () => {
+    // Pinch-zoomed and panned: the visible band is x 200 to 590 (offset 200, width 390).
+    expect(aeScreenShift(150, 192, 390, 200)).toBe(58);
+    expect(aeScreenShift(500, 192, 390, 200)).toBe(-110);
+    expect(aeScreenShift(300, 192, 390, 200)).toBe(0);
+  });
+
   it("keeps the left edge visible when the box is wider than the screen", () => {
     expect(aeScreenShift(50, 500, 390)).toBe(-42);
   });
@@ -82,6 +89,31 @@ describe("aeKeepOnScreen", () => {
     const stop = aeKeepOnScreen(node);
     expect(node.style.left).toBe("-92px");
     stop();
+  });
+
+  it("follows a pinch-zoomed screen that is panned right and refits on its scroll", () => {
+    const listeners: Record<string, () => void> = {};
+    const vv = {
+      width: 390,
+      offsetLeft: 200,
+      addEventListener: vi.fn((name: string, fn: () => void) => {
+        listeners[name] = fn;
+      }),
+      removeEventListener: vi.fn(),
+    };
+    window.innerWidth = 1024;
+    Object.defineProperty(window, "visualViewport", { value: vv, configurable: true });
+    const { node, wrapper } = flyout(150, 192);
+    const stop = aeKeepOnScreen(node);
+    // Band is x 200 to 590, so a flyout at 150 moves right to 208.
+    expect(node.style.left).toBe("58px");
+    vv.offsetLeft = 0;
+    wrapper.getBoundingClientRect = () => ({ left: 150, width: 192 }) as DOMRect;
+    listeners.scroll();
+    expect(node.style.left).toBe("");
+    stop();
+    expect(vv.removeEventListener).toHaveBeenCalledWith("scroll", expect.any(Function));
+    expect(vv.removeEventListener).toHaveBeenCalledWith("resize", expect.any(Function));
   });
 
   it("stops observing after cleanup", async () => {

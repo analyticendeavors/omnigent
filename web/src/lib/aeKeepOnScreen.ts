@@ -9,20 +9,25 @@ import * as React from "react";
 
 export const AE_SCREEN_MARGIN = 8;
 
-/** How far to move a box at `left` with `width` so it sits inside `viewport` minus the margin. */
+/**
+ * How far to move a box at `left` with `width` so it sits inside the visible band
+ * `[origin, origin + viewport]` minus the margin.
+ */
 export function aeScreenShift(
   left: number,
   width: number,
   viewport: number,
+  origin = 0,
   margin = AE_SCREEN_MARGIN,
 ): number {
-  const fitted = Math.max(margin, Math.min(left, viewport - margin - width));
+  const fitted = Math.max(origin + margin, Math.min(left, origin + viewport - margin - width));
   return Math.round(fitted - left);
 }
 
-/** The width the user can see: the visual viewport shrinks under pinch-zoom on iOS. */
-function visibleWidth(): number {
-  return window.visualViewport?.width ?? window.innerWidth;
+/** The band the user can see: under pinch-zoom on iOS the visual viewport shrinks and pans. */
+function visibleBand(): { origin: number; width: number } {
+  const vv = window.visualViewport;
+  return vv ? { origin: vv.offsetLeft, width: vv.width } : { origin: 0, width: window.innerWidth };
 }
 
 /** Shift `node` inside the screen now and whenever Radix repositions its wrapper. */
@@ -31,7 +36,8 @@ export function aeKeepOnScreen(node: HTMLElement): () => void {
   if (!wrapper) return () => {};
   const fit = () => {
     const box = wrapper.getBoundingClientRect();
-    const shift = aeScreenShift(box.left, box.width, visibleWidth());
+    const { origin, width } = visibleBand();
+    const shift = aeScreenShift(box.left, box.width, width, origin);
     node.style.position = "relative";
     node.style.left = shift === 0 ? "" : `${shift}px`;
   };
@@ -41,11 +47,13 @@ export function aeKeepOnScreen(node: HTMLElement): () => void {
   observer.observe(wrapper, { attributes: true, attributeFilter: ["style"] });
   window.addEventListener("resize", fit);
   window.visualViewport?.addEventListener("resize", fit);
+  window.visualViewport?.addEventListener("scroll", fit);
   return () => {
     cancelAnimationFrame(frame);
     observer.disconnect();
     window.removeEventListener("resize", fit);
     window.visualViewport?.removeEventListener("resize", fit);
+    window.visualViewport?.removeEventListener("scroll", fit);
   };
 }
 
