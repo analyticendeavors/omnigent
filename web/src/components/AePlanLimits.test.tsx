@@ -28,6 +28,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAeSessionRailStore } from "@/lib/aeSessionRail";
 import { type AeContextSnapshotState, resetAeContextSnapshots } from "./aeContextUsage";
 import { SNAPSHOT } from "./aeRailTestFixtures";
+import { AeLimitsAccountMenu } from "./AeLimitsAccountMenu";
 import {
   type AeLimitsAnswer,
   AeLimitsHarnessBlock,
@@ -399,7 +400,7 @@ describe("AeLimitsHarnessBlock subscription switcher", () => {
   it("turns the account name into a menu with a tooltip, and fetches nothing until opened", () => {
     render(block("conv_a"));
     const trigger = screen.getByTestId("ae-limits-account-menu");
-    expect(trigger.textContent).toBe("AE Default");
+    expect(trigger.textContent).toBe("AE Default · Max");
     expect(trigger.getAttribute("title")).toMatch(/This chat stays on its own login/);
     expect(urls()).toEqual([]);
   });
@@ -423,12 +424,18 @@ describe("AeLimitsHarnessBlock subscription switcher", () => {
   it("keeps the account chip outside the truncating title span, whole", () => {
     render(block("conv_a"));
     const trigger = screen.getByTestId("ae-limits-account-menu");
-    const title = screen.getByTestId("ae-limits-plan").closest(".truncate");
+    const title = screen.getByRole("heading", { level: 3 }).querySelector(".truncate");
     expect(title).toBeTruthy();
     expect(title?.contains(trigger)).toBe(false);
+    expect(title?.className).toContain("shrink-0");
+    expect(title?.textContent).toBe("Claude Code");
     expect(trigger.className).toContain("border");
     expect(trigger.querySelector("svg")?.getAttribute("class")).toContain("shrink-0");
-    expect(trigger.getAttribute("title")).toMatch(/^AE Default\. View another subscription/);
+    expect(trigger.getAttribute("title")).toMatch(/^AE Default, Max\. View another subscription/);
+    expect(trigger.getAttribute("aria-label")).toBe("AE Default, Max");
+    expect(trigger.textContent).toBe("AE Default · Max");
+    expect(trigger.contains(screen.getByTestId("ae-limits-plan"))).toBe(true);
+    expect(trigger.hasAttribute("data-viewing-other")).toBe(false);
     expect(screen.getByTestId("ae-limits-account").getAttribute("title")).toBeNull();
   });
 
@@ -481,12 +488,20 @@ describe("AeLimitsHarnessBlock subscription switcher", () => {
 
   it("shows another login's usage without the session and hides the This session chip", async () => {
     render(block("conv_a"));
-    expect(screen.getByTestId("ae-limits-in-use")).toBeTruthy();
+    const dot = screen.getByTestId("ae-limits-in-use");
+    expect(dot.className).toContain("rounded-full");
+    expect(dot.getAttribute("title")).toBe("This session");
+    expect(dot.getAttribute("aria-label")).toBe("This session");
     openMenu();
     fireEvent.click((await screen.findAllByTestId("ae-limits-account-option"))[1]);
     await waitFor(() =>
       expect(screen.getByTestId("ae-limits-account-menu").textContent).toBe("AE Backup"),
     );
+    expect(screen.getByTestId("ae-limits-account-menu").hasAttribute("data-viewing-other")).toBe(
+      true,
+    );
+    expect(screen.getByTestId("ae-limits-account-menu").className).toContain("amber");
+    expect(screen.getByTestId("ae-limits-account-menu").querySelector("svg")).toBeTruthy();
     await waitFor(() =>
       expect(screen.getAllByTestId("ae-limit-window")[0].textContent).toContain("64"),
     );
@@ -500,6 +515,45 @@ describe("AeLimitsHarnessBlock subscription switcher", () => {
     expect(screen.getAllByTestId("ae-limit-window")[0].textContent).toContain("11");
   });
 
+  it("marks a shared login with the users icon and drops the (shared) suffix from the chip", () => {
+    render(
+      <AeLimitsAccountMenu
+        rows={[]}
+        ownKey=""
+        selectedKey="shared:AE Backup"
+        label="AE Backup (shared)"
+        plan="Max"
+        onOpenChange={() => {}}
+        onSelect={() => {}}
+      />,
+    );
+    const chip = screen.getByTestId("ae-limits-account-menu");
+    expect(screen.getByTestId("ae-limits-account").textContent).toBe("AE Backup");
+    expect(within(chip).getByTestId("ae-limits-account-shared").querySelector("svg")).toBeTruthy();
+    expect(chip.getAttribute("title")).toMatch(/^AE Backup \(shared\), Max\./);
+    expect(chip.getAttribute("aria-label")).toBe("AE Backup (shared), Max");
+    expect(chip.hasAttribute("data-viewing-other")).toBe(false);
+  });
+
+  it("shows a shared login's name, not its raw key, and says when the card views another login", () => {
+    render(
+      <AeLimitsAccountMenu
+        rows={[]}
+        ownKey=""
+        selectedKey="shared:AE Backup"
+        label="shared:AE Backup"
+        plan={null}
+        viewingOther
+        onOpenChange={() => {}}
+        onSelect={() => {}}
+      />,
+    );
+    const chip = screen.getByTestId("ae-limits-account-menu");
+    expect(chip.textContent).toBe("AE Backup");
+    expect(screen.queryByTestId("ae-limits-plan")).toBeNull();
+    expect(chip.getAttribute("aria-label")).toBe("AE Backup (shared), viewing another login");
+  });
+
   it("goes back to the chat's own login when the chat changes", async () => {
     const view = render(block("conv_a"));
     openMenu();
@@ -509,7 +563,7 @@ describe("AeLimitsHarnessBlock subscription switcher", () => {
     );
     view.rerender(block("conv_b"));
     await waitFor(() =>
-      expect(screen.getByTestId("ae-limits-account-menu").textContent).toBe("AE Default"),
+      expect(screen.getByTestId("ae-limits-account-menu").textContent).toBe("AE Default · Max"),
     );
     expect(screen.getByTestId("ae-limits-in-use")).toBeTruthy();
   });

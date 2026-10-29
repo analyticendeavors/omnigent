@@ -373,8 +373,13 @@ function SectionHeader({
   return (
     <div className="flex flex-col gap-0.5">
       <div className="flex items-center gap-2">
-        <h3 className="flex min-w-0 items-center gap-1 text-sm font-medium text-foreground">
-          <span className={cn("min-w-0 truncate", control && "min-w-[7ch]")}>{title}</span>
+        <h3
+          className={cn(
+            "flex min-w-0 items-center gap-1 text-sm font-medium text-foreground",
+            control && "flex-1",
+          )}
+        >
+          <span className={cn("min-w-0 truncate", control && "shrink-0")}>{title}</span>
           {info && (
             <button
               type="button"
@@ -917,7 +922,7 @@ function AeLimitsBlockView({
         title={
           <>
             {AE_HARNESS_NAMES[harness]}
-            {snapshot?.plan && (
+            {!accountMenu && snapshot?.plan && (
               <>
                 {" · "}
                 <span data-testid="ae-limits-plan">{snapshot.plan}</span>
@@ -936,11 +941,12 @@ function AeLimitsBlockView({
         tag={
           inUse ? (
             <span
-              className="ml-1 shrink-0 rounded border border-border px-1 text-xs font-normal text-muted-foreground"
+              role="img"
+              aria-label="This session"
+              className="size-1.5 shrink-0 rounded-full bg-emerald-500"
               data-testid="ae-limits-in-use"
-            >
-              This session
-            </span>
+              title="This session"
+            />
           ) : null
         }
         control={accountMenu}
@@ -1069,6 +1075,8 @@ function AeSwitchedBlock({ sessionId, ...block }: AeLimitsBlockProps & { session
           ownKey={ownKey}
           selectedKey={selectedKey}
           label={label}
+          plan={shown?.plan ?? null}
+          viewingOther={viewingOther}
           onOpenChange={setMenuOpen}
           onSelect={(key) => setPicked({ sessionId, key })}
           renderDetail={(key) => <AeAccountWeekly accountKey={key} now={block.now} />}

@@ -120,7 +120,9 @@ describe("AeRailUsage", () => {
     await waitFor(() => expect(screen.getAllByTestId("ae-limits-harness")).toHaveLength(2));
     const [codex, claude] = screen.getAllByTestId("ae-limits-harness");
     expect(codex.getAttribute("data-harness")).toBe("codex");
-    expect(within(codex).getByTestId("ae-limits-in-use").textContent).toBe("This session");
+    expect(within(codex).getByTestId("ae-limits-in-use").getAttribute("aria-label")).toBe(
+      "This session",
+    );
     expect(within(codex).getByText("Updated 4m ago")).toBeTruthy();
     expect(within(claude).queryByTestId("ae-limits-in-use")).toBeNull();
     expect(within(claude).getByText("Weekly · all models")).toBeTruthy();
