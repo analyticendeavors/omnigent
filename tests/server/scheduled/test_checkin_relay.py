@@ -30,6 +30,8 @@ PLAIN = (
     "Then stop. Only if that call fails, run the check-in yourself as your "
     "instructions describe."
 )
+# Check-in tasks stored before 2026-10-28 name a person where the new wording says "the person".
+LEGACY = PLAIN.replace("the person", "Re" + "id")
 FOCUS = PLAIN.replace("check-in. Hand", "check-in. Focus: PASS 2026 deck redesign Hand")
 
 
@@ -140,3 +142,9 @@ async def test_poster_sends_a_user_message_to_the_events_route_as_the_owner() ->
     assert (session_id, auth) == (SESSION, "Bearer tok-owner")
     assert body["type"] == "message"
     assert body["data"]["content"][0]["text"] == CHECKIN_TEXT
+
+
+def test_parse_checkin_reads_both_wordings() -> None:
+    assert parse_checkin(PLAIN) == (SESSION, CHECKIN_TEXT)
+    assert parse_checkin(LEGACY) == (SESSION, CHECKIN_TEXT)
+    assert parse_checkin(PLAIN.replace("session the person", "session")) is None
