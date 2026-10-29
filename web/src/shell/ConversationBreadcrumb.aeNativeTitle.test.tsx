@@ -49,7 +49,7 @@ function renderInShell(
         <TooltipProvider>
           <ConversationBreadcrumb
             conversationTitle="UX for multiple autocomplete suggestions"
-            projectName="reid"
+            projectName="demo-project"
             isChildSession={Boolean(props.titleLinkTo)}
             subAgentName="Explore"
             boundAgent={undefined}

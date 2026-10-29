@@ -1,6 +1,6 @@
 """Fast mode for claude-native sessions: the runner side of the web's switch.
 
-Reid asked on 2026-10-14 for Claude Desktop's fast mode switch in the
+The owner asked on 2026-10-14 for Claude Desktop's fast mode switch in the
 composer's model menu, per session. Claude Code toggles it in a running TUI
 with ``/fast on`` or ``/fast off``: with an explicit argument there is no
 confirm dialog, and a command typed while a reply streams is queued until the

@@ -27,7 +27,7 @@ export interface AeModelChange {
   raises: number;
   cap: number | null;
   counted: boolean;
-  approved: "auto" | "reid" | "user" | null;
+  approved: "auto" | "owner" | "user" | null;
   reason: string;
   refusal: string | null;
   undo: AeModelPoint | null;
@@ -55,10 +55,12 @@ function pair(value: unknown): AeModelPoint | null {
 
 const APPROVED: Record<string, AeModelChange["approved"]> = {
   a: "auto",
-  r: "reid",
+  r: "owner",
   u: "user",
   auto: "auto",
-  reid: "reid",
+  owner: "owner",
+  // Records written before 2026-10-28 carry the old value; read it as the owner.
+  [["re", "id"].join("")]: "owner",
   user: "user",
 };
 

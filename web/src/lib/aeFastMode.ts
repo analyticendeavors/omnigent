@@ -1,4 +1,4 @@
-// Fast mode for claude-native sessions (omnigent-ae, 2026-10-14). Reid asked
+// Fast mode for claude-native sessions (omnigent-ae, 2026-10-14). The owner asked
 // for Claude Desktop's fast mode switch in the composer's model menu, per
 // session. `GET /v1/sessions/{id}/fast-mode` reads it from the session's
 // Claude Code status line (null until the session reports it), along with

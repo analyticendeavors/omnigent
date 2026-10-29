@@ -81,8 +81,8 @@ def owner_store(owner: object = None) -> Mock:
 
 def test_no_label_uses_the_owners_default(prefs: dict[str, Any]) -> None:
     prefs["default"] = "yolo"
-    roles = resolve_roles(conversation(), owner_store("reid@example.com"))
-    assert prefs["asked"] == ["reid@example.com"]
+    roles = resolve_roles(conversation(), owner_store("owner@example.com"))
+    assert prefs["asked"] == ["owner@example.com"]
     assert roles == {
         "preset": {
             "id": "yolo",
@@ -106,10 +106,10 @@ def test_no_owner_falls_back_to_local(prefs: dict[str, Any]) -> None:
 
 def test_a_child_without_a_grant_reads_the_roots_owner(prefs: dict[str, Any]) -> None:
     store = Mock()
-    store.get_session_owner.side_effect = lambda cid, **_: {"root": "steve@example.com"}.get(cid)
+    store.get_session_owner.side_effect = lambda cid, **_: {"root": "other@example.com"}.get(cid)
     conv = Conversation(id="child", root_conversation_id="root", created_at=0, updated_at=0)
     resolve_roles(conv, store)
-    assert prefs["asked"] == ["steve@example.com"]
+    assert prefs["asked"] == ["other@example.com"]
 
 
 def test_label_names_a_preset(prefs: dict[str, Any]) -> None:
@@ -426,17 +426,17 @@ def test_real_preset_store_is_read_when_installed(monkeypatch: pytest.MonkeyPatc
     store = role_prefs.RolePrefsStore(None)
     body = role_prefs.never_saved().model_dump()
     store.put(
-        "reid@example.com", role_prefs.RolesPut.model_validate({**body, "default_preset": "yolo"})
+        "owner@example.com", role_prefs.RolesPut.model_validate({**body, "default_preset": "yolo"})
     )
     monkeypatch.setattr(role_prefs, "store", lambda: store)
-    roles = resolve_roles(conversation(), owner_store("reid@example.com"))
+    roles = resolve_roles(conversation(), owner_store("owner@example.com"))
     assert roles["preset"]["id"] == "yolo"
-    assert resolve_roles(conversation(), owner_store("steve@example.com"))["preset"]["id"] == (
+    assert resolve_roles(conversation(), owner_store("other@example.com"))["preset"]["id"] == (
         "balanced"
     )
     custom = {"roles": YOLO["roles"], "rules": YOLO["rules"]}
     labels = team_label(roles={"preset": "balanced", "custom": custom})
-    assert resolve_roles(conversation(labels), owner_store("reid@example.com"))["custom"] is True
+    assert resolve_roles(conversation(labels), owner_store("owner@example.com"))["custom"] is True
 
 
 def test_without_the_package_balanced_uses_tier_aliases(monkeypatch: pytest.MonkeyPatch) -> None:

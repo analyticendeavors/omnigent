@@ -2,7 +2,7 @@
 //
 // An MCP server's confirmation ("Confirm the operation", a required string enum
 // Yes / No with enumNames "Continue the operation" / "Decline the operation")
-// used to render a dropdown plus Submit and Reject. Reid, 2026-10-27: "you don't
+// used to render a dropdown plus Submit and Reject. The owner, 2026-10-27: "you don't
 // need a dropdown for Continue or Decline the operation. The popup should have a
 // single button for either." This file holds the detection and the label rule;
 // `AeChoiceButtons.tsx` draws the buttons.

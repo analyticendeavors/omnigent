@@ -20,7 +20,7 @@ const CARD: AePrCard = {
   changed_files: 29,
   state: "merged",
   draft: false,
-  author: "ae-reid-havens",
+  author: "demo-author",
   head_ref: "dev",
   base_ref: "main",
   head_sha: null,
@@ -60,7 +60,7 @@ describe("AePrLinkHoverCard", () => {
     expect(preview).toHaveAttribute("data-pr-state", "merged");
     expect(preview).toHaveTextContent("Merged");
     expect(preview).toHaveTextContent("#2669");
-    expect(preview).toHaveTextContent("by ae-reid-havens");
+    expect(preview).toHaveTextContent("by demo-author");
     expect(preview).toHaveTextContent("+53");
     expect(preview).toHaveTextContent("29 files");
     // A merged pull request's checks no longer matter.

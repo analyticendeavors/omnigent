@@ -6,7 +6,7 @@ question only ever reached the TUI. The wrapper now forwards it here and the ans
 back as the hook's ``hookSpecificOutput``. The prompt is a permission-type card (policy
 ``claude_native_permission``, the server's schema as a form) and never carries
 ``ask_user_question``, so the lead's ``answer_child_question`` relay tool refuses it: only
-Reid answers an MCP prompt.
+The owner answers an MCP prompt.
 """
 
 from __future__ import annotations

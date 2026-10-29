@@ -46,21 +46,21 @@ describe("AeRailEnvironment", () => {
   it("shows host, folder, branch, worktree and permission mode", () => {
     state.session = {
       hostId: "host_1",
-      workspace: "/home/reid/repos/omnigent-ae",
+      workspace: "/home/demo/repos/omnigent-ae",
       gitBranch: "ae/session-rail",
       harness: "claude-native",
       labels: { "omnigent.claude_native.permission_mode": "auto" },
     };
-    state.hosts = [{ host_id: "host_1", name: "ae-llm-box", status: "online" }];
+    state.hosts = [{ host_id: "host_1", name: "box-host", status: "online" }];
     state.hostOnline = true;
-    state.env = { root: "/home/reid/repos/omnigent-ae", home: "/home/reid", available: true };
+    state.env = { root: "/home/demo/repos/omnigent-ae", home: "/home/demo", available: true };
     state.github = { available: true, branch: "ae/session-rail-live" };
     render(<AeRailEnvironment sessionId="s1" />);
-    expect(screen.getByText("ae-llm-box")).toBeTruthy();
+    expect(screen.getByText("box-host")).toBeTruthy();
     expect(screen.getByRole("img", { name: "Host online" })).toBeTruthy();
     expect(screen.getByText("omnigent-ae")).toBeTruthy();
     expect(screen.getByText("~/repos")).toBeTruthy();
-    expect(screen.getByTitle("/home/reid/repos/omnigent-ae")).toBeTruthy();
+    expect(screen.getByTitle("/home/demo/repos/omnigent-ae")).toBeTruthy();
     expect(screen.getByText("ae/session-rail-live")).toBeTruthy();
     expect(screen.getByText("worktree")).toBeTruthy();
     expect(screen.getByText("Auto")).toBeTruthy();
@@ -88,13 +88,13 @@ describe("AeRailEnvironment", () => {
 
   it("summarises host and branch only while folded", () => {
     state.session = { hostId: "host_1", gitBranch: "dev", harness: "codex-native", labels: {} };
-    state.hosts = [{ host_id: "host_1", name: "ae-llm-box", status: "online" }];
+    state.hosts = [{ host_id: "host_1", name: "box-host", status: "online" }];
     showRail(true);
     const { rerender } = render(<AeRailEnvironment sessionId="s1" />);
-    expect(screen.getByText("ae-llm-box · dev")).toBeTruthy();
+    expect(screen.getByText("box-host · dev")).toBeTruthy();
     showRail(false);
     rerender(<AeRailEnvironment sessionId="s1" />);
-    expect(screen.queryByText("ae-llm-box · dev")).toBeNull();
+    expect(screen.queryByText("box-host · dev")).toBeNull();
     expect(screen.getByText("Permission mode not reported yet")).toBeTruthy();
   });
 });

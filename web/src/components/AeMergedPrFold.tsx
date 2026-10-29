@@ -4,8 +4,8 @@
 // details, AE compliance review). Open and draft pull requests never fold; they
 // keep their receipt (AePrCards.tsx), and the action dock owns Merge.
 //
-// 2026-10-20, Reid: a finished session ended on three large Merged cards that
-// repeated the TLDR's links and needed nothing from him (about 550 px).
+// 2026-10-20, the owner: a finished session ended on three large Merged cards that
+// repeated the TLDR's links and needed nothing from them (about 550 px).
 // Later that day: each number in the row is a link with the chat's pull
 // request preview on hover, and each opened line has a caret.
 

@@ -25,7 +25,7 @@ from tests.server.scheduled.test_fire import (
 SESSION = "aa29ab15f9da4d9b92ecd58f5e53f9fe"
 # The exact text the schedule_checkin tool wrote before this change.
 PLAIN = (
-    "Scheduled orchestrator check-in. Hand it to the orchestrator session Reid talks to: "
+    "Scheduled orchestrator check-in. Hand it to the orchestrator session the person talks to: "
     f'call post_message once with session_id {SESSION} and the text "{CHECKIN_TEXT}" '
     "Then stop. Only if that call fails, run the check-in yourself as your "
     "instructions describe."
@@ -58,7 +58,7 @@ def _poster(posts: list[tuple[Any, str, str]], fail: bool = False) -> Any:
 async def _fire(
     prompt: str, conv: Any, posts: list[Any], *, fail: bool = False
 ) -> tuple[FakeScheduledTaskStore, _Conversations, list[Any]]:
-    store = FakeScheduledTaskStore(rows={"task_1": _task(prompt=prompt, user_id="reid")})
+    store = FakeScheduledTaskStore(rows={"task_1": _task(prompt=prompt, user_id="owner")})
     convs = _Conversations(conv)
     launched: list[Any] = []
 
@@ -83,7 +83,7 @@ def test_parse_reads_session_and_focus() -> None:
 async def test_live_session_gets_direct_post_and_no_session_is_created() -> None:
     posts: list[Any] = []
     store, convs, launched = await _fire(PLAIN, _FakeConversation(SESSION, "ag_1"), posts)
-    assert posts == [("reid", SESSION, CHECKIN_TEXT)]
+    assert posts == [("owner", SESSION, CHECKIN_TEXT)]
     assert convs.created == [] and launched == []
     assert [r["status"] for r in store.runs] == ["succeeded"]
     assert store.runs[0].get("conversation_id") is None
@@ -135,8 +135,8 @@ async def test_poster_sends_a_user_message_to_the_events_route_as_the_owner() ->
         def mint_runner_token(self, user_id: str, ttl: int) -> str:
             return f"tok-{user_id}"
 
-    await build_session_poster(app, _Auth())("reid", SESSION, CHECKIN_TEXT)
+    await build_session_poster(app, _Auth())("owner", SESSION, CHECKIN_TEXT)
     session_id, auth, body = seen[0]
-    assert (session_id, auth) == (SESSION, "Bearer tok-reid")
+    assert (session_id, auth) == (SESSION, "Bearer tok-owner")
     assert body["type"] == "message"
     assert body["data"]["content"][0]["text"] == CHECKIN_TEXT

@@ -21,7 +21,7 @@ function card(number: number, extra: Partial<AePrCard> = {}): AePrCard {
     title: `PR ${number}`,
     state: "open",
     draft: false,
-    author: "ae-reid-havens",
+    author: "demo-author",
     head_ref: `claude/branch-${number}`,
     base_ref: "main",
     head_sha: SHA,
@@ -297,7 +297,7 @@ describe("AePrCards", () => {
     );
   });
 
-  // 2026-09-28: Reid asked the confirm step to say which method to use.
+  // 2026-09-28: The owner asked the confirm step to say which method to use.
   describe("the recommended method", () => {
     const PROMOTE =
       "Merge commit keeps dev and main in step; a squash would make the next promotion conflict.";
@@ -404,7 +404,7 @@ describe("AePrCards", () => {
     });
   });
 
-  // 2026-09-26: Reid saw the method buttons on one row and Confirm and Cancel
+  // 2026-09-26: The owner saw the method buttons on one row and Confirm and Cancel
   // on a second, on a 1100 px card. Now all three sit in one wrapping row, the
   // two buttons together at its right end (2026-10-14).
   it("puts the method toggle, Cancel and the confirm button in one row", async () => {

@@ -14,7 +14,7 @@ function card(overrides: Partial<AePrCard> = {}): AePrCard {
     title: "Take the image name from one variable",
     state: "open",
     draft: false,
-    author: "ae-reid-havens",
+    author: "demo-author",
     head_ref: "ae/image-var",
     base_ref: "main",
     head_sha: "a1b2c3d",

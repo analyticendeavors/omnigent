@@ -11,18 +11,18 @@
 // Which pull requests: upstream's per-session tracking
 // (https://github.com/omnigent-ai/omnigent/pull/6935), the `prs` list the
 // panel already reads. What is on a card: omnigent-ae's `/v1/ae/prs` routes
-// (lib/aePrs.ts). Reid merges from his phone while travelling, so every
+// (lib/aePrs.ts). The owner merges from their phone while travelling, so every
 // target was 44 px below the `md` breakpoint (40 px on a touch screen since
 // P26). omnigent-ae patch P11, 2026-09-24. In a card under 30rem wide (a
 // phone) the method is a segmented control (2026-09-25); the Merge button
 // spanned such a card until P26 put it at the end of the status row.
 //
-// 2026-09-26, from Reid's screenshots of a 1100 px card: the confirm step is one
+// 2026-09-26, from the owner's screenshots of a 1100 px card: the confirm step is one
 // row (the method toggle, Confirm merge, Cancel) that wraps to two only when it
 // does not fit, and the offer after a merge reads "Mark session done" with a
 // "frees a slot" hint; "Set this session to review" did not say what it does.
 //
-// 2026-09-27 (patch P26), Reid's second note that the cards waste space: at
+// 2026-09-27 (patch P26), the owner's second note that the cards waste space: at
 // 1200 px every piece sat on its own full-width row. The chips, the outcome or
 // the reason, and the action now share one status row
 // (`data-testid="ae-pr-status-row"`) that wraps only when it does not fit, with
@@ -30,14 +30,14 @@
 // successfully merged" echo; buttons are 32 px with a mouse and 40 px on a
 // touch screen, as on the Dashboard; the card's padding and gaps are tighter.
 //
-// 2026-09-28, Reid: the confirm step says which method to use. The server
+// 2026-09-28, the owner: the confirm step says which method to use. The server
 // recommends one (a merge commit when the head is a long-lived branch such as
 // dev or release/x, else squash; `recommend_merge_method` in omnigent-ae's
 // ae_omni_policies.prs); the toggle opens on it, its segment carries the
 // reason as its title, and the reason is one muted line in the confirm step.
 // The other method stays one tap away.
 //
-// 2026-10-14, Reid: a calmer card. The header leads with the pull request's
+// 2026-10-14, the owner: a calmer card. The header leads with the pull request's
 // state (open green, merged purple, as GitHub draws them), gives the title two
 // lines and puts the repo and number beside it. A card whose Merge is live
 // shows one Ready line; otherwise the chips are quiet (an icon and a word, a
@@ -46,7 +46,7 @@
 // leads the reason line instead of tagging the toggle, and the button names
 // the method and the base ("Squash into main"), the question line's job.
 //
-// 2026-10-21, Reid: the card under a chat message duplicated the action dock,
+// 2026-10-21, the owner: the card under a chat message duplicated the action dock,
 // so two Merge buttons showed at once. It is now a one-line receipt (state,
 // number, title, a status word from lib/aePrReceipt.ts) that opens in place
 // onto the detail with no Merge; the dock owns every live action. The panel's

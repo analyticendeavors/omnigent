@@ -9,7 +9,7 @@
 // The thinking spinner (the lead's own turn, or a folded-away child's) takes the
 // time's place, since "now" is all the time would say. It used to keep a 16px slot
 // of its own on every lead row, which left about 28px of the title empty on an
-// idle row (Reid, 2026-10-26). Only when the time slot holds another marker (an
+// idle row (the owner, 2026-10-26). Only when the time slot holds another marker (an
 // unseen dot, a draft, "Needs response") does the spinner sit left of it.
 
 import { AE_TIME_COLUMN } from "@/lib/aeFamilyBadge";
@@ -94,7 +94,7 @@ export const AE_LEAD_ACTIONS_OVERLAY = "pointer-events-none right-[28px] pr-0.5 
 
 // While the actions show (hover, focus inside the actions, or an open menu), the
 // title ends at the actions' left edge, as a standalone row's does with pr-20. It
-// used to run on under a fade, which left it readable behind the pin (Reid,
+// used to run on under a fade, which left it readable behind the pin (the owner,
 // 2026-10-26). Pin, archive and kebab are three 24px buttons with two 2px gaps,
 // right of the wrapper's 2px padding: 28 + 2 + 76 = 106. `!` beats the row's inline
 // padding; written out in full for Tailwind.

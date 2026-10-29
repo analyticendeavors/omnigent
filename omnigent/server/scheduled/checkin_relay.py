@@ -26,7 +26,7 @@ _MINT_TTL_S = 300
 _POST_TIMEOUT_S = 30.0
 _PROMPT = re.compile(
     r"^Scheduled orchestrator check-in\.(?: Focus: (?P<note>.*?))?"
-    r" Hand it to the orchestrator session Reid talks to: call post_message once"
+    r" Hand it to the orchestrator session the person talks to: call post_message once"
     r" with session_id (?P<session_id>\S+) and the text ",
     re.DOTALL,
 )

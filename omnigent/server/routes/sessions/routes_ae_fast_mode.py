@@ -1,6 +1,6 @@
 """Fast mode routes: how the web's switch reaches a claude-native runner.
 
-Reid asked on 2026-10-14 for Claude Desktop's fast mode switch in the
+The owner asked on 2026-10-14 for Claude Desktop's fast mode switch in the
 composer's model menu, per session. Fast mode lives only in the running
 Claude Code TUI (``fastModePerSessionOptIn`` keeps it out of settings), so
 nothing is persisted here: both routes forward a control event to the bound

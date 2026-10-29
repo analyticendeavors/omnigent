@@ -1,7 +1,7 @@
 // The code under an approval card's message, behind "Show details" when the ask gates
-// the person's own message (2026-10-22). Reid: on cards such as the rabbit-hole check he
-// reads the sentence at the top, and the JSON under it is noise most of the time; he
-// wanted it folded by default and opened only when needed. A request-phase ask (the
+// the person's own message (2026-10-22). The owner: on cards such as the rabbit-hole
+// check the owner reads the sentence at the top, and the JSON under it is noise most of the
+// time; the owner wanted it folded by default and opened only when needed. A request-phase ask (the
 // rabbit-hole check, the slot cap) repeats the message just sent, so its code folds. Every
 // other phase shows what the agent is about to do (a tool call's command, a response), so
 // that code stays in view whoever wrote the policy.

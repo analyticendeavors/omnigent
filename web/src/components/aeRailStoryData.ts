@@ -284,7 +284,7 @@ function route(input: string, init?: RequestInit): Response | null {
   if (path === `/v1/sessions/${AE_STORY_SESSION}`) {
     return json(
       sessionWire(AE_STORY_SESSION, {
-        host_id: "host_ae_llm_box",
+        host_id: "host_box_host",
         workspace: FOLDER,
         git_branch: "ae/session-rail",
         llm_model: "claude-opus-5-5[1m]",
@@ -368,7 +368,7 @@ function route(input: string, init?: RequestInit): Response | null {
   if (pr && method === "GET") return json(prCard(Number(pr[1])));
   if (path === "/v1/hosts") {
     return json({
-      hosts: [{ host_id: "host_ae_llm_box", name: "ae-llm-box", owner: "demo", status: "online" }],
+      hosts: [{ host_id: "host_box_host", name: "box-host", owner: "demo", status: "online" }],
     });
   }
   if (path === "/v1/ae/limits") return json(STORY_LIMITS(Date.now()));

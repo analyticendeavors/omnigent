@@ -1,6 +1,6 @@
 // The context ring's colour as the context window fills. Upstream draws
 // `ComposerContextRing` in grayscale on purpose (a near-full context is a
-// neutral fact, not an error). Reid asked on 2026-09-24 for the cue Claude Code
+// neutral fact, not an error). The owner asked on 2026-09-24 for the cue Claude Code
 // desktop gives instead: the ring turns a warning colour as the window
 // approaches full, so a compaction or a fresh session is not a surprise.
 // omnigent-ae patch P18; the plan limits popover (P6, P9) tones its Context

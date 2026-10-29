@@ -4,9 +4,9 @@ import { repairEncodedNote } from "./aePasteRepair";
 describe("repairEncodedNote", () => {
   it("restores a note the clipboard encoded as a URL", () => {
     const encoded =
-      "thread:%20session-link-titles%0ASTATE:%20Reid%20asked,%20from%20his%20phone,%20that%20a%20link%20read%20as%20%5Btitle%5D(url)%20%22x%22%20%3Cid%3E%0ANEXT:%20go";
+      "thread:%20session-link-titles%0ASTATE:%20The%20owner%20asked,%20from%20their%20phone,%20that%20a%20link%20read%20as%20%5Btitle%5D(url)%20%22x%22%20%3Cid%3E%0ANEXT:%20go";
     expect(repairEncodedNote(encoded)).toBe(
-      'thread: session-link-titles\nSTATE: Reid asked, from his phone, that a link read as [title](url) "x" <id>\nNEXT: go',
+      'thread: session-link-titles\nSTATE: The owner asked, from their phone, that a link read as [title](url) "x" <id>\nNEXT: go',
     );
   });
 
@@ -25,7 +25,7 @@ describe("repairEncodedNote", () => {
   });
 
   it("repairs the note copied from a code block, trailing newline and all", () => {
-    // Exact clipboard of Reid's iPhone, 2026-10-27: the URL form ends in %0A.
+    // Exact clipboard of the owner's iPhone, 2026-10-27: the URL form ends in %0A.
     const plain =
       'THREAD: paste-test\nSTATE: Has spaces, "quotes", [brackets](url), <angle> and a dash - it\'s fine.\nQUADRANT: admin \u00b7 EST: minutes\n';
     const uri =

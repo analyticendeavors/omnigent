@@ -1,7 +1,7 @@
 // A small preview of a pull request when the pointer rests on a chat link to
 // it: the state (open, draft, merged, closed), the repo and number, the title,
 // who opened it, the size of the change and, while it is open, its checks.
-// Reid, 2026-10-20: when a session reports finished work he wants a glance at
+// The owner, 2026-10-20: when a session reports finished work the owner wants a glance at
 // each pull request before opening it. The data is the merge card's
 // (`/v1/ae/prs`, lib/aePrs.ts) and shares its query cache, so a link whose
 // card is already on screen opens with no fetch; the fetch starts only when a

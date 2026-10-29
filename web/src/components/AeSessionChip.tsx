@@ -1,6 +1,6 @@
 // The session header's slots chip (omnigent-ae, 2026-09-24): the session's
 // own `ae.status` icon and the slot count, "n/3", red at the limit; a tap
-// opens the Session Dashboard. Reid asked for the slot count on every session
+// opens the Session Dashboard. The owner asked for the slot count on every session
 // and on the phone, where the sidebar (and its "Session Dashboard n/3" row) is
 // a closed drawer, so the header was the only place a session could show it.
 //

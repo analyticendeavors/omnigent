@@ -415,7 +415,7 @@ export function aeHolderName(setBy: string): string {
 
 /**
  * What a deploy line says after the number: "merged 4m ago · deploy waits on
- * 2 busy sessions", "· held until 10:50 PM by reid", or "live in ae-v0.18.0.32".
+ * 2 busy sessions", "· held until 10:50 PM by owner", or "live in ae-v0.18.0.32".
  */
 export function aeDeployText(
   item: AeDockDeploy,

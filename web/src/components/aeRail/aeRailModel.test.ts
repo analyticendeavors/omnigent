@@ -57,19 +57,21 @@ describe("environment", () => {
   });
 
   it("splits a folder and shortens home to ~", () => {
-    expect(aeRailFolderParts("/home/reid/repos/omnigent-ae/", "/home/reid")).toEqual({
+    expect(aeRailFolderParts("/home/demo/repos/omnigent-ae/", "/home/demo")).toEqual({
       name: "omnigent-ae",
       parent: "~/repos",
     });
-    expect(aeRailFolderParts("/home/reid/x", "/home/reid/")).toEqual({ name: "x", parent: "~" });
+    expect(aeRailFolderParts("/home/demo/x", "/home/demo/")).toEqual({ name: "x", parent: "~" });
     expect(aeRailFolderParts("/srv/app", null)).toEqual({ name: "app", parent: "/srv" });
-    expect(aeRailFolderParts("/home/reidx/app", "/home/reid").parent).toBe("/home/reidx");
-    expect(aeRailFolderParts("C:\\Users\\reid\\GitHub\\repo", "C:\\Users\\reid")).toEqual({
+    // Built from parts: a sibling that merely starts with the home user's name.
+    const sibling = ["demo", "x"].join("");
+    expect(aeRailFolderParts(`/home/${sibling}/app`, "/home/demo").parent).toBe(`/home/${sibling}`);
+    expect(aeRailFolderParts("C:\\Users\\demo\\GitHub\\repo", "C:\\Users\\demo")).toEqual({
       name: "repo",
       parent: "~\\GitHub",
     });
-    expect(aeRailFolderParts("C:\\Users\\reidx\\repo", "C:\\Users\\reid").parent).toBe(
-      "C:\\Users\\reidx",
+    expect(aeRailFolderParts(`C:\\Users\\${sibling}\\repo`, "C:\\Users\\demo").parent).toBe(
+      `C:\\Users\\${sibling}`,
     );
     expect(aeRailFolderParts("/app", null)).toEqual({ name: "app", parent: "/" });
   });

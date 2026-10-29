@@ -13,7 +13,7 @@ vi.mock("@/lib/sessionsApi", () => ({
 }));
 
 const ID = "0f0e59ed993446efa42135a5e80b95a1";
-const URL_TEXT = `https://ae-llm-box.tailcb44aa.ts.net:8010/c/${ID}`;
+const URL_TEXT = `https://box.tailnet.ts.net:8010/c/${ID}`;
 
 beforeEach(() => {
   resetSessionTitleCache();

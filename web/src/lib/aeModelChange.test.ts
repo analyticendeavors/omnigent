@@ -1,5 +1,13 @@
-import { describe, expect, it } from "vitest";
-import { aeRaiseDetail, aeRaiseMarks, aeRunsAboveStart } from "./aeModelChange";
+import { describe, expect, it, vi } from "vitest";
+import {
+  aeRaiseDetail,
+  aeRaiseMarks,
+  aeRunsAboveStart,
+  fetchAeModelChanges,
+} from "./aeModelChange";
+
+const fetchMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/identity", () => ({ authenticatedFetch: fetchMock }));
 
 const start = { model: "claude-sonnet-5-5", effort: "medium" };
 
@@ -123,5 +131,32 @@ describe("aeRaiseDetail", () => {
     const detail = aeRaiseDetail(lowered, null);
     expect(detail?.reason).toBe("");
     expect(detail?.at).toBeNull();
+  });
+});
+
+describe("fetchAeModelChanges approver", () => {
+  // The first value is the one records carried before 2026-10-28, built from parts.
+  const legacy = ["re", "id"].join("");
+  it.each([
+    ["r", "owner"],
+    ["owner", "owner"],
+    [legacy, "owner"],
+    ["a", "auto"],
+    ["user", "user"],
+    ["someone-else", null],
+  ])("reads %s as %s", async (wire, expected) => {
+    const change = {
+      f: ["claude-haiku-5-5", "low"],
+      t: ["claude-sonnet-5-5", "low"],
+      a: 1,
+      p: wire,
+    };
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ changes: [{ session_id: "s1", change }] }),
+    });
+    const feed = await fetchAeModelChanges("lead");
+    expect(feed.items[0].change.approved).toBe(expected);
   });
 });

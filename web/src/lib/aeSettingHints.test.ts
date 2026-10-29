@@ -9,8 +9,9 @@ import {
 } from "./aeSettingHints";
 
 const entries = Object.entries(AE_SETTING_HINTS) as [string, AeSettingHint][];
+// 2026-10-28: person names are no longer listed here; the leak scan's private denylist owns them.
 const BANNED =
-  /leverage|seamless|powerful|robust|utiliz|furthermore|additionally|game-changing|deep dive|circle back|synergy|—|–|--|Reid|Analytic|Havens|Steve|[\u{1F300}-\u{1FAFF}]/iu;
+  /leverage|seamless|powerful|robust|utiliz|furthermore|additionally|game-changing|deep dive|circle back|synergy|—|–|--|Analytic|[\u{1F300}-\u{1FAFF}]/iu;
 
 /** Hints for a control with more than one choice: each names its default. */
 const CHOICES = [

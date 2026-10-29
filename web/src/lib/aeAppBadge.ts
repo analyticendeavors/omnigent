@@ -1,4 +1,4 @@
-// The slot count on the installed app's icon (omnigent-ae, 2026-09-24): Reid
+// The slot count on the installed app's icon (omnigent-ae, 2026-09-24): The owner
 // asked for the count everywhere, the phone's home screen included. The Badging
 // API (`navigator.setAppBadge`) draws a number on an installed web app's icon;
 // Safari supports it for Home Screen apps from iOS 16.4 once notification

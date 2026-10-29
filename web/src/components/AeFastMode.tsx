@@ -1,5 +1,5 @@
 // The fast mode switch at the bottom of the composer's model menu
-// (omnigent-ae, 2026-10-14). Reid asked for Claude Desktop's fast mode switch
+// (omnigent-ae, 2026-10-14). The owner asked for Claude Desktop's fast mode switch
 // "if I'm ever connected to a Claude session", per session. Claude Code takes
 // `/fast on|off` mid-session and reports the state in its status line; this
 // row reads and changes it through `@/lib/aeFastMode`.

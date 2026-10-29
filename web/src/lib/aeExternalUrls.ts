@@ -7,7 +7,7 @@
 // URL the host already handed to that extension (`sessions.pullRequest` hands
 // out one per session). The AE Dashboard lists pull requests the AE routes
 // read from GitHub, not from that call, so its cards could only offer "Copy
-// link", and Reid works from an iPhone where copy and paste into Safari is the
+// link", and the owner works from an iPhone where copy and paste into Safari is the
 // slowest step of a merge. This admits one more kind of URL: a pull request or
 // issue page on github.com, written exactly the way GitHub's API returns it.
 //

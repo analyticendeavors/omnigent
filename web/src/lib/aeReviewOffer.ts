@@ -1,5 +1,5 @@
 // Whether a PR card offers "Mark session done" (sets review) after a merge.
-// Review means the session is done and frees one of Reid's three slots, so the
+// Review means the session is done and frees one of the owner's three slots, so the
 // offer belongs after the merge of the session's last open tracked pull
 // request, not after the first of several. On 2026-09-25 a session that had
 // opened four pull requests offered review after the first merge while three

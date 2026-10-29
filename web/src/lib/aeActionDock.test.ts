@@ -361,11 +361,11 @@ describe("deploy text", () => {
     );
     expect(
       aeDeployText(
-        item({ mid_turn: 3, hold_until: "2026-10-21T05:50:00Z", hold_by: "reid@x.com" }),
+        item({ mid_turn: 3, hold_until: "2026-10-21T05:50:00Z", hold_by: "owner@example.com" }),
         NOW,
         clock,
       ),
-    ).toBe("merged 4m ago · held until at 05:50 by reid");
+    ).toBe("merged 4m ago · held until at 05:50 by owner");
     expect(aeDeployText(item({}), NOW, clock)).toBe("merged 4m ago · waiting for deploy");
     expect(aeDeployText(item({ state: "live", running: "ae-v0.18.0.32" }), NOW, clock)).toBe(
       "live in ae-v0.18.0.32",

@@ -31,7 +31,7 @@ from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConver
 from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
 from tests.server.helpers import create_test_agent
 
-OWNER = "reid@example.com"
+OWNER = "owner@example.com"
 VIEWER = "viewer@example.com"
 AGENT_ID = "6f0c2b7e9a4d4c1e8b3a5d7f9e1c3a5b"
 
