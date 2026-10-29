@@ -46,9 +46,16 @@ import {
   type AeTreeRow,
   toggleAeFamilyFold,
 } from "@/lib/aeFamilyTree";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { AeFamilyContext } from "@/lib/aeFamilyView";
 import { cn } from "@/lib/utils";
 import { AeFamilyDotButton } from "@/shell/AeFamilyDot";
+import { useAeStandInArchive } from "@/shell/AeFamilyArchive";
 import { SIDEBAR_ROW } from "@/shell/sidebarStyles";
 
 // Half the 16px status icon past the row's left padding: the icon's center at depth 0.
@@ -363,43 +370,55 @@ function StandIn({
   const { family } = lead;
   const known = lead.standIn!.lead;
   const archived = known?.archived === true;
+  const { archiveFamily, dialog } = useAeStandInArchive(family.root);
   return (
     <li className="group relative" data-testid="ae-family-stand-in" data-family={family.root}>
-      <Link
-        to={`/c/${family.root}`}
-        componentId="sidebar.family_lead"
-        title={known ? undefined : "Open the lead session"}
-        onClick={onNavigate}
-        className={cn(
-          SIDEBAR_ROW,
-          "relative flex w-full items-center pr-2 text-left text-muted-foreground transition-colors",
-          ROW_HOVER,
-        )}
-      >
-        {!lead.folded && lead.count > 0 && (
-          <Lines row={{ family, depth: 0, through: [], more: false, stem: true }} />
-        )}
-        {archived ? (
-          <ArchiveIcon className="ui-icon mr-1.5" aria-hidden="true" />
-        ) : known ? null : (
-          <GhostIcon className="ui-icon mr-1.5" aria-hidden="true" />
-        )}
-        <AeFamilyDotButton
-          family={family}
-          isLead
-          dashed={!known}
-          hint={aeFamilyHint({ family, isLead: true, forked: false, parentTitle: null })}
-        />
-        <span className={cn("min-w-0 truncate", !known && "italic")}>
-          {known ? (known.title ?? known.id) : "Lead not loaded"}
-        </span>
-        {archived && (
-          <span className="ml-1.5 shrink-0 rounded bg-foreground/[0.07] px-1.5 text-[11px]">
-            Archived
-          </span>
-        )}
-        <FoldChevron lead={lead} />
-      </Link>
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <Link
+            to={`/c/${family.root}`}
+            componentId="sidebar.family_lead"
+            title={known ? undefined : "Open the lead session"}
+            onClick={onNavigate}
+            className={cn(
+              SIDEBAR_ROW,
+              "relative flex w-full items-center pr-2 text-left text-muted-foreground transition-colors",
+              ROW_HOVER,
+            )}
+          >
+            {!lead.folded && lead.count > 0 && (
+              <Lines row={{ family, depth: 0, through: [], more: false, stem: true }} />
+            )}
+            {archived ? (
+              <ArchiveIcon className="ui-icon mr-1.5" aria-hidden="true" />
+            ) : known ? null : (
+              <GhostIcon className="ui-icon mr-1.5" aria-hidden="true" />
+            )}
+            <AeFamilyDotButton
+              family={family}
+              isLead
+              dashed={!known}
+              hint={aeFamilyHint({ family, isLead: true, forked: false, parentTitle: null })}
+            />
+            <span className={cn("min-w-0 truncate", !known && "italic")}>
+              {known ? (known.title ?? known.id) : "Lead not loaded"}
+            </span>
+            {archived && (
+              <span className="ml-1.5 shrink-0 rounded bg-foreground/[0.07] px-1.5 text-[11px]">
+                Archived
+              </span>
+            )}
+            <FoldChevron lead={lead} />
+          </Link>
+        </ContextMenuTrigger>
+        <ContextMenuContent className="min-w-40">
+          <ContextMenuItem onSelect={archiveFamily}>
+            <ArchiveIcon className="ui-icon" aria-hidden="true" />
+            Archive family
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+      {dialog}
     </li>
   );
 }

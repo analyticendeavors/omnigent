@@ -796,6 +796,52 @@ describe("Grouping > Family", () => {
       expect(mocks.archiveOne).not.toHaveBeenCalled();
     });
 
+    describe("a stand-in lead", () => {
+      /** The lead is on no page the sidebar or the archive read, so the family shows a stand-in. */
+      const standIn = (children: Conversation[], unlisted: Conversation[] = []) => {
+        const rows = [...children, mine(row("PASS deck", 20))];
+        useConvMock.mockImplementation(() => conversationPage(rows));
+        mocks.archived.mockImplementation(async ({ visibility }: { visibility?: string }) =>
+          visibility === "archived"
+            ? { data: [] }
+            : { data: [...rows, ...unlisted], has_more: false, last_id: null },
+        );
+        setView({ grouping: "family" });
+        renderSidebar();
+        fireEvent.contextMenu(screen.getByTestId("ae-family-stand-in").querySelector("a")!);
+      };
+      const chooseArchive = () => fireEvent.click(screen.getByText("Archive family"));
+
+      it("offers Archive family on right-click and archives the closed sessions, never the unknown lead", async () => {
+        standIn([child("Escalation tool", "reference"), child("Families PR", "reference")]);
+        chooseArchive();
+        await waitFor(() => expect(mocks.archiveMany).toHaveBeenCalledTimes(1));
+        expect(screen.queryByTestId("ae-family-archive-confirm")).toBeNull();
+        expect(archivedIds()).toEqual([sid("Escalation tool"), sid("Families PR")]);
+        expect(archivedIds()).not.toContain(lead);
+        expect(mocks.archiveMany.mock.calls[0][0].archived).toBe(true);
+      });
+
+      it("asks first while a session is open, then archives them all", async () => {
+        standIn([child("Escalation tool", "reference")], [child("Older helper", "working")]);
+        chooseArchive();
+        const confirm = await screen.findByTestId("ae-family-archive-confirm");
+        expect(mocks.archiveMany).not.toHaveBeenCalled();
+        fireEvent.click(within(confirm).getByRole("button", { name: "Archive" }));
+        expect(archivedIds()).toEqual([sid("Escalation tool"), sid("Older helper")]);
+      });
+
+      it("skips sessions that are already archived", async () => {
+        standIn([
+          child("Escalation tool", "reference"),
+          { ...child("Families PR", "reference"), archived: true },
+        ]);
+        chooseArchive();
+        await waitFor(() => expect(mocks.archiveMany).toHaveBeenCalledTimes(1));
+        expect(archivedIds()).toEqual([sid("Escalation tool")]);
+      });
+    });
+
     it("archives a session with no family alone", () => {
       family([child("Escalation tool", "working"), child("Families PR", "working")]);
       renderSidebar();
