@@ -180,6 +180,11 @@ export const AE_SETTING_HINTS = {
     hint: "The lead may pass your answer to a child's question. It can never approve tool use or MCP writes for a child. Default: on.",
     source: "existing",
   },
+  "family.handoff": {
+    label: "Hand off at",
+    hint: "A chat past this many thousand tokens is asked once to hand off to a fresh lead that takes over its sessions. Default: 300. Off: never.",
+    source: "existing",
+  },
   "chat.suggestion_keys": {
     label: "Suggestion keys",
     hint: "Next and Previous step through the composer's suggestions when it offers several. Defaults Alt+] and Alt+[. Change records a new combo.",

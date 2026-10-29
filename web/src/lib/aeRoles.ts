@@ -205,7 +205,12 @@ export interface AeRolesDoc {
   child_prompts?: boolean;
   /** Let the lead pass an answer to a child's question; absent reads as on. */
   child_relay?: boolean;
+  /** Context tokens at which a top-level chat is asked to hand off to a fresh lead; 0 is off, absent reads as 300000. */
+  lead_handoff_tokens?: number | null;
 }
+
+/** The context size, in tokens, that asks a chat to hand off when the user never set one. */
+export const AE_HANDOFF_DEFAULT_TOKENS = 300_000;
 
 /** What `GET` and `PUT /v1/ae/roles` answer. */
 export interface AeRolesState extends AeRolesDoc {
@@ -345,6 +350,7 @@ export function aeParseRolesState(value: unknown): AeRolesState | null {
     insights,
     child_prompts,
     child_relay,
+    lead_handoff_tokens,
   } = value;
   if (typeof revision !== "number" || !Number.isInteger(revision) || revision < 0) return null;
   if (typeof default_preset !== "string") return null;
@@ -362,6 +368,11 @@ export function aeParseRolesState(value: unknown): AeRolesState | null {
     ...(parseInsights(insights) ? { insights: parseInsights(insights) as AeInsights } : {}),
     ...(typeof child_prompts === "boolean" ? { child_prompts } : {}),
     ...(typeof child_relay === "boolean" ? { child_relay } : {}),
+    ...(typeof lead_handoff_tokens === "number" &&
+    Number.isInteger(lead_handoff_tokens) &&
+    lead_handoff_tokens >= 0
+      ? { lead_handoff_tokens }
+      : {}),
   };
 }
 
@@ -376,6 +387,9 @@ export function aeRolesDoc(state: AeRolesDoc): AeRolesDoc {
     ...(state.insights ? { insights: state.insights } : {}),
     ...(state.child_prompts !== undefined ? { child_prompts: state.child_prompts } : {}),
     ...(state.child_relay !== undefined ? { child_relay: state.child_relay } : {}),
+    ...(state.lead_handoff_tokens !== undefined
+      ? { lead_handoff_tokens: state.lead_handoff_tokens }
+      : {}),
   };
 }
 

@@ -29,6 +29,7 @@ const CHOICES = [
   "chat.pin_family",
   "family.child_prompts",
   "family.relay",
+  "family.handoff",
 ] as const;
 
 describe("the setting hints", () => {

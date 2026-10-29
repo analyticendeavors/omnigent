@@ -54,6 +54,7 @@ describe("AeChildPromptSettings", () => {
     const rows = [
       ["ae-child-prompts", "family.child_prompts"],
       ["ae-child-relay", "family.relay"],
+      ["ae-handoff", "family.handoff"],
     ] as const;
     await screen.findByTestId("ae-child-prompts");
     for (const [testId, id] of rows) {
@@ -103,5 +104,77 @@ describe("AeChildPromptSettings", () => {
       });
     });
     await waitFor(() => expect(screen.getByTestId("ae-child-prompts-toggle")).not.toBeChecked());
+  });
+
+  it("reads the hand off size as 300 and on when unset, and as off at 0", async () => {
+    vi.mocked(authenticatedFetch).mockImplementation(() => json(STATE));
+    mount();
+    const input = await screen.findByTestId("ae-handoff-tokens");
+    await waitFor(() => expect(screen.getByTestId("ae-handoff-toggle")).not.toBeDisabled());
+    expect(input).toHaveValue(300);
+    expect(screen.getByTestId("ae-handoff-toggle")).toBeChecked();
+    cleanup();
+    vi.mocked(authenticatedFetch).mockImplementation(() =>
+      json({ ...STATE, lead_handoff_tokens: 0 }),
+    );
+    mount();
+    const toggle = await screen.findByTestId("ae-handoff-toggle");
+    await waitFor(() => expect(toggle).not.toBeDisabled());
+    expect(toggle).not.toBeChecked();
+    expect(screen.queryByTestId("ae-handoff-tokens")).toBeNull();
+  });
+
+  const puts = () =>
+    vi
+      .mocked(authenticatedFetch)
+      .mock.calls.filter(([, init]) => init?.method === "PUT")
+      .map(([, init]) => JSON.parse(String(init!.body)));
+
+  it("saves a new size in tokens when the box loses focus", async () => {
+    vi.mocked(authenticatedFetch).mockImplementation((_path, init) =>
+      json(init?.method === "PUT" ? { ...STATE, revision: 4, lead_handoff_tokens: 200000 } : STATE),
+    );
+    mount();
+    const input = await screen.findByTestId("ae-handoff-tokens");
+    await waitFor(() => expect(input).not.toBeDisabled());
+    fireEvent.change(input, { target: { value: "200" } });
+    fireEvent.blur(input);
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0]).toMatchObject({ revision: 3, lead_handoff_tokens: 200000 });
+  });
+
+  it("ignores a size outside 50 to 5000 and puts the saved one back", async () => {
+    vi.mocked(authenticatedFetch).mockImplementation(() => json(STATE));
+    mount();
+    const input = await screen.findByTestId("ae-handoff-tokens");
+    await waitFor(() => expect(input).not.toBeDisabled());
+    fireEvent.change(input, { target: { value: "10" } });
+    fireEvent.blur(input);
+    await waitFor(() => expect(input).toHaveValue(300));
+    expect(puts()).toHaveLength(0);
+  });
+
+  it("the switch saves 0 to turn it off and clears the value to turn it back on", async () => {
+    let saved: number | null | undefined;
+    vi.mocked(authenticatedFetch).mockImplementation((_path, init) => {
+      if (init?.method === "PUT") {
+        saved = JSON.parse(String(init.body)).lead_handoff_tokens;
+        return json({
+          ...STATE,
+          revision: 4,
+          ...(typeof saved === "number" ? { lead_handoff_tokens: saved } : {}),
+        });
+      }
+      return json(STATE);
+    });
+    mount();
+    const toggle = await screen.findByTestId("ae-handoff-toggle");
+    await waitFor(() => expect(toggle).not.toBeDisabled());
+    fireEvent.click(toggle);
+    await waitFor(() => expect(saved).toBe(0));
+    await waitFor(() => expect(screen.getByTestId("ae-handoff-toggle")).not.toBeChecked());
+    fireEvent.click(screen.getByTestId("ae-handoff-toggle"));
+    await waitFor(() => expect(saved).toBeNull());
+    await waitFor(() => expect(screen.getByTestId("ae-handoff-toggle")).toBeChecked());
   });
 });

@@ -129,6 +129,22 @@ describe("aeRoles", () => {
     expect("insights" in aeRolesDoc(doc([preset("a")]))).toBe(false);
   });
 
+  it("keeps the lead handoff size, including 0, and leaves it out when absent or bad", () => {
+    const body = { ...doc([preset("a")]), starters: [] };
+    expect(aeParseRolesState(body)?.lead_handoff_tokens).toBeUndefined();
+    expect("lead_handoff_tokens" in aeRolesDoc(doc([preset("a")]))).toBe(false);
+    for (const tokens of [150_000, 0]) {
+      const parsed = aeParseRolesState({ ...body, lead_handoff_tokens: tokens });
+      expect(parsed?.lead_handoff_tokens).toBe(tokens);
+      expect(aeRolesDoc(parsed as AeRolesDoc).lead_handoff_tokens).toBe(tokens);
+    }
+    for (const bad of [-1, 1.5, "300000", null, true]) {
+      expect(aeParseRolesState({ ...body, lead_handoff_tokens: bad })?.lead_handoff_tokens).toBe(
+        undefined,
+      );
+    }
+  });
+
   it("aeWithInsights replaces the setting and keeps the rest of the doc", () => {
     const base = {
       ...doc([preset("a")]),
