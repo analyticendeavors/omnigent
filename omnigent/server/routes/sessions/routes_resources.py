@@ -2735,6 +2735,31 @@ def register_resources_routes(
         qs = urllib.parse.urlencode({**params, **reach})
         runner_rel = _runner_path_segment(relative_path, absolute=absolute)
         if download:
+            # A download can be the first action after a managed sandbox sleeps.
+            tunnel_registry = getattr(request.app.state, "tunnel_registry", None)
+            if (
+                conv.host_id is not None
+                and host_registry is not None
+                and host_registry.get(conv.host_id) is None
+                and (
+                    conv.runner_id is None
+                    or tunnel_registry is None
+                    or tunnel_registry.get(conv.runner_id) is None
+                )
+                and not (
+                    runner_router is not None
+                    and await asyncio.to_thread(
+                        runner_router.host_is_on_another_replica, conv.host_id
+                    )
+                )
+            ):
+                _, conv = await ensure_runner_connected(
+                    session_id=conv.id,
+                    conv=conv,
+                    app_state=request.app.state,
+                    conversation_store=conversation_store,
+                    runner_router=runner_router,
+                )
             return await _stream_download_from_runner(
                 request,
                 session_id,

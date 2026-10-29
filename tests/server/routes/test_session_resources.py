@@ -3577,6 +3577,68 @@ async def test_filesystem_download_streams_runner_attachment(
 
 
 @pytest.mark.asyncio
+async def test_filesystem_download_wakes_an_asleep_runner_first(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A download from a chat whose sandbox slept reconnects the runner, then streams."""
+    from unittest.mock import AsyncMock
+
+    from omnigent.server.routes.sessions import routes_resources
+
+    session_id = "79b22ebd2309e48fdeb450c65611d51b"
+    conv = app.state.test_conversation_store._conversations[session_id]
+    conv.host_id = "host_asleep"
+    conv.runner_id = None
+    (tmp_path / "big.bin").write_bytes(b"asleep-bytes")
+    runner = FastAPI()
+
+    @runner.get(_FS_ROUTE)
+    async def _serve(session_id: str, environment_id: str, relative_path: str) -> FileResponse:
+        del session_id, environment_id, relative_path
+        return FileResponse(tmp_path / "big.bin", filename="big.bin")
+
+    wake = AsyncMock(return_value=(None, conv))
+    monkeypatch.setattr(routes_resources, "ensure_runner_connected", wake)
+    async with _runner_app_client(runner):
+        resp = await client.get(_DOWNLOAD_URL)
+
+    wake.assert_awaited_once()
+    assert resp.status_code == 200
+    assert resp.content == b"asleep-bytes"
+
+
+@pytest.mark.asyncio
+async def test_filesystem_download_of_a_live_runner_does_not_wake_it(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """With no host bound there is nothing to wake, so the stream starts at once."""
+    from unittest.mock import AsyncMock
+
+    from omnigent.server.routes.sessions import routes_resources
+
+    (tmp_path / "big.bin").write_bytes(b"live")
+    runner = FastAPI()
+
+    @runner.get(_FS_ROUTE)
+    async def _serve(session_id: str, environment_id: str, relative_path: str) -> FileResponse:
+        del session_id, environment_id, relative_path
+        return FileResponse(tmp_path / "big.bin", filename="big.bin")
+
+    wake = AsyncMock()
+    monkeypatch.setattr(routes_resources, "ensure_runner_connected", wake)
+    async with _runner_app_client(runner):
+        resp = await client.get(_DOWNLOAD_URL)
+
+    assert resp.status_code == 200
+    wake.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_filesystem_download_rejects_runner_without_download_support(
     client: httpx.AsyncClient,
 ) -> None:
@@ -9560,3 +9622,62 @@ async def test_native_message_that_is_not_a_claude_btw_is_still_queued(
         assert client.post_json_calls[-1][0] == f"/v1/sessions/{sid}/events"
     finally:
         pending_inputs.reset_for_tests()
+
+
+def _download_auth_app(db_uri: str) -> tuple[FastAPI, str]:
+    """A header-auth app and a session owned by Bob and read-shared to Alice."""
+    from omnigent.server.auth import LEVEL_OWNER, LEVEL_READ, UnifiedAuthProvider
+    from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
+    from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+    from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
+
+    agent_store = SqlAlchemyAgentStore(db_uri)
+    conv_store = SqlAlchemyConversationStore(db_uri)
+    perms = SqlAlchemyPermissionStore(db_uri)
+    agent_store.create(
+        agent_id="087b7cb7ac30abf4debfaa578d052ec6",
+        name="test-agent",
+        bundle_location="087b7cb7ac30abf4debfaa578d052ec6/bundle",
+    )
+    conv = conv_store.create_conversation(
+        title="Bob's session", agent_id="087b7cb7ac30abf4debfaa578d052ec6"
+    )
+    for user in ("alice@example.com", "bob@example.com"):
+        perms.ensure_user(user)
+    perms.grant("bob@example.com", conv.id, LEVEL_OWNER)
+    perms.grant("alice@example.com", conv.id, LEVEL_READ)
+    app = FastAPI()
+
+    @app.exception_handler(OmnigentError)
+    async def _handle(request: Request, exc: OmnigentError) -> JSONResponse:
+        del request
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={"error": {"code": exc.code, "message": exc.message}},
+        )
+
+    app.include_router(
+        create_sessions_router(
+            conversation_store=conv_store,
+            agent_store=agent_store,
+            auth_provider=UnifiedAuthProvider(source="header"),
+            permission_store=perms,
+        ),
+        prefix="/v1",
+    )
+    return app, conv.id
+
+
+@pytest.mark.asyncio
+async def test_host_absolute_download_is_owner_only(db_uri: str) -> None:
+    """A read-only collaborator gets 403 on a host-absolute download."""
+    app, session_id = _download_auth_app(db_uri)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://server") as http:
+        resp = await http.get(
+            f"/v1/sessions/{session_id}/resources/environments/default"
+            "/filesystem/etc/hosts?base=host&download=true",
+            headers={"X-Forwarded-Email": "alice@example.com"},
+        )
+
+    assert resp.status_code == 403

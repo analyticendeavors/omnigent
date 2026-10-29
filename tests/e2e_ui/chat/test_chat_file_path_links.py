@@ -304,3 +304,54 @@ def test_chat_file_link_opens_on_mobile_tap(
         )
     finally:
         ctx.close()
+
+
+def test_chat_file_link_context_menu_downloads_the_whole_file(
+    page: Page,
+    live_server: str,
+    runner_id: str,
+    tmp_path: Path,
+) -> None:
+    """Right-click on a cited file offers Download, which saves the exact bytes."""
+    payload = bytes(range(256)) * 6000  # about 1.5 MB, past any preview cap
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(payload)
+
+    create_resp = post_session_bundle(
+        httpx.post, f"{live_server}/v1/sessions", _agent_bundle(str(tmp_path)), timeout=30.0
+    )
+    create_resp.raise_for_status()
+    session_id = create_resp.json()["session_id"]
+    try:
+        bind_session_runner(httpx.patch, live_server, session_id, runner_id, timeout=10.0)
+        httpx.post(
+            f"{live_server}/v1/sessions/{session_id}/events",
+            json={
+                "type": "external_assistant_message",
+                "data": {"agent": _AGENT_NAME, "text": f"Your video is at `{clip}`."},
+            },
+            timeout=10.0,
+        ).raise_for_status()
+
+        page.goto(f"{live_server}/c/{session_id}")
+        link = page.get_by_role("button", name=str(clip))
+        expect(link).to_be_visible(timeout=30_000)
+        link.click(button="right")
+        with page.expect_download() as download_info:
+            page.get_by_role("menuitem", name="Download").click()
+        download = download_info.value
+        assert download.suggested_filename == "clip.mp4"
+        saved = tmp_path / "saved-clip.mp4"
+        download.save_as(saved)
+        assert saved.read_bytes() == payload
+
+        # The same route answers a plain request as an attachment, so a phone
+        # or a bare link click saves rather than plays it.
+        raw = page.request.get(
+            f"{live_server}/v1/sessions/{session_id}/resources/environments/default"
+            f"/filesystem/{str(clip).lstrip('/')}?base=host&download=true"
+        )
+        assert raw.status == 200
+        assert raw.headers["content-disposition"].startswith("attachment")
+    finally:
+        httpx.delete(f"{live_server}/v1/sessions/{session_id}", timeout=10.0)

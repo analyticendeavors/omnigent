@@ -28,6 +28,7 @@ import { useThrottledValue } from "@/hooks/useThrottledValue";
 import { withBasePath } from "@/lib/basePath";
 import { isNativeShell } from "@/lib/nativeBridge";
 import { SessionRouteLink } from "@/components/blocks/AeSessionLink";
+import { aeFileLinkHint, useAeChatFileActions } from "@/components/blocks/AeChatFileActions";
 import { sessionLinkRoute } from "@/lib/aeSessionLinks";
 import { maybeOpenLinkInApp } from "@/lib/openLinkInApp";
 import { cn } from "@/lib/utils";
@@ -165,7 +166,9 @@ function WorkspacePathInlineCode({
   // A backtick span is prose by default (`git status`, `useState`), so a
   // non-openable one just stays styled inline code — only an explicit
   // markdown link (WorkspaceFileLink) earns dead-path feedback.
-  const { open: openWorkspaceFile } = useWorkspaceFileOpener(text);
+  const { open: openWorkspaceFile, resolvedPath } = useWorkspaceFileOpener(text);
+  const conversationId = useFileViewerConversationId();
+  const actions = useAeChatFileActions(conversationId, resolvedPath, openWorkspaceFile);
 
   if (openWorkspaceFile) {
     // Rendered as an inline <code> (not a <button>): a button is laid out as
@@ -186,6 +189,8 @@ function WorkspacePathInlineCode({
           className,
         )}
         onClick={openWorkspaceFile}
+        onContextMenu={actions.onContextMenu}
+        title={aeFileLinkHint(resolvedPath)}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
@@ -195,6 +200,7 @@ function WorkspacePathInlineCode({
         {...codeProps}
       >
         {codeChildren}
+        {actions.extra}
       </code>
     );
   }
@@ -308,6 +314,7 @@ function WorkspaceFileLink({
   // Scopes the desktop in-app browser route to this conversation's view.
   const conversationId = useFileViewerConversationId();
   const inRouter = useInRouterContext();
+  const actions = useAeChatFileActions(conversationId, resolvedPath, openWorkspaceFile);
 
   if (!path) {
     // Rebase an app-internal link (e.g. an agent's `/clear` "the new chat"
@@ -415,8 +422,9 @@ function WorkspaceFileLink({
       {...props}
       role="button"
       tabIndex={0}
-      title={title ?? path}
+      title={title ?? aeFileLinkHint(resolvedPath)}
       data-streamdown="link"
+      onContextMenu={actions.onContextMenu}
       // Dotted underline distinguishes "opens in the FileViewer" from a link
       // that leaves the app; the rest matches Streamdown so a file link in a
       // table cell wraps like any other.
@@ -430,6 +438,7 @@ function WorkspaceFileLink({
       }}
     >
       {children}
+      {actions.extra}
     </a>
   );
 }
