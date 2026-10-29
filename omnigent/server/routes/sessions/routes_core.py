@@ -188,6 +188,12 @@ from omnigent.server.routes._sessions.orchestration import (
     _validate_session_model_selection,
     ensure_runner_connected,
 )
+from omnigent.server.routes.sessions.ae_bypass_switch import (
+    RELAUNCH_FORWARD_TIMEOUT_S,
+    pin_relaunch_launch_args,
+    restore_launch_args,
+    server_needs_relaunch,
+)
 from omnigent.server.routes.sessions.ae_live_account_label import (
     reject_live_account_seed,
     require_live_account_authority,
@@ -3047,6 +3053,22 @@ def register_core_routes(
                 _runner_result,
             )
         if requested_permission_mode is not None and live_forward:
+            # omnigent-ae: into or out of bypass the runner restarts Claude, and the
+            # new pane reads its mode from the row, so pin it before the forward.
+            _relaunch_switch = server_needs_relaunch(
+                requested_permission_mode,
+                updated.labels.get(_CLAUDE_NATIVE_PERMISSION_MODE_LABEL_KEY),
+            )
+            _args_before_relaunch = (
+                await pin_relaunch_launch_args(
+                    session_id,
+                    conversation_store,
+                    updated.terminal_launch_args,
+                    requested_permission_mode,
+                )
+                if _relaunch_switch
+                else None
+            )
             _mode_result = await _forward_session_change_to_runner(
                 session_id,
                 runner_router,
@@ -3054,14 +3076,22 @@ def register_core_routes(
                     "type": "permission_mode_change",
                     "permission_mode": requested_permission_mode,
                 },
+                **({"timeout_s": RELAUNCH_FORWARD_TIMEOUT_S} if _relaunch_switch else {}),
             )
             # Raises unless the runner confirms the switch, so the label can
             # never claim a mode Claude isn't in. Stores the mode it reached.
-            _confirmed_permission_mode = _require_permission_mode_forward(
-                session_id,
-                requested_permission_mode,
-                _mode_result,
-            )
+            try:
+                _confirmed_permission_mode = _require_permission_mode_forward(
+                    session_id,
+                    requested_permission_mode,
+                    _mode_result,
+                )
+            except OmnigentError:
+                if _relaunch_switch:
+                    await restore_launch_args(
+                        session_id, conversation_store, _args_before_relaunch
+                    )
+                raise
             labels_to_set[_CLAUDE_NATIVE_PERMISSION_MODE_LABEL_KEY] = _confirmed_permission_mode
             # The launcher restores the mode from terminal_launch_args, not the
             # label above, so pin the confirmed mode there too — otherwise a

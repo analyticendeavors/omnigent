@@ -257,10 +257,11 @@ async def test_events_permission_mode_change_on_native_session_switches_and_echo
     ``permission_mode_change`` cycles the pane and returns the settled mode.
 
     Claude Code's ``--permission-mode`` is launch-only, so the runner drives
-    the TUI's shift+tab cycle via the bridge. The 200 body echoes the mode the
-    pane actually landed on — the Omnigent server persists that value, so a
-    regression returning 204 (or dropping the body) would leave the web UI
-    showing a mode the session isn't in.
+    the TUI's shift+tab cycle via the bridge (bypass restarts the pane
+    instead). The 200 body echoes the mode the pane actually landed on — the
+    Omnigent server persists that value, so a regression returning 204 (or
+    dropping the body) would leave the web UI showing a mode the session
+    isn't in.
     """
 
     calls: list[str] = []
@@ -295,6 +296,105 @@ async def test_events_permission_mode_change_on_native_session_switches_and_echo
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"permission_mode": "auto"}
     assert calls == ["auto"], f"Expected one switch to auto, got {calls!r}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("target", "pane_mode"),
+    [("bypassPermissions", "auto"), ("plan", "bypassPermissions")],
+)
+async def test_events_permission_mode_change_into_or_out_of_bypass_relaunches(
+    monkeypatch: pytest.MonkeyPatch, target: str, pane_mode: str
+) -> None:
+    """
+    A switch into or out of bypass restarts the pane; the shift+tab cycle is never used.
+
+    Bypass is not in the cycle of a pane launched without it, and a pane
+    launched into it passes through bypass when it cycles, so the runner hands
+    the switch to the relaunch handler and never calls ``set_permission_mode``.
+    """
+    from omnigent.runner import ae_bypass_relaunch
+
+    cycled: list[str] = []
+    relaunched: list[str] = []
+
+    def _fake_set_mode(bridge_dir: Any, *, mode: str, timeout_s: float) -> str:
+        del bridge_dir, timeout_s
+        cycled.append(mode)
+        return mode
+
+    async def _fake_relaunch(conversation_id: str, *, target_mode: str, **_kwargs: Any) -> Any:
+        from fastapi.responses import JSONResponse
+
+        relaunched.append(target_mode)
+        return JSONResponse({"permission_mode": target_mode, "relaunched": True})
+
+    monkeypatch.setattr(claude_native_bridge, "set_permission_mode", _fake_set_mode)
+    monkeypatch.setattr(claude_native_bridge, "read_permission_mode", lambda _dir: pane_mode)
+    monkeypatch.setattr(ae_bypass_relaunch, "handle_claude_relaunch_switch", _fake_relaunch)
+
+    app, _ = await _build_app_for_spec(_harness_spec("claude-native"))
+
+    async with _runner_client(app) as client:
+        create_resp = await client.post(
+            "/v1/sessions",
+            json={
+                "session_id": "4a99519bd9daa4e9bc2df649fe468522",
+                "agent_id": "880b5afda28ad55ff74cbeb9b5fc67fb",
+            },
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        resp = await client.post(
+            "/v1/sessions/4a99519bd9daa4e9bc2df649fe468522/events",
+            json={"type": "permission_mode_change", "permission_mode": target},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"permission_mode": target, "relaunched": True}
+    assert relaunched == [target]
+    assert cycled == []
+
+
+@pytest.mark.asyncio
+async def test_events_permission_mode_change_between_cycle_modes_still_cycles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Auto to plan never touches the relaunch path; the pane cycles as before."""
+    from omnigent.runner import ae_bypass_relaunch
+
+    cycled: list[str] = []
+
+    def _fake_set_mode(bridge_dir: Any, *, mode: str, timeout_s: float) -> str:
+        del bridge_dir, timeout_s
+        cycled.append(mode)
+        return mode
+
+    async def _no_relaunch(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("auto to plan must not relaunch the pane")
+
+    monkeypatch.setattr(claude_native_bridge, "set_permission_mode", _fake_set_mode)
+    monkeypatch.setattr(claude_native_bridge, "read_permission_mode", lambda _dir: "auto")
+    monkeypatch.setattr(ae_bypass_relaunch, "handle_claude_relaunch_switch", _no_relaunch)
+
+    app, _ = await _build_app_for_spec(_harness_spec("claude-native"))
+
+    async with _runner_client(app) as client:
+        create_resp = await client.post(
+            "/v1/sessions",
+            json={
+                "session_id": "5b00519bd9daa4e9bc2df649fe468533",
+                "agent_id": "880b5afda28ad55ff74cbeb9b5fc67fb",
+            },
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        resp = await client.post(
+            "/v1/sessions/5b00519bd9daa4e9bc2df649fe468533/events",
+            json={"type": "permission_mode_change", "permission_mode": "plan"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"permission_mode": "plan"}
+    assert cycled == ["plan"]
 
 
 @pytest.mark.asyncio

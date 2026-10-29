@@ -30,6 +30,7 @@ import contextlib
 import logging
 import weakref
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from fastapi.responses import JSONResponse, Response
@@ -52,6 +53,28 @@ NOT_STARTED_DETAIL = (
 )
 
 NOT_CLOSED_DETAIL = "Claude's old terminal would not close. Try the switch again."
+
+
+@dataclass(frozen=True)
+class Refusals:
+    """The 409 codes and sentences a relaunch answers with, so each caller words its own."""
+
+    busy_code: str
+    busy_detail: str
+    not_closed_code: str
+    not_closed_detail: str
+    not_started_code: str
+    not_started_detail: str
+
+
+ACCOUNT_REFUSALS = Refusals(
+    busy_code="claude_account_busy",
+    busy_detail=BUSY_DETAIL,
+    not_closed_code="claude_account_not_closed",
+    not_closed_detail=NOT_CLOSED_DETAIL,
+    not_started_code="claude_account_not_started",
+    not_started_detail=NOT_STARTED_DETAIL,
+)
 # Longest a turn waits for a switch to finish; past it the turn goes ahead.
 SWITCH_WAIT_S = 100.0
 
@@ -124,6 +147,43 @@ async def handle_claude_account_change(
     """
     if harness != _CLAUDE_NATIVE:
         return _error(400, "claude_account_unsupported", NOT_CLAUDE_DETAIL)
+    return await relaunch_claude_terminal(
+        conversation_id,
+        turn_in_flight=turn_in_flight,
+        terminal_registry=terminal_registry,
+        close_terminal=close_terminal,
+        ensure_terminal=ensure_terminal,
+        publish_event=publish_event,
+        refusals=ACCOUNT_REFUSALS,
+    )
+
+
+async def relaunch_claude_terminal(
+    conversation_id: str,
+    *,
+    turn_in_flight: Callable[[], bool],
+    terminal_registry: TerminalRegistry | None,
+    close_terminal: CloseTerminal,
+    ensure_terminal: EnsureTerminal,
+    publish_event: PublishEvent,
+    refusals: Refusals,
+) -> Response:
+    """
+    Restart a claude-native session's terminal, one relaunch at a time per session.
+
+    Marks the session switching for the duration, so a turn that arrives waits
+    for the new pane. The caller has already checked the harness and stored
+    whatever the new launch reads.
+
+    :param conversation_id: Session id, e.g. ``"conv_abc123"``.
+    :param turn_in_flight: Whether the runner sees an active turn or a running pane.
+    :param terminal_registry: The runner's terminal registry.
+    :param close_terminal: Closes a terminal resource by session and resource id.
+    :param ensure_terminal: Starts the native terminal again.
+    :param publish_event: The runner's per-session event emitter.
+    :param refusals: The codes and sentences for the 409 answers.
+    :returns: ``200 {"relaunched": true}`` or a 409 response.
+    """
     lock = _locks.get(conversation_id)
     if lock is None:
         lock = _locks[conversation_id] = asyncio.Lock()
@@ -137,6 +197,7 @@ async def handle_claude_account_change(
                 close_terminal=close_terminal,
                 ensure_terminal=ensure_terminal,
                 publish_event=publish_event,
+                refusals=refusals,
             )
         finally:
             _switching.pop(conversation_id, None)
@@ -151,6 +212,7 @@ async def _replace_terminal(
     close_terminal: CloseTerminal,
     ensure_terminal: EnsureTerminal,
     publish_event: PublishEvent,
+    refusals: Refusals,
 ) -> Response:
     """Close the pane seen now and start another; the session is already marked switching."""
     from omnigent.runner.tool_dispatch import _publish_terminal_deleted_event
@@ -161,7 +223,7 @@ async def _replace_terminal(
         return terminal_registry.get(conversation_id, _TERMINAL_NAME, "main")
 
     if session_is_busy(conversation_id, turn_in_flight=turn_in_flight()):
-        return _error(409, "claude_account_busy", BUSY_DETAIL)
+        return _error(409, refusals.busy_code, refusals.busy_detail)
     pane = current()
     if pane is not None:
         try:
@@ -175,14 +237,14 @@ async def _replace_terminal(
                     publish_event=publish_event,
                 )
         if current() is pane:
-            return _error(409, "claude_account_not_closed", NOT_CLOSED_DETAIL)
+            return _error(409, refusals.not_closed_code, refusals.not_closed_detail)
     await ensure_terminal(conversation_id, _CLAUDE_NATIVE)
     started = current()
     if started is None or started is pane or not await started.is_alive():
         _logger.warning(
-            "claude account switch: no live new terminal after relaunch for session=%s",
+            "claude relaunch: no live new terminal after relaunch for session=%s",
             conversation_id,
             extra={"session_id": conversation_id},
         )
-        return _error(409, "claude_account_not_started", NOT_STARTED_DETAIL)
+        return _error(409, refusals.not_started_code, refusals.not_started_detail)
     return JSONResponse({"relaunched": True})

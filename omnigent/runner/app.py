@@ -6798,20 +6798,23 @@ def create_runner_app(
                 turn_in_flight=_native_turn_in_flight,
             )
 
+        def _claude_turn_busy() -> bool:
+            return (
+                conversation_id in _active_turns
+                or _native_turn_in_flight(conversation_id)
+                or (
+                    process_manager is not None
+                    and process_manager.has_active_turn(conversation_id)
+                )
+            )
+
         if body_type == "claude_account_change":
             from omnigent.runner.ae_claude_account import handle_claude_account_change
 
             return await handle_claude_account_change(
                 conversation_id,
                 harness=_session_harness_name(conversation_id),
-                turn_in_flight=lambda: (
-                    conversation_id in _active_turns
-                    or _native_turn_in_flight(conversation_id)
-                    or (
-                        process_manager is not None
-                        and process_manager.has_active_turn(conversation_id)
-                    )
-                ),
+                turn_in_flight=_claude_turn_busy,
                 terminal_registry=resource_registry.terminal_registry,
                 close_terminal=resource_registry.close_terminal,
                 ensure_terminal=_ensure_native_terminal_for_turn,
@@ -6853,6 +6856,39 @@ def create_runner_app(
                         conversation_id,
                         mode,
                     )
+                if mode is not None:
+                    # omnigent-ae: into or out of bypass the pane restarts (see the module).
+                    from omnigent.harnesses.claude_native.bridge import (
+                        bridge_dir_for_bridge_id,
+                        read_permission_mode,
+                    )
+                    from omnigent.runner import ae_bypass_relaunch
+
+                    bypass_dir = bridge_dir_for_bridge_id(
+                        await _claude_native_bridge_id_for_session(
+                            server_client=server_client, session_id=conversation_id
+                        )
+                    )
+                    pane_mode = await asyncio.to_thread(read_permission_mode, bypass_dir)
+                    if ae_bypass_relaunch.needs_relaunch(mode, pane_mode):
+                        return await ae_bypass_relaunch.handle_claude_relaunch_switch(
+                            conversation_id,
+                            target_mode=mode,
+                            harness=harness,
+                            current_mode=lambda: asyncio.to_thread(
+                                read_permission_mode, bypass_dir
+                            ),
+                            settled_mode=lambda: asyncio.to_thread(
+                                ae_bypass_relaunch.read_settled_mode_blocking,
+                                bypass_dir,
+                                ae_bypass_relaunch.SETTLE_TIMEOUT_S,
+                            ),
+                            turn_in_flight=_claude_turn_busy,
+                            terminal_registry=resource_registry.terminal_registry,
+                            close_terminal=resource_registry.close_terminal,
+                            ensure_terminal=_ensure_native_terminal_for_turn,
+                            publish_event=_publish_event,
+                        )
                 return await _handle_claude_native_permission_mode_change(
                     conversation_id,
                     mode,

@@ -106,7 +106,7 @@ export function CreateScheduledTaskDialog({
   // are omitted so the fire path uses the agent's configured defaults. Permission
   // mode is offered for native coding agents that support it (Claude Code); each
   // fire launches a fresh session, so the whole launch vocabulary is valid —
-  // including the launch-only `dontAsk` / `bypassPermissions`.
+  // including `dontAsk`, which is launch-only (bypass on a running session restarts Claude).
   const [pickedAgentId, setPickedAgentId] = useState<string | null>(null);
   const [pickedModel, setPickedModel] = useState<string>("");
   const [pickedEffort, setPickedEffort] = useState<string>("");

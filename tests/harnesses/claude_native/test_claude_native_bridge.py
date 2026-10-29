@@ -5677,13 +5677,15 @@ def test_cycleable_permission_modes_match_the_server_patch_vocabulary() -> None:
     PATCH validates ``permission_mode`` against its own frozenset before
     forwarding, so a mode in one set but not the other is either
     unreachable (rejected at the API after the UI offered it) or
-    reachable but un-offerable. Pin them together.
+    reachable but un-offerable. Pin them together. Bypass is the one
+    mode outside the cycle: the runner serves it by restarting the pane
+    (``omnigent.runner.ae_bypass_relaunch``), not by shift+tab.
     """
     from omnigent.server.routes._sessions.common import _CLAUDE_NATIVE_PERMISSION_MODES
 
-    assert set(claude_native_bridge.CYCLEABLE_PERMISSION_MODES) == set(
+    assert set(claude_native_bridge.CYCLEABLE_PERMISSION_MODES) | {"bypassPermissions"} == set(
         _CLAUDE_NATIVE_PERMISSION_MODES
-    ), "Bridge cycleable modes and the Sessions API's accepted modes must match."
+    ), "Bridge cycleable modes (plus bypass) and the Sessions API's accepted modes must match."
 
 
 class _FakeModeCycleTmux:

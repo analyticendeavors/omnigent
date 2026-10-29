@@ -8645,10 +8645,10 @@ async def test_post_external_permission_mode_change_accepts_bypass_read_back(
     """
     A pane reporting bypass lands on the label and rewrites the launch arg.
 
-    Bypass is launch-only and stays rejected as a PATCH target, but a session
-    launched into it (or cycled back to it inside the TUI) must read back as
-    bypass, or the picker shows a stale mode and a relaunch reopens in the
-    mode last recorded instead of the one the pane is in.
+    A session launched into bypass (or cycled back to it inside the TUI)
+    must read back as bypass, or the picker shows a stale mode and a
+    relaunch reopens in the mode last recorded instead of the one the pane
+    is in.
     """
     published: list[tuple[str, dict[str, Any]]] = []
     _capture_published(monkeypatch, published)
@@ -11208,7 +11208,12 @@ async def test_post_external_codex_approval_mode_change_requires_a_field(
 
 @pytest.mark.parametrize(
     ("requested_mode", "confirmed_mode"),
-    [("auto", "auto"), ("default", "default"), ("auto", "acceptEdits")],
+    [
+        ("auto", "auto"),
+        ("default", "default"),
+        ("auto", "acceptEdits"),
+        ("bypassPermissions", "bypassPermissions"),
+    ],
 )
 async def test_patch_permission_mode_persists_label_and_forwards_event(
     client: httpx.AsyncClient,
@@ -11219,7 +11224,7 @@ async def test_patch_permission_mode_persists_label_and_forwards_event(
     PATCH ``permission_mode`` forwards the switch and persists what landed.
 
     Claude Code's ``--permission-mode`` is launch-only, so the runner has to
-    drive the TUI's shift+tab cycle. The server forwards a
+    drive the TUI's shift+tab cycle (or restart the pane, for bypass). The server forwards a
     ``permission_mode_change`` control event and records the mode the runner
     reports the pane reached — not the requested one — so a reload shows the
     session's real mode.
@@ -11409,6 +11414,163 @@ async def test_patch_permission_mode_replaces_standalone_bypass_flag(
     assert resp.json()["labels"]["omnigent.claude_native.permission_mode"] == "auto"
 
 
+async def _patch_with_relaunch_probe(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    requested: str,
+    label: str | None,
+    launch_args: list[str] | None,
+    runner_response: httpx.Response,
+) -> tuple[httpx.Response, dict[str, Any], list[str], list[float]]:
+    """
+    PATCH a Claude session's permission mode and record what the runner forward saw.
+
+    :returns: The PATCH response, the session snapshot afterwards, the events
+        in the order ``pin`` (launch args written) and ``forward`` (runner
+        called), and the read timeouts of the forwards.
+    """
+    from omnigent.server.routes.sessions import routes_core
+
+    events: list[str] = []
+    timeouts: list[float] = []
+    real_pin = routes_core.pin_relaunch_launch_args
+
+    async def _pin(*args: Any, **kwargs: Any) -> list[str] | None:
+        events.append("pin")
+        return await real_pin(*args, **kwargs)
+
+    monkeypatch.setattr(routes_core, "pin_relaunch_launch_args", _pin)
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        if request.method != "POST":
+            return httpx.Response(204)
+        events.append("forward")
+        timeouts.append(request.extensions["timeout"]["read"])
+        return runner_response
+
+    labels = {"omnigent.ui": "terminal", "omnigent.wrapper": "claude-code-native-ui"}
+    if label is not None:
+        labels["omnigent.claude_native.permission_mode"] = label
+    async with _runtime_runner(_handler):
+        agent = await create_test_agent(client)
+        session = await _create_session(
+            client, agent["id"], labels=labels, terminal_launch_args=launch_args
+        )
+        resp = await client.patch(
+            f"/v1/sessions/{session['id']}", json={"permission_mode": requested}
+        )
+        snapshot = (await client.get(f"/v1/sessions/{session['id']}")).json()
+    return resp, snapshot, events, timeouts
+
+
+@pytest.mark.parametrize(
+    ("requested", "label"),
+    [("bypassPermissions", "auto"), ("plan", "bypassPermissions")],
+    ids=["into_bypass", "out_of_bypass"],
+)
+async def test_patch_permission_mode_relaunch_pins_args_before_the_long_forward(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    requested: str,
+    label: str,
+) -> None:
+    """
+    Into or out of bypass the launch args are pinned first and the forward gets 90 s.
+
+    The runner restarts Claude, and the new pane reads its mode from the row,
+    so the pin has to land before the runner is called.
+    """
+    resp, snapshot, events, timeouts = await _patch_with_relaunch_probe(
+        client,
+        monkeypatch,
+        requested=requested,
+        label=label,
+        launch_args=["--model", "opus"],
+        runner_response=httpx.Response(200, json={"permission_mode": requested}),
+    )
+    assert resp.status_code == 200, resp.text
+    assert events == ["pin", "forward"]
+    assert timeouts == [90.0]
+    assert snapshot["terminal_launch_args"] == ["--model", "opus", "--permission-mode", requested]
+    assert snapshot["labels"]["omnigent.claude_native.permission_mode"] == requested
+
+
+async def test_patch_permission_mode_between_cycle_modes_keeps_the_short_forward(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Auto to plan neither pins ahead of the forward nor stretches its budget."""
+    resp, _snapshot, events, timeouts = await _patch_with_relaunch_probe(
+        client,
+        monkeypatch,
+        requested="plan",
+        label="auto",
+        launch_args=None,
+        runner_response=httpx.Response(200, json={"permission_mode": "plan"}),
+    )
+    assert resp.status_code == 200, resp.text
+    assert events == ["forward"]
+    assert timeouts == [5.0]
+
+
+@pytest.mark.parametrize(
+    ("launch_args", "restored"),
+    [
+        (
+            ["--model", "opus", "--permission-mode", "auto"],
+            ["--model", "opus", "--permission-mode", "auto"],
+        ),
+        (None, []),
+    ],
+    ids=["had_a_flag", "flagless"],
+)
+async def test_patch_permission_mode_relaunch_refusal_restores_args_and_label(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    launch_args: list[str] | None,
+    restored: list[str],
+) -> None:
+    """A runner 409 puts the launch args back, keeps the label, and carries the detail."""
+    resp, snapshot, events, _timeouts = await _patch_with_relaunch_probe(
+        client,
+        monkeypatch,
+        requested="bypassPermissions",
+        label="auto",
+        launch_args=launch_args,
+        runner_response=httpx.Response(
+            409,
+            json={"error": "claude_bypass_busy", "detail": "Claude is mid-reply."},
+        ),
+    )
+    assert resp.status_code == 503, resp.text
+    assert "Claude is mid-reply." in resp.text
+    assert events == ["pin", "forward"]
+    assert snapshot["labels"]["omnigent.claude_native.permission_mode"] == "auto"
+    assert (snapshot["terminal_launch_args"] or []) == restored
+    assert "--dangerously-skip-permissions" not in (snapshot["terminal_launch_args"] or [])
+    if launch_args is None:
+        assert "--permission-mode" not in (snapshot["terminal_launch_args"] or [])
+
+
+async def test_patch_permission_mode_relaunch_records_the_mode_the_pane_reached(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A managed setting that strips bypass leaves the label and the launch args at default."""
+    resp, snapshot, _events, _timeouts = await _patch_with_relaunch_probe(
+        client,
+        monkeypatch,
+        requested="bypassPermissions",
+        label="auto",
+        launch_args=None,
+        runner_response=httpx.Response(200, json={"permission_mode": "default"}),
+    )
+    assert resp.status_code == 200, resp.text
+    assert snapshot["labels"]["omnigent.claude_native.permission_mode"] == "default"
+    assert snapshot["terminal_launch_args"] == ["--permission-mode", "default"]
+
+
 @pytest.mark.parametrize("runner_status", [None, 503], ids=["no_runner", "runner_rejects"])
 async def test_patch_permission_mode_requires_live_runner_before_persisting(
     client: httpx.AsyncClient,
@@ -11501,7 +11663,7 @@ async def test_patch_permission_mode_silent_skips_the_switch_without_crashing(
     assert "omnigent.claude_native.permission_mode" not in snapshot["labels"]
 
 
-@pytest.mark.parametrize("bad_mode", ["dontAsk", "bypassPermissions", "nonsense"])
+@pytest.mark.parametrize("bad_mode", ["dontAsk", "nonsense"])
 async def test_patch_permission_mode_rejects_modes_the_cycle_cannot_reach(
     client: httpx.AsyncClient,
     bad_mode: str,
@@ -11509,10 +11671,10 @@ async def test_patch_permission_mode_rejects_modes_the_cycle_cannot_reach(
     """
     Launch-only modes are rejected rather than forwarded.
 
-    ``dontAsk`` is never in Claude's shift+tab cycle and
-    ``bypassPermissions`` only joins it when the session launched into it, so
-    a live switch toward either would wander through unrelated modes before
-    failing. Reject up front, before touching the runner.
+    ``dontAsk`` is never in Claude's shift+tab cycle, so a live switch toward
+    it would wander through unrelated modes before failing. Reject up front,
+    before touching the runner. ``bypassPermissions`` is accepted and served
+    by restarting the pane.
     """
     agent = await create_test_agent(client)
     session = await _create_session(

@@ -150,7 +150,7 @@ export function ComposerPermissionPicker({
   value: string;
   harness?: string | null;
   selectedValue?: string | null;
-  options: readonly { value: string; label: string }[];
+  options: readonly { value: string; label: string; description?: string }[];
   disabled?: boolean;
   /** Hide the visible value; it stays in the accessible name. */
   iconOnly?: boolean;
@@ -205,6 +205,7 @@ export function ComposerPermissionPicker({
               value={option.value}
               data-testid={`${testIdPrefix}-permission-option-${option.value}`}
               data-permission-concept={permissionModeConcept(harness, option.value)}
+              title={option.description}
               className="whitespace-normal break-words"
             >
               {option.label}

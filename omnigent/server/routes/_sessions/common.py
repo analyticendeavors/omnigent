@@ -248,17 +248,16 @@ _CLAUDE_NATIVE_PERMISSION_MODE_LABEL_KEY = "omnigent.claude_native.permission_mo
 
 # Permission modes switchable on a running session — the ones Claude
 # Code's shift+tab cycle can reach. Mirrors
-# ``claude_native_bridge.CYCLEABLE_PERMISSION_MODES``; ``dontAsk`` and
-# ``bypassPermissions`` are launch-only and rejected on PATCH.
+# ``claude_native_bridge.CYCLEABLE_PERMISSION_MODES`` plus
+# ``bypassPermissions``; ``dontAsk`` is launch-only and rejected on PATCH.
+# Bypass is not in the shift+tab cycle of a pane not launched into it, so the
+# runner restarts the pane with ``--permission-mode`` instead.
 _CLAUDE_NATIVE_PERMISSION_MODES: frozenset[str] = frozenset(
-    {"default", "acceptEdits", "plan", "auto"}
+    {"default", "acceptEdits", "plan", "auto", "bypassPermissions"}
 )
-# Modes the forwarder can read off the pane footer. A session launched into
-# ``bypassPermissions`` reports it so the label and picker show the real mode;
-# it is still not a PATCH target.
-_CLAUDE_NATIVE_READABLE_PERMISSION_MODES: frozenset[str] = _CLAUDE_NATIVE_PERMISSION_MODES | {
-    "bypassPermissions"
-}
+# Modes the forwarder can read off the pane footer: the switchable set, so a
+# session in bypass reports it and the label and picker show the real mode.
+_CLAUDE_NATIVE_READABLE_PERMISSION_MODES: frozenset[str] = _CLAUDE_NATIVE_PERMISSION_MODES
 
 
 _CODEX_NATIVE_SUBAGENT_DISPLAY_FALLBACK = "Codex"

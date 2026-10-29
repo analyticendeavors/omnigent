@@ -684,7 +684,8 @@ def test_scheduled_task_edit_switches_the_harness(
 # The dialog renders a Permission-mode select alongside Model/Effort, gated on
 # the same ``permissionMode`` capability (Claude Code). Because an automation
 # fires a fresh session each run, the whole launch vocabulary is offered —
-# including the launch-only ``dontAsk`` / ``bypassPermissions``. Left on
+# including ``dontAsk``, which is launch-only (bypass on a running session
+# restarts Claude). Left on
 # "Default" the field is omitted (agent default); a concrete pick persists
 # ``permission_mode``, which the fire path turns into the runner's
 # ``--permission-mode`` launch arg. Like the sibling tests these are LLM-free:
@@ -749,7 +750,7 @@ def test_scheduled_task_edit_prefills_permission_mode(
     """The edit dialog prefills the Permission control from the loaded task.
 
     Seeds a Claude Code task carrying ``permission_mode="bypassPermissions"`` (a
-    launch-only mode, valid for automations), opens its Edit dialog, and asserts
+    mode valid for automations), opens its Edit dialog, and asserts
     ``task-permission-trigger`` renders the stored pick ("Bypass permissions"),
     not the "Default" sentinel.
     """

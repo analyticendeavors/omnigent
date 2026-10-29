@@ -11,15 +11,27 @@ import {
 
 describe("claudePermissionMode", () => {
   it("offers only shift+tab-reachable modes for a running session", () => {
-    // dontAsk is never in Claude's cycle and bypassPermissions only joins it
-    // when the session launched into it — offering either would produce a
-    // switch the server rejects or the cycler can't reach.
+    // dontAsk is never in Claude's cycle — offering it would produce a switch
+    // the server rejects. Bypass is last: the cycle does not reach it, so the
+    // runner restarts Claude in the same chat to get there.
     expect(CLAUDE_NATIVE_SWITCHABLE_PERMISSION_MODES.map((m) => m.value)).toEqual([
       "default",
       "auto",
       "acceptEdits",
       "plan",
+      "bypassPermissions",
     ]);
+    const bypass = CLAUDE_NATIVE_SWITCHABLE_PERMISSION_MODES.find(
+      (m) => m.value === "bypassPermissions",
+    );
+    expect(bypass?.label).toBe("Bypass permissions");
+    expect(bypass?.description).toBe(
+      "Restarts Claude in this chat, then runs everything with no prompts or safety checks",
+    );
+    // The start-session list keeps the original wording.
+    expect(
+      CLAUDE_NATIVE_PERMISSION_MODES.find((m) => m.value === "bypassPermissions")?.description,
+    ).toBe("Runs everything; no prompts or safety checks");
   });
 
   it("still offers the launch-only modes when starting a session", () => {
@@ -45,7 +57,7 @@ describe("claudePermissionMode", () => {
   it("accepts only switchable modes", () => {
     expect(isSwitchableClaudePermissionMode("auto")).toBe(true);
     expect(isSwitchableClaudePermissionMode("dontAsk")).toBe(false);
-    expect(isSwitchableClaudePermissionMode("bypassPermissions")).toBe(false);
+    expect(isSwitchableClaudePermissionMode("bypassPermissions")).toBe(true);
     expect(isSwitchableClaudePermissionMode(undefined)).toBe(false);
   });
 

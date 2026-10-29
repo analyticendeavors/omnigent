@@ -29,7 +29,7 @@ from playwright.sync_api import Page, expect
 # The four shift+tab-reachable modes the picker offers (see
 # CLAUDE_NATIVE_SWITCHABLE_PERMISSION_MODES in
 # web/src/lib/claudePermissionMode.ts).
-_SWITCHABLE_MODES = ["default", "auto", "acceptEdits", "plan"]
+_SWITCHABLE_MODES = ["default", "auto", "acceptEdits", "plan", "bypassPermissions"]
 _CURRENT_MODE = "auto"
 _CURRENT_MODE_LABEL = "Auto"
 # The menu rows render together with the menu itself, so once the menu is open

@@ -2307,8 +2307,10 @@ class UpdateSessionRequest(BaseModel):
     :param permission_mode: Claude-native permission mode to switch a
         running session to, e.g. ``"auto"``. Only the modes Claude Code's
         shift+tab cycle can reach are accepted (``default``,
-        ``acceptEdits``, ``plan``, ``auto``) — ``dontAsk`` and
-        ``bypassPermissions`` are launch-only. Only valid for sessions
+        ``acceptEdits``, ``plan``, ``auto``) plus ``bypassPermissions``;
+        ``dontAsk`` is launch-only. ``bypassPermissions``, and any switch
+        out of it, restarts Claude's terminal in the same conversation;
+        refused while a reply or approval is in progress. Only valid for sessions
         stamped with the claude-native wrapper label. Unlike the other
         fields here the switch is applied by the live TUI, so a failure
         to reach the mode is surfaced as an error rather than persisted.

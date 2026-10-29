@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { CLAUDE_NATIVE_SWITCHABLE_PERMISSION_MODES } from "@/lib/claudePermissionMode";
 import {
   ComposerHostTrigger,
   ComposerWorkspaceBar,
@@ -191,6 +192,27 @@ describe("shared composer controls", () => {
         "false",
       );
     }
+  });
+
+  it("lists Bypass permissions among the Claude switchable modes with a restart hint", () => {
+    render(
+      <ComposerPermissionPicker
+        label="Permission mode"
+        value="Manual"
+        selectedValue="default"
+        options={CLAUDE_NATIVE_SWITCHABLE_PERMISSION_MODES}
+        onSelect={vi.fn()}
+      />,
+    );
+    fireEvent.keyDown(screen.getByRole("button", { name: "Permission mode: Manual" }), {
+      key: "ArrowDown",
+    });
+    const row = screen.getByTestId("composer-permission-option-bypassPermissions");
+    expect(row).toHaveTextContent("Bypass permissions");
+    expect(row).toHaveAttribute(
+      "title",
+      "Restarts Claude in this chat, then runs everything with no prompts or safety checks",
+    );
   });
 
   it("exposes shared permission concepts without changing harness wire values", () => {

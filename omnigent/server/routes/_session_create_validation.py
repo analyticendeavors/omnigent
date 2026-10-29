@@ -94,8 +94,8 @@ async def resolve_project_session_create(
 
 
 # Claude Code's ``--permission-mode`` launch vocabulary — every value the CLI
-# accepts at start, not just the shift+tab-switchable subset. ``dontAsk`` and
-# ``bypassPermissions`` are launch-only (rejected on a running-session PATCH),
+# accepts at start, not just the shift+tab-switchable subset. ``dontAsk``
+# is launch-only (rejected on a running-session PATCH),
 # but a scheduled task launches a fresh session each fire, so all of them are
 # valid here. Mirrors the frontend's ``CLAUDE_NATIVE_PERMISSION_MODES``.
 CLAUDE_NATIVE_LAUNCH_PERMISSION_MODES: frozenset[str] = frozenset(
@@ -162,10 +162,11 @@ def validate_session_permission_mode(permission_mode: str | None) -> str | None:
     """Validate a persisted per-task permission mode shared by schedules.
 
     A scheduled task fires a fresh native session each run, so the whole launch
-    vocabulary is allowed (including the launch-only ``dontAsk`` /
-    ``bypassPermissions``). The value reaches the native CLI as the
-    ``--permission-mode`` argv element the fire path derives, so reject anything
-    outside the known set before a row persists it.
+    vocabulary is allowed (including the launch-only ``dontAsk``;
+    ``bypassPermissions`` on a running session restarts Claude). The value
+    reaches the native CLI as the ``--permission-mode`` argv element the fire
+    path derives, so reject anything outside the known set before a row
+    persists it.
     """
     if permission_mode is None:
         return None

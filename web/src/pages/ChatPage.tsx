@@ -2508,7 +2508,15 @@ function ComposerImpl(
       const store = useChatStore.getState();
       if (showClaudePermissionMode) await store.setClaudePermissionMode(mode);
       else if (showCodexApprovalMode) await store.setCodexApprovalMode(mode);
-      if (useChatStore.getState().conversationId === sourceSessionId) setCommandError(null);
+      if (useChatStore.getState().conversationId === sourceSessionId) {
+        // omnigent-ae: a restart into bypass can land elsewhere when a managed setting strips it.
+        const reached = useChatStore.getState().claudePermissionMode;
+        setCommandError(
+          showClaudePermissionMode && mode === "bypassPermissions" && reached !== mode
+            ? `Claude restarted but stayed in ${claudePermissionModeLabel(reached)}. A managed setting on this host may turn bypass off.`
+            : null,
+        );
+      }
     } catch (error) {
       if (useChatStore.getState().conversationId === sourceSessionId)
         setCommandError(error instanceof Error ? error.message : "Unable to change permissions");

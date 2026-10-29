@@ -49,10 +49,23 @@ export const CLAUDE_NATIVE_PERMISSION_MODES: ClaudePermissionModeOption[] = [
   },
 ];
 
-/** Modes a running session can be switched to (shift+tab-reachable). */
+/**
+ * Modes a running session can be switched to: the shift+tab-reachable ones,
+ * plus bypass. Bypass is not in the cycle of a pane launched without it, so
+ * the runner restarts Claude in the same chat instead (no allow flag is ever
+ * passed at launch); `dontAsk` stays launch-only.
+ */
 export const CLAUDE_NATIVE_SWITCHABLE_PERMISSION_MODES: ClaudePermissionModeOption[] =
   CLAUDE_NATIVE_PERMISSION_MODES.filter((mode) =>
-    ["default", "acceptEdits", "plan", "auto"].includes(mode.value),
+    ["default", "acceptEdits", "plan", "auto", "bypassPermissions"].includes(mode.value),
+  ).map((mode) =>
+    mode.value === "bypassPermissions"
+      ? {
+          ...mode,
+          description:
+            "Restarts Claude in this chat, then runs everything with no prompts or safety checks",
+        }
+      : mode,
   );
 
 export function isSwitchableClaudePermissionMode(mode: string | null | undefined): boolean {
