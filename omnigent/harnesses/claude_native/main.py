@@ -5338,6 +5338,7 @@ async def _ensure_local_claude_resume_transcript(
     external_session_id: str,
     workspace: Path,
     bridge_dir: Path | None = None,
+    ae_resume: ae_resume_keep.ResumeContext | None = None,
 ) -> Path | None:
     """
     Refresh Claude Code's local JSONL transcript for cold resume.
@@ -5364,6 +5365,9 @@ async def _ensure_local_claude_resume_transcript(
         what Claude computes.
     :param bridge_dir: Launch bridge path identifying the attachment cache.
         Defaults to the legacy session-id bridge when omitted.
+    :param ae_resume: The launch's resume context (final forwarder cursor and
+        frontier). Given, the transcript on disk may be kept or copied instead of
+        rebuilt, and the path taken is set on it; ``None`` always rebuilds.
     :returns: Path to the local transcript that was written; ``None`` if
         *external_session_id* is not a safe transcript stem, or if the AP
         history yields no resumable records (an empty transcript would make
@@ -5405,27 +5409,30 @@ async def _ensure_local_claude_resume_transcript(
     # fetch the bytes back so the rebuilt transcript can reference a
     # live local file instead of silently dropping the attachment.
     items = await resolve_session_item_file_references(client, session_id=session_id, items=items)
-    kept = ae_resume_keep.try_keep(
-        session_id=session_id,
-        items=items,
-        target=target,
-        external_session_id=external_session_id,
-        workspace=current,
-        is_resumable=_is_resumable_claude_transcript,
-        find_transcript=_find_claude_transcript,
-        copy_transcript=_copy_transcript_with_cwd,
-    )
-    if kept is not None:
-        # A rebuild also re-materializes the attachment files its records point at.
-        _claude_transcript_records_from_session_items(
-            items,
+    if ae_resume is not None:
+        kept = await ae_resume_keep.try_keep(
+            ae_resume,
             session_id=session_id,
+            items=items,
+            target=target,
             external_session_id=external_session_id,
-            cwd=current,
-            bridge_dir=bridge_dir or bridge_dir_for_conversation_id(session_id),
+            workspace=current,
+            is_resumable=_is_resumable_claude_transcript,
+            find_transcript=_find_claude_transcript,
+            copy_transcript=_copy_transcript_with_cwd,
+            sanitize_record=_sanitize_cloned_tool_result_record,
         )
-        return kept
-    ae_resume_keep.note_rebuilt(session_id)
+        if kept is not None:
+            # A rebuild also re-materializes the attachment files its records point at.
+            _claude_transcript_records_from_session_items(
+                items,
+                session_id=session_id,
+                external_session_id=external_session_id,
+                cwd=current,
+                bridge_dir=bridge_dir or bridge_dir_for_conversation_id(session_id),
+            )
+            return kept
+        ae_resume_keep.note_rebuilt(ae_resume, items)
     records = _claude_transcript_records_from_session_items(
         items,
         session_id=session_id,

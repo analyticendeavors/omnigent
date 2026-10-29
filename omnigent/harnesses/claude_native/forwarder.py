@@ -21,6 +21,7 @@ import httpx
 from omnigent.debug_logging import debug_event
 from omnigent.entities.session_resources import terminal_resource_id
 from omnigent.errors import ErrorCode
+from omnigent.harnesses.claude_native import ae_resume_keep
 from omnigent.harnesses.claude_native.ae_pane_progress import (
     ProgressRelayState,
     clear_progress_on_rotation,
@@ -4876,10 +4877,13 @@ async def _forward_available_items(
         if retry_tracker.retry_delay_s(retry_key) is not None:
             return updated
         try:
-            await _post_external_conversation_item(
-                client,
-                session_id=session_id,
-                item=item,
+            ae_resume_keep.note_posted(
+                session_id,
+                await _post_external_conversation_item(
+                    client,
+                    session_id=session_id,
+                    item=item,
+                ),
             )
         except httpx.HTTPError as exc:
             decision = retry_tracker.record_failure(retry_key, exc, session_id=session_id)
@@ -5010,6 +5014,15 @@ async def _forward_available_items(
         pending_settled_response_id=dedupe.pending_settled_response_id,
     )
     await _write_forward_state_async(bridge_dir, updated)
+    if updated.byte_offset is not None and updated.cursor_fingerprint is not None:
+        await ae_resume_keep.record_frontier(
+            client,
+            bridge_dir,
+            session_id,
+            ae_resume_keep.ForwardCursor(
+                updated.transcript_path, updated.byte_offset, updated.cursor_fingerprint
+            ),
+        )
     # POST usage AFTER items so the ring never leads the transcript.
     # Best-effort: a failed post is retried on the next poll.
     #
@@ -5438,14 +5451,15 @@ async def _post_external_conversation_item(
     *,
     session_id: str,
     item: ClaudeTranscriptItem,
-) -> None:
+) -> str | None:
     """
     Post one mirrored transcript item to the Sessions API.
 
     :param client: Omnigent HTTP client.
     :param session_id: Omnigent session/conversation id.
     :param item: Transcript-derived conversation item.
-    :returns: None.
+    :returns: The store id the server gave the item, or ``None`` when the response
+        carried none.
     :raises httpx.HTTPError: If the Omnigent request fails or is rejected.
     """
     from omnigent.runtime import telemetry
@@ -5487,6 +5501,10 @@ async def _post_external_conversation_item(
             },
         )
         resp.raise_for_status()
+        try:
+            return resp.json().get("item_id")
+        except (ValueError, AttributeError):
+            return None
 
 
 async def _post_external_output_text_delta(

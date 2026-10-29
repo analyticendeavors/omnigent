@@ -191,7 +191,7 @@ class _CodexNativeModelOptionsNotReady(RuntimeError):
     """Raised when Codex model options are requested before bridge startup."""
 
 
-async def _cancel_auto_forwarder_task(session_id: str) -> None:
+async def _cancel_auto_forwarder_task(session_id: str) -> bool:
     """
     Cancel and await the session's registered transcript forwarder, if any.
 
@@ -203,11 +203,15 @@ async def _cancel_auto_forwarder_task(session_id: str) -> None:
     for external conversation items).
 
     :param session_id: Session/conversation id, e.g. ``"conv_abc123"``.
-    :returns: None.
+    :returns: ``True`` when no forwarder is left running, ``False`` when a cancelled one
+        did not finish in time.
     """
+    from omnigent.harnesses.claude_native import ae_resume_keep
+
     task = _AUTO_FORWARDER_TASKS.pop(session_id, None)
     if task is None or task.done():
-        return
+        ae_resume_keep.forget_session(session_id)
+        return True
     task.cancel()
     # asyncio.wait absorbs the CancelledError and bounds the wait on a hung cancellation.
     _done, pending = await asyncio.wait({task}, timeout=_AUTO_FORWARDER_CANCEL_TIMEOUT_S)
@@ -217,6 +221,8 @@ async def _cancel_auto_forwarder_task(session_id: str) -> None:
             session_id,
             _AUTO_FORWARDER_CANCEL_TIMEOUT_S,
         )
+    ae_resume_keep.forget_session(session_id)
+    return not pending
 
 
 async def teardown_codex_native_app_server(session_id: str) -> None:
@@ -8413,13 +8419,6 @@ async def _auto_create_claude_terminal(
     )
 
     _pre_wipe_claude_sid = _read_csid_pre_wipe(_bridge_dir_for_bridge_id(bridge_id))
-    from omnigent.harnesses.claude_native import ae_resume_keep
-
-    # The forwarder cursor goes the same way, so a kept transcript that is ahead of
-    # the server can be forwarded from where the cursor stopped.
-    ae_resume_keep.remember_cursor(
-        session_id, ae_resume_keep.read_forward_cursor(_bridge_dir_for_bridge_id(bridge_id))
-    )
     # Resolved once here and reused below (env_spec) so the bridge's own
     # sys_os_* tools and the terminal process see the same sandbox — the
     # agent's declared os_env.sandbox, already overridden by any
@@ -8433,7 +8432,12 @@ async def _auto_create_claude_terminal(
     )
     # Cancel any surviving forwarder BEFORE wiping its cursor/seen state, else it
     # re-posts with fresh dedup state alongside the forwarder spawned below.
-    await _cancel_auto_forwarder_task(session_id)
+    _ae_forwarder_stopped = await _cancel_auto_forwarder_task(session_id)
+    # Read the old forwarder's final cursor and frontier now that it has stopped, and
+    # before the reset below wipes them, so a keep sees what it wrote while cancelling.
+    from omnigent.harnesses.claude_native import ae_resume_keep
+
+    _ae_resume = ae_resume_keep.read_context(bridge_dir, forwarder_stopped=_ae_forwarder_stopped)
     reset_transcript_forward_state(bridge_dir)
     _logger.info(
         "Claude terminal bridge prepared: session=%s",
@@ -8524,12 +8528,15 @@ async def _auto_create_claude_terminal(
                 external_session_id=session_external_id,
                 workspace=Path(workspace).resolve(),
                 bridge_dir=bridge_dir,
+                ae_resume=_ae_resume,
             )
             if _transcript is not None:
                 resume_external_session_id = session_external_id
                 resume_prefix_bytes = await ae_resume_keep.settle_resume(
                     server_client,
                     session_id,
+                    _ae_resume,
+                    _transcript,
                     _measured_prefix_bytes(_transcript),
                     session_init.snapshot.labels if session_init is not None else None,
                 )

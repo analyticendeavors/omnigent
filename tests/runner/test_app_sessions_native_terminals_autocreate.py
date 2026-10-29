@@ -2185,10 +2185,11 @@ async def test_auto_create_claude_terminal_forwarder_skips_replayed_transcript_o
         external_session_id: str,
         workspace: Path,
         bridge_dir: Path,
+        ae_resume: Any = None,
     ) -> Path:
         """Record the resume id and return a transcript path."""
         assert bridge_dir == bridge_dir_for_bridge_id(session_id)
-        del client, session_id, workspace
+        del client, session_id, workspace, ae_resume
         synth_calls.append(external_session_id)
         return tmp_path / f"{external_session_id}.jsonl"
 
@@ -2465,9 +2466,10 @@ async def test_auto_create_claude_terminal_cold_resume_fallback_uses_pre_wipe_br
         external_session_id: str,
         workspace: Path,
         bridge_dir: Path,
+        ae_resume: Any = None,
     ) -> Path:
         assert bridge_dir == bridge_dir_for_bridge_id(session_id)
-        del client, session_id, workspace
+        del client, session_id, workspace, ae_resume
         synth_calls.append(external_session_id)
         return tmp_path / f"{external_session_id}.jsonl"
 
