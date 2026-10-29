@@ -177,6 +177,8 @@ async def relaunch_claude_terminal(
     publish_event: PublishEvent,
     refusals: Refusals,
     finish: Callable[[], Awaitable[Response]] | None = None,
+    deadline_s: float | None = None,
+    lock_wait_s: float | None = None,
 ) -> Response:
     """
     Restart a claude-native session's terminal, one relaunch at a time per session.
@@ -194,6 +196,10 @@ async def relaunch_claude_terminal(
     :param refusals: The codes and sentences for the 409 answers.
     :param finish: Runs inside the lock, after the new terminal is up and before the
         session stops being marked switching; its response replaces the plain 200.
+    :param deadline_s: Longest the restart and *finish* may take once the lock is held;
+        ``TimeoutError`` escapes when it runs out. ``None`` is unbounded.
+    :param lock_wait_s: Longest to wait for the lock behind another relaunch; past it
+        the answer is the busy refusal and nothing was touched. ``None`` waits.
     :returns: ``200 {"relaunched": true}``, the *finish* response, or a 409 response.
     """
     lock = _locks.get(conversation_id)
@@ -202,19 +208,34 @@ async def relaunch_claude_terminal(
     _queued[conversation_id] = _queued.get(conversation_id, 0) + 1
     done = _switching.setdefault(conversation_id, asyncio.Event())
     try:
-        async with lock:
-            response = await _replace_terminal(
-                conversation_id,
-                turn_in_flight=turn_in_flight,
-                terminal_registry=terminal_registry,
-                close_terminal=close_terminal,
-                ensure_terminal=ensure_terminal,
-                publish_event=publish_event,
-                refusals=refusals,
-            )
-            if finish is not None and response.status_code == 200:
-                return await finish()
-            return response
+        if lock_wait_s is None:
+            await lock.acquire()
+        else:
+            try:
+                await asyncio.wait_for(lock.acquire(), lock_wait_s)
+            except TimeoutError:
+                return _error(409, refusals.busy_code, refusals.busy_detail)
+        try:
+
+            async def restart() -> Response:
+                response = await _replace_terminal(
+                    conversation_id,
+                    turn_in_flight=turn_in_flight,
+                    terminal_registry=terminal_registry,
+                    close_terminal=close_terminal,
+                    ensure_terminal=ensure_terminal,
+                    publish_event=publish_event,
+                    refusals=refusals,
+                )
+                if finish is not None and response.status_code == 200:
+                    return await finish()
+                return response
+
+            if deadline_s is None:
+                return await restart()
+            return await asyncio.wait_for(restart(), deadline_s)
+        finally:
+            lock.release()
     finally:
         _queued[conversation_id] -= 1
         if _queued[conversation_id] <= 0:

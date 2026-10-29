@@ -160,6 +160,8 @@ interface SessionResponseWire {
    * a later mode switch is reflected in `labels`, not here.
    */
   terminal_launch_args?: string[] | null;
+  /** PATCH of a Claude permission mode only: what the runner did. */
+  permission_switch?: "switched" | "restarted" | "unconfirmed" | null;
   /** Worktree branch; ``null`` when the session uses no worktree. */
   git_branch?: string | null;
   items?: SessionItem[];
@@ -336,6 +338,7 @@ function sessionFromWire(wire: SessionResponseWire): Session {
     labels: wire.labels,
     workspace: wire.workspace ?? null,
     terminalLaunchArgs: wire.terminal_launch_args ?? null,
+    permissionSwitch: wire.permission_switch ?? undefined,
     gitBranch: wire.git_branch ?? null,
     items: wire.items ?? [],
     queuedItems: wire.queued_items,

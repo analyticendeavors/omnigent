@@ -2127,6 +2127,11 @@ class SessionResponse(BaseModel):
         ``["--dangerously-skip-permissions"]``. ``None`` for
         non-native sessions or a native session launched with none.
         Lets the launcher reproduce the command on resume.
+    :param permission_switch: Set only on the ``PATCH`` response of a Claude
+        permission-mode change: ``"switched"`` (shift+tab, or already in the
+        mode), ``"restarted"`` (Claude was restarted in the same chat) or
+        ``"unconfirmed"`` (restarted, but the mode it landed in could not be
+        read, so the label is unchanged until the forwarder reads it).
     :param pending_elicitations: Outstanding approval prompts on
         this session at the moment the snapshot was built — the
         original ``response.elicitation_request`` event dicts.
@@ -2238,6 +2243,7 @@ class SessionResponse(BaseModel):
     last_task_error: dict[str, str] | None = None
     external_session_id: str | None = None
     terminal_launch_args: list[str] | None = None
+    permission_switch: Literal["switched", "restarted", "unconfirmed"] | None = None
     pending_elicitations: list[dict[str, Any]] = Field(default_factory=list)
     # Un-consumed web-composer user messages on native-terminal
     # sessions at snapshot time, each ``{"pending_id", "content"}``.

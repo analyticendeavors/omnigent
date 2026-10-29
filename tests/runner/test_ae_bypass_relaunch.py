@@ -300,3 +300,53 @@ async def test_a_turn_waits_through_two_queued_relaunches() -> None:
     await turn_task
     assert finished_when_turn_woke == [2]
     assert not is_switching(SESSION_ID)
+
+
+async def test_a_switch_queued_too_long_answers_busy_and_touches_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ae_bypass_relaunch, "LOCK_WAIT_S", 0.05)
+    runner = _Runner(_Registry(_Terminal()))
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    plain_ensure = runner.ensure
+
+    async def gated_ensure(session_id: str, harness: str | None) -> None:
+        entered.set()
+        await release.wait()
+        await plain_ensure(session_id, harness)
+
+    runner.ensure = gated_ensure  # type: ignore[method-assign]
+    first = asyncio.create_task(_switch(runner, target=BYPASS, current="auto", settled=BYPASS))
+    await entered.wait()
+    calls_before = list(runner.calls)
+    status, body = await _switch(runner, target="plan", current=BYPASS, settled="plan")
+    assert (status, body["error"]) == (409, "claude_bypass_busy")
+    assert runner.calls == calls_before  # the queued switch closed and started nothing
+    release.set()
+    assert (await first)[0] == 200
+
+
+async def test_the_deadline_starts_when_the_lock_is_held(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A switch that waits for the lock longer than the deadline still gets all of it."""
+    monkeypatch.setattr(ae_bypass_relaunch, "RELAUNCH_DEADLINE_S", 0.3)
+    monkeypatch.setattr(ae_bypass_relaunch, "LOCK_WAIT_S", 5.0)
+    runner = _Runner(_Registry(_Terminal()))
+    plain_ensure = runner.ensure
+    ensures = 0
+
+    async def slow_first_ensure(session_id: str, harness: str | None) -> None:
+        nonlocal ensures
+        ensures += 1
+        if ensures == 1:
+            await asyncio.sleep(0.25)
+        await plain_ensure(session_id, harness)
+
+    runner.ensure = slow_first_ensure  # type: ignore[method-assign]
+    first = asyncio.create_task(_switch(runner, target=BYPASS, current="auto", settled=BYPASS))
+    await asyncio.sleep(0.05)
+    second = await _switch(runner, target="plan", current=BYPASS, settled="plan")
+    assert (await first)[0] == 200
+    assert second[0] == 200  # waited about 0.2 s for the lock, past 0.3 s in total

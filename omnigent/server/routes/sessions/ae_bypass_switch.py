@@ -25,7 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -40,12 +40,11 @@ from omnigent.stores.conversation_store import ConversationStore
 
 BYPASS_MODE = "bypassPermissions"
 
+SwitchOutcome = Literal["switched", "restarted", "unconfirmed"]
+
 # A relaunch closes the pane, starts Claude again and reads its mode, which the
 # runner bounds at 70 s; this is the server's wait for that answer.
 RELAUNCH_FORWARD_TIMEOUT_S = 90.0
-
-# The runner answers 504 with this code when its own deadline ran out mid-restart.
-RUNNER_TIMEOUT_CODE = "claude_bypass_timeout"
 
 
 def args_request_bypass(args: Sequence[str] | None) -> bool:
@@ -186,13 +185,28 @@ async def _forward(
 
 
 def _runner_timed_out(result: _RunnerForwardResult) -> bool:
-    if result.status_code != 504:
-        return False
+    # The runner answers 504 when its own deadline ran out mid-restart; a gateway
+    # or tunnel in front of it answers 504 when it gave up waiting. Either way the
+    # restart may still be going, so no 504 is a refusal.
+    return result.status_code == 504
+
+
+def switch_outcome(result: _RunnerForwardResult | None) -> SwitchOutcome:
+    """
+    Name what the runner did, for the PATCH response.
+
+    :param result: The runner's 2xx answer.
+    :returns: ``"unconfirmed"`` when Claude restarted but its mode was not read,
+        ``"restarted"`` when it restarted, else ``"switched"`` (shift+tab, or
+        already in the mode).
+    """
+    if relaunch_unconfirmed(result):
+        return "unconfirmed"
     try:
-        body = json.loads(result.body)
+        body = json.loads(result.body) if result is not None else None
     except (TypeError, ValueError):
-        return False
-    return isinstance(body, dict) and body.get("error") == RUNNER_TIMEOUT_CODE
+        body = None
+    return "restarted" if isinstance(body, dict) and body.get("relaunched") is True else "switched"
 
 
 async def switch_claude_permission_mode(

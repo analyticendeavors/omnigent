@@ -337,6 +337,8 @@ export interface Session {
    * via `claudePermissionModeFromSession` rather than from these args.
    */
   terminalLaunchArgs?: string[] | null;
+  /** PATCH of a Claude permission mode only: what the runner did. */
+  permissionSwitch?: "switched" | "restarted" | "unconfirmed";
   /**
    * Git branch checked out in a server-created worktree, e.g.
    * ``"feature/login"``. ``null`` when the session uses no worktree.

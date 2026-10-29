@@ -24,13 +24,13 @@ Answers to ``{"type": "permission_mode_change"}`` for such a switch:
     up in the new mode, so the server must not roll anything back.
 
 The whole restart, including the read of the new pane's mode, runs inside the
-session's switching lock under one deadline, so no turn is injected before the
-read and two quick switches cannot interleave.
+session's switching lock under one deadline counted from when the lock is held
+(a switch queued too long behind another answers 409 busy instead), so no turn
+is injected before the read and two quick switches cannot interleave.
 """
 
 from __future__ import annotations
 
-import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -53,8 +53,11 @@ if TYPE_CHECKING:
 BYPASS = "bypassPermissions"
 # Longest the new pane gets to show its permission-mode footer.
 SETTLE_TIMEOUT_S = 15.0
-# The whole restart and settle; well under the server's 90 s forward budget.
+# The restart and settle, counted from when the session's lock is held.
 RELAUNCH_DEADLINE_S = 70.0
+# Longest a switch waits behind another one before it answers busy; with the
+# deadline above it stays under the server's 90 s forward budget.
+LOCK_WAIT_S = 15.0
 
 BYPASS_REFUSALS = Refusals(
     busy_code="claude_bypass_busy",
@@ -163,18 +166,17 @@ async def handle_claude_relaunch_switch(
         return JSONResponse(content)
 
     try:
-        return await asyncio.wait_for(
-            relaunch_claude_terminal(
-                conversation_id,
-                turn_in_flight=turn_in_flight,
-                terminal_registry=terminal_registry,
-                close_terminal=close_terminal,
-                ensure_terminal=ensure_terminal,
-                publish_event=publish_event,
-                refusals=BYPASS_REFUSALS,
-                finish=finish,
-            ),
-            RELAUNCH_DEADLINE_S,
+        return await relaunch_claude_terminal(
+            conversation_id,
+            turn_in_flight=turn_in_flight,
+            terminal_registry=terminal_registry,
+            close_terminal=close_terminal,
+            ensure_terminal=ensure_terminal,
+            publish_event=publish_event,
+            refusals=BYPASS_REFUSALS,
+            finish=finish,
+            deadline_s=RELAUNCH_DEADLINE_S,
+            lock_wait_s=LOCK_WAIT_S,
         )
     except TimeoutError:
         return JSONResponse(

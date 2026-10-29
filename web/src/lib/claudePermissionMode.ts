@@ -79,6 +79,27 @@ export function claudePermissionModeLabel(mode: string | null | undefined): stri
 }
 
 /**
+ * The notice to show after a Claude permission switch, or `null` when it landed
+ * where it was asked to. `outcome` is what the server says the runner did:
+ * `"restarted"` (Claude restarted in the same chat), `"unconfirmed"` (restarted,
+ * mode not yet read) or `"switched"` (shift+tab).
+ */
+export function claudePermissionSwitchNotice(
+  requested: string,
+  reached: string | null | undefined,
+  outcome: "switched" | "restarted" | "unconfirmed" | undefined,
+): string | null {
+  if (outcome === "unconfirmed") return "Claude restarted; its mode will show once it is read.";
+  if (!reached || reached === requested) return null;
+  const was = claudePermissionModeLabel(reached);
+  if (outcome !== "restarted")
+    return `Claude is in ${was}, not ${claudePermissionModeLabel(requested)}.`;
+  return requested === "bypassPermissions"
+    ? `Claude restarted but stayed in ${was}. A managed setting on this host may turn bypass off.`
+    : `Claude restarted but is in ${was}, not ${claudePermissionModeLabel(requested)}.`;
+}
+
+/**
  * The permission mode a running claude-native session is in, or `null` when
  * it cannot be determined.
  *

@@ -3130,6 +3130,7 @@ describe("Composer shared visible controls", () => {
       .spyOn(useChatStore.getState(), "setClaudePermissionMode")
       .mockImplementation(async () => {
         useChatStore.setState({ claudePermissionMode: "default" });
+        return "restarted";
       });
     renderWithTooltips(<Composer {...composerProps({ showClaudePermissionMode: true })} />);
     fireEvent.keyDown(screen.getByTestId("composer-permission-chip"), { key: "ArrowDown" });
@@ -3149,6 +3150,7 @@ describe("Composer shared visible controls", () => {
       .spyOn(useChatStore.getState(), "setClaudePermissionMode")
       .mockImplementation(async () => {
         useChatStore.setState({ claudePermissionMode: "bypassPermissions" });
+        return "restarted";
       });
     renderWithTooltips(<Composer {...composerProps({ showClaudePermissionMode: true })} />);
     fireEvent.keyDown(screen.getByTestId("composer-permission-chip"), { key: "ArrowDown" });
@@ -3156,6 +3158,34 @@ describe("Composer shared visible controls", () => {
     await waitFor(() => expect(setClaude).toHaveBeenCalledWith("plan"));
     await screen.findByText("Claude restarted but is in Bypass permissions, not Plan.");
     expect(screen.queryByText(/managed setting/)).toBeNull();
+  });
+
+  it("does not claim a mismatch when the restarted mode is not read yet", async () => {
+    useChatStore.setState({ conversationId: "unread", claudePermissionMode: "auto" });
+    const setClaude = vi
+      .spyOn(useChatStore.getState(), "setClaudePermissionMode")
+      .mockResolvedValue("unconfirmed");
+    renderWithTooltips(<Composer {...composerProps({ showClaudePermissionMode: true })} />);
+    fireEvent.keyDown(screen.getByTestId("composer-permission-chip"), { key: "ArrowDown" });
+    fireEvent.click(screen.getByTestId("composer-permission-option-plan"));
+    await waitFor(() => expect(setClaude).toHaveBeenCalledWith("plan"));
+    await screen.findByText("Claude restarted; its mode will show once it is read.");
+    expect(screen.queryByText(/not Plan/)).toBeNull();
+  });
+
+  it("drops the word restarted for a plain switch that landed elsewhere", async () => {
+    useChatStore.setState({ conversationId: "cycled", claudePermissionMode: "auto" });
+    const setClaude = vi
+      .spyOn(useChatStore.getState(), "setClaudePermissionMode")
+      .mockImplementation(async () => {
+        useChatStore.setState({ claudePermissionMode: "acceptEdits" });
+        return "switched";
+      });
+    renderWithTooltips(<Composer {...composerProps({ showClaudePermissionMode: true })} />);
+    fireEvent.keyDown(screen.getByTestId("composer-permission-chip"), { key: "ArrowDown" });
+    fireEvent.click(screen.getByTestId("composer-permission-option-plan"));
+    await waitFor(() => expect(setClaude).toHaveBeenCalledWith("plan"));
+    await screen.findByText("Claude is in Accept edits, not Plan.");
   });
 });
 

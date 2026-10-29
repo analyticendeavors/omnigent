@@ -11501,6 +11501,7 @@ async def test_patch_permission_mode_pins_args_before_the_long_forward(
         runner_response=httpx.Response(200, json={"permission_mode": requested}),
     )
     assert resp.status_code == 200, resp.text
+    assert resp.json()["permission_switch"] == "switched"
     assert events == ["pin", "forward"]
     assert timeouts == [90.0]
     assert snapshot["terminal_launch_args"] == ["--model", "opus", "--permission-mode", requested]
@@ -11578,8 +11579,9 @@ async def test_patch_permission_mode_refusal_or_no_runner_restores_args_and_labe
         httpx.Response(
             504, json={"error": "claude_bypass_timeout", "detail": "Still restarting."}
         ),
+        httpx.Response(504, text="Gateway Timeout"),
     ],
-    ids=["read_timeout", "runner_deadline"],
+    ids=["read_timeout", "runner_deadline", "gateway_504"],
 )
 @pytest.mark.parametrize(
     ("requested", "label", "launch_args", "kept"),
@@ -11642,6 +11644,7 @@ async def test_patch_permission_mode_relaunch_records_the_mode_the_pane_reached(
         ),
     )
     assert resp.status_code == 200, resp.text
+    assert resp.json()["permission_switch"] == "restarted"
     assert snapshot["labels"][_LABEL_KEY] == "default"
     assert snapshot["terminal_launch_args"] == ["--permission-mode", "default"]
 
@@ -11665,6 +11668,7 @@ async def test_patch_permission_mode_unread_mode_keeps_the_pin_and_stamps_nothin
         runner_response=httpx.Response(200, json={"relaunched": True}),
     )
     assert resp.status_code == 200, resp.text
+    assert resp.json()["permission_switch"] == "unconfirmed"
     assert resp.json()["labels"][_LABEL_KEY] == "auto"
     assert snapshot["labels"][_LABEL_KEY] == "auto"
     assert snapshot["terminal_launch_args"] == ["--permission-mode", "bypassPermissions"]

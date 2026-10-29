@@ -273,6 +273,7 @@ import { supportsEffortControl } from "@/lib/sessionCapabilities";
 import {
   CLAUDE_NATIVE_SWITCHABLE_PERMISSION_MODES,
   claudePermissionModeLabel,
+  claudePermissionSwitchNotice,
   isClaudeNativeSession,
 } from "@/lib/claudePermissionMode";
 import {
@@ -2506,20 +2507,18 @@ function ComposerImpl(
     const sourceSessionId = useChatStore.getState().conversationId;
     try {
       const store = useChatStore.getState();
-      if (showClaudePermissionMode) await store.setClaudePermissionMode(mode);
+      let switched: Awaited<ReturnType<typeof store.setClaudePermissionMode>>;
+      if (showClaudePermissionMode) switched = await store.setClaudePermissionMode(mode);
       else if (showCodexApprovalMode) await store.setCodexApprovalMode(mode);
       if (useChatStore.getState().conversationId === sourceSessionId) {
-        // omnigent-ae: Claude can land in another mode than asked (a managed setting
-        // strips bypass; a restart whose mode could not be read keeps the old label).
-        const reached = useChatStore.getState().claudePermissionMode;
-        const differs =
-          showClaudePermissionMode && !devinPermissionControl && !!reached && reached !== mode;
         setCommandError(
-          !differs
-            ? null
-            : mode === "bypassPermissions"
-              ? `Claude restarted but stayed in ${claudePermissionModeLabel(reached)}. A managed setting on this host may turn bypass off.`
-              : `Claude restarted but is in ${claudePermissionModeLabel(reached)}, not ${claudePermissionModeLabel(mode)}.`,
+          showClaudePermissionMode && !devinPermissionControl
+            ? claudePermissionSwitchNotice(
+                mode,
+                useChatStore.getState().claudePermissionMode,
+                switched,
+              )
+            : null,
         );
       }
     } catch (error) {

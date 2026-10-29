@@ -5,9 +5,41 @@ import {
   CLAUDE_NATIVE_SWITCHABLE_PERMISSION_MODES,
   claudePermissionModeFromSession,
   claudePermissionModeLabel,
+  claudePermissionSwitchNotice,
   isClaudeNativeSession,
   isSwitchableClaudePermissionMode,
 } from "@/lib/claudePermissionMode";
+
+describe("claudePermissionSwitchNotice", () => {
+  it("is silent when the switch landed where asked", () => {
+    expect(claudePermissionSwitchNotice("plan", "plan", "restarted")).toBeNull();
+    expect(claudePermissionSwitchNotice("plan", "plan", "switched")).toBeNull();
+  });
+
+  it("says only that Claude restarted when its mode was not read", () => {
+    expect(claudePermissionSwitchNotice("plan", "auto", "unconfirmed")).toBe(
+      "Claude restarted; its mode will show once it is read.",
+    );
+  });
+
+  it("says restarted only after a restart", () => {
+    expect(claudePermissionSwitchNotice("plan", "auto", "restarted")).toBe(
+      "Claude restarted but is in Auto, not Plan.",
+    );
+    expect(claudePermissionSwitchNotice("plan", "auto", "switched")).toBe(
+      "Claude is in Auto, not Plan.",
+    );
+    expect(claudePermissionSwitchNotice("plan", "auto", undefined)).toBe(
+      "Claude is in Auto, not Plan.",
+    );
+  });
+
+  it("keeps the managed-setting hint for a bypass request that was restarted", () => {
+    expect(claudePermissionSwitchNotice("bypassPermissions", "default", "restarted")).toBe(
+      "Claude restarted but stayed in Manual. A managed setting on this host may turn bypass off.",
+    );
+  });
+});
 
 describe("claudePermissionMode", () => {
   it("offers only shift+tab-reachable modes for a running session", () => {

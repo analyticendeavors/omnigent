@@ -189,8 +189,10 @@ from omnigent.server.routes._sessions.orchestration import (
     ensure_runner_connected,
 )
 from omnigent.server.routes.sessions.ae_bypass_switch import (
+    SwitchOutcome,
     relaunch_unconfirmed,
     switch_claude_permission_mode,
+    switch_outcome,
 )
 from omnigent.server.routes.sessions.ae_live_account_label import (
     reject_live_account_seed,
@@ -3050,6 +3052,7 @@ def register_core_routes(
                 _codex_plan_enabled,
                 _runner_result,
             )
+        _permission_switch: SwitchOutcome | None = None
         if requested_permission_mode is not None and live_forward:
             # omnigent-ae: every claude-native switch pins the target in the launch args
             # first (the runner may restart the pane, which reads them) and gets the
@@ -3082,6 +3085,8 @@ def register_core_routes(
                 requested_permission_mode,
                 _mode_result,
             )
+            if _claude_switch:
+                _permission_switch = switch_outcome(_mode_result)
             # A restart whose mode could not be read keeps the pinned args (the pane
             # launched from them) and stamps no label; the forwarder corrects it.
             if not (_claude_switch and relaunch_unconfirmed(_mode_result)):
@@ -3235,7 +3240,7 @@ def register_core_routes(
         # PATCH callers consume only the snapshot's scalar fields (clients
         # hydrate transcripts via GET /sessions/{id}/items), so skip the
         # items read — it dominated this response's size and build time.
-        return await _get_session_snapshot(
+        _snapshot = await _get_session_snapshot(
             conversation_store,
             session_id,
             level,
@@ -3248,6 +3253,8 @@ def register_core_routes(
             viewer_id=user_id,
             request=request,
         )
+        _snapshot.permission_switch = _permission_switch
+        return _snapshot
 
     # ── POST /sessions/{source_id}/fork ─────────────────────────
 

@@ -1294,7 +1294,7 @@ export interface ChatActions {
    * callers surface the error rather than assuming the switch landed.
    * No-ops when there is no active conversation.
    */
-  setClaudePermissionMode: (mode: string) => Promise<void>;
+  setClaudePermissionMode: (mode: string) => Promise<Session["permissionSwitch"]>;
   /**
    * Switch a running codex-native session's approval/sandbox mode (e.g. to
    * ``"full-access"``). Rejects when the live Codex thread could not accept the
@@ -3328,6 +3328,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     try {
       const session = await updateSession(conversationId, { claudePermissionMode: mode });
       patchSet({ claudePermissionMode: claudePermissionModeFromSession(session) ?? "" });
+      return session.permissionSwitch;
     } catch (err) {
       patchSet({ claudePermissionMode: previous });
       throw err;

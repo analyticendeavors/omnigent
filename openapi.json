@@ -7836,6 +7836,23 @@
             "description": "The requesting user's numeric permission level on this session: `1` = read, `2` = edit, `3` = manage. `None` when permissions are disabled (single-user mode without a permission store).",
             "title": "Permission Level"
           },
+          "permission_switch": {
+            "anyOf": [
+              {
+                "enum": [
+                  "switched",
+                  "restarted",
+                  "unconfirmed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set only on the `PATCH` response of a Claude permission-mode change: `\"switched\"` (shift+tab, or already in the mode), `\"restarted\"` (Claude was restarted in the same chat) or `\"unconfirmed\"` (restarted, but the mode it landed in could not be read, so the label is unchanged until the forwarder reads it).",
+            "title": "Permission Switch"
+          },
           "project_id": {
             "anyOf": [
               {
