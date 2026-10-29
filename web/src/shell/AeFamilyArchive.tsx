@@ -139,10 +139,17 @@ function useArchiveAll(requestArchive: RequestArchive, activeId: () => string | 
 /**
  * A stand-in's archive: every session of the family under *root* that is not
  * archived yet. The lead is among them only when it exists; an unknown lead id
- * is never sent. The caller renders `dialog` (the confirm and the worktree
- * prompt).
+ * is never sent. *shown* are the sessions the sidebar draws under the stand-in:
+ * its tree is built from the loaded pages, so *root* can be a session that is
+ * merely missing from them, and the fresh read then re-roots the family at that
+ * session's own lead. Those sessions and *root* are archived too, never the
+ * re-rooted lead's wider family. The caller renders `dialog` (the confirm and
+ * the worktree prompt).
  */
-export function useAeStandInArchive(root: string): {
+export function useAeStandInArchive(
+  root: string,
+  shown: readonly Conversation[],
+): {
   archiveFamily: () => void;
   dialog: ReactNode;
 } {
@@ -166,7 +173,11 @@ export function useAeStandInArchive(root: string): {
       })
       .then(
         (rows) => {
-          const all = aeFamilyOf(rows, root).filter((c) => c.archived !== true);
+          const ids = new Set([root, ...shown.map((c) => c.id)]);
+          const found = [...aeFamilyOf(rows, root), ...rows.filter((c) => ids.has(c.id))];
+          const all = [...new Map(found.map((c) => [c.id, c])).values()].filter(
+            (c) => c.archived !== true,
+          );
           if (all.length === 0) showToast("Nothing left to archive in this family.");
           else if (all.some((c) => !aeIsClosedMember(c))) ask(all);
           else archiveAll(all);

@@ -370,7 +370,7 @@ function StandIn({
   const { family } = lead;
   const known = lead.standIn!.lead;
   const archived = known?.archived === true;
-  const { archiveFamily, dialog } = useAeStandInArchive(family.root);
+  const { archiveFamily, dialog } = useAeStandInArchive(family.root, family.members);
   return (
     <li className="group relative" data-testid="ae-family-stand-in" data-family={family.root}>
       <ContextMenu>

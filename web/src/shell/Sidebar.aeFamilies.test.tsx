@@ -831,6 +831,37 @@ describe("Grouping > Family", () => {
         expect(archivedIds()).toEqual([sid("Escalation tool"), sid("Older helper")]);
       });
 
+      it("archives the shown sessions when the fresh read re-roots the family at their parent's lead", async () => {
+        const missing = sid("Missing parent");
+        const reRooted = sid("Re-rooted lead");
+        const parent = mine({
+          ...row("Missing parent", 40, { "ae.orch": reRooted, "ae.status": "reference" }),
+          id: missing,
+        });
+        const outer = mine({ ...row("Re-rooted lead", 5), id: reRooted });
+        // The sidebar shows children of a parent it has not loaded; the fresh read has the parent.
+        const shown = [
+          mine(row("Escalation tool", 50, { "ae.orch": missing, "ae.status": "reference" })),
+          mine(row("Families PR", 50, { "ae.orch": missing, "ae.status": "reference" })),
+        ];
+        useConvMock.mockImplementation(() => conversationPage(shown));
+        mocks.archived.mockImplementation(async ({ visibility }: { visibility?: string }) =>
+          visibility === "archived"
+            ? { data: [] }
+            : { data: [...shown, parent, outer], has_more: false, last_id: null },
+        );
+        setView({ grouping: "family" });
+        renderSidebar();
+        fireEvent.contextMenu(screen.getByTestId("ae-family-stand-in").querySelector("a")!);
+        chooseArchive();
+        await waitFor(() => expect(mocks.archiveMany).toHaveBeenCalledTimes(1));
+        expect(screen.queryByText("Nothing left to archive in this family.")).toBeNull();
+        expect(archivedIds().sort()).toEqual(
+          [sid("Escalation tool"), sid("Families PR"), missing].sort(),
+        );
+        expect(archivedIds()).not.toContain(reRooted);
+      });
+
       it("skips sessions that are already archived", async () => {
         standIn([
           child("Escalation tool", "reference"),
