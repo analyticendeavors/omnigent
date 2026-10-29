@@ -15,9 +15,11 @@ fingerprint of the file it describes. A cold relaunch keeps the file only when:
 
 * the forwarder cursor exists, the bytes before its offset still hash to its fingerprint,
   and the frontier record describes that same cursor;
-* the server's item count and last item id still equal the frontier (so the server gained
-  or changed nothing the forwarder had not accounted for: a retried or edited turn, an item
-  from another harness or a message typed in the web UI all force a rebuild);
+* the server still holds the item the frontier ends on at the position it recorded, and
+  everything after that position is an item the rebuild would leave out of the transcript
+  (the server's own resource and error items; see ``_OUTSIDE_TRANSCRIPT``), so the server
+  gained or changed nothing the forwarder had not accounted for: a retried or edited turn, an
+  item from another harness or a message typed in the web UI all force a rebuild;
 * the file ends in a newline, every line after the cursor parses as JSON and the image and
   ``toolUseResult`` repair a rebuild would make has nothing to change.
 
@@ -38,7 +40,7 @@ import logging
 import os
 import urllib.parse
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import httpx
@@ -58,6 +60,29 @@ FRONTIER_FILE = "ae_transcript_frontier.json"
 _ITEMS_PAGE = 1000
 _MAX_PAGES = 50
 _MAX_OWN_IDS = 1024
+
+# Item types the transcript rebuild skips (``_claude_record_from_item`` returns ``None``
+# for each), by wire name. The server adds some of them on its own: a ``resource_event``
+# right after every relaunch, an ``error`` when it cannot deliver a message. Such an item
+# says nothing the file lacks, so it neither blocks the frontier record nor forces a
+# rebuild. Any other type, including one this list has never seen, counts as part of the
+# transcript. ``tests/harnesses/claude_native/test_ae_resume_keep.py`` ties this set to
+# ``ITEM_TYPE`` so a new item type has to be placed on purpose.
+_OUTSIDE_TRANSCRIPT = frozenset(
+    {
+        "reasoning",
+        "error",
+        "native_tool",
+        "resource_event",
+        "routing_decision",
+        "slash_command",
+        "terminal_command",
+    }
+)
+
+
+def _in_transcript(item_type: str) -> bool:
+    return item_type not in _OUTSIDE_TRANSCRIPT
 
 
 @dataclass(frozen=True)
@@ -264,8 +289,15 @@ def forget_session(session_id: str) -> None:
     _own_ids.pop(session_id, None)
 
 
-async def _items_after(client: httpx.AsyncClient, session_id: str, after: str) -> list[str] | None:
-    ids: list[str] = []
+async def _items_after(
+    client: httpx.AsyncClient, session_id: str, after: str
+) -> list[tuple[str, str]] | None:
+    """
+    The items created after *after* as ``(id, wire type name)`` pairs, or ``None`` when
+    they could not be read. A missing or non-string type is the empty string, which counts
+    as part of the transcript.
+    """
+    ids: list[tuple[str, str]] = []
     cursor = after
     for _ in range(_MAX_PAGES):
         resp = await client.get(
@@ -279,14 +311,16 @@ async def _items_after(client: httpx.AsyncClient, session_id: str, after: str) -
         if not isinstance(data, list):
             return None
         batch = [
-            row["id"] for row in data if isinstance(row, dict) and isinstance(row.get("id"), str)
+            (row["id"], row["type"] if isinstance(row.get("type"), str) else "")
+            for row in data
+            if isinstance(row, dict) and isinstance(row.get("id"), str)
         ]
         if len(batch) != len(data):
             return None
         ids.extend(batch)
         if not payload.get("has_more") or not batch:
             return ids
-        cursor = batch[-1]
+        cursor = batch[-1][0]
     return None
 
 
@@ -301,10 +335,11 @@ async def record_frontier(
 
     Called by the forwarder after it posts rows and writes its cursor. It advances the
     previous record by the items created since, and only when every one of them is an item
-    the forwarder itself posted; any other item leaves the record behind, so the next cold
-    relaunch sees a mismatch and rebuilds. It never creates a record from nothing: with no
-    previous record (a session started before this existed, or a launch that did not settle)
-    nothing is written, because a record made at a cursor the forwarder seeded itself would
+    the forwarder itself posted or a type the rebuild leaves out of the transcript (the
+    server's own resource and error items); any other item leaves the record behind, so the
+    next cold relaunch sees a mismatch and rebuilds. It never creates a record from nothing:
+    with no previous record (a session started before this existed, or a launch that did not
+    settle) nothing is written, because a record made at a cursor the forwarder seeded itself would
     vouch for rows the server never received. Never raises.
 
     :param client: Omnigent HTTP client.
@@ -327,7 +362,7 @@ async def record_frontier(
         if delta is None:
             return
         own = _own_ids.get(session_id, [])
-        if any(item_id not in own for item_id in delta):
+        if any(item_id not in own and _in_transcript(item_type) for item_id, item_type in delta):
             return
         write_frontier(
             bridge_dir,
@@ -336,10 +371,10 @@ async def record_frontier(
                 cursor.byte_offset,
                 cursor.fingerprint,
                 previous.item_count + len(delta),
-                delta[-1] if delta else previous.last_item_id,
+                delta[-1][0] if delta else previous.last_item_id,
             ),
         )
-        absorbed = set(delta)
+        absorbed = {item_id for item_id, _ in delta}
         _own_ids[session_id] = [item_id for item_id in own if item_id not in absorbed]
     except Exception:  # noqa: BLE001 - a missed record only costs a later keep
         _logger.debug(
@@ -467,6 +502,25 @@ async def try_keep(
         return None
 
 
+def _frontier_holds(frontier: Frontier, items: Sequence[Mapping[str, object]]) -> bool:
+    """
+    Whether the server still holds the frontier and has added nothing the file lacks.
+
+    The item at the recorded position must be the recorded one (so a retried or replaced
+    turn fails), and every later item must be of a type the rebuild leaves out.
+    """
+    count = frontier.item_count
+    if count < 1 or len(items) < count:
+        return False
+    if items[count - 1].get("id") != frontier.last_item_id:
+        return False
+    for item in items[count:]:
+        item_type = item.get("type")
+        if not isinstance(item_type, str) or _in_transcript(item_type):
+            return False
+    return True
+
+
 def _try_keep(
     ctx: ResumeContext,
     *,
@@ -482,8 +536,10 @@ def _try_keep(
     cursor, frontier = ctx.cursor, ctx.frontier
     if cursor is None or frontier is None or not items:
         return None
+    if not _frontier_holds(frontier, items):
+        return None
     last_id = items[-1].get("id")
-    if frontier.item_count != len(items) or frontier.last_item_id != last_id:
+    if not isinstance(last_id, str):
         return None
     if (
         not _same_path(frontier.transcript_path, cursor.transcript_path)
@@ -508,8 +564,9 @@ def _try_keep(
     if not _sanitizer_changes_nothing(source, sanitize_record):
         return None
 
+    # The trailing items were just checked, so the record moves up to the server's end.
     if not copying:
-        ctx.pending_frontier = frontier
+        ctx.pending_frontier = replace(frontier, item_count=len(items), last_item_id=last_id)
         ctx.outcome = ResumeOutcome(KEPT, cursor.byte_offset)
         return target
 
@@ -529,9 +586,7 @@ def _try_keep(
     if fingerprint is None:
         target.unlink()
         return None
-    ctx.pending_frontier = Frontier(
-        target, offset, fingerprint, frontier.item_count, frontier.last_item_id
-    )
+    ctx.pending_frontier = Frontier(target, offset, fingerprint, len(items), last_id)
     ctx.outcome = ResumeOutcome(COPIED, offset)
     return target
 

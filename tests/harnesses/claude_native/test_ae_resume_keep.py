@@ -50,6 +50,9 @@ class FakeServer:
 
     items: list[dict[str, Any]] = field(default_factory=list)
     patches: list[dict[str, Any]] = field(default_factory=list)
+    source_ids: dict[str, str] = field(default_factory=dict)
+    # Stamped on every forwarded item, as the real server copies it from the queued input.
+    stamp_created_by: str | None = None
 
     def add(self, item: dict[str, Any]) -> str:
         item_id = f"item_{len(self.items)}"
@@ -74,7 +77,16 @@ class FakeServer:
         body = json.loads(request.content)
         if body.get("type") == "external_conversation_item":
             data = body["data"]
-            item_id = self.add({"type": data["item_type"], **data["item_data"]})
+            # The real server derives the id from the source id, so a re-post is a no-op.
+            source_id = data.get("source_id")
+            if isinstance(source_id, str) and source_id in self.source_ids:
+                return httpx.Response(
+                    202, json={"queued": False, "item_id": self.source_ids[source_id]}
+                )
+            stamp = {"created_by": self.stamp_created_by} if self.stamp_created_by else {}
+            item_id = self.add({"type": data["item_type"], **data["item_data"], **stamp})
+            if isinstance(source_id, str):
+                self.source_ids[source_id] = item_id
             return httpx.Response(202, json={"queued": False, "item_id": item_id})
         return httpx.Response(202, json={})
 
@@ -797,3 +809,318 @@ async def test_no_record_is_written_when_the_transcript_size_could_not_be_measur
     await _forward(env)
     _written, second = await _relaunch(env)
     assert _mode(second) == keep.REBUILT
+
+
+def _server_message(text: str, *, meta: bool = False) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": text}],
+    }
+    if meta:
+        item["is_meta"] = True
+    return item
+
+
+# One server row per type the rebuild leaves out of the transcript.
+_SKIPPED_ROWS: dict[str, dict[str, Any]] = {
+    "reasoning": {"type": "reasoning", "summary": []},
+    "error": {"type": "error", "message": "could not deliver"},
+    "native_tool": {"type": "native_tool", "name": "x"},
+    "resource_event": {"type": "resource_event", "event": "launched"},
+    "routing_decision": {"type": "routing_decision"},
+    "slash_command": {"type": "slash_command", "command": "/skill"},
+    "terminal_command": {"type": "terminal_command", "command": "ls"},
+}
+
+
+@pytest.mark.asyncio
+async def test_the_live_sequence_keeps_after_a_resource_event_and_a_mirrored_user_note(
+    env: Env,
+) -> None:
+    path = _seed(env)
+    # The relaunch adds its own resource_event right after the seed.
+    env.server.add(_SKIPPED_ROWS["resource_event"])
+    # A note typed in the TUI is written to the JSONL and mirrored with the queue's created_by.
+    env.server.stamp_created_by = "user_1"
+    _append(path, [_user_row("u1", "a note", str(env.workspace))])
+    await _forward(env)
+    _append(path, [_assistant_row("a1", "answer", str(env.workspace))])
+    await _forward(env)
+
+    frontier = keep.read_frontier(env.bridge)
+    assert frontier is not None
+    assert (frontier.item_count, frontier.last_item_id) == (4, "item_3")
+    assert len(env.server.items) == 4
+    assert env.server.items[2]["created_by"] == "user_1"
+    _append(path, [_assistant_row("a2", "tail", str(env.workspace))])
+
+    written, ctx = await _relaunch(env)
+
+    assert written == path
+    assert _mode(ctx) == keep.KEPT
+    assert len(env.server.items) == 4
+    # The relaunched forwarder resumes at the cursor: the tail row posts once, nothing twice.
+    await _settle(env, written, ctx)
+    _restart_forwarder_at(env, path, frontier.byte_offset)
+    await _forward(env)
+    await _forward(env)
+    assert len(env.server.items) == 5
+    assert _posted_texts(env.server).count("a note") == 1
+    assert _posted_texts(env.server).count("tail") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("item_type", sorted(_SKIPPED_ROWS))
+async def test_each_skipped_type_leaves_the_record_advancing_and_the_relaunch_kept(
+    env: Env, item_type: str
+) -> None:
+    path = _seed(env)
+    env.server.add(_SKIPPED_ROWS[item_type])
+    _append(path, [_assistant_row("a1", "done", str(env.workspace))])
+    await _forward(env)
+
+    frontier = keep.read_frontier(env.bridge)
+    assert frontier is not None
+    assert (frontier.item_count, frontier.last_item_id) == (3, "item_2")
+
+    _written, ctx = await _relaunch(env)
+
+    assert _mode(ctx) == keep.KEPT
+
+
+@pytest.mark.asyncio
+async def test_an_idle_session_that_only_gained_a_resource_event_is_kept(env: Env) -> None:
+    _seed(env)
+    env.server.add(_SKIPPED_ROWS["resource_event"])
+    env.server.add(_SKIPPED_ROWS["resource_event"])
+
+    written, ctx = await _relaunch(env)
+
+    assert _mode(ctx) == keep.KEPT
+    # The record moves up to the server's end, which the trailing items were checked against.
+    await _settle(env, written, ctx)
+    frontier = keep.read_frontier(env.bridge)
+    assert frontier is not None
+    assert (frontier.item_count, frontier.last_item_id) == (3, "item_2")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("order", ["error_first", "message_first", "message_only"])
+async def test_a_server_written_user_message_after_a_resource_event_rebuilds(
+    env: Env, order: str
+) -> None:
+    path = _seed(env)
+    env.server.add(_SKIPPED_ROWS["resource_event"])
+    error = _SKIPPED_ROWS["error"]
+    undelivered = _server_message("never typed")
+    for row in {
+        "error_first": [error, undelivered],
+        "message_first": [undelivered, error],
+        "message_only": [undelivered],
+    }[order]:
+        env.server.add(row)
+
+    _written, ctx = await _relaunch(env)
+
+    assert _mode(ctx) == keep.REBUILT
+    assert "never typed" in path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_a_server_written_message_in_the_delta_leaves_the_record_behind(env: Env) -> None:
+    path = _seed(env)
+    env.server.add(_SKIPPED_ROWS["resource_event"])
+    env.server.add(_server_message("never typed"))
+    _append(path, [_assistant_row("a1", "done", str(env.workspace))])
+    await _forward(env)
+
+    frontier = keep.read_frontier(env.bridge)
+    assert frontier is not None
+    assert frontier.item_count == 1
+
+    _written, ctx = await _relaunch(env)
+
+    assert _mode(ctx) == keep.REBUILT
+
+
+@pytest.mark.asyncio
+async def test_a_skill_from_the_ui_the_forwarder_did_not_post_rebuilds(env: Env) -> None:
+    path = _seed(env)
+    # The UI route writes a slash_command item and an is_meta user message with the skill text.
+    env.server.add(_SKIPPED_ROWS["slash_command"])
+    env.server.add(_server_message("skill body", meta=True))
+
+    _written, ctx = await _relaunch(env)
+
+    assert _mode(ctx) == keep.REBUILT
+    assert "skill body" in path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_a_compaction_the_forwarder_did_not_post_rebuilds(env: Env) -> None:
+    path = _seed(env)
+    env.server.add({"type": "compaction", "compacted_messages": [_server_message("summary")]})
+    _append(path, [_assistant_row("a1", "done", str(env.workspace))])
+    await _forward(env)
+    frontier = keep.read_frontier(env.bridge)
+    assert frontier is not None
+    assert frontier.item_count == 1
+
+    _written, ctx = await _relaunch(env)
+
+    assert _mode(ctx) == keep.REBUILT
+
+
+_ODD_TYPES = [None, 12, "brand_new_type", ""]
+
+
+def _odd_row(odd_type: object) -> dict[str, Any]:
+    return {} if odd_type is None else {"type": odd_type}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("odd_type", _ODD_TYPES)
+async def test_a_missing_or_unknown_item_type_after_the_record_rebuilds(
+    env: Env, odd_type: object
+) -> None:
+    _seed(env)
+    env.server.add(_odd_row(odd_type))
+
+    _written, ctx = await _relaunch(env)
+
+    assert _mode(ctx) == keep.REBUILT
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("odd_type", _ODD_TYPES)
+async def test_a_missing_or_unknown_item_type_in_the_delta_leaves_the_record_behind(
+    env: Env, odd_type: object
+) -> None:
+    path = _seed(env)
+    env.server.add(_odd_row(odd_type))
+    _append(path, [_assistant_row("a1", "done", str(env.workspace))])
+    await _forward(env)
+
+    frontier = keep.read_frontier(env.bridge)
+    assert frontier is not None
+    assert frontier.item_count == 1
+
+    _written, ctx = await _relaunch(env)
+
+    assert _mode(ctx) == keep.REBUILT
+
+
+@pytest.mark.asyncio
+async def test_a_foreign_message_before_the_recorded_last_item_shifts_it_and_rebuilds(
+    env: Env,
+) -> None:
+    _seed(env)
+    # The item the record ends on is still there, but one place later than recorded.
+    env.server.items.insert(0, {"id": "item_x", **_server_message("older")})
+    assert env.server.items[-1]["id"] == "item_0"
+
+    _written, ctx = await _relaunch(env)
+
+    assert _mode(ctx) == keep.REBUILT
+
+
+@pytest.mark.asyncio
+async def test_a_server_that_holds_fewer_items_than_the_record_rebuilds(
+    env: Env, caplog: pytest.LogCaptureFixture
+) -> None:
+    path = _seed(env)
+    _append(path, [_assistant_row("a1", "done", str(env.workspace))])
+    await _forward(env)
+    frontier = keep.read_frontier(env.bridge)
+    assert frontier is not None
+    env.server.items.pop()
+    assert len(env.server.items) < frontier.item_count
+
+    with caplog.at_level("WARNING"):
+        _written, ctx = await _relaunch(env)
+
+    assert _mode(ctx) == keep.REBUILT
+    # The short server is refused by the check itself, not by an exception caught after it.
+    assert not [r for r in caplog.records if "could not reuse" in r.getMessage()]
+
+
+@pytest.mark.asyncio
+async def test_a_skipped_row_posted_before_the_cursor_was_saved_is_kept_and_not_reposted(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _seed(env)
+    thought = _assistant_row("a1", "", str(env.workspace))
+    thought["message"]["content"] = [{"type": "thinking", "thinking": "hmm"}]
+    _append(path, [thought])
+    cursor_before = keep.read_forward_cursor(env.bridge)
+    assert cursor_before is not None
+
+    async def dies(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("process died before the cursor was written")
+
+    # The forwarder posts the reasoning row, then dies before it saves the cursor.
+    with monkeypatch.context() as patched:
+        patched.setattr(forwarder, "_write_forward_state_async", dies)
+        with pytest.raises(RuntimeError):
+            await _forward(env)
+    assert [item["type"] for item in env.server.items[1:]] == ["reasoning"]
+    keep._own_ids.clear()
+
+    written, ctx = await _relaunch(env)
+
+    assert _mode(ctx) == keep.KEPT
+    assert written == path
+    # The forwarder resumes at the old cursor and posts the row again: the server dedupes it.
+    await _settle(env, written, ctx)
+    count = len(env.server.items)
+    _restart_forwarder_at(env, path, cursor_before.byte_offset)
+    await _forward(env)
+    assert len(env.server.items) == count
+
+
+@pytest.mark.asyncio
+async def test_a_kept_and_a_copied_transcript_move_the_record_to_the_server_end(
+    env: Env,
+) -> None:
+    old_ws = env.root / "old-ws"
+    _seed(env, workspace=old_ws)
+    env.server.add(_SKIPPED_ROWS["resource_event"])
+    env.server.add(_SKIPPED_ROWS["error"])
+
+    written, ctx = await _relaunch(env)
+
+    assert _mode(ctx) == keep.COPIED
+    assert ctx.pending_frontier is not None
+    assert (ctx.pending_frontier.item_count, ctx.pending_frontier.last_item_id) == (3, "item_2")
+    assert ctx.pending_frontier.transcript_path == written
+
+
+@pytest.mark.asyncio
+async def test_a_kept_transcript_moves_the_record_to_the_server_end(env: Env) -> None:
+    _seed(env)
+    env.server.add(_SKIPPED_ROWS["resource_event"])
+
+    _written, ctx = await _relaunch(env)
+
+    assert _mode(ctx) == keep.KEPT
+    assert ctx.pending_frontier is not None
+    assert (ctx.pending_frontier.item_count, ctx.pending_frontier.last_item_id) == (2, "item_1")
+
+
+def test_the_skipped_set_and_the_rebuilt_types_cover_every_item_type(tmp_path: Path) -> None:
+    from omnigent.db.enum_codecs import ITEM_TYPE
+
+    rebuilt = {"message", "function_call", "function_call_output", "compaction"}
+    assert keep._OUTSIDE_TRANSCRIPT | rebuilt == set(ITEM_TYPE)
+    assert not keep._OUTSIDE_TRANSCRIPT & rebuilt
+    for item_type in keep._OUTSIDE_TRANSCRIPT:
+        record = claude_native._claude_transcript_record_from_session_item(
+            {"id": "x", "type": item_type, "role": "user", "content": "text"},
+            session_id=SID,
+            record_uuid="r",
+            parent_uuid=None,
+            cwd=tmp_path,
+            bridge_dir=tmp_path,
+        )
+        assert record is None, item_type
