@@ -8413,6 +8413,13 @@ async def _auto_create_claude_terminal(
     )
 
     _pre_wipe_claude_sid = _read_csid_pre_wipe(_bridge_dir_for_bridge_id(bridge_id))
+    from omnigent.harnesses.claude_native import ae_resume_keep
+
+    # The forwarder cursor goes the same way, so a kept transcript that is ahead of
+    # the server can be forwarded from where the cursor stopped.
+    ae_resume_keep.remember_cursor(
+        session_id, ae_resume_keep.read_forward_cursor(_bridge_dir_for_bridge_id(bridge_id))
+    )
     # Resolved once here and reused below (env_spec) so the bridge's own
     # sys_os_* tools and the terminal process see the same sandbox — the
     # agent's declared os_env.sandbox, already overridden by any
@@ -8520,7 +8527,12 @@ async def _auto_create_claude_terminal(
             )
             if _transcript is not None:
                 resume_external_session_id = session_external_id
-                resume_prefix_bytes = _measured_prefix_bytes(_transcript)
+                resume_prefix_bytes = await ae_resume_keep.settle_resume(
+                    server_client,
+                    session_id,
+                    _measured_prefix_bytes(_transcript),
+                    session_init.snapshot.labels if session_init is not None else None,
+                )
         except Exception:  # noqa: BLE001 — best-effort; launch fresh on failure
             _logger.warning(
                 "Could not synthesize Claude resume transcript for %s; launching without --resume",

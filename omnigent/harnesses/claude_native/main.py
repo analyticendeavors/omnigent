@@ -83,6 +83,7 @@ from omnigent.claude_launcher import resolve_claude_launch
 from omnigent.cli_invocation import cli_invocation
 from omnigent.conversation_browser import conversation_url, open_conversation_link_if_enabled
 from omnigent.entities.session_resources import terminal_resource_id
+from omnigent.harnesses.claude_native import ae_resume_keep
 from omnigent.harnesses.claude_native.bridge import (
     BRIDGE_ID_LABEL_KEY,
     ClaudeNativeHookInterpreterMismatchError,
@@ -5404,6 +5405,27 @@ async def _ensure_local_claude_resume_transcript(
     # fetch the bytes back so the rebuilt transcript can reference a
     # live local file instead of silently dropping the attachment.
     items = await resolve_session_item_file_references(client, session_id=session_id, items=items)
+    kept = ae_resume_keep.try_keep(
+        session_id=session_id,
+        items=items,
+        target=target,
+        external_session_id=external_session_id,
+        workspace=current,
+        is_resumable=_is_resumable_claude_transcript,
+        find_transcript=_find_claude_transcript,
+        copy_transcript=_copy_transcript_with_cwd,
+    )
+    if kept is not None:
+        # A rebuild also re-materializes the attachment files its records point at.
+        _claude_transcript_records_from_session_items(
+            items,
+            session_id=session_id,
+            external_session_id=external_session_id,
+            cwd=current,
+            bridge_dir=bridge_dir or bridge_dir_for_conversation_id(session_id),
+        )
+        return kept
+    ae_resume_keep.note_rebuilt(session_id)
     records = _claude_transcript_records_from_session_items(
         items,
         session_id=session_id,
