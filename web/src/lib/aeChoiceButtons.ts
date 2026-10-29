@@ -82,11 +82,25 @@ export function aeShortChoiceLabel(label: string): string {
   const text = label.trim();
   if (text.length <= SHORT_LABEL_MAX) return text;
   const head = text.split(/:\s|\s-\s/)[0].trim();
+  // A clause a little over the limit still beats a cut mid-thought; the button wraps.
   if (head.length >= 3 && head.length < text.length && head.length <= SHORT_LABEL_MAX + 12) {
     return head;
   }
-  const cut = text.slice(0, SHORT_LABEL_MAX).replace(/\s+\S*$/, "");
-  return `${cut || text.slice(0, SHORT_LABEL_MAX)}…`;
+  // Cut by code point so an emoji is never split, and at a word when the cut lands inside one.
+  const chars = Array.from(text);
+  const kept = chars.slice(0, SHORT_LABEL_MAX).join("");
+  const cut = /\s/.test(chars[SHORT_LABEL_MAX]) ? kept.trimEnd() : kept.replace(/\s+\S*$/, "");
+  return `${cut || kept}…`;
+}
+
+/**
+ * The labels buttons show for these answers. Two answers that shorten to the
+ * same words ("Fix it now: patch it" and "Fix it now: revert it") keep their
+ * full labels, so no two buttons read alike.
+ */
+export function aeShortChoiceLabels(labels: string[]): string[] {
+  const short = labels.map(aeShortChoiceLabel);
+  return short.map((s, i) => (short.filter((o) => o === s).length > 1 ? labels[i].trim() : s));
 }
 
 /**
@@ -110,7 +124,7 @@ export function aeChoiceField(
   const values = prop.enum as string[];
   if (new Set(values).size !== values.length) return null;
   const full = values.map((value, i) => enumLabel(prop, i, value));
-  const short = trimSharedSuffix(full).map(aeShortChoiceLabel);
+  const short = aeShortChoiceLabels(trimSharedSuffix(full));
   const choices = values.map((value, i) => ({ value, label: short[i], fullLabel: full[i] }));
   return {
     name,

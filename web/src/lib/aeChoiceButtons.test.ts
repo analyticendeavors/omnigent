@@ -4,6 +4,7 @@ import {
   aeChoiceIsNo,
   aeChoiceIsPrimary,
   aeShortChoiceLabel,
+  aeShortChoiceLabels,
   trimSharedSuffix,
 } from "./aeChoiceButtons";
 
@@ -135,5 +136,34 @@ describe("aeShortChoiceLabel", () => {
     const long = "Fix it now: one builder changes the scheduler so a check-in reuses your chat";
     const field = aeChoiceField(schema({ enum: ["a", "b"], enumNames: [long, "Park it"] }));
     expect(field?.choices[0]).toMatchObject({ label: "Fix it now", fullLabel: long });
+  });
+});
+
+describe("aeShortChoiceLabels", () => {
+  it("keeps the full labels of answers that would shorten to the same words", () => {
+    const a = "Fix it now: patch the scheduler so a check-in reuses your chat";
+    const b = "Fix it now: revert the scheduler change that broke the check-in";
+    expect(aeShortChoiceLabels([a, b, "Park it"])).toEqual([a, b, "Park it"]);
+  });
+
+  it("shortens each answer when the short labels differ", () => {
+    expect(
+      aeShortChoiceLabels([
+        "Fix it now: patch the scheduler so a check-in reuses a chat",
+        "Park it",
+      ]),
+    ).toEqual(["Fix it now", "Park it"]);
+  });
+
+  it("never splits an emoji when it cuts a long label", () => {
+    const out = aeShortChoiceLabel(`${"a".repeat(39)}😀 and more words after the picture here`);
+    expect(out).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+    expect(out.endsWith("…")).toBe(true);
+  });
+
+  it("keeps the last whole word when the cut lands on a space", () => {
+    expect(
+      aeShortChoiceLabel("Flip one of the running chats to reviews now and then open the new chat"),
+    ).toBe("Flip one of the running chats to reviews…");
   });
 });

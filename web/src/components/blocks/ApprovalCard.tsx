@@ -47,7 +47,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useDescendantSession } from "@/hooks/useChildSessions";
-import { aeChoiceField, aeShortChoiceLabel } from "@/lib/aeChoiceButtons";
+import { aeChoiceField, aeShortChoiceLabels } from "@/lib/aeChoiceButtons";
 import {
   type AskUserQuestionPayload,
   castAskUserQuestionPayload,
@@ -343,6 +343,7 @@ export function ApprovalCard({
   const planMarkdown = exitPlanModePlan(exitPlanMode);
   const isExitPlanMode = planMarkdown !== null;
   const optionLabels = askPayload === null ? extractOptionLabels(requestedSchema) : [];
+  const shortOptionLabels = aeShortChoiceLabels(optionLabels);
   const isAskUserQuestion = askPayload !== null;
   const isMultiChoice = optionLabels.length > 0;
   // Any other schema that names fields: a free-form string, several
@@ -774,7 +775,7 @@ export function ApprovalCard({
               />
             ) : isMultiChoice ? (
               <div className="flex flex-wrap gap-2 pt-1" data-testid="approval-card-options">
-                {optionLabels.map((optLabel) => (
+                {optionLabels.map((optLabel, index) => (
                   <Button
                     key={optLabel}
                     size="sm"
@@ -785,7 +786,7 @@ export function ApprovalCard({
                     aria-label={optLabel}
                     onClick={() => submitOption(optLabel)}
                   >
-                    {aeShortChoiceLabel(optLabel)}
+                    {shortOptionLabels[index]}
                   </Button>
                 ))}
               </div>
