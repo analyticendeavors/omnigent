@@ -39,6 +39,7 @@ import json
 import logging
 import os
 import urllib.parse
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -261,23 +262,98 @@ def read_context(bridge_dir: Path, *, forwarder_stopped: bool = True) -> ResumeC
 
 
 # Ids the forwarder's own posts returned that no frontier record has yet absorbed, per
-# session. Process-local bookkeeping of the forwarder itself (it is never read by a
+# session, each with the kind of item that was posted (see :func:`item_kind`; empty when
+# unknown). Process-local bookkeeping of the forwarder itself (it is never read by a
 # launch) so a post made in an earlier, interrupted poll is not mistaken for a foreign item.
-_own_ids: dict[str, list[str]] = {}
+# An id counts as own only for a server row of the same kind, so a foreign row that reuses
+# the id (a same source id under another type or role) still holds the record.
+_own_ids: dict[str, dict[str, str]] = {}
 
 
-def note_posted(session_id: str, item_id: object) -> None:
+# Longest ``source_id`` the server accepts; it rejects longer ones (and empty ones), so no
+# item was stored for such a post and no id can be derived for it.
+_MAX_SOURCE_ID = 256
+
+# Per session, the (id, type) of the foreign item named by the last "held" line
+# :func:`record_frontier` logged, so one foreign item is logged once, not on every poll and
+# however many own posts follow it. Ids and types only, never item text.
+_MAX_LOGGED_SESSIONS = 1024
+_held_logged: dict[str, tuple[str, str]] = {}
+
+# Sessions already warned about a post that left no id to note.
+_warned_no_id: set[str] = set()
+
+
+def derived_item_id(session_id: str, source_id: str) -> str:
+    """
+    The id the server gives the item it stores for an external post with *source_id*.
+
+    The runner reaches the server over the event tunnel, whose acknowledgement carries no
+    item id, so the forwarder cannot read the id back from the post. The server keys the
+    item's stable id by this formula, so the forwarder derives it. It must stay in step with
+    ``_new_external_conversation_item`` in ``omnigent/server/routes/_sessions/orchestration.py``.
+
+    :param session_id: Omnigent conversation id the item was posted to, e.g. ``"conv_abc123"``.
+    :param source_id: The post's ``source_id``; surrounding whitespace is ignored, as on the
+        server.
+    :return: The item's id: a 32-character lowercase hex string.
+    """
+    return uuid.uuid5(
+        uuid.NAMESPACE_URL, f"omnigent-external-item:{session_id}:{source_id.strip()}"
+    ).hex
+
+
+def item_kind(item_type: object, role: object = None) -> str:
+    """
+    The kind of an item as the server's item list reports it, for telling a row from the
+    one the forwarder posted: the wire type, plus the role for a message.
+
+    :param item_type: Wire item type, e.g. ``"message"`` or ``"function_call"``.
+    :param role: The message role, e.g. ``"assistant"``; ignored for other types.
+    :return: e.g. ``"message:assistant"`` or ``"function_call"``; ``""`` when untyped.
+    """
+    if not isinstance(item_type, str):
+        return ""
+    if item_type == "message" and isinstance(role, str):
+        return f"message:{role}"
+    return item_type
+
+
+def note_posted(
+    session_id: str, item_id: object, source_id: object = None, kind: str = ""
+) -> None:
     """
     Remember the id the server gave an item the forwarder posted.
 
+    The id the post returned wins. A post over the event tunnel returns none, so the id is
+    derived from *source_id* (see :func:`derived_item_id`); that is safe because ``_own_ids``
+    only whitelists ids that also appear in the server's item list, and the id of a source id
+    this forwarder posted can only be the item the server stored for that post. Call it only
+    after the post succeeded.
+
     :param session_id: Omnigent conversation id, e.g. ``"conv_abc123"``.
     :param item_id: The ``item_id`` of the post's response; anything else is ignored.
+    :param source_id: The ``source_id`` the post carried, used when *item_id* is unusable.
+    :param kind: :func:`item_kind` of the item posted; the id counts as own only for a row of
+        this kind. Empty means any kind.
     """
     if not isinstance(item_id, str) or not item_id:
-        return
-    ids = _own_ids.setdefault(session_id, [])
-    ids.append(item_id)
-    del ids[:-_MAX_OWN_IDS]
+        if isinstance(source_id, str) and source_id.strip() and len(source_id) <= _MAX_SOURCE_ID:
+            item_id = derived_item_id(session_id, source_id)
+        else:
+            if session_id not in _warned_no_id and len(_warned_no_id) < _MAX_LOGGED_SESSIONS:
+                _warned_no_id.add(session_id)
+                _logger.warning(
+                    "claude-native: a posted item for %s has no item id and no usable "
+                    "source id; the transcript keep cannot recognise it",
+                    session_id,
+                )
+            return
+    ids = _own_ids.setdefault(session_id, {})
+    ids.pop(item_id, None)
+    ids[item_id] = kind
+    while len(ids) > _MAX_OWN_IDS:
+        del ids[next(iter(ids))]
 
 
 def forget_session(session_id: str) -> None:
@@ -287,17 +363,51 @@ def forget_session(session_id: str) -> None:
     :param session_id: Omnigent conversation id, e.g. ``"conv_abc123"``.
     """
     _own_ids.pop(session_id, None)
+    _held_logged.pop(session_id, None)
+    _warned_no_id.discard(session_id)
+
+
+def _log_held(
+    session_id: str,
+    delta: list[tuple[str, str, str]],
+    own: Mapping[str, str],
+    held: int,
+    foreign: int,
+) -> None:
+    """
+    Log, once per change, that the record is held at *held* items by ``delta[foreign]``.
+
+    :param held: The recorded item count, where the frontier stays.
+    :param foreign: Index in *delta* of the first item the forwarder did not post.
+    """
+    item_id, item_type, _kind = delta[foreign]
+    marker = (item_id, item_type)
+    if _held_logged.get(session_id) == marker:
+        return
+    if session_id not in _held_logged and len(_held_logged) >= _MAX_LOGGED_SESSIONS:
+        return
+    _held_logged[session_id] = marker
+    _logger.info(
+        "claude-native: frontier for %s held at %d: item %s (%s) not posted by this "
+        "forwarder; own_ids=%d delta=%d",
+        session_id,
+        held,
+        item_id,
+        item_type or "untyped",
+        len(own),
+        len(delta),
+    )
 
 
 async def _items_after(
     client: httpx.AsyncClient, session_id: str, after: str
-) -> list[tuple[str, str]] | None:
+) -> list[tuple[str, str, str]] | None:
     """
-    The items created after *after* as ``(id, wire type name)`` pairs, or ``None`` when
-    they could not be read. A missing or non-string type is the empty string, which counts
-    as part of the transcript.
+    The items created after *after* as ``(id, wire type name, kind)`` triples (see
+    :func:`item_kind`), or ``None`` when they could not be read. A missing or non-string type
+    is the empty string, which counts as part of the transcript.
     """
-    ids: list[tuple[str, str]] = []
+    ids: list[tuple[str, str, str]] = []
     cursor = after
     for _ in range(_MAX_PAGES):
         resp = await client.get(
@@ -311,7 +421,11 @@ async def _items_after(
         if not isinstance(data, list):
             return None
         batch = [
-            (row["id"], row["type"] if isinstance(row.get("type"), str) else "")
+            (
+                row["id"],
+                row["type"] if isinstance(row.get("type"), str) else "",
+                item_kind(row.get("type"), row.get("role")),
+            )
             for row in data
             if isinstance(row, dict) and isinstance(row.get("id"), str)
         ]
@@ -350,7 +464,7 @@ async def record_frontier(
     try:
         previous = read_frontier(bridge_dir)
         if previous is None:
-            _own_ids.pop(session_id, None)
+            forget_session(session_id)
             return
         if (
             _same_path(previous.transcript_path, cursor.transcript_path)
@@ -361,9 +475,14 @@ async def record_frontier(
         delta = await _items_after(client, session_id, previous.last_item_id)
         if delta is None:
             return
-        own = _own_ids.get(session_id, [])
-        if any(item_id not in own and _in_transcript(item_type) for item_id, item_type in delta):
-            return
+        own = _own_ids.get(session_id, {})
+        for index, (item_id, item_type, kind) in enumerate(delta):
+            recorded = own.get(item_id)
+            is_own = recorded is not None and recorded in ("", kind)
+            if not is_own and _in_transcript(item_type):
+                _log_held(session_id, delta, own, previous.item_count, index)
+                return
+        _held_logged.pop(session_id, None)
         write_frontier(
             bridge_dir,
             Frontier(
@@ -374,8 +493,10 @@ async def record_frontier(
                 delta[-1][0] if delta else previous.last_item_id,
             ),
         )
-        absorbed = {item_id for item_id, _ in delta}
-        _own_ids[session_id] = [item_id for item_id in own if item_id not in absorbed]
+        absorbed = {item_id for item_id, _type, _kind in delta}
+        _own_ids[session_id] = {
+            item_id: kind for item_id, kind in own.items() if item_id not in absorbed
+        }
     except Exception:  # noqa: BLE001 - a missed record only costs a later keep
         _logger.debug(
             "claude-native: could not record the server frontier for %s",

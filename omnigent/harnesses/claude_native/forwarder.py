@@ -4884,6 +4884,8 @@ async def _forward_available_items(
                     session_id=session_id,
                     item=item,
                 ),
+                item.source_id,
+                ae_resume_keep.item_kind(item.item_type, item.data.get("role")),
             )
         except httpx.HTTPError as exc:
             decision = retry_tracker.record_failure(retry_key, exc, session_id=session_id)
