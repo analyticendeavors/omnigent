@@ -334,13 +334,15 @@ def test_chat_file_link_context_menu_downloads_the_whole_file(
         ).raise_for_status()
 
         page.goto(f"{live_server}/c/{session_id}")
-        link = page.get_by_role("button", name=str(clip))
+        link = page.get_by_role("button", name=str(clip), exact=True)
         expect(link).to_be_visible(timeout=30_000)
         link.click(button="right")
         with page.expect_download() as download_info:
             page.get_by_role("menuitem", name="Download").click()
         download = download_info.value
         assert download.suggested_filename == "clip.mp4"
+        # Download must not also open the file viewer through the link underneath.
+        assert "file=" not in page.url
         saved = tmp_path / "saved-clip.mp4"
         download.save_as(saved)
         assert saved.read_bytes() == payload

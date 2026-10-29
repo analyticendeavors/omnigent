@@ -2736,9 +2736,26 @@ def register_resources_routes(
         runner_rel = _runner_path_segment(relative_path, absolute=absolute)
         if download:
             # A download can be the first action after a managed sandbox sleeps.
+            # Waking costs the owner a sandbox, so it needs edit access, as upload does.
+            can_wake = owner
+            if not can_wake:
+                try:
+                    await _validate_session(session_id, request, LEVEL_EDIT)
+                    can_wake = True
+                except OmnigentError:
+                    can_wake = False
+            tracker = getattr(request.app.state, "managed_launches", None)
+            launch = tracker.get(conv.id) if tracker is not None else None
+            if can_wake and launch is not None and conv.host_id is None and conv.runner_id is None:
+                await _await_settled_managed_launch(launch)
+                refreshed = await asyncio.to_thread(conversation_store.get_conversation, conv.id)
+                if refreshed is None:
+                    raise _session_not_found()
+                conv = refreshed
             tunnel_registry = getattr(request.app.state, "tunnel_registry", None)
             if (
-                conv.host_id is not None
+                can_wake
+                and conv.host_id is not None
                 and host_registry is not None
                 and host_registry.get(conv.host_id) is None
                 and (

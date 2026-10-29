@@ -9624,7 +9624,7 @@ async def test_native_message_that_is_not_a_claude_btw_is_still_queued(
         pending_inputs.reset_for_tests()
 
 
-def _download_auth_app(db_uri: str) -> tuple[FastAPI, str]:
+def _download_auth_app(db_uri: str, host_registry: object | None = None) -> tuple[FastAPI, str]:
     """A header-auth app and a session owned by Bob and read-shared to Alice."""
     from omnigent.server.auth import LEVEL_OWNER, LEVEL_READ, UnifiedAuthProvider
     from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
@@ -9662,10 +9662,40 @@ def _download_auth_app(db_uri: str) -> tuple[FastAPI, str]:
             agent_store=agent_store,
             auth_provider=UnifiedAuthProvider(source="header"),
             permission_store=perms,
+            host_registry=host_registry,  # type: ignore[arg-type]
         ),
         prefix="/v1",
     )
+    if host_registry is not None:
+        conv_store.set_host_id(conv.id, "5d0c7b1e9a3f4c28b6e1f0a2d4c8e7b3", workspace="/ws")
+        conv_store.update_conversation(conv.id, share_workspace_files=True)
     return app, conv.id
+
+
+@pytest.mark.asyncio
+async def test_view_only_sharer_download_does_not_wake_the_sandbox(
+    db_uri: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A view-only collaborator may read shared files but never wakes the owner's sandbox."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from omnigent.server.routes.sessions import routes_resources
+
+    registry = MagicMock()
+    registry.get.return_value = None
+    wake = AsyncMock()
+    monkeypatch.setattr(routes_resources, "ensure_runner_connected", wake)
+    app, session_id = _download_auth_app(db_uri, host_registry=registry)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://server") as http:
+        resp = await http.get(
+            f"/v1/sessions/{session_id}/resources/environments/default"
+            "/filesystem/clip.mp4?download=true",
+            headers={"X-Forwarded-Email": "alice@example.com"},
+        )
+
+    wake.assert_not_awaited()
+    assert resp.status_code == 502
 
 
 @pytest.mark.asyncio

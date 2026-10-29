@@ -83,6 +83,7 @@ describe.each(FORMS)("%s to a workspace file", (_label, markdown, name) => {
     fireEvent.contextMenu(screen.getByRole("button", { name }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Download" }));
     expect(downloadMock).toHaveBeenCalledWith("conv_1", "clip.mp4");
+    expect(openFile).not.toHaveBeenCalled();
   });
 
   it("opens the file from the menu", () => {
@@ -103,7 +104,24 @@ describe.each(FORMS)("%s to a workspace file", (_label, markdown, name) => {
     expect(openFile).not.toHaveBeenCalled();
   });
 
-  it("toasts when the download fails", async () => {
+  it("keeps the link name and puts the touch icon beside it, not inside", () => {
+    setCoarse(true);
+    renderMarkdown(markdown);
+    const link = screen.getByRole("button", { name });
+    const icon = screen.getByLabelText("Download clip.mp4");
+    expect(link.contains(icon)).toBe(false);
+  });
+
+  it("adds the right-click hint on a fine pointer only", () => {
+    renderMarkdown(markdown);
+    expect(screen.getByRole("button", { name }).getAttribute("title")).toContain("right-click");
+    cleanup();
+    setCoarse(true);
+    renderMarkdown(markdown);
+    expect(screen.getByRole("button", { name }).getAttribute("title")).not.toContain("right-click");
+  });
+
+  it("toasts when the native-shell blob download rejects", async () => {
     downloadMock.mockRejectedValue(new Error("502 Bad Gateway"));
     renderMarkdown(markdown);
     fireEvent.contextMenu(screen.getByRole("button", { name }));
@@ -116,8 +134,9 @@ describe.each(FORMS)("%s to a workspace file", (_label, markdown, name) => {
 describe("a dead link", () => {
   it("has no menu", () => {
     renderMarkdown("[gone](/home/u/ws/../../etc/passwd)");
-    const dead = screen.queryByRole("button", { name: "gone" });
-    if (dead) fireEvent.contextMenu(dead);
-    expect(screen.queryByRole("menuitem", { name: "Download" })).toBeNull();
+    const dead = screen.getByText("gone");
+    const notPrevented = fireEvent.contextMenu(dead);
+    expect(notPrevented).toBe(true);
+    expect(screen.queryByRole("menuitem")).toBeNull();
   });
 });

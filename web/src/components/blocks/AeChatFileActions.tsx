@@ -35,21 +35,29 @@ function isCoarse(): boolean {
   return typeof window !== "undefined" && !!window.matchMedia && window.matchMedia(COARSE).matches;
 }
 
-/** The download hint a link carries on desktop, where right-click opens the menu. */
-export function aeFileLinkHint(path: string): string {
-  return `${path} (right-click for Download)`;
+export interface AeChatFileActions {
+  onContextMenu: ((event: MouseEvent<HTMLElement>) => void) | undefined;
+  /** The title text: the right-click hint is added on fine pointers only. */
+  hint: (base: string) => string;
+  /** The menu; render it inside the link (it is portaled and stops its events). */
+  extra: ReactNode;
+  /** The touch download icon; render it as a sibling after the link. */
+  after: ReactNode;
 }
 
 export function useAeChatFileActions(
   conversationId: string | undefined,
   resolvedPath: string,
   onOpen: (() => void) | null,
-): { onContextMenu: ((event: MouseEvent<HTMLElement>) => void) | undefined; extra: ReactNode } {
+): AeChatFileActions {
   const [point, setPoint] = useState<{ x: number; y: number } | null>(null);
   const coarse = useSyncExternalStore(subscribeCoarse, isCoarse, () => false);
-  if (!conversationId || !resolvedPath || !onOpen) return { onContextMenu: undefined, extra: null };
+  if (!conversationId || !resolvedPath || !onOpen) {
+    return { onContextMenu: undefined, hint: (base) => base, extra: null, after: null };
+  }
 
   const download = () => {
+    // Only the native-shell blob path can reject; a desktop download resolves before any response.
     downloadWorkspaceFile(conversationId, resolvedPath).catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
       showToast(
@@ -71,39 +79,42 @@ export function useAeChatFileActions(
         <DropdownMenuTrigger asChild>
           <span className="fixed" style={{ left: point.x, top: point.y }} />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" onCloseAutoFocus={(event) => event.preventDefault()}>
+        <DropdownMenuContent
+          align="start"
+          onCloseAutoFocus={(event) => event.preventDefault()}
+          // The menu is portaled but still a React child of the link: keep its events off the link.
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
           <DropdownMenuItem onSelect={onOpen}>Open</DropdownMenuItem>
           <DropdownMenuItem onSelect={download}>Download</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>,
       document.body,
     );
-  const extra = (
-    <>
-      {coarse ? (
-        <span
-          role="button"
-          tabIndex={0}
-          aria-label={`Download ${name}`}
-          title={`Download ${name}`}
-          className="hidden pointer-coarse:inline-block size-[1em] align-[-0.125em] ml-0.5"
-          onClick={(event) => {
-            event.stopPropagation();
-            download();
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              event.stopPropagation();
-              download();
-            }
-          }}
-        >
-          <AeTablerSvg node={AE_DOWNLOAD_ICON} className="size-full" />
-        </span>
-      ) : null}
-      {menu}
-    </>
-  );
-  return { onContextMenu, extra };
+  const after = coarse ? (
+    <span
+      role="button"
+      tabIndex={0}
+      aria-label={`Download ${name}`}
+      title={`Download ${name}`}
+      className="inline-block size-[1em] align-[-0.125em] ml-0.5 cursor-pointer"
+      onClick={(event) => {
+        event.stopPropagation();
+        download();
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          event.stopPropagation();
+          download();
+        }
+      }}
+    >
+      <AeTablerSvg node={AE_DOWNLOAD_ICON} className="size-full" />
+    </span>
+  ) : null;
+  const hint = (base: string) => (coarse ? base : `${base} (right-click for Download)`);
+  return { onContextMenu, hint, extra: menu, after };
 }

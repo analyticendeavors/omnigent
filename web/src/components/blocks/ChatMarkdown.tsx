@@ -28,7 +28,7 @@ import { useThrottledValue } from "@/hooks/useThrottledValue";
 import { withBasePath } from "@/lib/basePath";
 import { isNativeShell } from "@/lib/nativeBridge";
 import { SessionRouteLink } from "@/components/blocks/AeSessionLink";
-import { aeFileLinkHint, useAeChatFileActions } from "@/components/blocks/AeChatFileActions";
+import { useAeChatFileActions } from "@/components/blocks/AeChatFileActions";
 import { sessionLinkRoute } from "@/lib/aeSessionLinks";
 import { maybeOpenLinkInApp } from "@/lib/openLinkInApp";
 import { cn } from "@/lib/utils";
@@ -177,31 +177,34 @@ function WorkspacePathInlineCode({
     // wraps like the surrounding text; role/tabIndex/keydown restore the
     // button semantics.
     return (
-      <code
-        role="button"
-        tabIndex={0}
-        data-streamdown="inline-code"
-        // Keep the base inline-code class/props (merge, don't replace) so the
-        // link only adds the underline affordance on top of Streamdown's
-        // styling and any caller-provided attributes survive.
-        className={cn(
-          "font-mono text-ui text-link underline decoration-dotted underline-offset-2 transition-colors cursor-pointer",
-          className,
-        )}
-        onClick={openWorkspaceFile}
-        onContextMenu={actions.onContextMenu}
-        title={aeFileLinkHint(resolvedPath)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            openWorkspaceFile();
-          }
-        }}
-        {...codeProps}
-      >
-        {codeChildren}
-        {actions.extra}
-      </code>
+      <>
+        <code
+          role="button"
+          tabIndex={0}
+          data-streamdown="inline-code"
+          // Keep the base inline-code class/props (merge, don't replace) so the
+          // link only adds the underline affordance on top of Streamdown's
+          // styling and any caller-provided attributes survive.
+          className={cn(
+            "font-mono text-ui text-link underline decoration-dotted underline-offset-2 transition-colors cursor-pointer",
+            className,
+          )}
+          onClick={openWorkspaceFile}
+          onContextMenu={actions.onContextMenu}
+          title={actions.hint(resolvedPath)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              openWorkspaceFile();
+            }
+          }}
+          {...codeProps}
+        >
+          {codeChildren}
+          {actions.extra}
+        </code>
+        {actions.after}
+      </>
     );
   }
   // Match Streamdown's default inline-code styling so non-path inline code
@@ -418,28 +421,31 @@ function WorkspaceFileLink({
   // No href: the parked fragment would still navigate on cmd/middle-click, and
   // no URL opens the FileViewer. role/tabIndex/onKeyDown restore button semantics.
   return (
-    <a
-      {...props}
-      role="button"
-      tabIndex={0}
-      title={title ?? aeFileLinkHint(resolvedPath)}
-      data-streamdown="link"
-      onContextMenu={actions.onContextMenu}
-      // Dotted underline distinguishes "opens in the FileViewer" from a link
-      // that leaves the app; the rest matches Streamdown so a file link in a
-      // table cell wraps like any other.
-      className={cn(STREAMDOWN_LINK_CLASS, "decoration-dotted underline-offset-2", className)}
-      onClick={openWorkspaceFile}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          openWorkspaceFile();
-        }
-      }}
-    >
-      {children}
-      {actions.extra}
-    </a>
+    <>
+      <a
+        {...props}
+        role="button"
+        tabIndex={0}
+        title={title ?? actions.hint(path)}
+        data-streamdown="link"
+        onContextMenu={actions.onContextMenu}
+        // Dotted underline distinguishes "opens in the FileViewer" from a link
+        // that leaves the app; the rest matches Streamdown so a file link in a
+        // table cell wraps like any other.
+        className={cn(STREAMDOWN_LINK_CLASS, "decoration-dotted underline-offset-2", className)}
+        onClick={openWorkspaceFile}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            openWorkspaceFile();
+          }
+        }}
+      >
+        {children}
+        {actions.extra}
+      </a>
+      {actions.after}
+    </>
   );
 }
 
