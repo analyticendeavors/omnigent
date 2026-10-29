@@ -69,6 +69,26 @@ export function trimSharedSuffix(labels: string[]): string[] {
   );
 }
 
+/** A button label longer than this is cut down to its first clause. */
+const SHORT_LABEL_MAX = 40;
+
+/**
+ * What a button shows for a long answer: the words before the first colon or
+ * " - " (an option often reads "Do X: because Y, then Z"), else the label cut at
+ * a word with an ellipsis. A short label comes back as it is; the full text stays in the
+ * button's tooltip and accessible name.
+ */
+export function aeShortChoiceLabel(label: string): string {
+  const text = label.trim();
+  if (text.length <= SHORT_LABEL_MAX) return text;
+  const head = text.split(/:\s|\s-\s/)[0].trim();
+  if (head.length >= 3 && head.length < text.length && head.length <= SHORT_LABEL_MAX + 12) {
+    return head;
+  }
+  const cut = text.slice(0, SHORT_LABEL_MAX).replace(/\s+\S*$/, "");
+  return `${cut || text.slice(0, SHORT_LABEL_MAX)}…`;
+}
+
 /**
  * The single-choice form in ``schema``, or null when it is anything else:
  * exactly one property, a required string whose schema lists 2 to 4 string
@@ -90,7 +110,7 @@ export function aeChoiceField(
   const values = prop.enum as string[];
   if (new Set(values).size !== values.length) return null;
   const full = values.map((value, i) => enumLabel(prop, i, value));
-  const short = trimSharedSuffix(full);
+  const short = trimSharedSuffix(full).map(aeShortChoiceLabel);
   const choices = values.map((value, i) => ({ value, label: short[i], fullLabel: full[i] }));
   return {
     name,

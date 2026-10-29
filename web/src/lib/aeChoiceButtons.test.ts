@@ -3,6 +3,7 @@ import {
   aeChoiceField,
   aeChoiceIsNo,
   aeChoiceIsPrimary,
+  aeShortChoiceLabel,
   trimSharedSuffix,
 } from "./aeChoiceButtons";
 
@@ -105,5 +106,34 @@ describe("button styles", () => {
     expect(aeChoiceIsPrimary(no, 0)).toBe(false);
     expect(aeChoiceIsNo(no)).toBe(true);
     expect(aeChoiceIsNo(yes)).toBe(false);
+  });
+});
+
+describe("aeShortChoiceLabel", () => {
+  it("keeps a short label as it is", () => {
+    expect(aeShortChoiceLabel("Park it")).toBe("Park it");
+  });
+
+  it("shows the words before the first colon of a long label", () => {
+    expect(
+      aeShortChoiceLabel(
+        "Open it as overflow (Recommended): a small chat on the backup login so the red dock shows",
+      ),
+    ).toBe("Open it as overflow (Recommended)");
+  });
+
+  it("cuts a long label with no colon at a word", () => {
+    const out = aeShortChoiceLabel(
+      "Flip one of the running chats to review first and then open the new chat afterwards",
+    );
+    expect(out.endsWith("…")).toBe(true);
+    expect(out.length).toBeLessThanOrEqual(41);
+    expect(out).not.toMatch(/\s…$/);
+  });
+
+  it("shortens the buttons of a choice field and keeps the full label", () => {
+    const long = "Fix it now: one builder changes the scheduler so a check-in reuses your chat";
+    const field = aeChoiceField(schema({ enum: ["a", "b"], enumNames: [long, "Park it"] }));
+    expect(field?.choices[0]).toMatchObject({ label: "Fix it now", fullLabel: long });
   });
 });

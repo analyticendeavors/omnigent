@@ -47,7 +47,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useDescendantSession } from "@/hooks/useChildSessions";
-import { aeChoiceField } from "@/lib/aeChoiceButtons";
+import { aeChoiceField, aeShortChoiceLabel } from "@/lib/aeChoiceButtons";
 import {
   type AskUserQuestionPayload,
   castAskUserQuestionPayload,
@@ -779,9 +779,13 @@ export function ApprovalCard({
                     key={optLabel}
                     size="sm"
                     variant="outline"
+                    // A long answer shows its first clause and wraps inside the card, not past the screen.
+                    className="h-auto min-h-7 max-w-full min-w-0 shrink justify-start py-0.5 text-left whitespace-normal"
+                    title={optLabel}
+                    aria-label={optLabel}
                     onClick={() => submitOption(optLabel)}
                   >
-                    {optLabel}
+                    {aeShortChoiceLabel(optLabel)}
                   </Button>
                 ))}
               </div>
