@@ -11421,32 +11421,35 @@ async def _patch_with_relaunch_probe(
     requested: str,
     label: str | None,
     launch_args: list[str] | None,
-    runner_response: httpx.Response,
+    runner_response: httpx.Response | Exception,
 ) -> tuple[httpx.Response, dict[str, Any], list[str], list[float]]:
     """
     PATCH a Claude session's permission mode and record what the runner forward saw.
 
+    :param runner_response: What the fake runner answers, or an exception it raises.
     :returns: The PATCH response, the session snapshot afterwards, the events
         in the order ``pin`` (launch args written) and ``forward`` (runner
         called), and the read timeouts of the forwards.
     """
-    from omnigent.server.routes.sessions import routes_core
+    from omnigent.server.routes.sessions import ae_bypass_switch
 
     events: list[str] = []
     timeouts: list[float] = []
-    real_pin = routes_core.pin_relaunch_launch_args
+    real_pin = ae_bypass_switch.pin_relaunch_launch_args
 
-    async def _pin(*args: Any, **kwargs: Any) -> list[str] | None:
+    async def _pin(*args: Any, **kwargs: Any) -> Any:
         events.append("pin")
         return await real_pin(*args, **kwargs)
 
-    monkeypatch.setattr(routes_core, "pin_relaunch_launch_args", _pin)
+    monkeypatch.setattr(ae_bypass_switch, "pin_relaunch_launch_args", _pin)
 
     def _handler(request: httpx.Request) -> httpx.Response:
         if request.method != "POST":
             return httpx.Response(204)
         events.append("forward")
         timeouts.append(request.extensions["timeout"]["read"])
+        if isinstance(runner_response, Exception):
+            raise runner_response
         return runner_response
 
     labels = {"omnigent.ui": "terminal", "omnigent.wrapper": "claude-code-native-ui"}
@@ -11464,22 +11467,30 @@ async def _patch_with_relaunch_probe(
     return resp, snapshot, events, timeouts
 
 
+_LABEL_KEY = "omnigent.claude_native.permission_mode"
+
+
 @pytest.mark.parametrize(
     ("requested", "label"),
-    [("bypassPermissions", "auto"), ("plan", "bypassPermissions")],
-    ids=["into_bypass", "out_of_bypass"],
+    [
+        ("bypassPermissions", "auto"),
+        ("plan", "bypassPermissions"),
+        ("plan", "auto"),
+        ("plan", None),
+    ],
+    ids=["into_bypass", "out_of_bypass", "between_cycle_modes", "no_label"],
 )
-async def test_patch_permission_mode_relaunch_pins_args_before_the_long_forward(
+async def test_patch_permission_mode_pins_args_before_the_long_forward(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
     requested: str,
-    label: str,
+    label: str | None,
 ) -> None:
     """
-    Into or out of bypass the launch args are pinned first and the forward gets 90 s.
+    Every Claude switch pins the target first and gets the 90 s budget.
 
-    The runner restarts Claude, and the new pane reads its mode from the row,
-    so the pin has to land before the runner is called.
+    The runner may restart Claude (the new pane reads its mode from the row),
+    and the stored label cannot say whether it will, so the server does not try.
     """
     resp, snapshot, events, timeouts = await _patch_with_relaunch_probe(
         client,
@@ -11493,25 +11504,25 @@ async def test_patch_permission_mode_relaunch_pins_args_before_the_long_forward(
     assert events == ["pin", "forward"]
     assert timeouts == [90.0]
     assert snapshot["terminal_launch_args"] == ["--model", "opus", "--permission-mode", requested]
-    assert snapshot["labels"]["omnigent.claude_native.permission_mode"] == requested
+    assert snapshot["labels"][_LABEL_KEY] == requested
 
 
-async def test_patch_permission_mode_between_cycle_modes_keeps_the_short_forward(
+async def test_patch_permission_mode_stale_label_still_pins_the_target(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Auto to plan neither pins ahead of the forward nor stretches its budget."""
-    resp, _snapshot, events, timeouts = await _patch_with_relaunch_probe(
+    """A missing label with the pane really in bypass must not pin bypass for a Plan request."""
+    resp, snapshot, events, _timeouts = await _patch_with_relaunch_probe(
         client,
         monkeypatch,
         requested="plan",
-        label="auto",
-        launch_args=None,
-        runner_response=httpx.Response(200, json={"permission_mode": "plan"}),
+        label=None,
+        launch_args=["--permission-mode", "bypassPermissions"],
+        runner_response=httpx.Response(200, json={"permission_mode": "plan", "relaunched": True}),
     )
     assert resp.status_code == 200, resp.text
-    assert events == ["forward"]
-    assert timeouts == [5.0]
+    assert events == ["pin", "forward"]
+    assert snapshot["terminal_launch_args"] == ["--permission-mode", "plan"]
 
 
 @pytest.mark.parametrize(
@@ -11525,32 +11536,94 @@ async def test_patch_permission_mode_between_cycle_modes_keeps_the_short_forward
     ],
     ids=["had_a_flag", "flagless"],
 )
-async def test_patch_permission_mode_relaunch_refusal_restores_args_and_label(
+@pytest.mark.parametrize(
+    "refusal",
+    [
+        httpx.Response(
+            409, json={"error": "claude_bypass_busy", "detail": "Claude is mid-reply."}
+        ),
+        httpx.ConnectError("no route"),
+    ],
+    ids=["runner_409", "not_reached"],
+)
+async def test_patch_permission_mode_refusal_or_no_runner_restores_args_and_label(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
     launch_args: list[str] | None,
     restored: list[str],
+    refusal: httpx.Response | Exception,
 ) -> None:
-    """A runner 409 puts the launch args back, keeps the label, and carries the detail."""
+    """A definite refusal, or a runner never reached, puts the launch args back."""
     resp, snapshot, events, _timeouts = await _patch_with_relaunch_probe(
         client,
         monkeypatch,
         requested="bypassPermissions",
         label="auto",
         launch_args=launch_args,
-        runner_response=httpx.Response(
-            409,
-            json={"error": "claude_bypass_busy", "detail": "Claude is mid-reply."},
-        ),
+        runner_response=refusal,
     )
     assert resp.status_code == 503, resp.text
-    assert "Claude is mid-reply." in resp.text
+    if isinstance(refusal, httpx.Response):
+        assert "Claude is mid-reply." in resp.text
     assert events == ["pin", "forward"]
-    assert snapshot["labels"]["omnigent.claude_native.permission_mode"] == "auto"
+    assert snapshot["labels"][_LABEL_KEY] == "auto"
     assert (snapshot["terminal_launch_args"] or []) == restored
-    assert "--dangerously-skip-permissions" not in (snapshot["terminal_launch_args"] or [])
-    if launch_args is None:
-        assert "--permission-mode" not in (snapshot["terminal_launch_args"] or [])
+    assert "bypassPermissions" not in (snapshot["terminal_launch_args"] or [])
+
+
+@pytest.mark.parametrize(
+    "unknown",
+    [
+        httpx.ReadTimeout("slow"),
+        httpx.Response(
+            504, json={"error": "claude_bypass_timeout", "detail": "Still restarting."}
+        ),
+    ],
+    ids=["read_timeout", "runner_deadline"],
+)
+@pytest.mark.parametrize(
+    ("requested", "label", "launch_args", "kept"),
+    [
+        # Into bypass: never leave a bypass pin nobody confirmed.
+        (
+            "bypassPermissions",
+            "auto",
+            ["--permission-mode", "auto"],
+            ["--permission-mode", "auto"],
+        ),
+        ("bypassPermissions", "auto", None, []),
+        # Out of bypass: never restore the bypass pin; keep the non-bypass target.
+        (
+            "plan",
+            "bypassPermissions",
+            ["--model", "opus", "--permission-mode", "bypassPermissions"],
+            ["--model", "opus", "--permission-mode", "plan"],
+        ),
+    ],
+    ids=["into_bypass", "into_bypass_flagless", "out_of_bypass"],
+)
+async def test_patch_permission_mode_unknown_outcome_keeps_a_safe_pin_and_label(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    unknown: httpx.Response | Exception,
+    requested: str,
+    label: str,
+    launch_args: list[str] | None,
+    kept: list[str],
+) -> None:
+    """When the runner may still be finishing, no unconfirmed bypass pin survives."""
+    resp, snapshot, _events, _timeouts = await _patch_with_relaunch_probe(
+        client,
+        monkeypatch,
+        requested=requested,
+        label=label,
+        launch_args=launch_args,
+        runner_response=unknown,
+    )
+    assert resp.status_code == 503, resp.text
+    assert "may still be restarting" in resp.text
+    assert snapshot["labels"][_LABEL_KEY] == label
+    assert (snapshot["terminal_launch_args"] or []) == kept
 
 
 async def test_patch_permission_mode_relaunch_records_the_mode_the_pane_reached(
@@ -11564,11 +11637,37 @@ async def test_patch_permission_mode_relaunch_records_the_mode_the_pane_reached(
         requested="bypassPermissions",
         label="auto",
         launch_args=None,
-        runner_response=httpx.Response(200, json={"permission_mode": "default"}),
+        runner_response=httpx.Response(
+            200, json={"permission_mode": "default", "relaunched": True}
+        ),
     )
     assert resp.status_code == 200, resp.text
-    assert snapshot["labels"]["omnigent.claude_native.permission_mode"] == "default"
+    assert snapshot["labels"][_LABEL_KEY] == "default"
     assert snapshot["terminal_launch_args"] == ["--permission-mode", "default"]
+
+
+async def test_patch_permission_mode_unread_mode_keeps_the_pin_and_stamps_nothing(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    A restart whose footer could not be read keeps the pinned args and the old label.
+
+    The pane launched from the pin, so the pin stays; the label is the
+    forwarder's to correct, not something to fill with the requested mode.
+    """
+    resp, snapshot, _events, _timeouts = await _patch_with_relaunch_probe(
+        client,
+        monkeypatch,
+        requested="bypassPermissions",
+        label="auto",
+        launch_args=None,
+        runner_response=httpx.Response(200, json={"relaunched": True}),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["labels"][_LABEL_KEY] == "auto"
+    assert snapshot["labels"][_LABEL_KEY] == "auto"
+    assert snapshot["terminal_launch_args"] == ["--permission-mode", "bypassPermissions"]
 
 
 @pytest.mark.parametrize("runner_status", [None, 503], ids=["no_runner", "runner_rejects"])
@@ -11629,7 +11728,8 @@ async def test_patch_permission_mode_requires_live_runner_before_persisting(
     assert resp.status_code == 503, resp.text
     assert "Could not switch to auto mode" in resp.text
     assert "omnigent.claude_native.permission_mode" not in snapshot["labels"]
-    assert snapshot["terminal_launch_args"] is None
+    # The pin is taken back; a session that had no args is left with none.
+    assert not snapshot["terminal_launch_args"]
 
 
 async def test_patch_permission_mode_silent_skips_the_switch_without_crashing(

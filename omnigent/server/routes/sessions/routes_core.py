@@ -189,10 +189,8 @@ from omnigent.server.routes._sessions.orchestration import (
     ensure_runner_connected,
 )
 from omnigent.server.routes.sessions.ae_bypass_switch import (
-    RELAUNCH_FORWARD_TIMEOUT_S,
-    pin_relaunch_launch_args,
-    restore_launch_args,
-    server_needs_relaunch,
+    relaunch_unconfirmed,
+    switch_claude_permission_mode,
 )
 from omnigent.server.routes.sessions.ae_live_account_label import (
     reject_live_account_seed,
@@ -3053,63 +3051,61 @@ def register_core_routes(
                 _runner_result,
             )
         if requested_permission_mode is not None and live_forward:
-            # omnigent-ae: into or out of bypass the runner restarts Claude, and the
-            # new pane reads its mode from the row, so pin it before the forward.
-            _relaunch_switch = server_needs_relaunch(
-                requested_permission_mode,
-                updated.labels.get(_CLAUDE_NATIVE_PERMISSION_MODE_LABEL_KEY),
+            # omnigent-ae: every claude-native switch pins the target in the launch args
+            # first (the runner may restart the pane, which reads them) and gets the
+            # long budget; see ae_bypass_switch for what happens to the pin afterwards.
+            _claude_switch = (
+                updated.labels.get(_CLAUDE_NATIVE_WRAPPER_LABEL_KEY)
+                == _CLAUDE_NATIVE_WRAPPER_LABEL_VALUE
             )
-            _args_before_relaunch = (
-                await pin_relaunch_launch_args(
+            if _claude_switch:
+                _mode_result = await switch_claude_permission_mode(
                     session_id,
                     conversation_store,
+                    runner_router,
                     updated.terminal_launch_args,
                     requested_permission_mode,
                 )
-                if _relaunch_switch
-                else None
-            )
-            _mode_result = await _forward_session_change_to_runner(
-                session_id,
-                runner_router,
-                {
-                    "type": "permission_mode_change",
-                    "permission_mode": requested_permission_mode,
-                },
-                **({"timeout_s": RELAUNCH_FORWARD_TIMEOUT_S} if _relaunch_switch else {}),
-            )
+            else:
+                _mode_result = await _forward_session_change_to_runner(
+                    session_id,
+                    runner_router,
+                    {
+                        "type": "permission_mode_change",
+                        "permission_mode": requested_permission_mode,
+                    },
+                )
             # Raises unless the runner confirms the switch, so the label can
             # never claim a mode Claude isn't in. Stores the mode it reached.
-            try:
-                _confirmed_permission_mode = _require_permission_mode_forward(
-                    session_id,
-                    requested_permission_mode,
-                    _mode_result,
-                )
-            except OmnigentError:
-                if _relaunch_switch:
-                    await restore_launch_args(
-                        session_id, conversation_store, _args_before_relaunch
-                    )
-                raise
-            labels_to_set[_CLAUDE_NATIVE_PERMISSION_MODE_LABEL_KEY] = _confirmed_permission_mode
-            # The launcher restores the mode from terminal_launch_args, not the
-            # label above, so pin the confirmed mode there too — otherwise a
-            # relaunch reopens in the launch mode, which is Claude's default
-            # (manual) for a session created without --permission-mode. Merge
-            # against ``updated`` (the post-write row), not the pre-update
-            # snapshot, so a combined PATCH that also set terminal_launch_args
-            # keeps those.
-            _merged_permission_args = _pin_claude_permission_launch_args(
-                updated.terminal_launch_args,
-                _confirmed_permission_mode,
+            _confirmed_permission_mode = _require_permission_mode_forward(
+                session_id,
+                requested_permission_mode,
+                _mode_result,
             )
-            if updated.terminal_launch_args != _merged_permission_args:
-                await asyncio.to_thread(
-                    conversation_store.update_conversation,
-                    session_id,
-                    terminal_launch_args=_merged_permission_args,
+            # A restart whose mode could not be read keeps the pinned args (the pane
+            # launched from them) and stamps no label; the forwarder corrects it.
+            if not (_claude_switch and relaunch_unconfirmed(_mode_result)):
+                labels_to_set[_CLAUDE_NATIVE_PERMISSION_MODE_LABEL_KEY] = (
+                    _confirmed_permission_mode
                 )
+                # The launcher restores the mode from terminal_launch_args, not the
+                # label above, so pin the confirmed mode there too — otherwise a
+                # relaunch reopens in the launch mode, which is Claude's default
+                # (manual) for a session created without --permission-mode. Merge
+                # against ``updated`` (the post-write row), not the pre-update
+                # snapshot, so a combined PATCH that also set terminal_launch_args
+                # keeps those.
+                _merged_permission_args = _pin_claude_permission_launch_args(
+                    updated.terminal_launch_args,
+                    _confirmed_permission_mode,
+                )
+                # The claude path already wrote its pin, so ``updated`` is stale there.
+                if _claude_switch or updated.terminal_launch_args != _merged_permission_args:
+                    await asyncio.to_thread(
+                        conversation_store.update_conversation,
+                        session_id,
+                        terminal_launch_args=_merged_permission_args,
+                    )
         if requested_codex_approval_mode is not None and live_forward:
             _approval_result = await _forward_session_change_to_runner(
                 session_id,

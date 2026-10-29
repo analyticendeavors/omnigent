@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from omnigent.harnesses.claude_native import bridge as claude_native_bridge
+from omnigent.runner import ae_bypass_relaunch
 from omnigent.runner.ae_bypass_relaunch import (
     BYPASS,
     BYPASS_REFUSALS,
@@ -207,9 +208,95 @@ async def test_a_turn_arriving_mid_relaunch_waits_for_the_new_pane() -> None:
         ("plan", BYPASS, True),
         ("default", BYPASS, True),
         ("plan", "auto", False),
-        ("plan", None, False),
+        ("plan", None, True),  # pane mode unknown: the cycler has nothing to start from
         ("auto", "default", False),
     ],
 )
 def test_needs_relaunch_truth_table(target: str, current: str | None, expected: bool) -> None:
     assert needs_relaunch(target, current) is expected
+
+
+async def test_the_mode_is_read_inside_the_lock_before_turns_are_released() -> None:
+    from omnigent.runner.ae_claude_account import is_switching
+
+    runner = _Runner(_Registry(_Terminal()))
+    seen: list[bool] = []
+
+    async def current_mode() -> str | None:
+        return "auto"
+
+    async def settled_mode() -> str | None:
+        seen.append(is_switching(SESSION_ID))
+        return BYPASS
+
+    response = await handle_claude_relaunch_switch(
+        SESSION_ID,
+        target_mode=BYPASS,
+        harness="claude-native",
+        current_mode=current_mode,
+        settled_mode=settled_mode,
+        turn_in_flight=lambda: False,
+        terminal_registry=runner.registry,  # type: ignore[arg-type]
+        close_terminal=runner.close,
+        ensure_terminal=runner.ensure,
+        publish_event=runner.publish,
+    )
+    assert response.status_code == 200
+    assert seen == [True]
+    assert not is_switching(SESSION_ID)
+
+
+async def test_a_restart_past_its_deadline_is_a_504_and_releases_the_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from omnigent.runner.ae_claude_account import is_switching
+
+    monkeypatch.setattr(ae_bypass_relaunch, "RELAUNCH_DEADLINE_S", 0.05)
+    runner = _Runner(_Registry(_Terminal()))
+
+    async def stuck_ensure(session_id: str, harness: str | None) -> None:
+        await asyncio.sleep(5)
+
+    runner.ensure = stuck_ensure  # type: ignore[method-assign]
+    status, body = await _switch(runner, target=BYPASS, current="auto", settled=BYPASS)
+    assert (status, body["error"]) == (504, "claude_bypass_timeout")
+    assert not is_switching(SESSION_ID)
+
+
+async def test_a_turn_waits_through_two_queued_relaunches() -> None:
+    from omnigent.runner.ae_claude_account import is_switching, wait_while_switching
+
+    runner = _Runner(_Registry(_Terminal()))
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    plain_ensure = runner.ensure
+    ensures = 0
+
+    async def gated_ensure(session_id: str, harness: str | None) -> None:
+        nonlocal ensures
+        ensures += 1
+        if ensures == 1:
+            entered.set()
+            await release.wait()
+        await plain_ensure(session_id, harness)
+
+    runner.ensure = gated_ensure  # type: ignore[method-assign]
+    first = asyncio.create_task(_switch(runner, target=BYPASS, current="auto", settled=BYPASS))
+    await entered.wait()
+    second = asyncio.create_task(_switch(runner, target="plan", current=BYPASS, settled="plan"))
+    await asyncio.sleep(0)
+    finished_when_turn_woke: list[int] = []
+
+    async def turn() -> None:
+        await wait_while_switching(SESSION_ID)
+        finished_when_turn_woke.append(ensures)
+
+    turn_task = asyncio.create_task(turn())
+    await asyncio.sleep(0)
+    release.set()
+    assert (await first)[0] == 200
+    assert is_switching(SESSION_ID) or second.done()
+    assert (await second)[0] == 200
+    await turn_task
+    assert finished_when_turn_woke == [2]
+    assert not is_switching(SESSION_ID)

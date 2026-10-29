@@ -2509,12 +2509,17 @@ function ComposerImpl(
       if (showClaudePermissionMode) await store.setClaudePermissionMode(mode);
       else if (showCodexApprovalMode) await store.setCodexApprovalMode(mode);
       if (useChatStore.getState().conversationId === sourceSessionId) {
-        // omnigent-ae: a restart into bypass can land elsewhere when a managed setting strips it.
+        // omnigent-ae: Claude can land in another mode than asked (a managed setting
+        // strips bypass; a restart whose mode could not be read keeps the old label).
         const reached = useChatStore.getState().claudePermissionMode;
+        const differs =
+          showClaudePermissionMode && !devinPermissionControl && !!reached && reached !== mode;
         setCommandError(
-          showClaudePermissionMode && mode === "bypassPermissions" && reached !== mode
-            ? `Claude restarted but stayed in ${claudePermissionModeLabel(reached)}. A managed setting on this host may turn bypass off.`
-            : null,
+          !differs
+            ? null
+            : mode === "bypassPermissions"
+              ? `Claude restarted but stayed in ${claudePermissionModeLabel(reached)}. A managed setting on this host may turn bypass off.`
+              : `Claude restarted but is in ${claudePermissionModeLabel(reached)}, not ${claudePermissionModeLabel(mode)}.`,
         );
       }
     } catch (error) {

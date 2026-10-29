@@ -3139,6 +3139,24 @@ describe("Composer shared visible controls", () => {
       "Claude restarted but stayed in Manual. A managed setting on this host may turn bypass off.",
     );
   });
+
+  it("names the mode Claude is in when a non-bypass switch lands elsewhere", async () => {
+    useChatStore.setState({
+      conversationId: "plan-mismatch",
+      claudePermissionMode: "bypassPermissions",
+    });
+    const setClaude = vi
+      .spyOn(useChatStore.getState(), "setClaudePermissionMode")
+      .mockImplementation(async () => {
+        useChatStore.setState({ claudePermissionMode: "bypassPermissions" });
+      });
+    renderWithTooltips(<Composer {...composerProps({ showClaudePermissionMode: true })} />);
+    fireEvent.keyDown(screen.getByTestId("composer-permission-chip"), { key: "ArrowDown" });
+    fireEvent.click(screen.getByTestId("composer-permission-option-plan"));
+    await waitFor(() => expect(setClaude).toHaveBeenCalledWith("plan"));
+    await screen.findByText("Claude restarted but is in Bypass permissions, not Plan.");
+    expect(screen.queryByText(/managed setting/)).toBeNull();
+  });
 });
 
 describe("Composer background tasks", () => {

@@ -273,6 +273,7 @@ async def test_events_permission_mode_change_on_native_session_switches_and_echo
         return mode
 
     monkeypatch.setattr(claude_native_bridge, "set_permission_mode", _fake_set_mode)
+    monkeypatch.setattr(claude_native_bridge, "read_permission_mode", lambda _dir: "default")
 
     native_spec = _harness_spec("claude-native")
 
@@ -301,13 +302,15 @@ async def test_events_permission_mode_change_on_native_session_switches_and_echo
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("target", "pane_mode"),
-    [("bypassPermissions", "auto"), ("plan", "bypassPermissions")],
+    [("bypassPermissions", "auto"), ("plan", "bypassPermissions"), ("plan", None)],
 )
 async def test_events_permission_mode_change_into_or_out_of_bypass_relaunches(
-    monkeypatch: pytest.MonkeyPatch, target: str, pane_mode: str
+    monkeypatch: pytest.MonkeyPatch, target: str, pane_mode: str | None
 ) -> None:
     """
-    A switch into or out of bypass restarts the pane; the shift+tab cycle is never used.
+    A switch into or out of bypass, or from a pane whose mode is unknown, restarts it.
+
+    The shift+tab cycle is never used for these.
 
     Bypass is not in the cycle of a pane launched without it, and a pane
     launched into it passes through bypass when it cycles, so the runner hands
@@ -415,6 +418,7 @@ async def test_events_permission_mode_change_returns_503_when_mode_unreachable(
         raise RuntimeError("The mode is not available in this session's cycle.")
 
     monkeypatch.setattr(claude_native_bridge, "set_permission_mode", _fake_set_mode)
+    monkeypatch.setattr(claude_native_bridge, "read_permission_mode", lambda _dir: "default")
 
     native_spec = _harness_spec("claude-native")
 

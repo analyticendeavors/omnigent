@@ -19,10 +19,19 @@ Answers to ``{"type": "permission_mode_change"}`` for such a switch:
 ``409``
     A reply or an approval is in progress, the old terminal would not close, or
     the new one did not start; ``{"error": <code>, "detail": <sentence>}``.
+``504``
+    The restart outran :data:`RELAUNCH_DEADLINE_S`; the pane may still be coming
+    up in the new mode, so the server must not roll anything back.
+
+The whole restart, including the read of the new pane's mode, runs inside the
+session's switching lock under one deadline, so no turn is injected before the
+read and two quick switches cannot interleave.
 """
 
 from __future__ import annotations
 
+import asyncio
+import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -44,6 +53,8 @@ if TYPE_CHECKING:
 BYPASS = "bypassPermissions"
 # Longest the new pane gets to show its permission-mode footer.
 SETTLE_TIMEOUT_S = 15.0
+# The whole restart and settle; well under the server's 90 s forward budget.
+RELAUNCH_DEADLINE_S = 70.0
 
 BYPASS_REFUSALS = Refusals(
     busy_code="claude_bypass_busy",
@@ -58,16 +69,21 @@ BYPASS_REFUSALS = Refusals(
 )
 
 
+RUNNER_TIMEOUT_CODE = "claude_bypass_timeout"
+TIMEOUT_DETAIL = "Claude is still restarting. The mode shown will update when it settles."
+
+
 def needs_relaunch(target_mode: str, current_mode: str | None) -> bool:
     """
     Whether a switch to *target_mode* restarts the pane.
 
     :param target_mode: Mode asked for, e.g. ``"plan"``.
-    :param current_mode: Mode the pane renders now, or ``None`` when unknown.
-    :returns: ``True`` when the target is bypass, or the pane is in bypass and
-        the switch leaves it.
+    :param current_mode: Mode the pane renders now, or ``None`` when unknown
+        (no pane, or no footer), which the shift+tab cycler cannot work from.
+    :returns: ``True`` when the target is bypass, the pane is in bypass, or its
+        mode is unknown.
     """
-    return target_mode == BYPASS or current_mode == BYPASS
+    return target_mode == BYPASS or current_mode in (BYPASS, None)
 
 
 def read_settled_mode_blocking(bridge_dir: Path, timeout_s: float) -> str | None:
@@ -82,15 +98,22 @@ def read_settled_mode_blocking(bridge_dir: Path, timeout_s: float) -> str | None
         the pane never showed one.
     """
     from omnigent.harnesses.claude_native.bridge import (
+        _capture_pane,
+        _claude_prompt_rendered,
         _read_settled_permission_mode,
-        _wait_for_claude_prompt_ready,
         _wait_for_tmux_info,
     )
 
+    # The bridge's own prompt gate stretches a short budget to its slow-boot
+    # floor (180 s), so poll the pane here against a deadline this call honours.
+    deadline = time.monotonic() + timeout_s
     try:
         info = _wait_for_tmux_info(bridge_dir, timeout_s=timeout_s)
         socket_path, tmux_target = info["socket_path"], info["tmux_target"]
-        _wait_for_claude_prompt_ready(socket_path, tmux_target, timeout_s=timeout_s)
+        while not _claude_prompt_rendered(_capture_pane(socket_path, tmux_target)):
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(0.25)
         return _read_settled_permission_mode(socket_path, tmux_target)
     except RuntimeError:
         return None
@@ -131,19 +154,30 @@ async def handle_claude_relaunch_switch(
         )
     if await current_mode() == target_mode:
         return JSONResponse({"permission_mode": target_mode, "relaunched": False})
-    response = await relaunch_claude_terminal(
-        conversation_id,
-        turn_in_flight=turn_in_flight,
-        terminal_registry=terminal_registry,
-        close_terminal=close_terminal,
-        ensure_terminal=ensure_terminal,
-        publish_event=publish_event,
-        refusals=BYPASS_REFUSALS,
-    )
-    if not 200 <= response.status_code < 300:
-        return response
-    mode = await settled_mode()
-    content: dict[str, object] = {"relaunched": True}
-    if mode is not None:
-        content["permission_mode"] = mode
-    return JSONResponse(content)
+
+    async def finish() -> Response:
+        mode = await settled_mode()
+        content: dict[str, object] = {"relaunched": True}
+        if mode is not None:
+            content["permission_mode"] = mode
+        return JSONResponse(content)
+
+    try:
+        return await asyncio.wait_for(
+            relaunch_claude_terminal(
+                conversation_id,
+                turn_in_flight=turn_in_flight,
+                terminal_registry=terminal_registry,
+                close_terminal=close_terminal,
+                ensure_terminal=ensure_terminal,
+                publish_event=publish_event,
+                refusals=BYPASS_REFUSALS,
+                finish=finish,
+            ),
+            RELAUNCH_DEADLINE_S,
+        )
+    except TimeoutError:
+        return JSONResponse(
+            status_code=504,
+            content={"error": RUNNER_TIMEOUT_CODE, "detail": TIMEOUT_DETAIL},
+        )

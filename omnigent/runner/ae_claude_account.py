@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 import weakref
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -86,6 +87,9 @@ PublishEvent = Callable[[str, Mapping[str, object]], None]
 _locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
 # Sessions whose terminal is being replaced, each with an event set when that ends.
 _switching: dict[str, asyncio.Event] = {}
+# Relaunches holding or queued for a session's lock, so the mark outlasts the gap
+# between one relaunch ending and the next taking the lock.
+_queued: dict[str, int] = {}
 
 
 def is_switching(conversation_id: str) -> bool:
@@ -98,11 +102,16 @@ async def wait_while_switching(conversation_id: str, timeout_s: float = SWITCH_W
     Hold a turn until the session's switch (if any) has finished, at most *timeout_s*.
 
     A turn that starts mid-switch then finds the new pane, not the one being closed.
+    It re-reads the mark after each wake, so a second queued relaunch is waited for too;
+    *timeout_s* bounds the whole wait.
     """
-    event = _switching.get(conversation_id)
-    if event is not None:
+    deadline = time.monotonic() + timeout_s
+    while (event := _switching.get(conversation_id)) is not None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
         with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(event.wait(), timeout_s)
+            await asyncio.wait_for(event.wait(), remaining)
 
 
 def _error(status_code: int, code: str, detail: str) -> JSONResponse:
@@ -167,6 +176,7 @@ async def relaunch_claude_terminal(
     ensure_terminal: EnsureTerminal,
     publish_event: PublishEvent,
     refusals: Refusals,
+    finish: Callable[[], Awaitable[Response]] | None = None,
 ) -> Response:
     """
     Restart a claude-native session's terminal, one relaunch at a time per session.
@@ -182,15 +192,18 @@ async def relaunch_claude_terminal(
     :param ensure_terminal: Starts the native terminal again.
     :param publish_event: The runner's per-session event emitter.
     :param refusals: The codes and sentences for the 409 answers.
-    :returns: ``200 {"relaunched": true}`` or a 409 response.
+    :param finish: Runs inside the lock, after the new terminal is up and before the
+        session stops being marked switching; its response replaces the plain 200.
+    :returns: ``200 {"relaunched": true}``, the *finish* response, or a 409 response.
     """
     lock = _locks.get(conversation_id)
     if lock is None:
         lock = _locks[conversation_id] = asyncio.Lock()
-    async with lock:
-        done = _switching[conversation_id] = asyncio.Event()
-        try:
-            return await _replace_terminal(
+    _queued[conversation_id] = _queued.get(conversation_id, 0) + 1
+    done = _switching.setdefault(conversation_id, asyncio.Event())
+    try:
+        async with lock:
+            response = await _replace_terminal(
                 conversation_id,
                 turn_in_flight=turn_in_flight,
                 terminal_registry=terminal_registry,
@@ -199,7 +212,13 @@ async def relaunch_claude_terminal(
                 publish_event=publish_event,
                 refusals=refusals,
             )
-        finally:
+            if finish is not None and response.status_code == 200:
+                return await finish()
+            return response
+    finally:
+        _queued[conversation_id] -= 1
+        if _queued[conversation_id] <= 0:
+            _queued.pop(conversation_id, None)
             _switching.pop(conversation_id, None)
             done.set()
 
