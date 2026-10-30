@@ -327,7 +327,10 @@ describe("Compact suggestion line", () => {
   it("shows the line and drops its own Compact button while the card shows", async () => {
     setSession("claude-native");
     renderSuggested(SUGGEST);
-    expect((await screen.findByTestId("ae-rail-compact-suggest")).textContent).toBe(
+    const line = await screen.findByTestId("ae-rail-compact-suggest");
+    expect(line.textContent).toBe("370k tokens, re-read on every reply.");
+    expect(line.className).toContain("truncate");
+    expect(line.getAttribute("title")).toBe(
       "This chat is at 370k tokens. Every reply re-reads all of it.",
     );
     await screen.findByRole("button", { name: /^Categories/ });

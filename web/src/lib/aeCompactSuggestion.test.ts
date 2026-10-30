@@ -5,6 +5,7 @@ vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
 import { AE_DOCK_KINDS, aeDockBadgeLabel, aeDockSummary } from "@/lib/aeActionDock";
 import { authenticatedFetch } from "@/lib/identity";
 import {
+  aeCompactRailText,
   aeCompactSuggestion,
   aeCompactText,
   aeCompactTokens,
@@ -67,6 +68,7 @@ describe("aeCompactSuggestion", () => {
     expect(aeCompactText(370_000)).toBe(
       "This chat is at 370k tokens. Every reply re-reads all of it.",
     );
+    expect(aeCompactRailText(370_000)).toBe("370k tokens, re-read on every reply.");
   });
 });
 

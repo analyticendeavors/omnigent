@@ -69,9 +69,14 @@ export function aeCompactTokens(tokens: number): string {
   return tokens > 0 ? `${Math.round(tokens / 1000)}k` : "a lot of";
 }
 
-/** The line the card and the rail share. */
+/** The card's line, and the rail line's tooltip. */
 export function aeCompactText(tokens: number): string {
   return `This chat is at ${aeCompactTokens(tokens)} tokens. Every reply re-reads all of it.`;
+}
+
+/** The rail's shorter line, which fits the Context card on one line. */
+export function aeCompactRailText(tokens: number): string {
+  return `${aeCompactTokens(tokens)} tokens, re-read on every reply.`;
 }
 
 /** "Not now" and Compact: no new suggestion until the context grew another 100k tokens. */

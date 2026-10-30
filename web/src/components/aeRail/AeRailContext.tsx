@@ -5,7 +5,7 @@
 
 import { Button } from "@/components/ui/button";
 import { useAeCompactSuggestion } from "@/hooks/useAeCompactSuggestion";
-import { aeCompactText } from "@/lib/aeCompactSuggestion";
+import { aeCompactRailText, aeCompactText } from "@/lib/aeCompactSuggestion";
 import { contextTone } from "@/lib/aeContextTone";
 import { type AeRailSectionProps, useAeRailSectionActive } from "@/lib/aeSessionRail";
 import { isNativeHarness } from "@/lib/forkHarness";
@@ -71,10 +71,11 @@ export function AeRailContext({ sessionId }: AeRailSectionProps) {
       <div className="flex flex-col gap-2 text-sm" data-testid="ae-rail-context">
         {suggestion.tokens !== null && (
           <p
-            className="text-xs text-amber-600 dark:text-amber-400"
+            className="truncate text-xs text-amber-600 dark:text-amber-400"
             data-testid="ae-rail-compact-suggest"
+            title={aeCompactText(suggestion.tokens)}
           >
-            {aeCompactText(suggestion.tokens)}
+            {aeCompactRailText(suggestion.tokens)}
           </p>
         )}
         {reading && pct !== null ? (
