@@ -92,6 +92,27 @@ describe("AeSwitchFamilyDialog", () => {
     await waitFor(() => expect(screen.queryByTestId("ae-switch-family-dialog")).toBeNull());
   });
 
+  it("a failed switch re-reads once and schedules no follow-ups", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.mocked(authenticatedFetch).mockImplementation(() =>
+        json({ error: { message: "Chat is busy." } }, 409),
+      );
+      ask();
+      const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+      fireEvent.click(await screen.findByTestId("ae-switch-family-both"));
+      await waitFor(() => expect(showToast).toHaveBeenCalled());
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ["ae-limits", "s1"] });
+      const before = invalidate.mock.calls.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120_000);
+      });
+      expect(invalidate.mock.calls.length).toBe(before);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps a failed cascade on screen with the not-switched line", async () => {
     vi.mocked(authenticatedFetch).mockImplementation(() =>
       json({

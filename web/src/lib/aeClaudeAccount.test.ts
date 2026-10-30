@@ -115,38 +115,57 @@ describe("aeSwitchSummary", () => {
 });
 
 describe("aeRefreshChatAccountSoon", () => {
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
+  });
 
-  const limitsCalls = (spy: ReturnType<typeof vi.fn>) =>
-    spy.mock.calls.filter(([arg]) => arg?.queryKey?.[0] === "ae-limits").length;
-
-  it("re-reads the Usage numbers now and at each follow-up delay", () => {
+  const limitsCalls = (spy: ReturnType<typeof vi.fn>, id: string) =>
+    spy.mock.calls.filter(
+      ([arg]) => arg?.queryKey?.[0] === "ae-limits" && arg?.queryKey?.[1] === id,
+    ).length;
+  const fake = () => {
     vi.useFakeTimers();
     const invalidate = vi.fn();
-    const client = { invalidateQueries: invalidate } as unknown as QueryClient;
+    return { invalidate, client: { invalidateQueries: invalidate } as unknown as QueryClient };
+  };
+
+  it("re-reads the chat and its Usage numbers at each follow-up delay, and nothing before", () => {
+    const { invalidate, client } = fake();
     aeRefreshChatAccountSoon(client, "s1");
-    expect(limitsCalls(invalidate)).toBe(1);
+    expect(invalidate).not.toHaveBeenCalled();
+    AE_ACCOUNT_FOLLOW_UP_DELAYS_MS.forEach((delay, n) => {
+      vi.advanceTimersByTime(n === 0 ? delay : delay - AE_ACCOUNT_FOLLOW_UP_DELAYS_MS[n - 1]);
+      expect(limitsCalls(invalidate, "s1")).toBe(n + 1);
+    });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["session", "s1"] });
-    vi.advanceTimersByTime(Math.max(...AE_ACCOUNT_FOLLOW_UP_DELAYS_MS));
-    expect(limitsCalls(invalidate)).toBe(1 + AE_ACCOUNT_FOLLOW_UP_DELAYS_MS.length);
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["ae-limits", "s1"] });
+    expect(AE_ACCOUNT_FOLLOW_UP_DELAYS_MS.at(-1)).toBe(60000);
   });
 
   it("stops re-reading once cancelled", () => {
-    vi.useFakeTimers();
-    const invalidate = vi.fn();
-    const client = { invalidateQueries: invalidate } as unknown as QueryClient;
+    const { invalidate, client } = fake();
     const cancel = aeRefreshChatAccountSoon(client, "s1");
     vi.advanceTimersByTime(AE_ACCOUNT_FOLLOW_UP_DELAYS_MS[0]);
     cancel();
-    vi.advanceTimersByTime(60_000);
-    expect(limitsCalls(invalidate)).toBe(2);
+    vi.advanceTimersByTime(120_000);
+    expect(limitsCalls(invalidate, "s1")).toBe(1);
+  });
+
+  it("replaces an earlier schedule for the same chat and keeps other chats' own", () => {
+    const { invalidate, client } = fake();
+    aeRefreshChatAccountSoon(client, "s1");
+    aeRefreshChatAccountSoon(client, "s2");
+    vi.advanceTimersByTime(3000);
+    aeRefreshChatAccountSoon(client, "s1");
+    vi.advanceTimersByTime(120_000);
+    // s1: one re-read from the first schedule (2 s), then a full second schedule.
+    expect(limitsCalls(invalidate, "s1")).toBe(1 + AE_ACCOUNT_FOLLOW_UP_DELAYS_MS.length);
+    expect(limitsCalls(invalidate, "s2")).toBe(AE_ACCOUNT_FOLLOW_UP_DELAYS_MS.length);
   });
 
   it("schedules nothing without a session", () => {
-    vi.useFakeTimers();
-    const invalidate = vi.fn();
-    aeRefreshChatAccountSoon({ invalidateQueries: invalidate } as unknown as QueryClient, null);
+    const { client } = fake();
+    aeRefreshChatAccountSoon(client, null);
     expect(vi.getTimerCount()).toBe(0);
   });
 });
