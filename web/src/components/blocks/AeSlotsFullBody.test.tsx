@@ -50,4 +50,15 @@ describe("AeSlotsFullBody", () => {
     fireEvent.click(toggle);
     expect(rows.hidden).toBe(true);
   });
+
+  it("hides the toggle and shows the tail when only a pending claim holds the slot", () => {
+    const text =
+      "Slots full: 1 of 3 taken. Run this as the 2nd? 1 more claimed a slot a moment ago. Accept to run it as overflow, or decline, then park one in the Parking Lot or flip one to review.";
+    render(
+      <AeSlotsFullBody slots={parseAeSlotsFull(text)!} onApprove={vi.fn()} onDecline={vi.fn()} />,
+    );
+    expect(screen.queryByTestId("ae-slots-full-toggle")).toBeNull();
+    expect(screen.getByText("1 more claimed a slot a moment ago.")).toBeDefined();
+    expect(screen.getByText(/Accept to run it as overflow/)).toBeDefined();
+  });
 });

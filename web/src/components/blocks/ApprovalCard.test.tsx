@@ -1865,7 +1865,7 @@ describe("ApprovalCard — slots full ask", () => {
         elicitationId="elic_slots"
         message={SLOTS}
         phase="request"
-        policyName="slot_cap"
+        policyName="ae_slot_cap"
         contentPreview=""
         requestedSchema={{}}
         status="pending"
@@ -1894,6 +1894,40 @@ describe("ApprovalCard — slots full ask", () => {
     expect(screen.getByText("Is this still on topic?")).toBeDefined();
     expect(screen.getByRole("button", { name: /^approve/i })).toBeDefined();
     expect(screen.getByRole("button", { name: /reject/i })).toBeDefined();
+    expect(screen.queryByTestId("ae-slots-full")).toBeNull();
+  });
+
+  it("keeps the old card for slot-shaped text from another policy or with a form", () => {
+    const { rerender } = render(
+      <ApprovalCard
+        elicitationId="elic_other"
+        message={SLOTS}
+        phase="request"
+        policyName="some_mcp_server"
+        contentPreview=""
+        requestedSchema={{}}
+        status="pending"
+        response={null}
+      />,
+    );
+    expect(screen.queryByTestId("ae-slots-full")).toBeNull();
+    expect(screen.getByRole("button", { name: /^approve/i })).toBeDefined();
+    rerender(
+      <ApprovalCard
+        elicitationId="elic_form"
+        message={SLOTS}
+        phase="request"
+        policyName="ae_slot_cap"
+        contentPreview=""
+        requestedSchema={{
+          type: "object",
+          properties: { answer: { type: "string" } },
+          required: ["answer"],
+        }}
+        status="pending"
+        response={null}
+      />,
+    );
     expect(screen.queryByTestId("ae-slots-full")).toBeNull();
   });
 });

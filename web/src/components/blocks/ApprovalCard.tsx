@@ -415,7 +415,16 @@ export function ApprovalCard({
       ? `Won't ask again for ${rememberScope.host} for the rest of this session`
       : `Won't ask again for any ${rememberScope.tool} call for the rest of this session`
     : undefined;
-  const slotsFull = phase === "request" ? parseAeSlotsFull(message) : null;
+  // Only the slot cap's own ask, and only where the card would show plain Approve/Reject.
+  const slotsFull =
+    phase === "request" &&
+    /^(ae_)?slot_cap$/.test(policyName) &&
+    !isExternalUrl &&
+    !aeChoice &&
+    !isSchemaForm &&
+    !isMultiChoice
+      ? parseAeSlotsFull(message)
+      : null;
   const binaryButtons = (
     <div className="flex flex-wrap gap-2 pt-1">
       <Button size="sm" onClick={() => submitBinary("accept")} componentId="approval.approve">

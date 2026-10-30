@@ -66,4 +66,43 @@ describe("parseAeSlotsFull", () => {
     // A warn headline without the closing sentence is not this ask.
     expect(parseAeSlotsFull(ONE.slice(0, ONE.indexOf(" Accept")))).toBeNull();
   });
+
+  it("keeps a title that holds a row-number lookalike, using the headline's count", () => {
+    const text =
+      "Slots full: 1 of 3 taken. Run this as the 2nd? 1. Deploy (phase) 2. rollout (elapsed 1h 0m) To park one instead, the longest running: Deploy (phase) 2. rollout. Accept to run it as overflow, or decline, then park one in the Parking Lot or flip one to review.";
+    expect(parseAeSlotsFull(text)!.rows).toEqual([
+      { title: "Deploy (phase) 2. rollout", detail: "elapsed 1h 0m" },
+    ]);
+    const two =
+      "Slots full: 2 of 3 taken. Run this as the 3rd? 1. Deploy (phase) 2. rollout (elapsed 1h 0m) 2. Beta (elapsed 1h 0m) To park one instead, the longest running: Deploy (phase) 2. rollout or Beta. Accept to run it as overflow, or decline, then park one in the Parking Lot or flip one to review.";
+    expect(parseAeSlotsFull(two)!.rows).toEqual([
+      { title: "Deploy (phase) 2. rollout", detail: "elapsed 1h 0m" },
+      { title: "Beta", detail: "elapsed 1h 0m" },
+    ]);
+  });
+
+  it("takes the detail from the end of the row, not from a title that looks like one", () => {
+    const text =
+      "Slots full: 1 of 3 taken. Run this as the 2nd? 1. Deploy (next: phase 2) (next: finish) To park one instead, the longest running: Deploy (next: phase 2). Accept to run it as overflow, or decline, then park one in the Parking Lot or flip one to review.";
+    expect(parseAeSlotsFull(text)!.rows).toEqual([
+      { title: "Deploy (next: phase 2)", detail: "next: finish" },
+    ]);
+  });
+
+  it("returns null when the rows do not match the headline's count", () => {
+    // The headline says 2 holders but the text carries one row.
+    expect(parseAeSlotsFull(ONE.replace("1 of 3 taken", "2 of 3 taken"))).toBeNull();
+    // Three rows against a headline that says 4.
+    expect(parseAeSlotsFull(THREE.replace("3 of 3 taken", "4 of 4 taken"))).toBeNull();
+    // A pending claim larger than the taken count.
+    expect(parseAeSlotsFull(SIX.replace("7 of 6 taken", "0 of 6 taken"))).toBeNull();
+  });
+
+  it("reads a headline that counts only a pending claim as zero rows", () => {
+    const text =
+      "Slots full: 1 of 3 taken. Run this as the 2nd? 1 more claimed a slot a moment ago. Accept to run it as overflow, or decline, then park one in the Parking Lot or flip one to review.";
+    const parsed = parseAeSlotsFull(text)!;
+    expect(parsed.rows).toEqual([]);
+    expect(parsed.tail[0]).toBe("1 more claimed a slot a moment ago.");
+  });
 });

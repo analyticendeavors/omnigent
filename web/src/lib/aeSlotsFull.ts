@@ -23,35 +23,50 @@ export interface AeSlotsFull {
   tail: string[];
 }
 
-const HEADLINE = /^Slots full: \d+ of \d+ taken\. Run this as the [^?]+\?/;
+const HEADLINE = /^Slots full: (\d+) of \d+ taken\. Run this as the [^?]+\?/;
 const ACCEPT = " Accept to run it as overflow, or decline, then ";
 const PARK = " To park one instead, the longest running: ";
-const PENDING = /\s(\d+ more claimed a slot a moment ago\.)$/;
+const PENDING = /\s((\d+) more claimed a slot a moment ago\.)$/;
 const OTHERS = /\s(Plus \d+ of another user's\.)$/;
-const ELAPSED_ROW = /^(.*) \((elapsed [^()]*)\)$/s;
-const NEXT_ROW = /^(.*?) \((next: .*)\)$/s;
+const ELAPSED_TAIL = /^(.*) \((elapsed [^()]*)\)$/s;
+const NEXT_MARK = " (next: ";
 
-function parseRow(text: string): AeSlotsFullRow {
-  const match = ELAPSED_ROW.exec(text) ?? NEXT_ROW.exec(text);
-  return match ? { title: match[1], detail: match[2] } : { title: text, detail: "" };
+/** Split a row at its last trailing "(elapsed ...)" or "(next: ...)"; null when it has neither. */
+function parseRow(text: string): AeSlotsFullRow | null {
+  const elapsed = ELAPSED_TAIL.exec(text);
+  const nextAt = text.lastIndexOf(NEXT_MARK);
+  const nextOk = nextAt > 0 && text.endsWith(")");
+  if (elapsed && (!nextOk || elapsed[1].length >= nextAt)) {
+    return { title: elapsed[1], detail: elapsed[2] };
+  }
+  if (nextOk) return { title: text.slice(0, nextAt), detail: text.slice(nextAt + 2, -1) };
+  return null;
 }
 
-/** The rows text is "1. A (x) 2. B (y)"; each row ends where ") N+1. " begins. */
-function parseRows(text: string): AeSlotsFullRow[] | null {
-  const rows: AeSlotsFullRow[] = [];
-  let index = 1;
-  let cursor = 0;
-  while (cursor < text.length) {
+/**
+ * The rows text is "1. A (x) 2. B (y)". A title may hold ") 2. " itself, so the text is
+ * ambiguous; try every boundary and keep the first split with exactly `expected` rows,
+ * each ending in a real detail.
+ */
+function parseRows(text: string, expected: number): AeSlotsFullRow[] | null {
+  const walk = (index: number, cursor: number): AeSlotsFullRow[] | null => {
     const marker = `${index}. `;
     if (!text.startsWith(marker, cursor)) return null;
     const start = cursor + marker.length;
-    const boundary = text.indexOf(`) ${index + 1}. `, start);
-    const end = boundary === -1 ? text.length : boundary + 1;
-    rows.push(parseRow(text.slice(start, end)));
-    cursor = boundary === -1 ? text.length : end + 1;
-    index += 1;
-  }
-  return rows;
+    if (index === expected) {
+      const row = parseRow(text.slice(start));
+      return row ? [row] : null;
+    }
+    const boundary = `) ${index + 1}. `;
+    for (let at = text.indexOf(boundary, start); at !== -1; at = text.indexOf(boundary, at + 1)) {
+      const row = parseRow(text.slice(start, at + 1));
+      if (!row) continue;
+      const rest = walk(index + 1, at + 2);
+      if (rest) return [row, ...rest];
+    }
+    return null;
+  };
+  return expected === 0 ? (text === "" ? [] : null) : walk(1, 0);
 }
 
 export function parseAeSlotsFull(text: string): AeSlotsFull | null {
@@ -69,9 +84,11 @@ export function parseAeSlotsFull(text: string): AeSlotsFull | null {
     park = rest.slice(parkAt + 1);
     rest = rest.slice(0, parkAt);
   }
+  let pendingCount = 0;
   const pending = PENDING.exec(rest);
   if (pending) {
     tail.unshift(pending[1]);
+    pendingCount = Number(pending[2]);
     rest = rest.slice(0, pending.index);
   }
   const others = OTHERS.exec(rest);
@@ -79,8 +96,10 @@ export function parseAeSlotsFull(text: string): AeSlotsFull | null {
     tail.unshift(others[1]);
     rest = rest.slice(0, others.index);
   }
-  const body = rest.trim();
-  const rows = body ? parseRows(body) : [];
+  // "N of M taken" counts the holders plus the claims made a moment ago.
+  const expected = Number(head[1]) - pendingCount;
+  if (expected < 0) return null;
+  const rows = parseRows(rest.trim(), expected);
   if (!rows) return null;
   return { headline: head[0], rows, park, tail };
 }

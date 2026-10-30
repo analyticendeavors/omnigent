@@ -25,7 +25,6 @@ export function AeSlotsFullBody({
   const count = slots.rows.length;
   const numbered = slots.rows.map((row, index) => ({ ...row, n: index + 1 }));
   const noun = count === 1 ? "the holding slot" : `the ${count} holding slots`;
-  const hasDetails = count > 0 || slots.tail.length > 0;
   return (
     <div className="flex flex-col gap-1.5" data-testid="ae-slots-full">
       <span className="font-medium text-foreground">{slots.headline}</span>
@@ -40,7 +39,13 @@ export function AeSlotsFullBody({
         </Button>
       </div>
       {slots.park && <span>{slots.park}</span>}
-      {hasDetails && (
+      {count === 0 &&
+        slots.tail.map((line) => (
+          <span key={line} className="break-words">
+            {line}
+          </span>
+        ))}
+      {count > 0 && (
         <>
           <button
             type="button"
