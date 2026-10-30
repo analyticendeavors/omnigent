@@ -244,7 +244,28 @@ def write_frontier(bridge_dir: Path, frontier: Frontier) -> None:
     )
 
 
-def read_context(bridge_dir: Path, *, forwarder_stopped: bool = True) -> ResumeContext:
+def _log_cold_launch_files(bridge_dir: Path, session_id: str) -> None:
+    """Log which of the cursor and the frontier record exist: booleans, sizes and times only."""
+    from omnigent.harnesses.claude_native.forwarder import _FORWARDER_STATE_FILE
+
+    parts = []
+    for label, name in (("cursor", _FORWARDER_STATE_FILE), ("frontier", FRONTIER_FILE)):
+        try:
+            info = (bridge_dir / name).stat()
+            parts.append(f"{label}=present size={info.st_size} mtime={int(info.st_mtime)}")
+        except OSError:
+            parts.append(f"{label}=absent")
+    _logger.info(
+        "claude-native: cold launch for %s: %s",
+        session_id,
+        ", ".join(parts),
+        extra={"session_id": session_id},
+    )
+
+
+def read_context(
+    bridge_dir: Path, *, forwarder_stopped: bool = True, session_id: str | None = None
+) -> ResumeContext:
     """
     Read the old forwarder's final cursor and frontier for a cold relaunch.
 
@@ -256,9 +277,13 @@ def read_context(bridge_dir: Path, *, forwarder_stopped: bool = True) -> ResumeC
     :param forwarder_stopped: ``False`` when the old forwarder may still be running; the
         context then carries no cursor and the launch rebuilds. The frontier record is
         deleted either way.
+    :param session_id: Conversation id, e.g. ``"conv_abc123"``; when given, one INFO line
+        records which of the cursor and the frontier record exist before they are read.
     :returns: The context for this launch.
     """
     ctx = ResumeContext(bridge_dir=bridge_dir)
+    if session_id is not None:
+        _log_cold_launch_files(bridge_dir, session_id)
     if forwarder_stopped:
         ctx.cursor = read_forward_cursor(bridge_dir)
         ctx.frontier = read_frontier(bridge_dir)

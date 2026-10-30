@@ -12291,6 +12291,12 @@ def test_prune_orphaned_bridge_dirs_only_removes_dead_owners(
     unmarked_dir = root / "unmarked"
     unmarked_dir.mkdir()
 
+    # A dead owner inside the 7-day window is kept; past it the dir goes.
+    assert prune_orphaned_bridge_dirs() == 0
+    assert dead_dir.exists()
+    eight_days_ago = time.time() - 8 * 24 * 60 * 60
+    os.utime(dead_dir / "owner.pid", (eight_days_ago, eight_days_ago))
+
     pruned = prune_orphaned_bridge_dirs()
 
     assert pruned == 1
