@@ -21,7 +21,10 @@ fingerprint of the file it describes. A cold relaunch keeps the file only when:
   gained or changed nothing the forwarder had not accounted for: a retried or edited turn, an
   item from another harness or a message typed in the web UI all force a rebuild;
 * the file ends in a newline, every line after the cursor parses as JSON and the image and
-  ``toolUseResult`` repair a rebuild would make has nothing to change.
+  ``toolUseResult`` repair a rebuild would make changes nothing the model sees (a record
+  whose only change is the base64 in Claude's own image-read ``toolUseResult`` is fine).
+
+When a keep is refused, one INFO line names the first check that failed (see ``_try_keep``).
 
 The forwarder then starts at the cursor's offset, because the rows after it are by
 construction absent from the server. A file missing under the current workspace dir is
@@ -84,6 +87,13 @@ _OUTSIDE_TRANSCRIPT = frozenset(
 
 def _in_transcript(item_type: str) -> bool:
     return item_type not in _OUTSIDE_TRANSCRIPT
+
+
+# Every wire name the keep has heard of: the skipped set plus the types the rebuild writes.
+# The refusal log names a server item's type only when it is one of these.
+_KNOWN_ITEM_TYPES = _OUTSIDE_TRANSCRIPT | frozenset(
+    {"message", "function_call", "function_call_output", "compaction"}
+)
 
 
 @dataclass(frozen=True)
@@ -529,20 +539,54 @@ def _tail_complete(path: Path, byte_offset: int) -> bool:
     return True
 
 
-def _sanitizer_changes_nothing(path: Path, sanitize_record: Callable[[dict], None]) -> bool:
-    """Whether the rebuild's image and ``toolUseResult`` repair leaves every record as is."""
+def _is_native_image_result(value: object) -> bool:
+    """Whether *value* is the ``toolUseResult`` Claude Code itself writes for an image read."""
+    if not isinstance(value, dict) or value.get("type") != "image":
+        return False
+    file = value.get("file")
+    return isinstance(file, dict) and isinstance(file.get("base64"), str)
+
+
+def _first_message_change(
+    path: Path, sanitize_record: Callable[[dict], None]
+) -> tuple[int, str] | None:
+    """
+    Line number (1-based) of the first record the rebuild's repair would change for the model.
+
+    A repair that only collapses the base64 in Claude's native image-read ``toolUseResult``
+    leaves ``message`` as it was, so the model sees the same bytes whether the file is kept
+    or not; that one change is allowed. Every other change refuses: a different ``message``,
+    a ``toolUseResult`` that is a string or list carrying a payload (the duplication the repair
+    was written for), and a native image result whose ``message.content`` is not a list.
+
+    :param path: Transcript to scan.
+    :param sanitize_record: ``_sanitize_cloned_tool_result_record``.
+    :returns: ``(line number, refusal reason)``, or ``None`` when every record may stay as
+        written. A line that is not valid JSON is its own reason; its text is never returned.
+    """
     with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
+        for number, line in enumerate(handle, start=1):
             if "tool_result" not in line and "toolUseResult" not in line:
                 continue
-            record = json.loads(line)
+            try:
+                record = json.loads(line)
+            except ValueError:
+                return number, "unreadable line"
             if not isinstance(record, dict):
                 continue
+            native = _is_native_image_result(record.get("toolUseResult"))
+            message = record.get("message")
+            if native and not (
+                isinstance(message, dict) and isinstance(message.get("content"), list)
+            ):
+                return number, "sanitizer would change a message"
             probe = copy.deepcopy(record)
             sanitize_record(probe)
-            if probe != record:
-                return False
-    return True
+            if probe == record:
+                continue
+            if not native or probe.get("message") != message:
+                return number, "sanitizer would change a message"
+    return None
 
 
 def _offset_after_lines(path: Path, lines: int) -> int:
@@ -603,6 +647,7 @@ async def try_keep(
         return await asyncio.to_thread(
             _try_keep,
             ctx,
+            session_id=session_id,
             items=items,
             target=target,
             external_session_id=external_session_id,
@@ -642,9 +687,31 @@ def _frontier_holds(frontier: Frontier, items: Sequence[Mapping[str, object]]) -
     return True
 
 
+def _refuse(session_id: str, reason: str) -> None:
+    """Log why a keep was refused: ids, counts, types and line numbers, never transcript text."""
+    _logger.info(
+        "claude-native: not keeping the transcript for %s: %s",
+        session_id,
+        reason,
+        extra={"session_id": session_id},
+    )
+
+
+def _first_unrecorded_type(frontier: Frontier, items: Sequence[Mapping[str, object]]) -> str:
+    """Type of the first in-transcript server item past the record, as a known wire name."""
+    for item in items[max(frontier.item_count, 0) :]:
+        item_type = item.get("type")
+        if not isinstance(item_type, str):
+            return "other"
+        if _in_transcript(item_type):
+            return item_type if item_type in _KNOWN_ITEM_TYPES else "other"
+    return "none"
+
+
 def _try_keep(
     ctx: ResumeContext,
     *,
+    session_id: str,
     items: Sequence[Mapping[str, object]],
     target: Path,
     external_session_id: str,
@@ -655,34 +722,57 @@ def _try_keep(
     sanitize_record: Callable[[dict], None],
 ) -> Path | None:
     cursor, frontier = ctx.cursor, ctx.frontier
-    if cursor is None or frontier is None or not items:
+    if cursor is None:
+        _refuse(session_id, "no forwarder cursor")
+        return None
+    if frontier is None:
+        _refuse(session_id, "no frontier record")
+        return None
+    if not items:
+        _refuse(session_id, "no server items")
         return None
     if not _frontier_holds(frontier, items):
+        _refuse(
+            session_id,
+            f"frontier does not hold (record {frontier.item_count}, server {len(items)}, "
+            f"first item past the record: {_first_unrecorded_type(frontier, items)})",
+        )
         return None
     last_id = items[-1].get("id")
     if not isinstance(last_id, str):
+        _refuse(session_id, "last server item has no id")
         return None
     if (
-        not _same_path(frontier.transcript_path, cursor.transcript_path)
-        or frontier.byte_offset != cursor.byte_offset
+        frontier.byte_offset != cursor.byte_offset
         or frontier.fingerprint != cursor.fingerprint
+        or not _same_path(frontier.transcript_path, cursor.transcript_path)
     ):
+        _refuse(session_id, "record and cursor differ")
         return None
 
     copying = not target.is_file()
     if copying:
         source = find_transcript(external_session_id, exclude=target)
         if source is None or not _same_path(source, cursor.transcript_path):
+            _refuse(session_id, "path mismatch (no transcript under another project dir)")
             return None
     else:
         source = target
         if not _same_path(target, cursor.transcript_path):
+            _refuse(session_id, "path mismatch (target is not the cursor's file)")
             return None
-    if not is_resumable(source) or not _cursor_matches(source, cursor):
+    if not is_resumable(source):
+        _refuse(session_id, "transcript is not resumable")
+        return None
+    if not _cursor_matches(source, cursor):
+        _refuse(session_id, "cursor fingerprint mismatch")
         return None
     if not _tail_complete(source, cursor.byte_offset):
+        _refuse(session_id, "tail incomplete")
         return None
-    if not _sanitizer_changes_nothing(source, sanitize_record):
+    change = _first_message_change(source, sanitize_record)
+    if change is not None:
+        _refuse(session_id, f"{change[1]} (line {change[0]})")
         return None
 
     # The trailing items were just checked, so the record moves up to the server's end.
@@ -706,6 +796,7 @@ def _try_keep(
     fingerprint = _jsonl_cursor_fingerprint(target, offset)
     if fingerprint is None:
         target.unlink()
+        _refuse(session_id, "copied cursor fingerprint unavailable")
         return None
     ctx.pending_frontier = Frontier(target, offset, fingerprint, len(items), last_id)
     ctx.outcome = ResumeOutcome(COPIED, offset)

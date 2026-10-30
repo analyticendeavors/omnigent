@@ -6,7 +6,7 @@ import copy
 import json
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
@@ -441,37 +441,58 @@ async def test_rebuilt_when_the_last_line_is_incomplete(env: Env, tail: str) -> 
     assert _mode(ctx) == keep.REBUILT
 
 
-def _image_records() -> dict[str, dict[str, Any]]:
-    def record(content: object, tool_use_result: object) -> dict[str, Any]:
-        return {
-            "type": "user",
-            "uuid": "r1",
-            "cwd": "/x",
-            "message": {
-                "role": "user",
-                "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": content}],
-            },
-            "toolUseResult": tool_use_result,
-        }
+# What Claude Code writes for a native image read: the model sees the image through the
+# message; ``toolUseResult`` holds a second copy of the base64 for Claude's own UI.
+NATIVE_IMAGE_RESULT = {
+    "type": "image",
+    "file": {
+        "base64": B64,
+        "type": "image/png",
+        "originalSize": 5000,
+        "dimensions": {"originalWidth": 10, "originalHeight": 10},
+    },
+}
 
-    truncated = '[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"'
-    truncated += "iVBORw0KGgo" + "D" * 5000
+
+def _image_record(content: object, tool_use_result: object, uuid: str = "r1") -> dict[str, Any]:
     return {
-        "dict": record([IMAGE], {"type": "image", "source": {"data": B64}}),
-        "list": record([IMAGE], json.dumps([IMAGE])),
-        "truncated": record(truncated, truncated),
+        "type": "user",
+        "uuid": uuid,
+        "cwd": "/x",
+        "message": {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": content}]
+            if content is not None
+            else None,
+        },
+        "toolUseResult": tool_use_result,
     }
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("form", ["dict", "list", "truncated"])
-async def test_rebuilt_when_the_sanitizer_would_change_the_file(env: Env, form: str) -> None:
-    record = _image_records()[form]
-    probe = copy.deepcopy(record)
-    claude_native._sanitize_cloned_tool_result_record(probe)
-    assert probe != record, "the fixture must be something the sanitizer repairs"
+def _image_records() -> dict[str, dict[str, Any]]:
+    truncated = '[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"'
+    truncated += "iVBORw0KGgo" + "D" * 5000
+    return {
+        "native": _image_record([IMAGE], NATIVE_IMAGE_RESULT),
+        "dict-without-the-native-file": _image_record(
+            [IMAGE], {"type": "image", "source": {"data": B64}}
+        ),
+        "list": _image_record([IMAGE], json.dumps([IMAGE])),
+        "string-payload": _image_record([IMAGE], "saved: data:image/png;base64," + B64),
+        "mcp-list": _image_record([IMAGE], [IMAGE]),
+        "truncated": _image_record(truncated, truncated),
+        "native-result-with-a-truncated-message": _image_record(truncated, NATIVE_IMAGE_RESULT),
+    }
+
+
+def _place_record(env: Env, record: dict[str, Any], *, after_cursor: bool = False) -> Path:
+    """A seeded session whose transcript holds *record*, before the cursor or past it."""
     path = _seed(env)
-    # The bad row sits BEFORE the cursor too: the whole file must be clean to keep.
+    if after_cursor:
+        _append(path, [record])
+        return path
+    # The cursor and the frontier record move to the end of the new file, so only the
+    # record's own content decides.
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     _write(path, [rows[0], record, rows[1]])
     offset = path.stat().st_size
@@ -479,10 +500,319 @@ async def test_rebuilt_when_the_sanitizer_would_change_the_file(env: Env, form: 
     fingerprint = forwarder._jsonl_cursor_fingerprint(path, offset)
     assert fingerprint is not None
     keep.write_frontier(env.bridge, keep.Frontier(path, offset, fingerprint, 1, "item_0"))
+    return path
+
+
+def _refusals(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == keep.__name__ and "not keeping the transcript" in record.getMessage()
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("after_cursor", [False, True], ids=["before-cursor", "after-cursor"])
+async def test_a_native_image_read_record_is_kept_and_its_bytes_stay(
+    env: Env, after_cursor: bool
+) -> None:
+    record = _image_records()["native"]
+    probe = copy.deepcopy(record)
+    claude_native._sanitize_cloned_tool_result_record(probe)
+    assert probe["toolUseResult"] != record["toolUseResult"], "the sanitizer collapses it"
+    assert probe["message"] == record["message"], "and never touches the message"
+    path = _place_record(env, record, after_cursor=after_cursor)
+    before = path.read_bytes()
+
+    _written, ctx = await _relaunch(env)
+
+    assert _mode(ctx) == keep.KEPT
+    assert path.read_bytes() == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "form",
+    [
+        pytest.param("list", id="legacy-json-string-toolUseResult-carrying-the-payload"),
+        pytest.param("string-payload", id="plain-string-toolUseResult-carrying-the-payload"),
+        pytest.param("dict-without-the-native-file", id="image-dict-that-is-not-the-native-shape"),
+        pytest.param("mcp-list", id="native-mcp-image-with-a-list-toolUseResult"),
+        pytest.param("truncated", id="truncated-payload-in-message-content"),
+        pytest.param(
+            "native-result-with-a-truncated-message", id="native-result-but-the-message-changes"
+        ),
+    ],
+)
+@pytest.mark.parametrize("after_cursor", [False, True], ids=["before-cursor", "after-cursor"])
+async def test_rebuilt_when_the_sanitizer_would_change_what_the_model_sees(
+    env: Env, form: str, after_cursor: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    record = _image_records()[form]
+    probe = copy.deepcopy(record)
+    claude_native._sanitize_cloned_tool_result_record(probe)
+    assert probe != record, "the fixture must be something the sanitizer repairs"
+    _place_record(env, record, after_cursor=after_cursor)
+    caplog.set_level(logging.INFO, logger=keep.__name__)
 
     _written, ctx = await _relaunch(env)
 
     assert _mode(ctx) == keep.REBUILT
+    (line,) = _refusals(caplog)
+    # The rows are [user, record, assistant] before the cursor and [user, assistant, record] after.
+    number = 3 if after_cursor else 2
+    assert f"sanitizer would change a message (line {number})" in line
+    assert CONV in line
+    assert B64[:20] not in line
+
+
+@pytest.mark.asyncio
+async def test_rebuilt_when_an_image_read_record_has_no_message_content(
+    env: Env, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The sanitizer leaves such a record alone, but the image would then live only in
+    # ``toolUseResult``; that is not Claude's native shape, so the file is rebuilt.
+    record = _image_record(None, NATIVE_IMAGE_RESULT)
+    probe = copy.deepcopy(record)
+    claude_native._sanitize_cloned_tool_result_record(probe)
+    assert probe == record
+    _place_record(env, record)
+    caplog.set_level(logging.INFO, logger=keep.__name__)
+
+    _written, ctx = await _relaunch(env)
+
+    assert _mode(ctx) == keep.REBUILT
+    (line,) = _refusals(caplog)
+    assert "sanitizer would change a message (line 2)" in line
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "result",
+    [
+        pytest.param(
+            {"type": "image", "file": {"base64": 123}, "source": {"data": B64}},
+            id="base64-is-an-int",
+        ),
+        pytest.param(
+            {"type": "image", "file": {"type": "image/png"}, "source": {"data": B64}},
+            id="no-base64-key",
+        ),
+    ],
+)
+async def test_rebuilt_when_the_native_image_result_has_no_string_base64(
+    env: Env, result: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    record = _image_record([IMAGE], result)
+    probe = copy.deepcopy(record)
+    claude_native._sanitize_cloned_tool_result_record(probe)
+    assert probe != record, "the fixture must be something the sanitizer repairs"
+    _place_record(env, record)
+    caplog.set_level(logging.INFO, logger=keep.__name__)
+
+    _written, ctx = await _relaunch(env)
+
+    assert _mode(ctx) == keep.REBUILT
+    (line,) = _refusals(caplog)
+    assert "sanitizer would change a message (line 2)" in line
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("odd_type", [["message"], {"a": 1}], ids=["list", "dict"])
+async def test_an_unhashable_server_item_type_is_logged_as_other_without_a_traceback(
+    env: Env, caplog: pytest.LogCaptureFixture, odd_type: object
+) -> None:
+    _seed(env)
+    env.server.add({"type": odd_type})
+    caplog.set_level(logging.INFO, logger=keep.__name__)
+
+    _written, ctx = await _relaunch(env)
+
+    assert _mode(ctx) == keep.REBUILT
+    (line,) = _refusals(caplog)
+    assert "first item past the record: other" in line
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+@pytest.mark.asyncio
+async def test_a_line_that_is_not_json_is_refused_by_line_number_without_its_text(
+    env: Env, caplog: pytest.LogCaptureFixture
+) -> None:
+    path = _seed(env)
+    rows = path.read_text(encoding="utf-8").splitlines()
+    path.write_text(
+        "\n".join([rows[0], '{"tool_result": SECRETWORDS not json', rows[1]]) + "\n",
+        encoding="utf-8",
+    )
+    offset = path.stat().st_size
+    _restart_forwarder_at(env, path, offset)
+    fingerprint = forwarder._jsonl_cursor_fingerprint(path, offset)
+    assert fingerprint is not None
+    keep.write_frontier(env.bridge, keep.Frontier(path, offset, fingerprint, 1, "item_0"))
+    caplog.set_level(logging.INFO, logger=keep.__name__)
+
+    _written, ctx = await _relaunch(env)
+
+    assert _mode(ctx) == keep.REBUILT
+    (line,) = _refusals(caplog)
+    assert "unreadable line (line 2)" in line
+    assert "SECRETWORDS" not in line
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert all("SECRETWORDS" not in r.getMessage() and r.exc_info is None for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_a_copied_launch_with_no_cursor_fingerprint_is_refused_with_a_reason(
+    env: Env, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old_ws = env.root / "old-ws"
+    old_path = _seed(env, workspace=old_ws)
+    target = env.transcript()
+    real = forwarder._jsonl_cursor_fingerprint
+    monkeypatch.setattr(
+        forwarder,
+        "_jsonl_cursor_fingerprint",
+        lambda path, offset: None if Path(path) == target else real(path, offset),
+    )
+    caplog.set_level(logging.INFO, logger=keep.__name__)
+
+    _written, ctx = await _relaunch(env)
+
+    assert old_path.is_file()
+    assert _mode(ctx) == keep.REBUILT
+    (line,) = _refusals(caplog)
+    assert "copied cursor fingerprint unavailable" in line
+    for text in ("hello", str(env.root)):
+        assert text not in line
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+@pytest.mark.asyncio
+async def test_a_message_changed_before_the_cursor_blocks_a_native_image_after_it(
+    env: Env,
+) -> None:
+    path = _place_record(env, _image_records()["truncated"])
+    _append(path, [_image_records()["native"] | {"uuid": "r2"}])
+
+    _written, ctx = await _relaunch(env)
+
+    assert _mode(ctx) == keep.REBUILT
+
+
+@pytest.mark.asyncio
+async def test_a_copied_launch_with_a_native_image_record_collapses_the_copy_only(
+    env: Env,
+) -> None:
+    old_ws = env.root / "old-ws"
+    old_path = _seed(env, workspace=old_ws)
+    record = _image_records()["native"] | {"cwd": str(old_ws)}
+    _append(old_path, [record])
+    cursor_offset = old_path.stat().st_size
+    _restart_forwarder_at(env, old_path, cursor_offset)
+    fingerprint = forwarder._jsonl_cursor_fingerprint(old_path, cursor_offset)
+    assert fingerprint is not None
+    keep.write_frontier(
+        env.bridge, keep.Frontier(old_path, cursor_offset, fingerprint, 1, "item_0")
+    )
+    original = old_path.read_bytes()
+    target = env.transcript()
+    assert not target.exists()
+
+    written, ctx = await _relaunch(env)
+
+    assert written == target
+    assert _mode(ctx) == keep.COPIED
+    assert old_path.read_bytes() == original, "the source is never rewritten"
+    copied = [json.loads(line) for line in target.read_text(encoding="utf-8").splitlines()]
+    image_row = next(row for row in copied if row["uuid"] == "r1")
+    assert image_row["message"] == record["message"]
+    assert image_row["toolUseResult"] != NATIVE_IMAGE_RESULT
+    assert B64 not in json.dumps(image_row["toolUseResult"])
+
+
+def _break_in_cursor(env: Env, path: Path) -> None:
+    other = env.root / "other.jsonl"
+    other.write_bytes(path.read_bytes())
+    offset = other.stat().st_size
+    _restart_forwarder_at(env, other, offset)
+    fingerprint = forwarder._jsonl_cursor_fingerprint(other, offset)
+    assert fingerprint is not None
+    keep.write_frontier(env.bridge, keep.Frontier(other, offset, fingerprint, 1, "item_0"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reason", "expected"),
+    [
+        ("no-cursor", "no forwarder cursor"),
+        ("no-frontier", "no frontier record"),
+        ("no-server-items", "no server items"),
+        (
+            "frontier-does-not-hold",
+            "frontier does not hold (record 1, server 2, first item past the record: message)",
+        ),
+        (
+            "unknown-type-past-the-record",
+            "frontier does not hold (record 1, server 2, first item past the record: other)",
+        ),
+        ("record-and-cursor-differ", "record and cursor differ"),
+        ("path-mismatch", "path mismatch"),
+        ("not-resumable", "transcript is not resumable"),
+        ("fingerprint-mismatch", "cursor fingerprint mismatch"),
+        ("tail-incomplete", "tail incomplete"),
+        ("sanitizer", "sanitizer would change a message (line 2)"),
+    ],
+)
+async def test_each_refusal_is_logged_once_with_its_reason_and_no_transcript_text(
+    env: Env,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    reason: str,
+    expected: str,
+) -> None:
+    if reason == "sanitizer":
+        path = _place_record(env, _image_records()["truncated"])
+    else:
+        path = _seed(env)
+    if reason == "no-cursor":
+        forwarder.reset_transcript_forward_state(env.bridge)
+    elif reason == "no-frontier":
+        (env.bridge / keep.FRONTIER_FILE).unlink()
+    elif reason == "no-server-items":
+        env.server.items.clear()
+    elif reason == "frontier-does-not-hold":
+        env.server.add(
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "yes"}]}
+        )
+    elif reason == "unknown-type-past-the-record":
+        env.server.add({"type": "brand_new_type_with_a_secret_name"})
+    elif reason == "record-and-cursor-differ":
+        frontier = keep.read_frontier(env.bridge)
+        assert frontier is not None
+        keep.write_frontier(env.bridge, replace(frontier, byte_offset=frontier.byte_offset - 1))
+    elif reason == "path-mismatch":
+        _break_in_cursor(env, path)
+    elif reason == "not-resumable":
+        monkeypatch.setattr(claude_native, "_is_resumable_claude_transcript", lambda _p: False)
+    elif reason == "fingerprint-mismatch":
+        original = path.read_bytes()
+        path.write_bytes(original.replace(b"hello", b"jello"))
+    elif reason == "tail-incomplete":
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write('{"type":"assistant","uuid":"p')
+    else:
+        assert reason == "sanitizer"
+    caplog.set_level(logging.INFO, logger=keep.__name__)
+
+    _written, ctx = await _relaunch(env)
+
+    assert _mode(ctx) == keep.REBUILT
+    (line,) = _refusals(caplog)
+    assert expected in line
+    assert CONV in line
+    assert "secret_name" not in line
+    for text in ("hello", "jello", str(env.root), "iVBORw0KGgo"):
+        assert text not in line
 
 
 @pytest.mark.asyncio
