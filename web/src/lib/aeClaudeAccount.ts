@@ -62,29 +62,45 @@ export function aeRefreshChatAccount(queryClient: QueryClient, sessionId: string
 }
 
 /**
- * When to re-read the Usage numbers after a switch (ms after it settled). The server answers
+ * When to re-read the Usage numbers after a switch (ms after it succeeded). The server answers
  * from the runner's launch-time label, which the runner stamps only after the terminal
- * relaunches, so the first re-read can still see the old login (2026-10-30).
+ * relaunches, so the first re-read can still see the old login (2026-10-30). The 60 s tail
+ * covers a slow relaunch (a pending switch, a busy host, a move-all over many chats).
  */
-export const AE_ACCOUNT_FOLLOW_UP_DELAYS_MS = [2000, 5000, 12000, 30000];
+export const AE_ACCOUNT_FOLLOW_UP_DELAYS_MS = [2000, 5000, 12000, 30000, 60000];
+
+// One schedule per chat, held outside React: the composer menu that starts a switch unmounts
+// when it closes, and the re-reads must outlive it. A timer that fires after the user left the
+// chat is harmless, an inactive query is only marked stale.
+const followUps = new Map<string, () => void>();
 
 /**
- * `aeRefreshChatAccount` now, then the Usage numbers again at each follow-up delay so the card
- * catches the runner's stamp. Returns a function that cancels the pending re-reads.
+ * Re-read the chat's Usage numbers again at each follow-up delay, so the card catches the
+ * runner's stamp. Call it after a switch succeeded (and after the immediate
+ * `aeRefreshChatAccount`). A repeat call for the same chat replaces its earlier schedule.
+ * Returns a function that cancels the pending re-reads.
  */
 export function aeRefreshChatAccountSoon(
   queryClient: QueryClient,
   sessionId: string | null,
 ): () => void {
-  aeRefreshChatAccount(queryClient, sessionId);
   if (!sessionId) return () => {};
+  followUps.get(sessionId)?.();
   const timers = AE_ACCOUNT_FOLLOW_UP_DELAYS_MS.map((delay) =>
-    setTimeout(
-      () => void queryClient.invalidateQueries({ queryKey: ["ae-limits", sessionId] }),
-      delay,
-    ),
+    setTimeout(() => {
+      void queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
+      void queryClient.invalidateQueries({ queryKey: ["ae-limits", sessionId] });
+      if (delay === AE_ACCOUNT_FOLLOW_UP_DELAYS_MS[AE_ACCOUNT_FOLLOW_UP_DELAYS_MS.length - 1]) {
+        if (followUps.get(sessionId) === cancel) followUps.delete(sessionId);
+      }
+    }, delay),
   );
-  return () => timers.forEach(clearTimeout);
+  const cancel = () => {
+    timers.forEach(clearTimeout);
+    if (followUps.get(sessionId) === cancel) followUps.delete(sessionId);
+  };
+  followUps.set(sessionId, cancel);
+  return cancel;
 }
 
 /** The login a chat is on: the stored pick, else the last launch's, else unknown (`undefined`). */
