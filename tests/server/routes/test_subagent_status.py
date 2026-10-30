@@ -861,3 +861,40 @@ async def test_running_edge_with_old_items_settles(
         assert common._session_status_cache[sid] == "idle"
     finally:
         ae_subagent_liveness.cancel_stale_timer(sid)
+
+
+async def test_running_edge_clears_a_disconnected_settle(
+    status_route: _StatusRoute, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    route = status_route
+    sid = route.child_id
+    route.store.set_labels(
+        sid,
+        {"omnigent.wrapper": _CLAUDE_SUBAGENT, "omnigent.claude_native.subagent_id": "agent-1"},
+    )
+    common._session_status_cache[sid] = "running"
+    try:
+        assert await ae_subagent_liveness.settle_stale_claude_subagent(
+            sid, route.store, now=time.time() + 2 * 60 * 60
+        )
+        settled = route.store.get_conversation(sid)
+        assert settled is not None
+        assert "runner_disconnected" in settled.labels.values()
+        assert common._session_status_cache[sid] == "idle"
+        # The resumed subagent reports running through the events route.
+        response = await route.client.post(
+            f"/v1/sessions/{sid}/events",
+            json={"type": "external_session_status", "data": {"status": "running"}},
+        )
+        assert response.status_code == 202, response.text
+        for _ in range(200):
+            if common._session_status_cache.get(sid) == "running":
+                break
+            await asyncio.sleep(0.01)
+        assert common._session_status_cache[sid] == "running"
+        resumed = route.store.get_conversation(sid)
+        assert resumed is not None
+        assert "runner_disconnected" not in resumed.labels.values()
+    finally:
+        ae_subagent_liveness.cancel_stale_timer(sid)
+        common._session_status_cache.pop(sid, None)

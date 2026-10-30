@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -362,7 +363,7 @@ async def test_startup_sweep_warns_at_its_row_limit(
         store.set_session_live_status(row.id, "running")
     monkeypatch.setattr(ae_subagent_liveness, "_SWEEP_LIMIT", 2)
     assert len(ae_subagent_liveness._running_sub_agent_ids(store)) == 2
-    assert "read only the first 2 running sub-agent rows" in caplog.text
+    assert "read only the first 2 running or waiting sub-agent rows" in caplog.text
 
 
 async def test_startup_sweep_warns_without_a_sql_store(
@@ -561,3 +562,114 @@ async def test_stale_after_env_override(
     finally:
         ae_subagent_liveness.cancel_stale_timer(child_id)
         common._session_status_cache.pop(child_id, None)
+
+
+async def test_settle_decides_for_a_child_with_a_stored_older_item(
+    db_uri: str, monkeypatch: pytest.MonkeyPatch, published: Mock
+) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    parent_id, child_id = _claude_child(store)
+    _append_message(store, child_id)
+    store.set_session_live_status(child_id, "running")
+    common._session_status_cache[child_id] = "running"
+    _two_hours_later(monkeypatch)
+    try:
+        assert await ae_subagent_liveness.settle_stale_claude_subagent(child_id, store)
+        settled = store.get_conversation(child_id)
+        assert settled is not None
+        summary = _child_session_summary_from_conversation(settled, parent_id, None)
+        assert summary.busy is False
+        assert summary.last_task_error is not None
+        assert summary.last_task_error["code"] == "runner_disconnected"
+        assert _statuses(published, child_id) == ["idle"]
+    finally:
+        common._session_status_cache.pop(child_id, None)
+
+
+async def test_running_edge_during_the_label_write_aborts_the_settle(
+    db_uri: str, monkeypatch: pytest.MonkeyPatch, published: Mock
+) -> None:
+    from omnigent.server.routes._sessions import helpers
+
+    store = SqlAlchemyConversationStore(db_uri)
+    parent_id, child_id = _claude_child(store)
+    conv = store.get_conversation(child_id)
+    assert conv is not None
+    common._session_status_cache[child_id] = "running"
+    real = helpers._persist_session_status_error_labels
+    calls = 0
+
+    async def racing(*args: Any, **kwargs: Any) -> None:
+        nonlocal calls
+        calls += 1
+        await real(*args, **kwargs)
+        if calls == 1:
+            # The runner resumes while the Disconnected labels are being written.
+            await ae_subagent_liveness.note_claude_subagent_status(conv, "running", store)
+
+    monkeypatch.setattr(helpers, "_persist_session_status_error_labels", racing)
+    try:
+        assert not await ae_subagent_liveness.settle_stale_claude_subagent(
+            child_id, store, now=conv.updated_at + CLAUDE_SUBAGENT_STALE_AFTER_S + 1
+        )
+        assert calls == 2
+        assert common._session_status_cache[child_id] == "running"
+        assert _statuses(published, child_id) == []
+        after = store.get_conversation(child_id)
+        assert after is not None
+        assert (
+            _child_session_summary_from_conversation(after, parent_id, None).last_task_error
+            is None
+        )
+    finally:
+        ae_subagent_liveness.cancel_stale_timer(child_id)
+        common._session_status_cache.pop(child_id, None)
+
+
+async def test_waiting_child_blocked_on_a_prompt_is_never_settled(
+    db_uri: str, published: Mock
+) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    _, child_id = _claude_child(store)
+    conv = store.get_conversation(child_id)
+    assert conv is not None
+    common._session_status_cache[child_id] = "waiting"
+    common._session_blocked_on_cache[child_id] = "user_input"
+    try:
+        assert not await ae_subagent_liveness.settle_stale_claude_subagent(
+            child_id, store, now=conv.updated_at + CLAUDE_SUBAGENT_STALE_AFTER_S + 1
+        )
+        assert common._session_status_cache[child_id] == "waiting"
+        assert _statuses(published, child_id) == []
+    finally:
+        common._session_status_cache.pop(child_id, None)
+        common._session_blocked_on_cache.pop(child_id, None)
+
+
+async def test_startup_sweep_picks_up_a_persisted_waiting_row(
+    db_uri: str, published: Mock
+) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    _, child_id = _claude_child(store)
+    store.set_session_live_status(child_id, "waiting")
+    common._session_status_cache.pop(child_id, None)
+    ae_subagent_liveness.cancel_stale_timer(child_id)
+    conv = store.get_conversation(child_id)
+    assert conv is not None and conv.live_status == "waiting"
+    try:
+        assert child_id in ae_subagent_liveness._running_sub_agent_ids(store)
+        assert (
+            await ae_subagent_liveness.sweep_stale_claude_subagents(
+                store, now=conv.updated_at + CLAUDE_SUBAGENT_STALE_AFTER_S + 1
+            )
+            == 1
+        )
+        assert common._session_status_cache[child_id] == "idle"
+    finally:
+        common._session_status_cache.pop(child_id, None)
+
+
+@pytest.mark.parametrize("bad", ["inf", "-inf", "nan", "Infinity"])
+def test_stale_after_env_rejects_non_finite(monkeypatch: pytest.MonkeyPatch, bad: str) -> None:
+    monkeypatch.setenv("OMNIGENT_AE_CLAUDE_SUBAGENT_STALE_AFTER_S", bad)
+    assert ae_subagent_liveness.stale_after_s() == CLAUDE_SUBAGENT_STALE_AFTER_S

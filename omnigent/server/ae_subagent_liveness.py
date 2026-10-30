@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import time
 from typing import Any
@@ -31,7 +32,7 @@ _NATIVE_ID_LABELS = ("omnigent.claude_native.subagent_id", "omnigent.claude_nati
 CLAUDE_SUBAGENT_STALE_AFTER_S = 60 * 60
 # Env override for the cap above, in seconds (tests and live checks use a short one).
 _STALE_AFTER_ENV = "OMNIGENT_AE_CLAUDE_SUBAGENT_STALE_AFTER_S"
-# Upper bound on running sub-agent rows one startup sweep reads.
+# Upper bound on running or waiting sub-agent rows one startup sweep reads.
 _SWEEP_LIMIT = 500
 
 _DISCONNECTED_MESSAGE = (
@@ -40,6 +41,13 @@ _DISCONNECTED_MESSAGE = (
 
 _stale_timers: dict[str, asyncio.TimerHandle] = {}
 _stale_checks: set[asyncio.Task[Any]] = set()
+# Bumped on every status note and lull for a child, so a settle that awaited in
+# between can tell the child moved and must not publish its stale verdict.
+_generations: dict[str, int] = {}
+
+
+def _bump_generation(child_id: str) -> None:
+    _generations[child_id] = _generations.get(child_id, 0) + 1
 
 
 def is_claude_subagent_child(conv: Conversation) -> bool:
@@ -60,9 +68,9 @@ def stale_after_s() -> float:
         except ValueError:
             _logger.warning("Ignoring non-numeric %s=%r", _STALE_AFTER_ENV, raw)
         else:
-            if value >= 0:
+            if math.isfinite(value) and value >= 0:
                 return value
-            _logger.warning("Ignoring negative %s=%r", _STALE_AFTER_ENV, raw)
+            _logger.warning("Ignoring negative or non-finite %s=%r", _STALE_AFTER_ENV, raw)
     return float(CLAUDE_SUBAGENT_STALE_AFTER_S)
 
 
@@ -123,6 +131,7 @@ async def hold_premature_lull_idle(
     from omnigent.server.routes._sessions.common import _session_status_cache
     from omnigent.server.routes._sessions.helpers import _publish_status
 
+    _bump_generation(conv.id)
     cached = _session_status_cache.get(conv.id)
     fields = {
         "response_id": response_id,
@@ -173,8 +182,11 @@ async def note_claude_subagent_status(
     all. An already pending check is left alone; it re-arms itself while the
     transcript keeps moving. The check is armed for the time left since the
     child's last real item, so a restart that only re-sends old items settles
-    it at once instead of restarting the full cap.
+    it at once instead of restarting the full cap. Every note also bumps the
+    child's generation, which makes a settle that is mid-await abort.
     """
+    if is_claude_subagent_child(conv):
+        _bump_generation(conv.id)
     if status == "running" and conv.id not in _stale_timers and is_claude_subagent_child(conv):
         arm_stale_timer(conv.id, store, await _remaining_quiet_s(conv, store))
 
@@ -222,49 +234,78 @@ async def settle_stale_claude_subagent(
     :param conv: The child row when the caller already read it.
     :returns: Whether the child was settled idle.
     """
-    from omnigent.server.routes._sessions.common import _session_status_cache
+    from omnigent.server.routes._sessions.common import (
+        _session_blocked_on_cache,
+        _session_status_cache,
+    )
     from omnigent.server.routes._sessions.helpers import (
         _persist_session_status_error_labels,
         _publish_status,
     )
 
+    labelled = False
     try:
         cached = _session_status_cache.get(child_id)
-        if cached not in (None, "running", "waiting"):
+        generation = _generations.get(child_id, 0)
+
+        def moved() -> bool:
+            # A running edge or lull (generation), a status change, or a new
+            # user prompt since the first read means this verdict is stale.
+            return (
+                _generations.get(child_id, 0) != generation
+                or _session_status_cache.get(child_id) != cached
+                or _session_blocked_on_cache.get(child_id) is not None
+            )
+
+        if cached not in (None, "running", "waiting") or moved():
             return False
         if conv is None:
             conv = await asyncio.to_thread(store.get_conversation, child_id)
+            if moved():
+                return False
         if (
             conv is None
             or conv.id != child_id
-            or (cached is None and conv.live_status != "running")
+            or (cached is None and conv.live_status not in ("running", "waiting"))
             or not is_claude_subagent_child(conv)
-            or await _completion_recorded(conv, store)
         ):
             return False
+        recorded = await _completion_recorded(conv, store)
+        if recorded or moved():
+            return False
         remaining = await _remaining_quiet_s(conv, store, now)
+        if moved():
+            return False
         if remaining > 0:
             arm_stale_timer(child_id, store, remaining)
             return False
-        if _session_status_cache.get(child_id) != cached:
-            return False
         # Label it disconnected so the rail shows grey "Disconnected", not "Done"; a
         # real resume's running edge clears the labels.
+        labelled = True
         await _persist_session_status_error_labels(
             child_id,
             ErrorDetail(code="runner_disconnected", message=_DISCONNECTED_MESSAGE),
             store,
             owner_runner_id=conv.runner_id,
         )
+        if moved():
+            await _persist_session_status_error_labels(child_id, None, store)
+            return False
+        labelled = False
         _publish_status(child_id, "idle")
         return True
     except Exception:  # noqa: BLE001 — a best-effort sweep must not crash the loop
         _logger.warning("Could not settle stale Claude subagent %s", child_id, exc_info=True)
+        if labelled:
+            try:
+                await _persist_session_status_error_labels(child_id, None, store)
+            except Exception:  # noqa: BLE001
+                _logger.warning("Could not clear disconnected labels for %s", child_id)
         return False
 
 
 def _running_sub_agent_ids(store: ConversationStore) -> list[str]:
-    """Return the ids of sub-agent rows whose persisted status reads running."""
+    """Return the ids of sub-agent rows whose persisted status reads running or waiting."""
     from sqlalchemy import select
 
     from omnigent.db.db_models import SqlConversationMetadata, current_workspace_id
@@ -281,7 +322,9 @@ def _running_sub_agent_ids(store: ConversationStore) -> list[str]:
         .where(
             SqlConversationMetadata.workspace_id == current_workspace_id(),
             SqlConversationMetadata.kind == encode_conversation_kind("sub_agent"),
-            SqlConversationMetadata.live_status == encode_session_live_status("running"),
+            SqlConversationMetadata.live_status.in_(
+                [encode_session_live_status("running"), encode_session_live_status("waiting")]
+            ),
         )
         .limit(_SWEEP_LIMIT)
     )
@@ -289,7 +332,7 @@ def _running_sub_agent_ids(store: ConversationStore) -> list[str]:
         ids = [str(row[0]) for row in session.execute(statement).all()]
     if len(ids) >= _SWEEP_LIMIT:
         _logger.warning(
-            "Stale Claude subagent sweep read only the first %d running sub-agent rows",
+            "Stale Claude subagent sweep read only the first %d running or waiting sub-agent rows",
             _SWEEP_LIMIT,
         )
     return ids
@@ -298,7 +341,7 @@ def _running_sub_agent_ids(store: ConversationStore) -> list[str]:
 async def sweep_stale_claude_subagents(
     store: ConversationStore, *, now: float | None = None
 ) -> int:
-    """Settle or re-arm every Claude subagent child a restart left running.
+    """Settle or re-arm every Claude subagent child a restart left running or waiting.
 
     Children quiet past the cap with no recorded completion are settled idle;
     the rest get a timer for the time remaining. A child the status cache
