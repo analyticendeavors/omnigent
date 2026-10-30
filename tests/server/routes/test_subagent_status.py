@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock
 from uuid import uuid4
@@ -816,3 +818,46 @@ async def test_native_child_completes_once_per_confirmed_turn(
         assert all(item.data.event_type == "session.subagent.returned" for item in notices)
         assert all(item.data.resource_id == route.child_id for item in notices)
         assert all(item.data.resource["status"] == "completed" for item in notices)
+
+
+async def test_running_edge_with_old_items_settles(
+    status_route: _StatusRoute, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    route = status_route
+    sid = route.child_id
+    route.store.set_labels(
+        sid,
+        {"omnigent.wrapper": _CLAUDE_SUBAGENT, "omnigent.claude_native.subagent_id": "agent-1"},
+    )
+    route.store.append(
+        sid,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="turn-1",
+                data=MessageData(
+                    role="assistant",
+                    agent="claude-native",
+                    content=[{"type": "output_text", "text": "old"}],
+                ),
+            )
+        ],
+    )
+    real = time.time()
+    monkeypatch.setattr(
+        ae_subagent_liveness, "time", SimpleNamespace(time=lambda: real + 2 * 60 * 60)
+    )
+    try:
+        # A restarted runner re-sends the old item and reports running again.
+        response = await route.client.post(
+            f"/v1/sessions/{sid}/events",
+            json={"type": "external_session_status", "data": {"status": "running"}},
+        )
+        assert response.status_code == 202, response.text
+        for _ in range(200):
+            if common._session_status_cache.get(sid) == "idle":
+                break
+            await asyncio.sleep(0.01)
+        assert common._session_status_cache[sid] == "idle"
+    finally:
+        ae_subagent_liveness.cancel_stale_timer(sid)

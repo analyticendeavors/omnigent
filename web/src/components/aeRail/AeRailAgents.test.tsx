@@ -322,6 +322,29 @@ describe("AeRailAgents failed subagents", () => {
     expect(screen.queryByText("Nothing running now.")).toBeNull();
   });
 
+  it("lists a disconnected subagent under Finished with no running count", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    route([
+      child("conv_gone", {
+        tool: "Run the long step",
+        labels: SUBAGENT,
+        busy: false,
+        current_task_status: null,
+        last_task_error: { code: "runner_disconnected", message: "The runner restarted." },
+        created_at: now - 7200,
+        updated_at: now - 600,
+      }),
+    ]);
+    render(<AeRailAgents sessionId="conv_root" />);
+    await waitFor(() => expect(screen.getByText("1 finished")).toBeTruthy());
+    expect(screen.queryByText(/\d+ running/)).toBeNull();
+    expect(screen.queryByTestId("ae-rail-agents-failed")).toBeNull();
+    fireEvent.click(screen.getByTestId("ae-rail-agents-finished-toggle"));
+    const row = screen.getByTestId("ae-rail-subagent");
+    expect(row.getAttribute("data-activity")).toBe("disconnected");
+    expect(row.textContent).toContain("Disconnected");
+  });
+
   it("keeps the counts in the summary after the section is folded", async () => {
     route([
       child("conv_dead", { labels: SUBAGENT, busy: false, current_task_status: "failed" }),

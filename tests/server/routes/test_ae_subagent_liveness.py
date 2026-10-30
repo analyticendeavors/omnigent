@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import time
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -15,7 +17,10 @@ from omnigent.entities import (
 from omnigent.server import ae_subagent_liveness
 from omnigent.server.ae_subagent_liveness import CLAUDE_SUBAGENT_STALE_AFTER_S
 from omnigent.server.routes._sessions import common
-from omnigent.server.routes._sessions.helpers import _child_session_summary_from_conversation
+from omnigent.server.routes._sessions.helpers import (
+    _child_session_summary_from_conversation,
+    _persist_session_status_error_labels,
+)
 from omnigent.server.subagent_activity import (
     _completion_marker,
     record_claude_subagent_return,
@@ -234,16 +239,16 @@ async def test_first_running_arms_cap_for_child_that_never_lulls(
     common._session_status_cache[child_id] = "running"
     try:
         # The real cap: the first running edge arms it, a later one keeps that timer.
-        ae_subagent_liveness.note_claude_subagent_status(conv, "running", store)
+        await ae_subagent_liveness.note_claude_subagent_status(conv, "running", store)
         timer = ae_subagent_liveness._stale_timers[child_id]
         remaining = timer.when() - asyncio.get_running_loop().time()
         assert abs(remaining - CLAUDE_SUBAGENT_STALE_AFTER_S) < 5
-        ae_subagent_liveness.note_claude_subagent_status(conv, "running", store)
+        await ae_subagent_liveness.note_claude_subagent_status(conv, "running", store)
         assert ae_subagent_liveness._stale_timers[child_id] is timer
         ae_subagent_liveness.cancel_stale_timer(child_id)
         # The child dies before any lull; nothing but that timer can settle it.
         monkeypatch.setattr(ae_subagent_liveness, "CLAUDE_SUBAGENT_STALE_AFTER_S", 0.01)
-        ae_subagent_liveness.note_claude_subagent_status(conv, "running", store)
+        await ae_subagent_liveness.note_claude_subagent_status(conv, "running", store)
         await _wait_for_stale_check(child_id)
         assert common._session_status_cache[child_id] == "idle"
         assert _statuses(published, child_id) == ["idle"]
@@ -260,8 +265,8 @@ async def test_running_edge_arms_nothing_for_other_children(db_uri: str) -> None
     claude = store.get_conversation(child_id)
     assert claude is not None
     try:
-        ae_subagent_liveness.note_claude_subagent_status(plain, "running", store)
-        ae_subagent_liveness.note_claude_subagent_status(claude, "idle", store)
+        await ae_subagent_liveness.note_claude_subagent_status(plain, "running", store)
+        await ae_subagent_liveness.note_claude_subagent_status(claude, "idle", store)
         assert plain.id not in ae_subagent_liveness._stale_timers
         assert child_id not in ae_subagent_liveness._stale_timers
     finally:
@@ -391,4 +396,168 @@ def test_child_summary_keeps_a_persisted_failure_after_a_restart(
         assert live.current_task_status == "in_progress"
         assert live.busy is True
     finally:
+        common._session_status_cache.pop(child_id, None)
+
+
+def _append_message(store: SqlAlchemyConversationStore, session_id: str) -> None:
+    store.append(
+        session_id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="turn-1",
+                data=MessageData(
+                    role="assistant",
+                    agent="claude-native",
+                    content=[{"type": "output_text", "text": "working"}],
+                ),
+            )
+        ],
+    )
+
+
+def _two_hours_later(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the liveness module see a clock two hours past every stored item."""
+    real = time.time()
+    monkeypatch.setattr(
+        ae_subagent_liveness, "time", SimpleNamespace(time=lambda: real + 2 * 60 * 60)
+    )
+
+
+async def test_restart_reposted_items_do_not_extend_the_settle(
+    db_uri: str, monkeypatch: pytest.MonkeyPatch, published: Mock
+) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    _, child_id = _claude_child(store)
+    _append_message(store, child_id)
+    # A restarted runner re-sends old items and reports running: the row is touched
+    # but no new item is stored, so the newest item is still two hours old.
+    store.set_session_live_status(child_id, "running")
+    conv = store.get_conversation(child_id)
+    assert conv is not None
+    common._session_status_cache[child_id] = "running"
+    _two_hours_later(monkeypatch)
+    try:
+        await ae_subagent_liveness.note_claude_subagent_status(conv, "running", store)
+        assert (
+            ae_subagent_liveness._stale_timers[child_id].when()
+            - (asyncio.get_running_loop().time())
+            < 5
+        )
+        await _wait_for_stale_check(child_id)
+        assert common._session_status_cache[child_id] == "idle"
+        assert _statuses(published, child_id) == ["idle"]
+    finally:
+        ae_subagent_liveness.cancel_stale_timer(child_id)
+        common._session_status_cache.pop(child_id, None)
+
+
+async def test_lull_hold_keeps_the_original_deadline(db_uri: str, published: Mock) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    _, child_id = _claude_child(store)
+    _append_message(store, child_id)
+    conv = store.get_conversation(child_id)
+    assert conv is not None
+    common._session_status_cache[child_id] = "running"
+    try:
+        held = await ae_subagent_liveness.hold_premature_lull_idle(
+            conv,
+            store,
+            response_id=None,
+            background_task_count=None,
+            background_tasks=None,
+            blocked_on=None,
+        )
+        assert held is True
+        remaining = (
+            ae_subagent_liveness._stale_timers[child_id].when() - asyncio.get_running_loop().time()
+        )
+        # The item is fresh, so the deadline is about a full cap away, and never more.
+        assert CLAUDE_SUBAGENT_STALE_AFTER_S - 10 < remaining <= CLAUDE_SUBAGENT_STALE_AFTER_S
+    finally:
+        ae_subagent_liveness.cancel_stale_timer(child_id)
+        common._session_status_cache.pop(child_id, None)
+
+
+async def test_lull_hold_past_the_cap_settles_at_once(
+    db_uri: str, monkeypatch: pytest.MonkeyPatch, published: Mock
+) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    _, child_id = _claude_child(store)
+    _append_message(store, child_id)
+    conv = store.get_conversation(child_id)
+    assert conv is not None
+    common._session_status_cache[child_id] = "running"
+    _two_hours_later(monkeypatch)
+    try:
+        assert await ae_subagent_liveness.hold_premature_lull_idle(
+            conv,
+            store,
+            response_id=None,
+            background_task_count=None,
+            background_tasks=None,
+            blocked_on=None,
+        )
+        await _wait_for_stale_check(child_id)
+        assert common._session_status_cache[child_id] == "idle"
+    finally:
+        ae_subagent_liveness.cancel_stale_timer(child_id)
+        common._session_status_cache.pop(child_id, None)
+
+
+@pytest.mark.parametrize("cached", ["running", "waiting"])
+async def test_settle_marks_child_disconnected_and_resume_clears_it(
+    db_uri: str, published: Mock, cached: str
+) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    parent_id, child_id = _claude_child(store)
+    conv = store.get_conversation(child_id)
+    assert conv is not None
+    common._session_status_cache[child_id] = cached
+    try:
+        assert await ae_subagent_liveness.settle_stale_claude_subagent(
+            child_id, store, now=conv.updated_at + CLAUDE_SUBAGENT_STALE_AFTER_S + 1
+        )
+        settled = store.get_conversation(child_id)
+        assert settled is not None
+        summary = _child_session_summary_from_conversation(settled, parent_id, None)
+        assert summary.busy is False
+        assert summary.last_task_error is not None
+        assert summary.last_task_error["code"] == "runner_disconnected"
+        # A real resume's running edge clears the labels.
+        await _persist_session_status_error_labels(child_id, None, store)
+        resumed = store.get_conversation(child_id)
+        assert resumed is not None
+        assert (
+            _child_session_summary_from_conversation(resumed, parent_id, None).last_task_error
+            is None
+        )
+    finally:
+        common._session_status_cache.pop(child_id, None)
+
+
+async def test_stale_after_env_override(
+    db_uri: str, monkeypatch: pytest.MonkeyPatch, published: Mock
+) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    _, child_id = _claude_child(store)
+    conv = store.get_conversation(child_id)
+    assert conv is not None
+    assert ae_subagent_liveness.stale_after_s() == CLAUDE_SUBAGENT_STALE_AFTER_S
+    monkeypatch.setenv("OMNIGENT_AE_CLAUDE_SUBAGENT_STALE_AFTER_S", "120")
+    assert ae_subagent_liveness.stale_after_s() == 120
+    for bad in ("soon", "-5"):
+        monkeypatch.setenv("OMNIGENT_AE_CLAUDE_SUBAGENT_STALE_AFTER_S", bad)
+        assert ae_subagent_liveness.stale_after_s() == CLAUDE_SUBAGENT_STALE_AFTER_S
+    monkeypatch.setenv("OMNIGENT_AE_CLAUDE_SUBAGENT_STALE_AFTER_S", "120")
+    common._session_status_cache[child_id] = "running"
+    try:
+        assert not await ae_subagent_liveness.settle_stale_claude_subagent(
+            child_id, store, now=conv.updated_at + 60
+        )
+        assert await ae_subagent_liveness.settle_stale_claude_subagent(
+            child_id, store, now=conv.updated_at + 121
+        )
+    finally:
+        ae_subagent_liveness.cancel_stale_timer(child_id)
         common._session_status_cache.pop(child_id, None)
