@@ -48,6 +48,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useDescendantSession } from "@/hooks/useChildSessions";
 import { aeChoiceField, aeShortChoiceLabels } from "@/lib/aeChoiceButtons";
+import { parseAeSlotsFull } from "@/lib/aeSlotsFull";
 import {
   type AskUserQuestionPayload,
   castAskUserQuestionPayload,
@@ -69,6 +70,7 @@ import {
 } from "@/components/chat/conversationScope";
 import { AeApprovalPreview, aeFoldsApprovalPreview } from "./AeApprovalPreview";
 import { AeChoiceButtons } from "./AeChoiceButtons";
+import { AeSlotsFullBody } from "./AeSlotsFullBody";
 import { AskUserQuestionForm, type AskUserQuestionAnswers } from "./AskUserQuestionForm";
 import { ElicitationMessage } from "./ElicitationMessage";
 import {
@@ -413,6 +415,7 @@ export function ApprovalCard({
       ? `Won't ask again for ${rememberScope.host} for the rest of this session`
       : `Won't ask again for any ${rememberScope.tool} call for the rest of this session`
     : undefined;
+  const slotsFull = phase === "request" ? parseAeSlotsFull(message) : null;
   const binaryButtons = (
     <div className="flex flex-wrap gap-2 pt-1">
       <Button size="sm" onClick={() => submitBinary("accept")} componentId="approval.approve">
@@ -748,11 +751,19 @@ export function ApprovalCard({
           </>
         ) : (
           <>
-            <ElicitationMessage message={message} />
+            {slotsFull ? (
+              <AeSlotsFullBody
+                slots={slotsFull}
+                onApprove={() => submitBinary("accept")}
+                onDecline={() => submitBinary("decline")}
+              />
+            ) : (
+              <ElicitationMessage message={message} />
+            )}
             {formattedPreview && (
               <AeApprovalPreview text={formattedPreview} fold={aeFoldsApprovalPreview(phase)} />
             )}
-            {isExternalUrl ? (
+            {slotsFull ? null : isExternalUrl ? (
               <div className="flex flex-wrap gap-2 pt-1">
                 <Button size="sm" asChild>
                   <a href={url!} target="_blank" rel="noopener noreferrer">

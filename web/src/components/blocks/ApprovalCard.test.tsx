@@ -1854,3 +1854,46 @@ describe("ApprovalCard — AE single-choice form shows one button per choice", (
     expect(screen.getByRole("button", { name: "Reject" }).hasAttribute("disabled")).toBe(true);
   });
 });
+
+describe("ApprovalCard — slots full ask", () => {
+  const SLOTS =
+    "Slots full: 1 of 1 taken. Run this as the 2nd? 1. Alpha (elapsed 1h) To park one instead, the longest running: Alpha. Accept to run it as overflow, or decline, then park one in the Parking Lot or flip one to review.";
+
+  it("lays the slot cap ask out as a decision with the buttons under the question", () => {
+    render(
+      <ApprovalCard
+        elicitationId="elic_slots"
+        message={SLOTS}
+        phase="request"
+        policyName="slot_cap"
+        contentPreview=""
+        requestedSchema={{}}
+        status="pending"
+        response={null}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /run as overflow/i })).toBeDefined();
+    expect(screen.getByRole("button", { name: /decline/i })).toBeDefined();
+    expect(screen.queryByRole("button", { name: /^approve/i })).toBeNull();
+    expect(screen.getByTestId("ae-slots-full-toggle").textContent).toBe("Show the holding slot");
+  });
+
+  it("leaves a request ask that is not the slot cap as it was", () => {
+    render(
+      <ApprovalCard
+        elicitationId="elic_rabbit"
+        message="Is this still on topic?"
+        phase="request"
+        policyName="rabbit_hole"
+        contentPreview=""
+        requestedSchema={{}}
+        status="pending"
+        response={null}
+      />,
+    );
+    expect(screen.getByText("Is this still on topic?")).toBeDefined();
+    expect(screen.getByRole("button", { name: /^approve/i })).toBeDefined();
+    expect(screen.getByRole("button", { name: /reject/i })).toBeDefined();
+    expect(screen.queryByTestId("ae-slots-full")).toBeNull();
+  });
+});
