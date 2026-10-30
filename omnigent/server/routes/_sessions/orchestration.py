@@ -169,7 +169,7 @@ from omnigent.server.routes._session_create_validation import (
     validate_session_agent,
     validate_session_model_metadata,
 )
-from omnigent.server.routes._sessions import ae_session_suggestion
+from omnigent.server.routes._sessions import ae_archive_cleanup, ae_session_suggestion
 from omnigent.server.routes._sessions.ae_session_activity import (
     session_active_child_count,
     session_background_task_count,
@@ -958,6 +958,8 @@ async def _archive_stop(
     _pending_archive_stops.pop(session_id, None)
 
     await _facade._best_effort_stop(session_id, conversation_store, runner_router)
+    # The runner deletes the session's bridge dir while it is still reachable.
+    await ae_archive_cleanup.request_runner_resource_cleanup(session_id)
     if conv.host_id and conv.runner_id:
         try:
             await _stop_host_runner_intentionally(

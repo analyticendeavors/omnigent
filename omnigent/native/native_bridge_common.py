@@ -89,6 +89,7 @@ def prune_orphaned_dirs(
     bridge_root: Path,
     *,
     should_prune: Callable[[Path], bool] | None = None,
+    on_keep: Callable[[Path], None] | None = None,
 ) -> int:
     """
     Remove per-session bridge dirs under *bridge_root* whose owner is dead.
@@ -115,6 +116,8 @@ def prune_orphaned_dirs(
     :param should_prune: Optional harness-specific eligibility predicate called
         only after the owner is proven dead. ``None`` removes every dead-owner
         directory.
+    :param on_keep: Optional hook called, under the cleanup lock, for a dead-owner
+        directory *should_prune* decided to keep.
     :returns: The number of orphaned bridge dirs removed.
     """
     if not bridge_root.exists():
@@ -143,6 +146,11 @@ def prune_orphaned_dirs(
                     _logger.exception("Error checking orphaned bridge dir %s", entry)
                     continue
                 if not eligible:
+                    if on_keep is not None:
+                        try:
+                            on_keep(entry)
+                        except Exception:
+                            _logger.exception("Error keeping orphaned bridge dir %s", entry)
                     continue
             try:
                 confirmed_pid = int(marker.read_text(encoding="utf-8").strip())

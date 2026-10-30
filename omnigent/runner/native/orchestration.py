@@ -8437,7 +8437,9 @@ async def _auto_create_claude_terminal(
     # before the reset below wipes them, so a keep sees what it wrote while cancelling.
     from omnigent.harnesses.claude_native import ae_resume_keep
 
-    _ae_resume = ae_resume_keep.read_context(bridge_dir, forwarder_stopped=_ae_forwarder_stopped)
+    _ae_resume = ae_resume_keep.read_context(
+        bridge_dir, forwarder_stopped=_ae_forwarder_stopped, session_id=session_id
+    )
     reset_transcript_forward_state(bridge_dir)
     _logger.info(
         "Claude terminal bridge prepared: session=%s",

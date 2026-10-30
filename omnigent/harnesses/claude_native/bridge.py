@@ -68,6 +68,7 @@ from filelock import FileLock
 from filelock import Timeout as FileLockTimeout
 
 from omnigent._platform import IS_WINDOWS, is_wsl, stable_user_id
+from omnigent.harnesses.claude_native import ae_bridge_retention
 from omnigent.harnesses.claude_native import delivery_diagnostics
 from omnigent.harnesses.claude_native import transcript_filters
 from omnigent.harnesses.claude_native.failure_telemetry import claude_failure_context
@@ -1797,7 +1798,11 @@ def prepare_bridge_dir(
 
 def prune_orphaned_bridge_dirs() -> int:
     """
-    Remove claude-native bridge dirs whose owner process is provably dead.
+    Remove claude-native bridge dirs whose owner is dead and that sat idle for 7 days.
+
+    A dir inside the window keeps its forwarder cursor and frontier record, so a relaunch
+    after a host restart can keep the transcript, and loses only the runtime files re-prep
+    would unlink, plus ``tool_relay.env`` (``ae_bridge_retention``).
 
     Delegates to the shared sweep against this harness's bridge root; the
     global maintenance calls it (via ``native_bridge_common.reap_orphaned_native_bridge_dirs``)
@@ -1806,7 +1811,22 @@ def prune_orphaned_bridge_dirs() -> int:
 
     :returns: The number of orphaned bridge dirs removed.
     """
-    return native_bridge_common.prune_orphaned_dirs(_BRIDGE_ROOT)
+    return native_bridge_common.prune_orphaned_dirs(
+        _BRIDGE_ROOT,
+        should_prune=ae_bridge_retention.retention_expired,
+        on_keep=functools.partial(
+            ae_bridge_retention.drop_runtime_files,
+            filenames=(
+                _SERVER_FILE,
+                _STATE_FILE,
+                _HOOKS_FILE,
+                OBSERVER_HOOK_STDERR_FILE,
+                _TOOL_RELAY_FILE,
+                _TOOL_RELAY_ENV_FILE,
+                _TMUX_FILE,
+            ),
+        ),
+    )
 
 
 def claude_global_config_path(
