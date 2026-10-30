@@ -2046,7 +2046,7 @@ def register_events_routes(
                 background_tasks=bg_tasks,
                 blocked_on=blocked_on,
             )
-            note_claude_subagent_status(conv, status, conversation_store)
+            await note_claude_subagent_status(conv, status, conversation_store)
             if (
                 conv.parent_conversation_id is not None
                 and status in {"idle", "failed"}
