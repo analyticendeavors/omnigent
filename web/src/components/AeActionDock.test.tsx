@@ -22,6 +22,7 @@ import { AeActionDock } from "./AeActionDock";
 import { ComposerWorkspaceBar } from "./composer/ComposerControls";
 import { ComposerPrLink } from "./composer/ComposerPrLink";
 
+const realCompact = useChatStore.getState().compact;
 const REPO = "analyticendeavors/omnigent-ae";
 const SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
 const url = (n: number) => `https://github.com/${REPO}/pull/${n}`;
@@ -72,13 +73,14 @@ function Questions({ pending }: { pending: Question[] }) {
   return null;
 }
 
-function renderDock(texts: string[], pending: Question[] = []) {
+function renderDock(texts: string[], pending: Question[] = [], labels?: Record<string, string>) {
   useChatStore.setState({
     conversationId: "s1",
     blocks: texts.map((text, i) => said(text, `m${i}`)),
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const tracked = texts.flatMap((text) => text.match(/https:\/\/\S+/g) ?? []);
+  if (labels) qc.setQueryData(["session", "s1"], { labels });
   qc.setQueryData(["github-info", "s1"], {
     available: true,
     prs: tracked.map((u) => ({ url: u })),
@@ -166,7 +168,13 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
-  useChatStore.setState({ conversationId: null, blocks: [] });
+  useChatStore.setState({
+    conversationId: null,
+    blocks: [],
+    status: "idle",
+    sessionStatus: "idle",
+    compact: realCompact,
+  });
 });
 
 describe("AeActionDock", () => {
@@ -977,5 +985,188 @@ describe("AeActionDock child prompts", () => {
         content: { [field]: "Yes" },
       });
     });
+  });
+});
+
+describe("the Compact card", () => {
+  const SUGGEST = {
+    "ae.handoff": "suggest",
+    "ae.handoff_at": "370000",
+    "ae.status": "working",
+    "omnigent.wrapper": "claude-code-native-ui",
+  };
+  const snoozeCalls = () =>
+    vi.mocked(authenticatedFetch).mock.calls.filter(([u]) => String(u).endsWith("/handoff/snooze"));
+
+  beforeEach(() => {
+    vi.mocked(authenticatedFetch).mockImplementation(() => json({ ok: true }));
+  });
+
+  it("shows the size and Compact and Not now when the label asks", async () => {
+    renderDock([], [], SUGGEST);
+    const lead = await screen.findByTestId("ae-dock-lead");
+    expect(lead.textContent).toContain(
+      "This chat is at 370k tokens. Every reply re-reads all of it.",
+    );
+    expect(within(lead).getByTestId("ae-dock-compact")).toBeTruthy();
+    expect(within(lead).getByTestId("ae-dock-context-later")).toBeTruthy();
+  });
+
+  it("is absent without the label, when snoozed, or for a different open chat", async () => {
+    const none = renderDock([], [], { "ae.status": "working" });
+    await waitFor(() =>
+      expect(none.container.querySelector("[data-testid=ae-dock-lead]")).toBeNull(),
+    );
+    cleanup();
+    const snoozed = renderDock([], [], { ...SUGGEST, "ae.handoff": "snoozed" });
+    expect(snoozed.container.querySelector("[data-testid=ae-dock-lead]")).toBeNull();
+    cleanup();
+    const other = renderDock([], [], SUGGEST);
+    await screen.findByTestId("ae-dock-lead");
+    act(() => useChatStore.setState({ conversationId: "elsewhere" }));
+    await waitFor(() =>
+      expect(other.container.querySelector("[data-testid=ae-dock-lead]")).toBeNull(),
+    );
+  });
+
+  it.each([
+    ["a family child", { "ae.orch": "conv_lead" }],
+    ["a reviewer", { "ae.role": "reviewer" }],
+    ["a fork", { "omnigent.fork.source_id": "conv_x" }],
+    ["a side chat", { "omnigent.side_chat": "1" }],
+    ["a Codex chat", { "omnigent.wrapper": "codex-native-ui" }],
+  ])("shows no card for %s with a stale suggest label", async (_name, extra) => {
+    const view = renderDock([], [], { ...SUGGEST, ...extra });
+    await waitFor(() => expect(authenticatedFetch).not.toHaveBeenCalled());
+    expect(view.container.querySelector("[data-testid=ae-dock-lead]")).toBeNull();
+    expect(view.container.querySelector("[data-testid=ae-dock-compact]")).toBeNull();
+  });
+
+  it("Compact asks twice, compacts the open chat, then snoozes", async () => {
+    const compact = vi.fn(() => Promise.resolve());
+    renderDock([], [], SUGGEST);
+    useChatStore.setState({ compact });
+    const button = await screen.findByTestId("ae-dock-compact");
+    fireEvent.click(button);
+    expect(button.textContent).toBe("Compact now?");
+    expect(compact).not.toHaveBeenCalled();
+    fireEvent.click(button);
+    expect(compact).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(snoozeCalls()).toHaveLength(1));
+    expect(String(snoozeCalls()[0]![0])).toBe("/v1/ae/sessions/s1/handoff/snooze");
+  });
+
+  it("does not snooze when the compact failed", async () => {
+    const compact = vi.fn(() => Promise.reject(new Error("409 Conflict")));
+    renderDock([], [], SUGGEST);
+    useChatStore.setState({ compact });
+    const button = await screen.findByTestId("ae-dock-compact");
+    fireEvent.click(button);
+    fireEvent.click(button);
+    await screen.findByRole("alert");
+    expect(snoozeCalls()).toHaveLength(0);
+  });
+
+  it("disables Compact while the chat is running", async () => {
+    renderDock([], [], SUGGEST);
+    act(() => useChatStore.setState({ sessionStatus: "running" }));
+    try {
+      expect(await screen.findByTestId("ae-dock-compact")).toBeDisabled();
+    } finally {
+      // The store keeps a per-session copy that the next render of "s1" would restore.
+      act(() => useChatStore.setState({ sessionStatus: "idle" }));
+    }
+  });
+
+  it("Not now posts the snooze and nothing else", async () => {
+    const compact = vi.fn(() => Promise.resolve());
+    renderDock([], [], SUGGEST);
+    useChatStore.setState({ compact });
+    fireEvent.click(await screen.findByTestId("ae-dock-context-later"));
+    await waitFor(() => expect(snoozeCalls()).toHaveLength(1));
+    expect(compact).not.toHaveBeenCalled();
+  });
+
+  it("treats a 409 from Not now as a quiet no-op", async () => {
+    vi.mocked(authenticatedFetch).mockImplementation(() =>
+      json({ error: { message: "this chat already handed off" } }, 409),
+    );
+    const seen: unknown[] = [];
+    const listen = (event: Event) => seen.push((event as CustomEvent).detail.content);
+    window.addEventListener("omnigent:toast", listen);
+    try {
+      renderDock([], [], SUGGEST);
+      fireEvent.click(await screen.findByTestId("ae-dock-context-later"));
+      await waitFor(() => expect(snoozeCalls()).toHaveLength(1));
+      await waitFor(() => expect(screen.getByTestId("ae-dock-context-later")).not.toBeDisabled());
+      expect(seen).toEqual([]);
+    } finally {
+      window.removeEventListener("omnigent:toast", listen);
+    }
+  });
+
+  it("does not toast when the snooze after Compact gets a 409", async () => {
+    vi.mocked(authenticatedFetch).mockImplementation(() =>
+      json({ error: { message: "this chat already handed off" } }, 409),
+    );
+    const seen: unknown[] = [];
+    const listen = (event: Event) => seen.push((event as CustomEvent).detail.content);
+    window.addEventListener("omnigent:toast", listen);
+    try {
+      const compact = vi.fn(() => Promise.resolve());
+      renderDock([], [], SUGGEST);
+      useChatStore.setState({ compact });
+      const button = await screen.findByTestId("ae-dock-compact");
+      fireEvent.click(button);
+      fireEvent.click(button);
+      await waitFor(() => expect(snoozeCalls()).toHaveLength(1));
+      await act(async () => {
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 20);
+        });
+      });
+      expect(compact).toHaveBeenCalledTimes(1);
+      expect(seen).toEqual([]);
+    } finally {
+      window.removeEventListener("omnigent:toast", listen);
+    }
+  });
+
+  it("toasts when the snooze after Compact fails some other way", async () => {
+    vi.mocked(authenticatedFetch).mockImplementation(() =>
+      json({ error: { message: "only the owner" } }, 403),
+    );
+    const seen: unknown[] = [];
+    const listen = (event: Event) => seen.push((event as CustomEvent).detail.content);
+    window.addEventListener("omnigent:toast", listen);
+    try {
+      const compact = vi.fn(() => Promise.resolve());
+      renderDock([], [], SUGGEST);
+      useChatStore.setState({ compact });
+      const button = await screen.findByTestId("ae-dock-compact");
+      fireEvent.click(button);
+      fireEvent.click(button);
+      await waitFor(() => expect(seen).toHaveLength(1));
+      expect(String(seen[0])).toContain("could not be snoozed");
+    } finally {
+      window.removeEventListener("omnigent:toast", listen);
+    }
+  });
+
+  it("tells the viewer when Not now is refused", async () => {
+    vi.mocked(authenticatedFetch).mockImplementation(() =>
+      json({ error: { message: "only the owner can change session s1" } }, 403),
+    );
+    const seen: unknown[] = [];
+    const listen = (event: Event) => seen.push((event as CustomEvent).detail.content);
+    window.addEventListener("omnigent:toast", listen);
+    try {
+      renderDock([], [], SUGGEST);
+      fireEvent.click(await screen.findByTestId("ae-dock-context-later"));
+      await waitFor(() => expect(seen).toHaveLength(1));
+      expect(String(seen[0])).toContain("Could not snooze this chat");
+    } finally {
+      window.removeEventListener("omnigent:toast", listen);
+    }
   });
 });

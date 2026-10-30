@@ -205,11 +205,11 @@ export interface AeRolesDoc {
   child_prompts?: boolean;
   /** Let the lead pass an answer to a child's question; absent reads as on. */
   child_relay?: boolean;
-  /** Context tokens at which a top-level chat is asked to hand off to a fresh lead; 0 is off, absent reads as 300000. */
+  /** Context tokens at which a top-level chat shows a Compact card; 0 is off, absent reads as 300000. */
   lead_handoff_tokens?: number | null;
 }
 
-/** The context size, in tokens, that asks a chat to hand off when the user never set one. */
+/** The context size, in tokens, that shows a chat the Compact card when the user never set one. */
 export const AE_HANDOFF_DEFAULT_TOKENS = 300_000;
 
 /** What `GET` and `PUT /v1/ae/roles` answer. */

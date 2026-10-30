@@ -4,7 +4,7 @@
 // Neither costs a request, and a push or the Status menu's overlay repaints both.
 
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useRef, useSyncExternalStore } from "react";
 import type { Conversation } from "@/hooks/useConversations";
 import type { AnyBlock } from "@/lib/blocks";
 import type { ConversationsInfiniteData } from "@/lib/sessionListCache";
@@ -15,13 +15,35 @@ export type AeLabels = Record<string, string>;
 
 const NO_LABELS: AeLabels = {};
 
-/** This session's labels from any cached copy, or `null` when no cache holds it. */
-export function readAeRailSessionLabels(queryClient: QueryClient, id: string): AeLabels | null {
+/** What the caches know of a session beyond its labels: the facts the Compact card checks. */
+export interface AeRailSessionRow {
+  labels: AeLabels;
+  /** A sub-agent or other child session names its parent. */
+  parentId: string | null;
+  archived: boolean;
+  /** `"sub_agent"` for native child sessions, else `"default"`; `null` when the copy lacks it. */
+  kind: string | null;
+}
+
+function fromConversation(row: Conversation): AeRailSessionRow {
+  return {
+    labels: row.labels ?? NO_LABELS,
+    parentId: row.parent_session_id ?? null,
+    archived: row.archived === true,
+    kind: null,
+  };
+}
+
+/** This session's row from any cached copy, or `null` when no cache holds it. */
+export function readAeRailSessionRow(
+  queryClient: QueryClient,
+  id: string,
+): AeRailSessionRow | null {
   for (const queryKey of [["conversations"], ["project-sessions"]]) {
     for (const [, data] of queryClient.getQueriesData<ConversationsInfiniteData>({ queryKey })) {
       for (const page of data?.pages ?? []) {
         const row = page.data.find((conversation: Conversation) => conversation.id === id);
-        if (row) return row.labels ?? NO_LABELS;
+        if (row) return fromConversation(row);
       }
     }
   }
@@ -29,12 +51,54 @@ export function readAeRailSessionLabels(queryClient: QueryClient, id: string): A
     "pinned-conversations",
   ]);
   const pinnedRow = pinned?.conversations.find((row) => row.id === id);
-  if (pinnedRow) return pinnedRow.labels ?? NO_LABELS;
+  if (pinnedRow) return fromConversation(pinnedRow);
   const backfill = queryClient.getQueryData<Conversation | null>(["conversation-backfill", id]);
-  if (backfill) return backfill.labels ?? NO_LABELS;
+  if (backfill) return fromConversation(backfill);
   const snapshot = queryClient.getQueryData<Session>(["session", id]);
-  if (snapshot) return snapshot.labels ?? NO_LABELS;
+  if (snapshot) {
+    return {
+      labels: snapshot.labels ?? NO_LABELS,
+      parentId: snapshot.parentSessionId ?? null,
+      archived: snapshot.archived === true,
+      kind: snapshot.kind ?? null,
+    };
+  }
   return null;
+}
+
+/** This session's labels from any cached copy, or `null` when no cache holds it. */
+export function readAeRailSessionLabels(queryClient: QueryClient, id: string): AeLabels | null {
+  return readAeRailSessionRow(queryClient, id)?.labels ?? null;
+}
+
+/**
+ * The open session's row, live; `null` until a cache holds the session. The row object is
+ * rebuilt on each read, so the hook returns a stable copy while its fields are unchanged.
+ */
+export function useAeRailSessionRow(id: string): AeRailSessionRow | null {
+  const queryClient = useQueryClient();
+  const subscribe = useCallback(
+    (onChange: () => void) => queryClient.getQueryCache().subscribe(onChange),
+    [queryClient],
+  );
+  const last = useRef<AeRailSessionRow | null>(null);
+  const read = useCallback(() => {
+    const next = readAeRailSessionRow(queryClient, id);
+    const prev = last.current;
+    if (
+      next &&
+      prev &&
+      next.labels === prev.labels &&
+      next.parentId === prev.parentId &&
+      next.archived === prev.archived &&
+      next.kind === prev.kind
+    ) {
+      return prev;
+    }
+    last.current = next;
+    return next;
+  }, [queryClient, id]);
+  return useSyncExternalStore(subscribe, read, read);
 }
 
 /** The open session's labels, live; `null` until a cache holds the session. */

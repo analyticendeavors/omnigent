@@ -3,8 +3,9 @@
 // auto-compact countdown with Compact beside it, and the snapshot's age. Other
 // harnesses get the plain context bar from the chat store.
 
-import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useAeCompactSuggestion } from "@/hooks/useAeCompactSuggestion";
+import { aeCompactText } from "@/lib/aeCompactSuggestion";
 import { contextTone } from "@/lib/aeContextTone";
 import { type AeRailSectionProps, useAeRailSectionActive } from "@/lib/aeSessionRail";
 import { isNativeHarness } from "@/lib/forkHarness";
@@ -21,6 +22,7 @@ import {
   useAeContextSnapshot,
 } from "../aeContextUsage";
 import { aeModelName } from "../aeSessionContext";
+import { AeCompactButton } from "./AeCompactButton";
 import { AeRailSection } from "./AeRailSection";
 import { AE_RAIL_TONE_TEXT, AeRailBar, AeRailIcon, AeRailMeta, AeRailMuted } from "./aeRailUi";
 import { useAeRailNow } from "./aeRailNow";
@@ -59,12 +61,22 @@ export function AeRailContext({ sessionId }: AeRailSectionProps) {
       : null;
   const reading = headline ? { used: headline.totalTokens, size: headline.maxTokens } : live;
   const pct = reading ? (reading.used / reading.size) * 100 : null;
+  const suggestion = useAeCompactSuggestion(sessionId);
+  const cardShown = suggestion.item !== null;
   return (
     <AeRailSection
       id="context"
       foldedSummary={pct === null ? undefined : `${Math.round(pct)}% used`}
     >
       <div className="flex flex-col gap-2 text-sm" data-testid="ae-rail-context">
+        {suggestion.tokens !== null && (
+          <p
+            className="text-xs text-amber-600 dark:text-amber-400"
+            data-testid="ae-rail-compact-suggest"
+          >
+            {aeCompactText(suggestion.tokens)}
+          </p>
+        )}
         {reading && pct !== null ? (
           <div className="flex items-baseline justify-between gap-2">
             <span className={cn("font-semibold", AE_RAIL_TONE_TEXT[contextTone(pct)])}>
@@ -86,6 +98,7 @@ export function AeRailContext({ sessionId }: AeRailSectionProps) {
             model={model}
             active={active}
             canCompact={canCompact}
+            cardShown={cardShown}
           />
         ) : (
           <>
@@ -162,12 +175,15 @@ function SnapshotBody({
   model,
   active,
   canCompact,
+  cardShown,
 }: {
   data: ContextUsage;
   snapshot: AeContextSnapshotState;
   model: string | null;
   active: boolean;
   canCompact: boolean;
+  /** The dock's Compact card is showing, so there is no second button here. */
+  cardShown: boolean;
 }) {
   const now = useAeRailNow(active);
   const countdown = contextCountdown(data, data.totalTokens);
@@ -183,7 +199,7 @@ function SnapshotBody({
           Some MCP servers are unavailable or still connecting. Their tools may be missing.
         </AeRailMuted>
       )}
-      {(countdown || canCompact) && (
+      {(countdown || (canCompact && !cardShown)) && (
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2">
           <span
             // basis-0 so the line never wraps for the text; it truncates instead.
@@ -193,7 +209,7 @@ function SnapshotBody({
           >
             {countdown}
           </span>
-          {canCompact && <CompactButton />}
+          {canCompact && !cardShown && <AeCompactButton />}
         </div>
       )}
       <div className="flex items-center gap-1.5">
@@ -219,65 +235,6 @@ function SnapshotBody({
           busy={snapshot.loading}
           destructive
         />
-      )}
-    </>
-  );
-}
-
-type CompactPhase = "idle" | "confirm" | "running";
-
-/** Two clicks within three seconds compact the session, as /compact does. */
-export function CompactButton() {
-  const [phase, setPhase] = useState<CompactPhase>("idle");
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    if (phase !== "confirm") return undefined;
-    const timer = window.setTimeout(() => setPhase("idle"), 3000);
-    return () => window.clearTimeout(timer);
-  }, [phase]);
-  const onClick = () => {
-    if (phase === "idle") {
-      setError(null);
-      setPhase("confirm");
-      return;
-    }
-    if (phase !== "confirm") return;
-    setPhase("running");
-    useChatStore
-      .getState()
-      .compact()
-      .then(
-        () => setPhase("idle"),
-        (reason: unknown) => {
-          const detail = reason instanceof Error ? reason.message : String(reason);
-          setError(
-            `Could not compact the session (${detail}). Try again, or send /compact from the composer.`,
-          );
-          setPhase("idle");
-        },
-      );
-  };
-  return (
-    <>
-      <Button
-        type="button"
-        size="xs"
-        variant={phase === "confirm" ? "destructive" : "outline"}
-        disabled={phase === "running"}
-        onClick={onClick}
-        data-testid="ae-rail-compact"
-        className="shrink-0"
-      >
-        {phase === "confirm"
-          ? "Compact now?"
-          : phase === "running"
-            ? "Compacting..."
-            : "Compact"}
-      </Button>
-      {error && (
-        <p role="alert" className="basis-full text-xs text-destructive">
-          {error}
-        </p>
       )}
     </>
   );

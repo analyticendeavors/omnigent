@@ -1,4 +1,14 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render as rtlRender,
+  type RenderOptions,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
@@ -22,6 +32,18 @@ const contextCalls = () =>
   vi.mocked(authenticatedFetch).mock.calls.filter(([url]) => String(url).includes("/context-usage"))
     .length;
 
+let queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+/** The rail reads the session's labels from the query cache, so every render has one. */
+function render(ui: React.ReactElement, options?: RenderOptions) {
+  return rtlRender(ui, {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    ),
+    ...options,
+  });
+}
+
 const realCompact = useChatStore.getState().compact;
 let sessionCount = 0;
 let sessionId = "";
@@ -41,6 +63,7 @@ function setSession(harness: string, extra: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
+  queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   resetAeContextSnapshots();
   vi.mocked(authenticatedFetch).mockReset();
   vi.mocked(authenticatedFetch).mockImplementation(() => json(snapshotNow()));
@@ -285,5 +308,49 @@ describe("Compact session", () => {
     ).toBeTruthy();
     expect(contextCalls()).toBe(0);
     expect(screen.queryByTestId("ae-rail-compact")).toBeNull();
+  });
+});
+
+describe("Compact suggestion line", () => {
+  const SUGGEST = {
+    "ae.handoff": "suggest",
+    "ae.handoff_at": "370000",
+    "ae.status": "working",
+    "omnigent.wrapper": "claude-code-native-ui",
+  };
+
+  function renderSuggested(labels: Record<string, string>) {
+    queryClient.setQueryData(["session", sessionId], { labels });
+    return render(<AeRailContext sessionId={sessionId} />);
+  }
+
+  it("shows the line and drops its own Compact button while the card shows", async () => {
+    setSession("claude-native");
+    renderSuggested(SUGGEST);
+    expect((await screen.findByTestId("ae-rail-compact-suggest")).textContent).toBe(
+      "This chat is at 370k tokens. Every reply re-reads all of it.",
+    );
+    await screen.findByRole("button", { name: /^Categories/ });
+    expect(screen.queryByTestId("ae-rail-compact")).toBeNull();
+  });
+
+  it.each([
+    ["a family child", { "ae.orch": "conv_lead" }],
+    ["a reviewer", { "ae.role": "reviewer" }],
+    ["a fork", { "omnigent.fork.source_id": "conv_x" }],
+    ["a side chat", { "omnigent.side_chat": "1" }],
+    ["a Codex chat", { "omnigent.wrapper": "codex-native-ui" }],
+  ])("shows no line for %s with a stale suggest label", async (_name, extra) => {
+    setSession("claude-native");
+    renderSuggested({ ...SUGGEST, ...extra });
+    await screen.findByRole("button", { name: /^Categories/ });
+    expect(screen.queryByTestId("ae-rail-compact-suggest")).toBeNull();
+  });
+
+  it("keeps its Compact button when no card shows", async () => {
+    setSession("claude-native");
+    renderSuggested({ "ae.status": "working" });
+    await screen.findByTestId("ae-rail-compact");
+    expect(screen.queryByTestId("ae-rail-compact-suggest")).toBeNull();
   });
 });

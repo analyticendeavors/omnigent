@@ -3,17 +3,19 @@
 // unit-tested (aeActionDock.test.ts). omnigent-ae, 2026-10-20.
 
 import type { AeLimitWindow } from "@/components/AePlanLimits";
+import { aeCompactTokens } from "@/lib/aeCompactSuggestion";
 import { type AeAccountChoice, type AeLimitGate, aeLimitGateShort } from "@/lib/aeLimitGate";
 import { type AePrDeploy, aeHasDeployState } from "@/lib/aePrDeploy";
 import { type AePrReceipt, aePrReceipt } from "@/lib/aePrReceipt";
 import { type AePrCard, aeCiText, aeReadyToMerge } from "@/lib/aePrs";
 
 export type AeDockKind =
-  "question" | "childPrompt" | "limit" | "merge" | "draft" | "waiting" | "deploy";
+  "question" | "childPrompt" | "limit" | "context" | "merge" | "draft" | "waiting" | "deploy";
 
 /**
  * Urgency: a question blocks the agent, and so does a prompt from a session this chat
- * started (listed right after it), a usage limit is about to, a merge
+ * started (listed right after it), a usage limit is about to, a long context
+ * costs on every reply, a merge
  * waits on a click, a draft on a click before review, an open pull request
  * that is not ready on checks or a person, a deploy only on time.
  */
@@ -21,6 +23,7 @@ export const AE_DOCK_KINDS: readonly AeDockKind[] = [
   "question",
   "childPrompt",
   "limit",
+  "context",
   "merge",
   "draft",
   "waiting",
@@ -127,10 +130,18 @@ export interface AeDockLimit extends ItemBase {
   canCopyAccount: boolean;
 }
 
+/** The chat's context passed the "Suggest compacting at" size (aeCompactSuggestion.ts). */
+export interface AeDockContext extends ItemBase {
+  kind: "context";
+  sessionId: string;
+  tokens: number;
+}
+
 export type AeDockItem =
   | AeDockQuestion
   | AeDockChildPrompt
   | AeDockLimit
+  | AeDockContext
   | AeDockMerge
   | AeDockDraft
   | AeDockWaiting
@@ -371,6 +382,8 @@ export function aeDockBadgeLabel(
       return many ? `${items.length} child prompts` : "Child prompt";
     case "limit":
       return aeLimitGateShort(first.gate);
+    case "context":
+      return `${aeCompactTokens(first.tokens)} tokens`;
     case "merge":
       return many ? `${items.length} to merge` : `#${first.number} ready`;
     case "draft":

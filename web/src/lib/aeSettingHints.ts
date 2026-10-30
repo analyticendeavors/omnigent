@@ -181,8 +181,8 @@ export const AE_SETTING_HINTS = {
     source: "existing",
   },
   "family.handoff": {
-    label: "Hand off at",
-    hint: "A chat past this many thousand tokens is asked once to hand off to a fresh lead that takes over its sessions. Default: 300. Off: never.",
+    label: "Suggest compacting at",
+    hint: "Past this many thousand tokens, a chat shows a Compact card above the composer and in the rail. Default: 300. Off: never.",
     source: "existing",
   },
   "chat.suggestion_keys": {

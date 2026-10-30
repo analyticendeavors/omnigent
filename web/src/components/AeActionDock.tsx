@@ -64,7 +64,14 @@ import {
 import { AE_ICON_CHEVRON_DOWN } from "@/lib/aeAgentsIcons";
 import { AE_ICON_CHECK, AE_ICON_MERGE, AE_ICON_PR_DRAFT, AE_ICON_PR_OPEN } from "@/lib/aePrIcons";
 import { AeLimitHoverCard } from "@/components/AeLimitHoverCard";
+import {
+  aeCompactText,
+  aeCompactTokens,
+  aeSnoozeFailureIsQuiet,
+  postAeHandoffSnooze,
+} from "@/lib/aeCompactSuggestion";
 import { aeLimitGateShort, aeLimitGateText } from "@/lib/aeLimitGate";
+import { AeCompactButton } from "@/components/aeRail/AeCompactButton";
 import { AE_ADMIN_CENTER_PATH } from "@/lib/aePrDeploy";
 import type { AeReceiptTone } from "@/lib/aePrReceipt";
 import { aeCiText } from "@/lib/aePrs";
@@ -93,6 +100,7 @@ const KIND_STYLE: Record<AeDockKind, { icon: AeTablerIconNode; tone: string; tin
   question: { icon: AE_ICON_HELP_CIRCLE, tone: AMBER, tint: "bg-amber-500/15" },
   childPrompt: { icon: AE_ICON_HELP_CIRCLE, tone: AMBER, tint: "bg-amber-500/15" },
   limit: { icon: AE_ICON_GAUGE, tone: RED, tint: "bg-red-500/15" },
+  context: { icon: AE_ICON_GAUGE, tone: AMBER, tint: "bg-amber-500/15" },
   merge: { icon: AE_ICON_PR_OPEN, tone: GREEN, tint: "bg-emerald-500/15" },
   draft: { icon: AE_ICON_PR_DRAFT, tone: MUTED, tint: "bg-muted" },
   waiting: { icon: AE_ICON_PR_OPEN, tone: AMBER, tint: "bg-amber-500/15" },
@@ -158,6 +166,26 @@ function ItemBody({ item, now, expanded }: { item: AeDockItem; now: number; expa
         {!expanded && (
           <span className="shrink-0 font-semibold whitespace-nowrap md:hidden" title={text}>
             {aeLimitGateShort(item.gate)}
+          </span>
+        )}
+      </>
+    );
+  }
+  if (item.kind === "context") {
+    const text = aeCompactText(item.tokens);
+    return (
+      <>
+        <span
+          className={cn("min-w-0 truncate", !expanded && "hidden md:inline")}
+          title={text}
+          data-ae-lead-text=""
+          data-testid="ae-dock-context-text"
+        >
+          {text}
+        </span>
+        {!expanded && (
+          <span className="shrink-0 font-semibold whitespace-nowrap md:hidden" title={text}>
+            {aeCompactTokens(item.tokens)} tokens
           </span>
         )}
       </>
@@ -410,6 +438,13 @@ function ItemActions({
           />
         </>
       );
+    case "context":
+      return (
+        <>
+          <AeCompactButton sessionId={item.sessionId} testId="ae-dock-compact" />
+          <NotNowButton sessionId={item.sessionId} />
+        </>
+      );
     case "question":
       return (
         <Button
@@ -467,6 +502,32 @@ function ItemActions({
         </>
       );
   }
+}
+
+/** The Compact card's Not now: snoozes the suggestion until the context grew another 100k. */
+function NotNowButton({ sessionId }: { sessionId: string }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <Button
+      variant="outline"
+      className={ACTION}
+      disabled={busy}
+      onClick={() => {
+        setBusy(true);
+        postAeHandoffSnooze(sessionId)
+          .catch((reason: unknown) => {
+            if (aeSnoozeFailureIsQuiet(reason)) return;
+            showToast(
+              `Could not snooze this chat: ${reason instanceof Error ? reason.message : String(reason)}`,
+            );
+          })
+          .finally(() => setBusy(false));
+      }}
+      data-testid="ae-dock-context-later"
+    >
+      Not now
+    </Button>
+  );
 }
 
 /** The card's "Mark ready for review"; marking ready never merges, so no confirm step. */

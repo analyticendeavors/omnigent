@@ -6,6 +6,7 @@
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { AE_PR_POLL_MS } from "@/components/AePrCards";
+import { useAeCompactSuggestion } from "@/hooks/useAeCompactSuggestion";
 import { useAeLimitGate } from "@/hooks/useAeLimitGate";
 import { fetchPullRequestInfo } from "@/hooks/usePullRequests";
 import {
@@ -294,11 +295,13 @@ export function useAeActionDockItems(
   const questions = useDockQuestions(sessionId);
   const childPrompts = useDockChildPrompts(sessionId);
   const limit = useAeLimitGate(sessionId);
+  const compact = useAeCompactSuggestion(sessionId);
   const items = aeDockArrange(
     [
       ...aeDockQuestions(questions),
       ...childPrompts,
       ...(limit.item ? [limit.item] : []),
+      ...(compact.item ? [compact.item] : []),
       ...aeDockMerges(withCards),
       ...aeDockDrafts(withCards),
       ...aeDockWaiting(withCards),

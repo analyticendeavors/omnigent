@@ -106,12 +106,14 @@ describe("AeChildPromptSettings", () => {
     await waitFor(() => expect(screen.getByTestId("ae-child-prompts-toggle")).not.toBeChecked());
   });
 
-  it("reads the hand off size as 300 and on when unset, and as off at 0", async () => {
+  it("reads the suggest-compacting size as 300 and on when unset, and as off at 0", async () => {
     vi.mocked(authenticatedFetch).mockImplementation(() => json(STATE));
     mount();
     const input = await screen.findByTestId("ae-handoff-tokens");
     await waitFor(() => expect(screen.getByTestId("ae-handoff-toggle")).not.toBeDisabled());
     expect(input).toHaveValue(300);
+    expect(input).toHaveAttribute("aria-label", "Suggest compacting at, in thousands of tokens");
+    expect(screen.getByTestId("ae-handoff").textContent).toContain("Suggest compacting at");
     expect(screen.getByTestId("ae-handoff-toggle")).toBeChecked();
     cleanup();
     vi.mocked(authenticatedFetch).mockImplementation(() =>

@@ -2,8 +2,8 @@
 // saved with the user's roles on the server (`child_prompts` and `child_relay`, top level, not
 // per preset), because the server mirrors the prompts and the relay tool checks the second.
 // An unset value reads as on. Each row's one hint line is also the phone tooltip's text.
-// The third row (2026-10-29) is "Hand off at": the context size, in thousands of tokens, past which
-// a top-level chat is asked once to hand off to a fresh lead (`lead_handoff_tokens`, 0 is off).
+// The third row (2026-10-29) is "Suggest compacting at": the context size, in thousands of tokens,
+// past which a top-level chat shows a Compact card (`lead_handoff_tokens`, 0 is off).
 
 import { QueryClientContext } from "@tanstack/react-query";
 import { useContext, useId, useState } from "react";
@@ -71,7 +71,7 @@ function Row({ field, hint, testId }: (typeof ROWS)[number]) {
 const HANDOFF_MIN_K = 50;
 const HANDOFF_MAX_K = 5000;
 
-/** "Hand off at": an on/off switch and the size in thousands of tokens. */
+/** "Suggest compacting at": an on/off switch and the size in thousands of tokens. */
 function HandoffRow() {
   const roles = useAeRoles();
   const save = useAeRolesSave();
@@ -124,7 +124,7 @@ function HandoffRow() {
             min={HANDOFF_MIN_K}
             max={HANDOFF_MAX_K}
             step={50}
-            aria-label="Hand off at, in thousands of tokens"
+            aria-label="Suggest compacting at, in thousands of tokens"
             aria-describedby={descriptionId}
             value={draft ?? String(tokens / 1000)}
             disabled={!state || saving}
