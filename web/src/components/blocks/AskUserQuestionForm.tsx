@@ -233,10 +233,10 @@ export function AskUserQuestionForm({ questions, onSubmit, onReject }: AskUserQu
 
       <fieldset
         key={currentKey}
-        className="flex flex-col gap-2 mb-2"
+        className="flex flex-col gap-2 mb-2 min-w-0"
         data-testid="ask-user-question-section"
       >
-        <legend className="text-foreground text-ui font-medium flex items-center gap-2 mb-2">
+        <legend className="text-foreground text-ui font-medium flex items-center gap-2 mb-2 min-w-0 max-w-full [overflow-wrap:anywhere]">
           {current.question}
         </legend>
         <div className="flex flex-col gap-2">
@@ -261,7 +261,7 @@ export function AskUserQuestionForm({ questions, onSubmit, onReject }: AskUserQu
                   <span className="flex flex-col">
                     <span>{opt.label}</span>
                     {opt.description && (
-                      <span className="text-muted-foreground text-sm">{opt.description}</span>
+                      <span className="text-muted-foreground text-sm [overflow-wrap:anywhere]">{opt.description}</span>
                     )}
                   </span>
                 </label>
@@ -286,7 +286,7 @@ export function AskUserQuestionForm({ questions, onSubmit, onReject }: AskUserQu
                 <span className="flex flex-col">
                   <span>{opt.label}</span>
                   {opt.description && (
-                    <span className="text-muted-foreground text-sm">{opt.description}</span>
+                    <span className="text-muted-foreground text-sm [overflow-wrap:anywhere]">{opt.description}</span>
                   )}
                 </span>
               </label>

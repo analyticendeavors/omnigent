@@ -711,6 +711,32 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
     expect(radios[0]!.getAttribute("type")).toBe("radio");
   });
 
+  it("lets a long unbroken URL in the question wrap instead of overflowing", () => {
+    const url = "https://github.com/example-org/example-repo/pull/2842";
+    const preview =
+      'AskUserQuestion({"questions": [{"question": "PR ' +
+      url +
+      ' is green", "options": [{"label": "Merge"}, {"label": "Wait"}], ' +
+      '"multiSelect": false}]})';
+    render(
+      <ApprovalCard
+        elicitationId="elic_wrap"
+        message="Claude wants to call AskUserQuestion"
+        phase="pre_tool_use"
+        policyName="claude_native_permission"
+        contentPreview={preview}
+        requestedSchema={{}}
+        status="pending"
+        response={null}
+      />,
+    );
+
+    const section = screen.getByTestId("ask-user-question-section");
+    expect(section.className).toContain("min-w-0");
+    const legend = section.querySelector("legend")!;
+    expect(legend.className).toContain("[overflow-wrap:anywhere]");
+  });
+
   it("renders checkbox inputs for a multiSelect question", () => {
     render(
       <ApprovalCard
