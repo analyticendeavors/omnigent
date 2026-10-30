@@ -4,7 +4,7 @@
 // finished ones under their own Finished group. Rows come from the same live
 // child list the Agents tab reads, so the two always agree.
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { RunningDot } from "@/components/RunningDot";
 import { type ChildSessionInfo, useChildSessions } from "@/hooks/useChildSessions";
 import { type AeRailSectionProps, useAeRailSectionActive } from "@/lib/aeSessionRail";
@@ -16,6 +16,7 @@ import {
   splitAgentSections,
 } from "@/shell/aeAgentsPaneModel";
 import {
+  type AeFamilyUsageRequest,
   AeAgentMetaLine,
   AeAgentMetaProvider,
   AeAgentsTotal,
@@ -34,6 +35,7 @@ import {
   isNativeSubagent,
   useAeSessionContexts,
 } from "../aeSessionContext";
+import { AeRailChildChats, useAeRailChildChats } from "./AeRailChildChats";
 import { AeRailSection } from "./AeRailSection";
 import { useAeRailNow } from "./aeRailNow";
 import { useAeSubagentSteps } from "./aeRailSubagentSteps";
@@ -198,8 +200,10 @@ export function aeRailAgentsSummary(
   running: number,
   failed: number,
   finished: number,
+  needsYou = 0,
 ): string | undefined {
   const parts = [
+    needsYou > 0 ? `${needsYou} ${needsYou === 1 ? "needs" : "need"} you` : null,
     running > 0 ? `${running} running` : null,
     failed > 0 ? `${failed} failed` : null,
     finished > 0 ? `${finished} finished` : null,
@@ -222,6 +226,7 @@ export function AeRailAgents({ sessionId }: AeRailSectionProps) {
   // The Agents tab's own list, kept live by the session stream between polls.
   // Folded, it only reads the cached list, so the folded summary keeps its counts.
   const { children } = useChildSessions(sessionId, POLL_MS, active);
+  const childChats = useAeRailChildChats(sessionId, active);
   const [finishedOpen, setFinishedOpen] = useState(readFinishedOpen);
   const openTab = useAeRailOpenWorkspaceTab();
   const openAgents = openTab ? () => openTab("subagents") : undefined;
@@ -251,12 +256,24 @@ export function AeRailAgents({ sessionId }: AeRailSectionProps) {
   const hidden = sessions.hidden ?? 0;
   const failed = failedSubagents.length;
   const subagentCount = runningSubagents.length + failed + finishedSubagents.length;
-  const empty = rows.length === 0 && subagentCount === 0;
+  const childChatCount = childChats.open.length + childChats.closed.length;
+  const empty =
+    rows.length === 0 &&
+    subagentCount === 0 &&
+    childChatCount === 0 &&
+    childChats.archivedNote !== "failed";
   const toggleFinished = () => {
     writeFinishedOpen(!finishedOpen);
     setFinishedOpen(!finishedOpen);
   };
-  const summary = aeRailAgentsSummary(running, failed, finished);
+  const childErrors = childChats.open.filter((c) => c.status === "error").length;
+  const childDone = childChats.open.filter((c) => c.status === "done").length;
+  const summary = aeRailAgentsSummary(
+    running + childChats.working,
+    failed + childErrors,
+    finished + childDone,
+    childChats.needs.length,
+  );
   const byId = new Map(children.map((c) => [c.id, c] as const));
   const collaboratorIds = new Set(rows.map((r) => r.entry.key));
   const shownRows = [
@@ -265,12 +282,32 @@ export function AeRailAgents({ sessionId }: AeRailSectionProps) {
     ...(finishedOpen ? finishedSubagents.slice(0, MAX_FINISHED) : []),
     ...children.filter((c) => collaboratorIds.has(c.id)),
   ];
-  const meta = useAeAgentMeta(sessionId, shownRows, running > 0);
+  // Child chats run outside this chat's spawn tree, so their spend is read on its own.
+  const familyUsage = useMemo<AeFamilyUsageRequest[]>(
+    () => [
+      ...childChats.open.map((c) => ({
+        id: c.row.id,
+        stamp: c.row.updated_at,
+        done: c.status === "done",
+      })),
+      ...childChats.closed.map((row) => ({ id: row.id, stamp: row.updated_at, done: true })),
+    ],
+    [childChats],
+  );
+  const meta = useAeAgentMeta(
+    sessionId,
+    shownRows,
+    running > 0 || childChats.working > 0,
+    familyUsage,
+  );
   return (
     <AeRailSection id="agents" summary={summary}>
       <AeAgentMetaProvider meta={meta}>
         <div className="flex flex-col gap-2 text-sm" data-testid="ae-rail-agents">
-          {!empty && running === 0 && <AeRailMuted>Nothing running now.</AeRailMuted>}
+          <AeRailChildChats sessionId={sessionId} model={childChats} active={active} nowMs={now} />
+          {!empty && running === 0 && childChats.working === 0 && (
+            <AeRailMuted>Nothing running now.</AeRailMuted>
+          )}
           {rows.map(({ entry, running: live }) => {
             const pct = entry.reading ? (entry.reading.used / entry.reading.size) * 100 : null;
             const detail = [who(entry), live ? null : "finished"].filter(Boolean).join(" · ");
@@ -303,6 +340,11 @@ export function AeRailAgents({ sessionId }: AeRailSectionProps) {
               </div>
             );
           })}
+          {childChatCount > 0 && subagentCount > 0 && (
+            <div className="pt-1 text-xs uppercase tracking-wide text-muted-foreground">
+              Subagents
+            </div>
+          )}
           {runningSubagents.length > 0 && (
             <div className="flex flex-col">
               {runningSubagents.map((child) => (
@@ -388,7 +430,12 @@ export function AeRailAgents({ sessionId }: AeRailSectionProps) {
               {sessions.loading ? "Loading agents…" : "No agents have run in this session."}
             </AeRailMuted>
           )}
-          <AeAgentsTotal as="div" rootSessionId={sessionId} childIds={children.map((c) => c.id)} />
+          <AeAgentsTotal
+            as="div"
+            rootSessionId={sessionId}
+            childIds={children.map((c) => c.id)}
+            familyIds={familyUsage.map((f) => f.id)}
+          />
         </div>
       </AeAgentMetaProvider>
     </AeRailSection>

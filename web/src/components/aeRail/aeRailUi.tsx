@@ -100,8 +100,20 @@ export function AeRailBar({
 }
 
 /** A quiet line: an empty state, a hint, or what the section cannot know. */
-export function AeRailMuted({ children, className }: { children: ReactNode; className?: string }) {
-  return <p className={cn("py-1 text-xs text-muted-foreground", className)}>{children}</p>;
+export function AeRailMuted({
+  children,
+  className,
+  "data-testid": testId,
+}: {
+  children: ReactNode;
+  className?: string;
+  "data-testid"?: string;
+}) {
+  return (
+    <p className={cn("py-1 text-xs text-muted-foreground", className)} data-testid={testId}>
+      {children}
+    </p>
+  );
 }
 
 /** Small muted text for timestamps, counts and sources. */

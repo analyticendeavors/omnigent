@@ -3,7 +3,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChildSessionInfo } from "@/hooks/useChildSessions";
 import { useChatStore } from "@/store/chatStore";
-import { AeAgentMetaLine } from "./AeAgentMeta";
+import { AeAgentMetaLine, AeAgentMetaProvider, AeAgentsTotal, useAeAgentMeta } from "./AeAgentMeta";
 import { AeAgentsSections } from "./AeAgentsSections";
 
 const usageMock = vi.hoisted(() => vi.fn());
@@ -425,5 +425,35 @@ describe("AeAgentMetaLine raise marks", () => {
     mark(row({ "ae.raises": "0", "ae.raise_cap": "0" }));
     expect(screen.queryByTestId("subagent-raised")).toBeNull();
     expect(screen.queryByTestId("subagent-cap-reached")).toBeNull();
+  });
+});
+
+describe("Agents total with family child chats", () => {
+  const FAMILY = [{ id: "fam", stamp: 1 }];
+  function Total() {
+    const meta = useAeAgentMeta("conv_root", [], false, FAMILY);
+    return (
+      <AeAgentMetaProvider meta={meta}>
+        <AeAgentsTotal as="div" rootSessionId="conv_root" childIds={[]} familyIds={["fam"]} />
+      </AeAgentMetaProvider>
+    );
+  }
+
+  it("adds the child chats on top and keeps their spend out of the lead's share", async () => {
+    usageMock.mockImplementation(async (id: string) =>
+      id === "conv_root"
+        ? usage("claude-sonnet-5-5", 100_000, 0)
+        : usage("claude-opus-4-8", 300_000, 0),
+    );
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <Total />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("agents-total").textContent).toContain("$4.00"));
+    const total = screen.getByTestId("agents-total").textContent ?? "";
+    expect(total).toContain("This chat and its helpers");
+    expect(total).toContain("(lead $1.00)");
+    expect(total).toContain("Opus 75%");
   });
 });

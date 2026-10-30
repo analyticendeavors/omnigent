@@ -9,12 +9,15 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
 
 import { authenticatedFetch } from "@/lib/identity";
 import { useAeSessionRailStore } from "@/lib/aeSessionRail";
+import { useAeDockReveal } from "@/lib/aeDockReveal";
+import { useChatStore } from "@/store/chatStore";
 import { AeRailAgents, aeRailAgentsSummary } from "./AeRailAgents";
 
 /** A fresh QueryClient per render, retries off, as the app's provider supplies one. */
@@ -360,5 +363,218 @@ describe("AeRailAgents failed subagents", () => {
     expect(aeRailAgentsSummary(0, 1, 2)).toBe("1 failed · 2 finished");
     expect(aeRailAgentsSummary(2, 0, 0)).toBe("2 running");
     expect(aeRailAgentsSummary(0, 0, 0)).toBeUndefined();
+  });
+});
+
+describe("AeRailAgents child chats", () => {
+  const family = (id: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    object: "conversation",
+    title: `Child ${id}`,
+    created_at: 0,
+    updated_at: 1_000,
+    labels: { "ae.orch": "lead", "ae.role": "builder" },
+    permission_level: null,
+    status: "idle",
+    ...extra,
+  });
+
+  function routeFamily(rows: object[], archived: object[] | "fail" = [], archivedMore = false) {
+    vi.mocked(authenticatedFetch).mockImplementation((input) => {
+      const url = String(input);
+      if (url.startsWith("/v1/sessions?")) {
+        if (url.includes("visibility=archived")) {
+          if (archived === "fail") return json({ detail: "boom" }, 500);
+          return json({
+            object: "list",
+            data: archived,
+            has_more: archivedMore,
+            last_id: archivedMore ? "next" : null,
+          });
+        }
+        return json({ object: "list", data: rows, has_more: false, last_id: null });
+      }
+      if (/^\/v1\/sessions\/[^/?]+\/items\?/.test(url)) {
+        return json({ object: "list", data: [] });
+      }
+      if (url.split("?")[0] === "/v1/ae/limits") return json({ now: "", harnesses: {} });
+      if (url.endsWith("/child_sessions")) return json({ object: "list", data: [] });
+      const id = url.match(/^\/v1\/sessions\/([^/?]+)\?/)?.[1] ?? "";
+      return json({ id, agent_id: "a", status: "idle", created_at: 0 });
+    });
+  }
+
+  const view = () =>
+    render(
+      <MemoryRouter>
+        <AeRailAgents sessionId="lead" />
+      </MemoryRouter>,
+    );
+
+  beforeEach(() => {
+    window.localStorage.removeItem("ae.rail.agents.childClosedOpen");
+    useChatStore.setState({ conversationId: "lead", blocks: [] });
+  });
+
+  it("pins a child waiting on you, lists the others and folds the closed ones", async () => {
+    routeFamily(
+      [
+        family("asks", { pending_elicitations_count: 1 }),
+        family("busy", { status: "running" }),
+        family("fin"),
+        family("gone", { labels: { "ae.orch": "lead", "ae.status": "reference" } }),
+      ],
+      [family("shelved", { archived: true })],
+    );
+    view();
+    const pinned = await screen.findByTestId("ae-rail-child-needs");
+    expect(pinned.textContent).toContain("Child asks");
+    const rows = screen.getAllByTestId("ae-rail-child-chat");
+    expect(rows.map((r) => r.getAttribute("data-session"))).toEqual(["busy", "fin"]);
+    expect(within(pinned).getByTestId("ae-rail-child-open").getAttribute("href")).toBe("/c/asks");
+    expect(screen.queryByText("No agents have run in this session.")).toBeNull();
+    expect(screen.getByText("1 needs you · 1 running · 1 finished")).toBeTruthy();
+    // The heading counts every open child, the waiting one included.
+    expect(screen.getByText("Child chats").nextElementSibling?.textContent).toBe("3");
+    // An archived child folds under the closed toggle with the reference one.
+    await screen.findByText("2 closed");
+    expect(screen.queryByTestId("ae-rail-child-closed-row")).toBeNull();
+    fireEvent.click(screen.getByTestId("ae-rail-child-closed-toggle"));
+    expect(screen.getAllByTestId("ae-rail-child-closed-row").map((r) => r.textContent)).toEqual(
+      expect.arrayContaining(["Child gone", "Child shelved"]),
+    );
+    expect(screen.getByLabelText("Answer Child asks")).toBeTruthy();
+  });
+
+  it("shows no child section when this chat started none", async () => {
+    routeFamily([family("other", { labels: { "ae.orch": "someone-else" } })]);
+    view();
+    expect(await screen.findByText("No agents have run in this session.")).toBeTruthy();
+    expect(screen.queryByTestId("ae-rail-child-chats")).toBeNull();
+  });
+
+  it("Answer opens the dock when the prompt is mirrored here, else the child's chat", async () => {
+    routeFamily([family("asks", { pending_elicitations_count: 1 })]);
+    useChatStore.setState({
+      conversationId: "lead",
+      blocks: [
+        {
+          type: "elicitation",
+          elicitationId: "e1",
+          targetSessionId: "asks",
+          familyChild: { title: "Child asks" },
+          status: "pending",
+        } as never,
+      ],
+    });
+    const seen: string[] = [];
+    function Listener() {
+      useAeDockReveal((kind, childId) => seen.push(kind, childId ?? ""));
+      return null;
+    }
+    render(<Listener />);
+    view();
+    const answer = await screen.findByTestId("ae-rail-child-answer");
+    expect(answer.tagName).toBe("BUTTON");
+    fireEvent.click(answer);
+    expect(seen).toEqual(["childPrompt", "asks"]);
+    cleanup();
+    useChatStore.setState({ conversationId: "lead", blocks: [] });
+    view();
+    const link = await screen.findByTestId("ae-rail-child-answer");
+    expect(link.tagName).toBe("A");
+    expect(link.getAttribute("href")).toBe("/c/asks");
+  });
+
+  it("lets a live row beat a stale archived read", async () => {
+    routeFamily([family("back")], [family("back", { archived: true })]);
+    view();
+    await screen.findByTestId("ae-rail-child-chat");
+    expect(screen.getByTestId("ae-rail-child-chat").getAttribute("data-session")).toBe("back");
+    await waitFor(() =>
+      expect(authenticatedFetch).toHaveBeenCalledWith(
+        expect.stringContaining("visibility=archived"),
+        expect.anything(),
+      ),
+    );
+    expect(screen.queryByTestId("ae-rail-child-closed-toggle")).toBeNull();
+  });
+
+  it("reads the archived list again when a child leaves the open list", async () => {
+    const live = [family("a"), family("b")];
+    const archived: object[] = [];
+    routeFamily(live, archived);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    rtlRender(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <AeRailAgents sessionId="lead" />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(screen.getAllByTestId("ae-rail-child-chat")).toHaveLength(2));
+    expect(screen.queryByTestId("ae-rail-child-closed-toggle")).toBeNull();
+    // "b" is archived: the stream drops it from the open list, the server now lists it archived.
+    archived.push(family("b", { archived: true }));
+    act(() => {
+      client.setQueryData(["conversations", "", false], {
+        pages: [{ data: [live[0]], has_more: false, last_id: null, first_id: null }],
+        pageParams: [undefined],
+      });
+    });
+    expect(await screen.findByText("1 closed")).toBeTruthy();
+  });
+
+  it("says when the archived read failed or stopped at its page cap", async () => {
+    routeFamily([family("a")], "fail");
+    view();
+    expect((await screen.findByTestId("ae-rail-child-archived-note")).textContent).toBe(
+      "Could not load archived chats.",
+    );
+    cleanup();
+    routeFamily([family("a")], [], true);
+    view();
+    expect((await screen.findByTestId("ae-rail-child-archived-note")).textContent).toContain(
+      "older archived not counted",
+    );
+  });
+
+  it("shows the failed archived note even when the chat has no other child", async () => {
+    routeFamily([], "fail");
+    view();
+    expect((await screen.findByTestId("ae-rail-child-archived-note")).textContent).toBe(
+      "Could not load archived chats.",
+    );
+    expect(screen.queryByText("No agents have run in this session.")).toBeNull();
+  });
+
+  it("says nothing about a page cap when the chat has no child to fold", async () => {
+    routeFamily([], [], true);
+    view();
+    expect(await screen.findByText("No agents have run in this session.")).toBeTruthy();
+    expect(screen.queryByTestId("ae-rail-child-archived-note")).toBeNull();
+  });
+
+  it("does not read the archived list again when the rail moves to another chat", async () => {
+    routeFamily([family("a"), family("b"), family("c", { labels: { "ae.orch": "other" } })]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    const tree = (id: string) => (
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <AeRailAgents sessionId={id} />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+    const { rerender } = rtlRender(tree("lead"));
+    await waitFor(() => expect(screen.getAllByTestId("ae-rail-child-chat")).toHaveLength(2));
+    rerender(tree("other"));
+    await waitFor(() => expect(screen.getAllByTestId("ae-rail-child-chat")).toHaveLength(1));
+    const archivedReads = invalidate.mock.calls.filter(
+      ([filter]) =>
+        JSON.stringify((filter as { queryKey?: unknown })?.queryKey) ===
+        JSON.stringify(["ae-rail-child-chats-archived"]),
+    );
+    expect(archivedReads).toHaveLength(0);
   });
 });

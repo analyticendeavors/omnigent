@@ -53,10 +53,20 @@ function useNativeInputs(rootSessionId: string): Readonly<Record<string, AeNativ
  * the native inputs. A stopped row is read once; running rows and the lead
  * read again every 30 s while anything runs.
  */
+const NO_IDS: readonly never[] = [];
+
+export interface AeFamilyUsageRequest {
+  id: string;
+  stamp: string | number;
+  done?: boolean;
+}
+
 export function useAeAgentMeta(
   rootSessionId: string,
   shown: readonly ChildSessionInfo[],
   live: boolean,
+  /** Family child chats: separate sessions the lead's usage does not cover. */
+  family: readonly AeFamilyUsageRequest[] = NO_IDS,
 ) {
   const sessions = useMemo(
     () => [
@@ -66,10 +76,11 @@ export function useAeAgentMeta(
         stamp: `${a.current_task_status ?? ""}${a.busy ? "b" : ""}`,
         done: isChildFinished(a),
       })),
+      ...family,
     ],
-    [rootSessionId, shown],
+    [rootSessionId, shown, family],
   );
-  const usage = useAeSessionUsages(sessions, { enabled: shown.length > 0, live });
+  const usage = useAeSessionUsages(sessions, { enabled: shown.length + family.length > 0, live });
   const inputs = useNativeInputs(rootSessionId);
   return { usage, inputs };
 }
@@ -186,16 +197,19 @@ export function AeAgentMetaLine({
 }
 
 /**
- * "This chat and its agents" with a bar split by model family. The lead's
+ * "This chat and its helpers" with a bar split by model family. The lead's
  * usage covers its subagents, so its own share is what is left after them.
  */
 export function AeAgentsTotal({
   rootSessionId,
   childIds,
+  familyIds = NO_IDS,
   as: Tag = "li",
 }: {
   rootSessionId: string;
   childIds: readonly string[];
+  /** Family child chats. They run outside the lead's spawn tree, so they add to its usage. */
+  familyIds?: readonly string[];
   as?: "li" | "div";
 }) {
   const usage = useContext(UsageContext);
@@ -204,7 +218,7 @@ export function AeAgentsTotal({
   if (!lead || mode === "off") return null;
   // Cost is the measure; tokens stand in only when the lead reports no cost.
   // Both mode needs one number, so it uses cost only when every session has one.
-  const allRead = [lead, ...childIds.map((id) => usage.get(id))];
+  const allRead = [lead, ...[...childIds, ...familyIds].map((id) => usage.get(id))];
   const byCost =
     mode === "cost"
       ? lead.costUsd !== null
@@ -217,11 +231,17 @@ export function AeAgentsTotal({
   const known = childIds.map((id) => usage.get(id)).filter((u): u is AeSessionUsage => !!u);
   const childSum = known.reduce((sum, u) => sum + measure(u), 0);
   // Every child here is in the lead's spawn tree, so its usage already holds them.
-  // The max covers a lead read that is older than the children's.
-  const total = Math.max(leadValue, childSum);
+  const familyKnown = familyIds
+    .filter((id) => !childIds.includes(id))
+    .map((id) => usage.get(id))
+    .filter((u): u is AeSessionUsage => !!u);
+  const familySum = familyKnown.reduce((sum, u) => sum + measure(u), 0);
+  // The max covers a lead read that is older than the children's; family spend stays apart.
+  const spawnTotal = Math.max(leadValue, childSum);
+  const total = spawnTotal + familySum;
   // With an unread child (a folded group), the lead's share cannot be told apart.
   // Float residue under half a cent is a true zero.
-  const rest = Math.max(0, total - childSum);
+  const rest = Math.max(0, spawnTotal - childSum);
   const own = known.length === childIds.length ? (rest < 0.005 ? 0 : rest) : null;
   // A stale lead read has no trustworthy split, so the children's stand in.
   const byFamily: Record<string, number> = childSum > leadValue ? {} : { ...leadFamilies };
@@ -233,16 +253,23 @@ export function AeAgentsTotal({
     }
   }
   // Tokens mode: sessions without a count leave the total short, so it ends in "+".
-  const noCount = byTokens ? [lead, ...known].filter((u) => aeUsageSpentTokens(u) === null) : [];
+  const noCount = byTokens
+    ? [lead, ...known, ...familyKnown].filter((u) => aeUsageSpentTokens(u) === null)
+    : [];
   const plus = noCount.length > 0 ? "+" : "";
   const fmt = (n: number) => (byCost ? aeFormatCost(n) : `${aeFormatTokens(n)}${plus} tokens`);
+  for (const u of familyKnown) {
+    for (const [family, n] of Object.entries(byCost ? u.costByFamily : u.byFamily)) {
+      byFamily[family] = (byFamily[family] ?? 0) + (n ?? 0);
+    }
+  }
   // Tokens only when every model in the lead and the rows read reports them.
   const tokenTotal =
-    byCost && lead.tokens !== null && known.every((u) => u.tokens !== null)
+    byCost && lead.tokens !== null && [...known, ...familyKnown].every((u) => u.tokens !== null)
       ? Math.max(
           lead.tokens,
           known.reduce((sum, u) => sum + (u.tokens ?? 0), 0),
-        )
+        ) + familyKnown.reduce((sum, u) => sum + (u.tokens ?? 0), 0)
       : null;
   if (total <= 0) return null;
   const sum = Object.values(byFamily).reduce((a, b) => a + b, 0) || 1;
@@ -252,7 +279,7 @@ export function AeAgentsTotal({
   return (
     <Tag data-testid="agents-total" className="mt-1 border-t border-border/60 px-2.5 py-2 text-xs">
       <div className="text-muted-foreground">
-        This chat and its agents:{" "}
+        This chat and its helpers:{" "}
         <b
           className="font-medium text-foreground tabular-nums"
           title={

@@ -18,6 +18,7 @@ import {
 } from "react";
 import { ConfirmMerge, MERGED_TEXT } from "@/components/AePrCards";
 import { AeDockChildPrompt } from "@/components/AeDockChildPrompt";
+import { useAeDockReveal } from "@/lib/aeDockReveal";
 import { AePrLinkHoverCard } from "@/components/AePrLinkHoverCard";
 import { COMPOSER_CONTENT_INSET_CLASS } from "@/components/composer/ChatComposer";
 import { Button } from "@/components/ui/button";
@@ -713,6 +714,7 @@ function Dock({ sessionId, onSwitchModel }: { sessionId?: string; onSwitchModel?
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [scrollTo, setScrollTo] = useState<AeDockKind | null>(null);
+  const [scrollChild, setScrollChild] = useState<string | null>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const [tray, setTray] = useState<HTMLDivElement | null>(null);
   useAeDockLift(tray);
@@ -720,13 +722,25 @@ function Dock({ sessionId, onSwitchModel }: { sessionId?: string; onSwitchModel?
   const badgesRef = useRef<HTMLDivElement>(null);
   const [compact, setCompact] = useState(false);
   const openedForConfirm = useRef(false);
+  // The rail's Answer button opens the tray at the line it names.
+  useAeDockReveal((kind, childId) => {
+    openedForConfirm.current = false;
+    setConfirming(null);
+    setOpen(true);
+    setScrollTo(kind);
+    setScrollChild(childId ?? null);
+  });
   const now = Date.now();
   useLayoutEffect(() => {
     if (!open || !scrollTo || !listRef.current) return;
-    const line = listRef.current.querySelector<HTMLElement>(`[data-kind="${scrollTo}"]`);
+    const lines = listRef.current.querySelectorAll<HTMLElement>(`[data-kind="${scrollTo}"]`);
+    // A reveal naming a child goes to that child's line, else to the first of the kind.
+    const line =
+      (scrollChild && [...lines].find((el) => el.dataset.child === scrollChild)) || lines[0];
     if (line) listRef.current.scrollTop = line.offsetTop;
     setScrollTo(null);
-  }, [open, scrollTo]);
+    setScrollChild(null);
+  }, [open, scrollTo, scrollChild]);
   // Escape closes the tray, and abandons a confirm in it.
   useEffect(() => {
     if (!open) return;
@@ -901,6 +915,7 @@ function Dock({ sessionId, onSwitchModel }: { sessionId?: string; onSwitchModel?
               <li
                 key={item.key}
                 data-kind={item.kind}
+                data-child={item.kind === "childPrompt" ? item.childId : undefined}
                 className={cn(index > 0 && "border-t border-border/60")}
                 data-testid="ae-dock-line"
               >

@@ -18,6 +18,7 @@ import { dismissAeSwitchFamily, useAeSwitchFamilyRequest } from "@/lib/aeSwitchF
 import type { AePrCard } from "@/lib/aePrs";
 import { ForkDialogContextProvider } from "@/shell/ForkDialogContext";
 import { useChatStore } from "@/store/chatStore";
+import { aeRevealDock } from "@/lib/aeDockReveal";
 import { AeActionDock } from "./AeActionDock";
 import { ComposerWorkspaceBar } from "./composer/ComposerControls";
 import { ComposerPrLink } from "./composer/ComposerPrLink";
@@ -897,6 +898,37 @@ describe("AeActionDock child prompts", () => {
     const lead = await screen.findByTestId("ae-dock-lead");
     expect(lead.textContent).toContain("Halcyon Orbital: Keep the Fuel Cost measure?");
     expect(screen.queryByTestId("ae-dock-jump")).toBeNull();
+  });
+
+  it("opens the tray when the rail asks to reveal the child prompts", async () => {
+    renderChildDock([ask]);
+    await screen.findByTestId("ae-dock-lead");
+    expect(screen.queryByTestId("ae-dock-child-prompt")).toBeNull();
+    act(() => aeRevealDock("childPrompt"));
+    expect(await screen.findByTestId("ae-dock-child-prompt")).toBeTruthy();
+  });
+
+  it("scrolls the tray to the child the rail names, not the first waiting one", async () => {
+    // jsdom has no layout: give each line a top of 100 per position.
+    const top = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetTop");
+    Object.defineProperty(HTMLElement.prototype, "offsetTop", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.parentElement ? [...this.parentElement.children].indexOf(this) * 100 : 0;
+      },
+    });
+    try {
+      renderChildDock([ask, permission]);
+      await screen.findByTestId("ae-dock-lead");
+      act(() => aeRevealDock("childPrompt", "conv_other"));
+      const list = await screen.findByTestId("ae-dock-list");
+      await waitFor(() => expect(list.scrollTop).toBe(100));
+      act(() => aeRevealDock("childPrompt", "conv_child"));
+      await waitFor(() => expect(list.scrollTop).toBe(0));
+    } finally {
+      if (top) Object.defineProperty(HTMLElement.prototype, "offsetTop", top);
+      else delete (HTMLElement.prototype as { offsetTop?: number }).offsetTop;
+    }
   });
 
   it("opens a tray with each prompt's real card, the child's title and an open link", async () => {
