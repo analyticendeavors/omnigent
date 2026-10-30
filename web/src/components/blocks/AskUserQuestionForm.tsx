@@ -258,10 +258,10 @@ export function AskUserQuestionForm({ questions, onSubmit, onReject }: AskUserQu
                     onChange={() => handleMultiToggle(currentKey, opt.label)}
                     className="mt-1"
                   />
-                  <span className="flex flex-col">
+                  <span className="flex flex-col min-w-0 [overflow-wrap:anywhere]">
                     <span>{opt.label}</span>
                     {opt.description && (
-                      <span className="text-muted-foreground text-sm [overflow-wrap:anywhere]">{opt.description}</span>
+                      <span className="text-muted-foreground text-sm">{opt.description}</span>
                     )}
                   </span>
                 </label>
@@ -283,10 +283,10 @@ export function AskUserQuestionForm({ questions, onSubmit, onReject }: AskUserQu
                   onChange={() => handleSingleSelect(currentKey, opt.label)}
                   className="mt-1"
                 />
-                <span className="flex flex-col">
+                <span className="flex flex-col min-w-0 [overflow-wrap:anywhere]">
                   <span>{opt.label}</span>
                   {opt.description && (
-                    <span className="text-muted-foreground text-sm [overflow-wrap:anywhere]">{opt.description}</span>
+                    <span className="text-muted-foreground text-sm">{opt.description}</span>
                   )}
                 </span>
               </label>

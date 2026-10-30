@@ -735,6 +735,9 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
     expect(section.className).toContain("min-w-0");
     const legend = section.querySelector("legend")!;
     expect(legend.className).toContain("[overflow-wrap:anywhere]");
+    const optionText = screen.getByText("Merge").parentElement!;
+    expect(optionText.className).toContain("min-w-0");
+    expect(optionText.className).toContain("[overflow-wrap:anywhere]");
   });
 
   it("renders checkbox inputs for a multiSelect question", () => {
