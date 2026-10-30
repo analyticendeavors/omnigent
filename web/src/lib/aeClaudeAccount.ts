@@ -61,6 +61,32 @@ export function aeRefreshChatAccount(queryClient: QueryClient, sessionId: string
   if (sessionId) void queryClient.invalidateQueries({ queryKey: ["ae-limits", sessionId] });
 }
 
+/**
+ * When to re-read the Usage numbers after a switch (ms after it settled). The server answers
+ * from the runner's launch-time label, which the runner stamps only after the terminal
+ * relaunches, so the first re-read can still see the old login (2026-10-30).
+ */
+export const AE_ACCOUNT_FOLLOW_UP_DELAYS_MS = [2000, 5000, 12000, 30000];
+
+/**
+ * `aeRefreshChatAccount` now, then the Usage numbers again at each follow-up delay so the card
+ * catches the runner's stamp. Returns a function that cancels the pending re-reads.
+ */
+export function aeRefreshChatAccountSoon(
+  queryClient: QueryClient,
+  sessionId: string | null,
+): () => void {
+  aeRefreshChatAccount(queryClient, sessionId);
+  if (!sessionId) return () => {};
+  const timers = AE_ACCOUNT_FOLLOW_UP_DELAYS_MS.map((delay) =>
+    setTimeout(
+      () => void queryClient.invalidateQueries({ queryKey: ["ae-limits", sessionId] }),
+      delay,
+    ),
+  );
+  return () => timers.forEach(clearTimeout);
+}
+
 /** The login a chat is on: the stored pick, else the last launch's, else unknown (`undefined`). */
 export function aeChatAccount(
   labels: Record<string, string> | null | undefined,

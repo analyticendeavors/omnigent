@@ -1,5 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { aeChatAccount, aeMoveAllSummary, aeSwitchSummary } from "./aeClaudeAccount";
+import type { QueryClient } from "@tanstack/react-query";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  AE_ACCOUNT_FOLLOW_UP_DELAYS_MS,
+  aeChatAccount,
+  aeMoveAllSummary,
+  aeRefreshChatAccountSoon,
+  aeSwitchSummary,
+} from "./aeClaudeAccount";
 import { aeOtherClaudeAccounts } from "./aeLimitGate";
 import { askAeMoveAll, dismissAeMoveAll } from "./aeMoveAllChats";
 
@@ -104,5 +111,42 @@ describe("aeSwitchSummary", () => {
         },
       }),
     ).toBe("This chat now runs on Backup; 1 child chat moved; 1 skipped: Docs: needs a host");
+  });
+});
+
+describe("aeRefreshChatAccountSoon", () => {
+  afterEach(() => vi.useRealTimers());
+
+  const limitsCalls = (spy: ReturnType<typeof vi.fn>) =>
+    spy.mock.calls.filter(([arg]) => arg?.queryKey?.[0] === "ae-limits").length;
+
+  it("re-reads the Usage numbers now and at each follow-up delay", () => {
+    vi.useFakeTimers();
+    const invalidate = vi.fn();
+    const client = { invalidateQueries: invalidate } as unknown as QueryClient;
+    aeRefreshChatAccountSoon(client, "s1");
+    expect(limitsCalls(invalidate)).toBe(1);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["session", "s1"] });
+    vi.advanceTimersByTime(Math.max(...AE_ACCOUNT_FOLLOW_UP_DELAYS_MS));
+    expect(limitsCalls(invalidate)).toBe(1 + AE_ACCOUNT_FOLLOW_UP_DELAYS_MS.length);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["ae-limits", "s1"] });
+  });
+
+  it("stops re-reading once cancelled", () => {
+    vi.useFakeTimers();
+    const invalidate = vi.fn();
+    const client = { invalidateQueries: invalidate } as unknown as QueryClient;
+    const cancel = aeRefreshChatAccountSoon(client, "s1");
+    vi.advanceTimersByTime(AE_ACCOUNT_FOLLOW_UP_DELAYS_MS[0]);
+    cancel();
+    vi.advanceTimersByTime(60_000);
+    expect(limitsCalls(invalidate)).toBe(2);
+  });
+
+  it("schedules nothing without a session", () => {
+    vi.useFakeTimers();
+    const invalidate = vi.fn();
+    aeRefreshChatAccountSoon({ invalidateQueries: invalidate } as unknown as QueryClient, null);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

@@ -17,7 +17,7 @@ import { showToast } from "@/components/ui/toast";
 import {
   AE_MOVE_ALL_CAUTION,
   aeMoveAllSummary,
-  aeRefreshChatAccount,
+  aeRefreshChatAccountSoon,
   moveAllAeClaudeChats,
 } from "@/lib/aeClaudeAccount";
 import { dismissAeMoveAll, useAeMoveAllRequest } from "@/lib/aeMoveAllChats";
@@ -33,7 +33,7 @@ export function AeMoveAllChatsDialog() {
     moveAllAeClaudeChats(account, hostId).then(
       (answer) => {
         for (const id of [...answer.moved, ...answer.pending.map((p) => p.id)]) {
-          aeRefreshChatAccount(queryClient, id);
+          aeRefreshChatAccountSoon(queryClient, id);
         }
         showToast(aeMoveAllSummary(answer));
       },
