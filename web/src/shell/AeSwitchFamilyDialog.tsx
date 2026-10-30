@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { showToast } from "@/components/ui/toast";
 import {
+  aeRefreshChatAccount,
   aeRefreshChatAccountSoon,
   aeSwitchSummary,
   aeSwitchedChildIds,
@@ -40,6 +41,7 @@ export function AeSwitchFamilyDialog() {
     putAeClaudeAccount(sessionId, account, includeChildren).then(
       (answer) => {
         for (const id of [sessionId, ...aeSwitchedChildIds(answer)]) {
+          aeRefreshChatAccount(queryClient, id);
           aeRefreshChatAccountSoon(queryClient, id);
         }
         const kids = answer.children;
@@ -48,7 +50,7 @@ export function AeSwitchFamilyDialog() {
         showToast(aeSwitchSummary(label, answer), lingers ? { duration: 0 } : undefined);
       },
       (failure: unknown) => {
-        aeRefreshChatAccountSoon(queryClient, sessionId);
+        aeRefreshChatAccount(queryClient, sessionId);
         showToast(failure instanceof Error ? failure.message : "Could not switch the login.");
       },
     );
