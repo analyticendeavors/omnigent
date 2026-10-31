@@ -12,10 +12,14 @@ export interface AePinFamilyQuestion {
   action: "pin" | "unpin";
   /** The lead's title, shown in the dialog. */
   title: string | null;
+  /** Why the whole family cannot be taken (pin only): the family button is disabled with it. */
+  familyBlocked?: string;
 }
 
-let current: { question: AePinFamilyQuestion; resolve: (answer: AePinFamilyAnswer) => void } | null =
-  null;
+let current: {
+  question: AePinFamilyQuestion;
+  resolve: (answer: AePinFamilyAnswer) => void;
+} | null = null;
 const listeners = new Set<() => void>();
 
 function emit(): void {

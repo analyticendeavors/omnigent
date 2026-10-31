@@ -400,6 +400,86 @@ describe("aeTogglePinFamily", () => {
       expect(question()).toBeNull();
     });
 
+    it("shows the newest click's question when an older read lands last", async () => {
+      const lead2 = session("lead2");
+      const rows = [LEAD, child("a"), lead2, child("b", "working", "lead2")];
+      let release: () => void = () => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let first = true;
+      mocks.read.mockImplementation(async () => {
+        const wait = first;
+        first = false;
+        if (wait) await held;
+        return { data: rows, has_more: false, last_id: null };
+      });
+      const aloneA = vi.fn<() => void>();
+      const aloneB = vi.fn<() => void>();
+      const click = (target: Conversation, fn: () => void) =>
+        aeTogglePinFamily({
+          queryClient,
+          writePin,
+          session: target,
+          pinned: false,
+          pinCap: 30,
+          includeShared: true,
+          alone: fn,
+        });
+      click(LEAD, aloneA);
+      click(lead2, aloneB);
+      await vi.waitFor(() => expect(question()).toEqual({ action: "pin", title: "lead2" }));
+      release();
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 20);
+      });
+      expect(question()).toEqual({ action: "pin", title: "lead2" });
+      answerPinFamily("parent");
+      await vi.waitFor(() => expect(aloneB).toHaveBeenCalledTimes(1));
+      expect(aloneA).not.toHaveBeenCalled();
+    });
+
+    it("tells the dialog when the family does not fit, before asking", async () => {
+      sessionList([LEAD, child("a"), child("b")]);
+      pinned({ x: 1, y: 2 });
+      toggle(LEAD, false, 4);
+      await vi.waitFor(() =>
+        expect(question()).toEqual({
+          action: "pin",
+          title: "lead",
+          familyBlocked: "Needs 3 pin spots, 2 free",
+        }),
+      );
+      answerPinFamily("parent");
+      await vi.waitFor(() => expect(alone).toHaveBeenCalledTimes(1));
+      expect(writePin).not.toHaveBeenCalled();
+    });
+
+    it("lands a family pinned at a drop spot there, children right after the lead", async () => {
+      sessionList([LEAD, child("a"), child("b")]);
+      const then = vi.fn<() => void>();
+      aeTogglePinFamily({
+        queryClient,
+        writePin,
+        session: LEAD,
+        pinned: false,
+        pinCap: 30,
+        includeShared: true,
+        alone,
+        place: { pinnedAt: 10, before: 11, then },
+      });
+      await vi.waitFor(() => expect(question()).not.toBeNull());
+      answerPinFamily("family");
+      await vi.waitFor(() => expect(then).toHaveBeenCalledTimes(1));
+      const values = writePin.mock.calls.map(([w]) => [w.id, w.pinnedAt]);
+      expect(values.map(([id]) => id)).toEqual(["lead", "a", "b"]);
+      const [lead, a, b] = values.map(([, v]) => v as number);
+      expect(lead).toBe(10);
+      expect(a).toBeGreaterThan(10);
+      expect(b).toBeGreaterThan(a);
+      expect(b).toBeLessThan(11);
+    });
+
     it("does not ask while the setting is family", async () => {
       writeAePinFamily("family");
       sessionList([LEAD, child("a")]);

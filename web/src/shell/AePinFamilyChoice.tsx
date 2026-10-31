@@ -3,6 +3,7 @@
 // `askPinFamily` (lib/aePinFamilyChoice.ts) asked. Radix's dialog supplies the
 // focus trap, focus return and Escape; closing any other way is Cancel.
 
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -15,10 +16,16 @@ import {
 import { answerPinFamily, usePinFamilyQuestion } from "@/lib/aePinFamilyChoice";
 
 export function AePinFamilyChoiceHost() {
-  const question = usePinFamilyQuestion();
+  const asked = usePinFamilyQuestion();
+  // Radix animates the dialog out after the question clears: keep drawing the last one.
+  const [kept, setKept] = useState(asked);
+  useEffect(() => {
+    if (asked) setKept(asked);
+  }, [asked]);
+  const question = asked ?? kept;
   const pin = question?.action !== "unpin";
   return (
-    <Dialog open={question !== null} onOpenChange={(open) => !open && answerPinFamily("cancel")}>
+    <Dialog open={asked !== null} onOpenChange={(open) => !open && answerPinFamily("cancel")}>
       <DialogContent showCloseButton={false} data-testid="ae-pin-family-dialog">
         <DialogHeader>
           <DialogTitle>
@@ -31,6 +38,11 @@ export function AePinFamilyChoiceHost() {
               ? `"${question.title}" leads a family of sessions.`
               : "This session leads a family of sessions."}
           </DialogDescription>
+          {question?.familyBlocked && (
+            <p role="status" className="text-ui text-destructive">
+              {question.familyBlocked}
+            </p>
+          )}
         </DialogHeader>
         <DialogFooter>
           <Button
@@ -47,7 +59,11 @@ export function AePinFamilyChoiceHost() {
           >
             {pin ? "Pin only the parent" : "Unpin only the parent"}
           </Button>
-          <Button data-testid="ae-pin-family-dialog-family" onClick={() => answerPinFamily("family")}>
+          <Button
+            data-testid="ae-pin-family-dialog-family"
+            disabled={!!question?.familyBlocked}
+            onClick={() => answerPinFamily("family")}
+          >
             {pin ? "Pin the whole family" : "Unpin the whole family"}
           </Button>
         </DialogFooter>

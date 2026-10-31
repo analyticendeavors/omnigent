@@ -22,6 +22,7 @@ import { aeFamilyParent } from "@/lib/aeFamily";
 import { aeIsClosedMember } from "@/lib/aeFamilyClosed";
 import { aeFamilyOf, aeReadFamilySessions } from "@/lib/aeFamilyRead";
 import { readAePinFamily } from "@/lib/aePinFamily";
+import { aeKidPinValues } from "@/lib/aePinnedOrder";
 import { askPinFamily } from "@/lib/aePinFamilyChoice";
 import { getCurrentUserId } from "@/lib/identity";
 import { PINNED_LABEL_KEY } from "@/lib/sessionListCache";
@@ -100,18 +101,17 @@ async function writeEach(
   return done;
 }
 
-async function pinFamily(
+/** The family's sessions a pin would add: the lead, and the open ones not pinned yet. */
+function pinTargets(
   queryClient: QueryClient,
-  writePin: WritePin,
   family: Conversation[],
   id: string,
-  pinCap: number,
   includeShared: boolean,
-): Promise<void> {
+): Conversation[] {
   const viewerId = getCurrentUserId();
   // Read again now: the lead or a member may have been pinned while the family was read.
   const pinned = pinnedNow(queryClient);
-  const targets = family.filter(
+  return family.filter(
     (c) =>
       !pinned.has(c.id) &&
       (c.id === id ||
@@ -120,8 +120,34 @@ async function pinFamily(
           // Without shared pins the toggle refuses another person's session.
           (includeShared || sessionVisibility(c, viewerId) === "mine"))),
   );
+}
+
+function freeSpots(queryClient: QueryClient, pinCap: number, includeShared: boolean): number {
+  return Math.max(pinCap - pinsCounted(queryClient, includeShared), 0);
+}
+
+/** Where a family pinned by a drop lands: the lead's value, and the row it must stay below. */
+export interface AePinPlace {
+  /** The lead's `omnigent.pinned` value. */
+  pinnedAt: number;
+  /** The value of the top-level row that follows, if any: the family sits below it. */
+  before?: number;
+  /** Runs once the pins are written (the renumbered neighbours). */
+  then?: () => void;
+}
+
+async function pinFamily(
+  queryClient: QueryClient,
+  writePin: WritePin,
+  family: Conversation[],
+  id: string,
+  pinCap: number,
+  includeShared: boolean,
+  place?: AePinPlace,
+): Promise<void> {
+  const targets = pinTargets(queryClient, family, id, includeShared);
   if (targets.length === 0) return;
-  const free = Math.max(pinCap - pinsCounted(queryClient, includeShared), 0);
+  const free = freeSpots(queryClient, pinCap, includeShared);
   if (targets.length > free) {
     showToast(
       `Not enough pin spots for this family (${targets.length} needed, ${free} free). Nothing was pinned.`,
@@ -135,10 +161,23 @@ async function pinFamily(
   }
   // Lead first: Pinned sorts by pin time, so the family lists together under it.
   const ordered = [...targets.filter((c) => c.id === id), ...targets.filter((c) => c.id !== id)];
+  // Dropped at a spot: the lead takes the drop value and the rest follow it, below the next row.
+  const kidValues = place
+    ? aeKidPinValues(
+        place.pinnedAt,
+        place.before,
+        ordered.length - ordered.filter((c) => c.id === id).length,
+      )
+    : [];
+  let kid = 0;
   const done = await writeEach(
     writePin,
-    ordered.map((c) => ({ id: c.id, pinned: true })),
+    ordered.map((c) => {
+      if (!place) return { id: c.id, pinned: true };
+      return { id: c.id, pinned: true, pinnedAt: c.id === id ? place.pinnedAt : kidValues[kid++] };
+    }),
   );
+  if (done.length === ordered.length) place?.then?.();
   if (done.length > 0 && done.length < ordered.length) {
     showToast(
       `Pinned ${done.length} of ${ordered.length} family sessions; the rest did not save. Pin them again to retry.`,
@@ -185,6 +224,8 @@ async function unpinFamily(
 
 // A second click on the same lead while its family is read does nothing.
 const reading = new Set<string>();
+// Reads can land out of order; only the newest click's read may show a question.
+let latestClick = 0;
 
 /**
  * Pin or unpin *session*, with its family when the setting is on and it leads
@@ -198,6 +239,7 @@ export function aeTogglePinFamily({
   pinCap,
   includeShared,
   alone,
+  place,
 }: {
   queryClient: QueryClient;
   writePin: WritePin;
@@ -208,6 +250,8 @@ export function aeTogglePinFamily({
   /** Whether Pinned holds shared sessions, as the pin toggle reads it. */
   includeShared: boolean;
   alone: () => void;
+  /** A pin dropped at a spot in Pinned: the whole family lands there. */
+  place?: AePinPlace;
 }): void {
   const mode = readAePinFamily();
   if (mode === "parent") {
@@ -222,10 +266,13 @@ export function aeTogglePinFamily({
   }
   if (reading.has(session.id)) return;
   reading.add(session.id);
+  latestClick += 1;
+  const click = latestClick;
   aeReadFamilySessions(queryClient)
     .finally(() => reading.delete(session.id))
     .then(
       (rows) => {
+        if (click !== latestClick) return undefined;
         const family = aeFamilyOf(rows, session.id);
         const lead = family.find((c) => c.id === session.id);
         const others = family.filter((c) => c.id !== session.id);
@@ -235,9 +282,13 @@ export function aeTogglePinFamily({
           return undefined;
         }
         const title = lead.title ?? null;
-        const cascade = async (takeFamily: () => Promise<void>) => {
+        const cascade = async (takeFamily: () => Promise<void>, familyBlocked?: string) => {
           if (mode === "ask") {
-            const answer = await askPinFamily({ action: pinned ? "unpin" : "pin", title });
+            const answer = await askPinFamily({
+              action: pinned ? "unpin" : "pin",
+              title,
+              familyBlocked,
+            });
             if (answer === "cancel") return;
             if (answer === "parent") {
               alone();
@@ -259,11 +310,16 @@ export function aeTogglePinFamily({
           alone();
           return undefined;
         }
-        return cascade(() =>
-          pinFamily(queryClient, writePin, family, session.id, pinCap, includeShared),
+        // Count the spots before asking, so the dialog can say the family does not fit.
+        const needed = pinTargets(queryClient, family, session.id, includeShared).length;
+        const free = freeSpots(queryClient, pinCap, includeShared);
+        return cascade(
+          () => pinFamily(queryClient, writePin, family, session.id, pinCap, includeShared, place),
+          needed > free ? `Needs ${needed} pin spots, ${free} free` : undefined,
         );
       },
       () => {
+        if (click !== latestClick) return;
         // Asking is the default, so a failed read must not stop a plain pin.
         if (mode === "ask") {
           alone();
@@ -279,4 +335,5 @@ export function aeTogglePinFamily({
 /** Resets the read guard between tests. */
 export function resetAePinFamilyForTests(): void {
   reading.clear();
+  latestClick = 0;
 }

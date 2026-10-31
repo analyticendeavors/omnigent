@@ -7,7 +7,16 @@
 //   5. The lead's chevron folds its pinned sessions away.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -16,23 +25,28 @@ import { CapabilitiesProvider } from "@/lib/CapabilitiesContext";
 import { FALLBACK_SERVER_INFO } from "@/lib/capabilities";
 import { resetAeFamilyFoldsCache } from "@/lib/aeFamilyTree";
 import { conversation as conv, conversationPage } from "@/test/sidebarMockHelpers";
+import { answerPinFamily, usePinFamilyQuestion } from "@/lib/aePinFamilyChoice";
+import { resetAePinFamilyForTests } from "./aePinFamily";
 import { Sidebar } from "./Sidebar";
 
 vi.mock("@/hooks/useScopeCache", () => import("@/test/mockScopeCache"));
 
 const mocks = vi.hoisted(() => ({
   pinned: [] as ReturnType<typeof conv>[],
+  filterHonored: true,
   pinFn: vi.fn(),
   reorderPins: vi.fn(),
+  readPage: vi.fn(),
 }));
 
 vi.mock("@/hooks/useConversations", async () => {
   const { conversationHooksMock } = await import("@/test/sidebarMockHelpers");
   return {
     ...conversationHooksMock(),
+    fetchConversationsPage: mocks.readPage,
     useProjects: vi.fn(() => ({ data: [] })),
     usePinnedConversations: () => ({
-      data: { conversations: mocks.pinned, filterHonored: true },
+      data: { conversations: mocks.pinned, filterHonored: mocks.filterHonored },
       isSuccess: true,
     }),
     useTogglePinnedConversation: () => ({ mutate: vi.fn(), mutateAsync: mocks.pinFn }),
@@ -112,6 +126,8 @@ async function drag(sourceId: string, targetId: string) {
 beforeEach(() => {
   localStorage.clear();
   resetAeFamilyFoldsCache();
+  resetAePinFamilyForTests();
+  mocks.filterHonored = true;
   // The lead (pinned first), a solo pin, then the lead's child pinned last.
   mocks.pinned = [
     conv("lead", pin(1000)),
@@ -164,7 +180,11 @@ describe("Pinned families", () => {
     expect(mocks.reorderPins).not.toHaveBeenCalled();
 
     expect(await drag("lead", "solo")).toBe(true);
-    expect(mocks.reorderPins).toHaveBeenCalledExactlyOnceWith([{ id: "lead", pinnedAt: 1002 }]);
+    // The lead's pinned session follows it, below the lead's new value.
+    expect(mocks.reorderPins).toHaveBeenCalledExactlyOnceWith([
+      { id: "lead", pinnedAt: 1002 },
+      { id: "kid", pinnedAt: 1003 },
+    ]);
   });
 
   it("folds a pinned lead's sessions away from its chevron", () => {
@@ -172,5 +192,40 @@ describe("Pinned families", () => {
     fireEvent.click(within(rowOf("lead")).getByTestId("ae-family-fold"));
     expect(ids().slice(0, 2)).toEqual(["lead", "solo"]);
     expect(rowOf("kid")).toBeNull();
+  });
+
+  it("asks, and lands the whole family at the drop spot, when a lead is dropped on a pinned row", async () => {
+    window.localStorage.setItem("omnigent:ae-pin-family", "ask");
+    const lead2 = conv("lead2");
+    const kid2 = conv("kid2", { labels: { "ae.orch": "lead2", "ae.status": "working" } });
+    vi.mocked(useConversations).mockImplementation(() =>
+      conversationPage([lead2, kid2, conv("other")]),
+    );
+    mocks.readPage.mockImplementation(async ({ visibility }: { visibility?: string }) => ({
+      data: visibility === "archived" ? [] : [lead2, kid2],
+      has_more: false,
+      last_id: null,
+    }));
+    mocks.pinFn.mockResolvedValue({});
+    renderTree();
+    const question = renderHook(() => usePinFamilyQuestion());
+    await drag("lead2", "solo");
+    await waitFor(() => expect(question.result.current?.action).toBe("pin"));
+    expect(mocks.pinFn).not.toHaveBeenCalled();
+    act(() => answerPinFamily("family"));
+    await waitFor(() => expect(mocks.pinFn).toHaveBeenCalledTimes(2));
+    const [lead, kid] = mocks.pinFn.mock.calls.map(([w]) => w);
+    expect(lead).toEqual({ id: "lead2", pinned: true, pinnedAt: 1000.5 });
+    expect(kid.id).toBe("kid2");
+    expect(kid.pinnedAt).toBeGreaterThan(1000.5);
+    expect(kid.pinnedAt).toBeLessThan(1001);
+  });
+
+  it("keeps a pinned session fixed under its lead even when reordering is off", async () => {
+    mocks.filterHonored = false;
+    renderTree();
+    expect(await drag("kid", "solo")).toBe(false);
+    expect(mocks.reorderPins).not.toHaveBeenCalled();
+    expect(mocks.pinFn).not.toHaveBeenCalled();
   });
 });

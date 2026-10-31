@@ -452,6 +452,8 @@ export function aePinnedTree(
   rows: Conversation[];
   top: Conversation[];
   children: ReadonlySet<string>;
+  /** A lead's pinned sessions under it, in tree order (folded ones last, in pin order). */
+  kids: ReadonlyMap<string, Conversation[]>;
   tree: AeFamilyTree | null;
 } {
   const pinnedIds = new Set(pinned.map((c) => c.id));
@@ -467,7 +469,13 @@ export function aePinnedTree(
   }
   const inTree = pinned.filter((c) => joins(c) && (under.get(rootOf(c)!) ?? 0) > 0);
   if (inTree.length === 0) {
-    return { rows: [...pinned], top: [...pinned], children: new Set(), tree: null };
+    return {
+      rows: [...pinned],
+      top: [...pinned],
+      children: new Set(),
+      kids: new Map(),
+      tree: null,
+    };
   }
   const inTreeIds = new Set(inTree.map((c) => c.id));
   const { sessions, tree } = aeFamilyTree(inTree, families, { folded, byLead: true });
@@ -496,5 +504,11 @@ export function aePinnedTree(
       children.add(c.id);
     }
   }
-  return { rows, top, children, tree };
+  const kids = new Map<string, Conversation[]>();
+  for (const [root, block] of blocks) {
+    const listed = block.slice(1);
+    const hidden = inTree.filter((c) => c.id !== root && rootOf(c) === root && !block.includes(c));
+    if (listed.length + hidden.length > 0) kids.set(root, [...listed, ...hidden]);
+  }
+  return { rows, top, children, kids, tree };
 }
