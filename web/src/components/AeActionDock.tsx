@@ -185,7 +185,7 @@ function ItemBody({ item, now, expanded }: { item: AeDockItem; now: number; expa
           {text}
         </span>
         {!expanded && (
-          <span className="shrink-0 font-semibold whitespace-nowrap md:hidden" title={text}>
+          <span className="min-w-0 truncate font-semibold whitespace-nowrap md:hidden" title={text}>
             {aeCompactTokens(item.tokens)} tokens
           </span>
         )}
@@ -443,7 +443,7 @@ function ItemActions({
       return (
         <>
           <AeCompactButton sessionId={item.sessionId} testId="ae-dock-compact" />
-          <NotNowButton sessionId={item.sessionId} />
+          <NotNowButton sessionId={item.sessionId} inList={inList} />
         </>
       );
     case "question":
@@ -506,12 +506,13 @@ function ItemActions({
 }
 
 /** The Compact card's Not now: snoozes the suggestion until the context grew another 100k. */
-function NotNowButton({ sessionId }: { sessionId: string }) {
+function NotNowButton({ sessionId, inList }: { sessionId: string; inList: boolean }) {
   const [busy, setBusy] = useState(false);
   return (
     <Button
       variant="outline"
-      className={ACTION}
+      // The phone strip has no room for it beside Compact; the opened list keeps it.
+      className={cn(ACTION, !inList && "hidden md:inline-flex")}
       disabled={busy}
       onClick={() => {
         setBusy(true);

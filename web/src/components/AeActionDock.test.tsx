@@ -1042,6 +1042,8 @@ describe("the Compact card", () => {
     );
     expect(within(lead).getByTestId("ae-dock-compact")).toBeTruthy();
     expect(within(lead).getByTestId("ae-dock-context-later")).toBeTruthy();
+    // On a phone the strip drops Not now so Compact is never clipped; the tray keeps it.
+    expect(within(lead).getByTestId("ae-dock-context-later").className).toContain("hidden");
   });
 
   it("is absent without the label, when snoozed, or for a different open chat", async () => {
