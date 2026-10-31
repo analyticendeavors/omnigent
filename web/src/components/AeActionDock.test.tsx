@@ -1042,8 +1042,23 @@ describe("the Compact card", () => {
     );
     expect(within(lead).getByTestId("ae-dock-compact")).toBeTruthy();
     expect(within(lead).getByTestId("ae-dock-context-later")).toBeTruthy();
-    // On a phone the strip drops Not now so Compact is never clipped; the tray keeps it.
-    expect(within(lead).getByTestId("ae-dock-context-later").className).toContain("hidden");
+  });
+
+  it("keeps Compact whole on a phone: the label truncates and the strip drops Not now", async () => {
+    renderDock([], [], SUGGEST);
+    const lead = await screen.findByTestId("ae-dock-lead");
+    const phoneLabel = within(lead).getByText("370k tokens");
+    expect(phoneLabel.className).toContain("min-w-0");
+    expect(phoneLabel.className).toContain("truncate");
+    expect(phoneLabel.className).not.toContain("shrink-0");
+    expect(within(lead).getByTestId("ae-dock-context-later").className).toContain(
+      "hidden md:inline-flex",
+    );
+    // The opened tray keeps Not now on every width.
+    fireEvent.click(screen.getByTestId("ae-dock-caret"));
+    const tray = await screen.findByTestId("ae-dock-tray");
+    const later = within(tray).getByTestId("ae-dock-context-later");
+    expect(later.className).not.toContain("hidden");
   });
 
   it("is absent without the label, when snoozed, or for a different open chat", async () => {
