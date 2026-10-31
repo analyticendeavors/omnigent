@@ -311,8 +311,14 @@ async def test_timeout_kills_the_whole_process_group(on_path: Path) -> None:
             os.kill(grandchild, 0)
         except ProcessLookupError:
             break
-        # A killed but unreaped child shows as a zombie; that is dead too.
-        if Path(f"/proc/{grandchild}/stat").read_text().split()[2] == "Z":
+        # A killed but unreaped child shows as a zombie; that is dead too. The
+        # reaper can remove it between the kill probe and this read, which also
+        # means dead.
+        try:
+            fields = Path(f"/proc/{grandchild}/stat").read_text().split()
+        except FileNotFoundError:
+            break
+        if fields[2] == "Z":
             break
         await asyncio.sleep(0.1)
     else:
