@@ -257,7 +257,9 @@ import {
 import { AE_TRIAGE_GROUPS } from "@/lib/aeTriage";
 import { AeFamilyContext, type AeFamilyView, useAeFamilies } from "@/lib/aeFamilyView";
 import {
+  AE_PINNED_SECTION,
   aeFamilyTree,
+  aePinnedTree,
   aeWithFamiliesSection,
   useAeEffectiveFolds,
   useAeFamilyFolds,
@@ -402,6 +404,8 @@ const PinSavingContext = createContext(false);
 // `draggingId` is the session being dragged; `overId` the row it's over.
 const PinOrderContext = createContext<{
   ids: string[];
+  /** Pinned family members, who move only with their lead: no drag, no drop target. */
+  fixed: ReadonlySet<string>;
   draggingId: string | null;
   overId: string | null;
 } | null>(null);
@@ -1842,7 +1846,10 @@ function ConversationList({
   );
   const families = useAeFamilies(
     familyRows,
-    view.familyDots || view.grouping === "family" || familyFilter !== null,
+    view.familyDots ||
+      view.grouping === "family" ||
+      familyFilter !== null ||
+      pinnedConversationIds.length > 0,
     view.grouping === "family",
   );
   // Another display (Shared, Archived) starts unfiltered.
@@ -2164,6 +2171,13 @@ function ConversationList({
 
   const aeTree = useAeStableTree(loadedSections.aeTree);
   const treeView = useMemo(() => ({ ...familyView, tree: aeTree }), [familyView, aeTree]);
+  // Pinned keeps each pinned family's tree, at its lead's pin slot.
+  const pinnedLayout = useMemo(
+    () => aePinnedTree(loadedSections.pinned, families, familyFolds),
+    [loadedSections.pinned, families, familyFolds],
+  );
+  const pinnedTree = useAeStableTree(pinnedLayout.tree);
+  const pinnedView = useMemo(() => ({ ...familyView, tree: pinnedTree }), [familyView, pinnedTree]);
   // A stand-in lead draws as its own entry; it is no session to navigate to or select.
   const standIns = loadedSections.aeTree?.unlisted;
   const config = useContext(SidebarConfigContext);
@@ -2382,7 +2396,7 @@ function ConversationList({
         return;
       }
       if (action.kind === "reorder-pin") {
-        const writes = pinOrderWrites(sections.pinned, dragged.id, action.targetId);
+        const writes = pinOrderWrites(pinnedLayout.top, dragged.id, action.targetId);
         if (writes.length > 0) reorderPins(writes);
         return;
       }
@@ -2390,7 +2404,7 @@ function ConversationList({
         // Pin into the dropped-on slot; the new pin goes through the pin toggle
         // (cap / ownership checks), and only once it's accepted are any
         // renumbered neighbours rewritten through the batch.
-        const writes = pinOrderWrites(sections.pinned, dragged.id, action.targetId);
+        const writes = pinOrderWrites(pinnedLayout.top, dragged.id, action.targetId);
         const pin = writes.find((w) => w.id === dragged.id);
         const rest = writes.filter((w) => w.id !== dragged.id);
         // Chain on this call's own promise: per-call mutate callbacks are dropped
@@ -2425,7 +2439,7 @@ function ConversationList({
       onTogglePinned,
       projects,
       saveOrder,
-      sections.pinned,
+      pinnedLayout.top,
       pinAt,
       reorderPins,
     ],
@@ -2551,7 +2565,7 @@ function ConversationList({
     // `sections` is already scoped to the active tab, so the same Pinned /
     // Projects / Sessions walk covers both tabs (Projects is empty on shared).
     return [
-      ...visible("Pinned", sections.pinned),
+      ...visible("Pinned", pinnedLayout.rows),
       ...sections.projectGroups.flatMap((g) => projectVisible(g.name, g.conversations)),
       ...visible("Shared", sections.shared),
       ...(sessionGroups
@@ -2560,7 +2574,14 @@ function ConversationList({
     ]
       .filter((c) => !standIns?.has(c.id))
       .map((c) => c.id);
-  }, [sections, sessionGroups, effectiveCollapsedSections, expandedProjects, standIns]);
+  }, [
+    sections,
+    sessionGroups,
+    pinnedLayout.rows,
+    effectiveCollapsedSections,
+    expandedProjects,
+    standIns,
+  ]);
   // Getter for the shift-select range, built on demand (at click time). Scopes
   // to whichever section is selectable: the flat Sessions list, or the sessions
   // across expanded project folders (in render order). For projects scope the
@@ -2594,20 +2615,21 @@ function ConversationList({
   // Cmd/Ctrl+1..9/0 jumps to the first ten pinned sessions (desktop only;
   // see the hook). Empty when the Pinned section is collapsed.
   const pinnedSessionIds = useMemo(
-    () => (collapsedSections.includes("Pinned") ? [] : sections.pinned.map((c) => c.id)),
-    [sections.pinned, collapsedSections],
+    () => (collapsedSections.includes("Pinned") ? [] : pinnedLayout.rows.map((c) => c.id)),
+    [pinnedLayout.rows, collapsedSections],
   );
   usePinnedSessionHotkeys(pinnedSessionIds, activeId);
   const pinOrder = useMemo(
     () =>
       pinReorderEnabled && !pinWriting
         ? {
-            ids: sections.pinned.map((c) => c.id),
+            ids: pinnedLayout.top.map((c) => c.id),
+            fixed: pinnedLayout.children,
             draggingId: activeDrag?.id ?? null,
             overId: overPin,
           }
         : null,
-    [pinReorderEnabled, pinWriting, sections.pinned, activeDrag, overPin],
+    [pinReorderEnabled, pinWriting, pinnedLayout, activeDrag, overPin],
   );
 
   // Pinned membership is server-authoritative (the `omnigent.pinned` label),
@@ -2852,20 +2874,22 @@ function ConversationList({
                     // an unpinned session; outline-only highlight.
                     <PinDropZone active={activeDrag != null && !activeDrag.isPinned}>
                       <PinOrderContext.Provider value={pinOrder}>
-                        <ConversationSection
-                          title="Pinned"
-                          conversations={sections.pinned}
-                          activeConversationId={displayedActiveId}
-                          pinnedConversationIds={pinnedConversationIds}
-                          collapsed={effectiveCollapsedSections.includes("Pinned")}
-                          onToggleCollapsed={() => effectiveToggleSectionCollapsed("Pinned")}
-                          onRowClick={onRowClick}
-                          onTogglePinned={onTogglePinned}
-                          selectionMode={false}
-                          selectedIds={selectedIds}
-                          onToggleSelected={onToggleSelected}
-                          onProjectAssigned={expandProject}
-                        />
+                        <AeFamilyContext.Provider value={pinnedView}>
+                          <ConversationSection
+                            title={AE_PINNED_SECTION}
+                            conversations={pinnedLayout.rows}
+                            activeConversationId={displayedActiveId}
+                            pinnedConversationIds={pinnedConversationIds}
+                            collapsed={effectiveCollapsedSections.includes("Pinned")}
+                            onToggleCollapsed={() => effectiveToggleSectionCollapsed("Pinned")}
+                            onRowClick={onRowClick}
+                            onTogglePinned={onTogglePinned}
+                            selectionMode={false}
+                            selectedIds={selectedIds}
+                            onToggleSelected={onToggleSelected}
+                            onProjectAssigned={expandProject}
+                          />
+                        </AeFamilyContext.Provider>
                       </PinOrderContext.Provider>
                     </PinDropZone>
                   )}
@@ -4997,6 +5021,7 @@ function ConversationRowImpl({
   // onto "Chats" unfiles it; onto "Pinned" pins it. The list-level <DndContext>
   // routes the drop; the row only advertises itself and its source project +
   // pinned state via the draggable `data`.
+  const pinOrder = useContext(PinOrderContext);
   const {
     listeners: dragListeners,
     setNodeRef: setDragNodeRef,
@@ -5004,7 +5029,13 @@ function ConversationRowImpl({
   } = useDraggable({
     id: conversation.id,
     data: { type: "session", label, project: currentProject, isPinned },
-    disabled: !isOwner || selectionMode || isArchived || isEditing || isProvisionalRow,
+    disabled:
+      !isOwner ||
+      selectionMode ||
+      isArchived ||
+      isEditing ||
+      isProvisionalRow ||
+      pinOrder?.fixed.has(conversation.id) === true,
   });
   // A drag ends with a synthetic click on the row's <Link> (mousedown + mouseup
   // on the same anchor still fires a click); swallow that one click so a drag
@@ -5023,11 +5054,10 @@ function ConversationRowImpl({
     return () => clearTimeout(timer);
   }, [isDragging]);
   // In the Pinned section each row is also a reorder target for other pins.
-  const pinOrder = useContext(PinOrderContext);
   const { setNodeRef: setPinOrderNodeRef } = useDroppable({
     id: `pin-order:${conversation.id}`,
     data: { type: "pin-order", id: conversation.id },
-    disabled: !pinOrder || !isPinned,
+    disabled: !pinOrder || !isPinned || pinOrder.fixed.has(conversation.id),
   });
   const { setNodeRef: setAeOrderNodeRef, insertion: aeOrderInsertion } = useAeOrderRow(
     conversation.id,

@@ -19,6 +19,8 @@ import {
 import { aeStatusOf } from "@/lib/aeLabels";
 
 export const AE_FAMILIES_SECTION = "Families";
+/** The Pinned section, whose pinned families draw as trees (`aePinnedTree`). */
+export const AE_PINNED_SECTION = "Pinned";
 export const AE_FAMILY_REST_SECTION = "Standalone";
 export const AE_FAMILY_SECTIONS = [AE_FAMILIES_SECTION, AE_FAMILY_REST_SECTION] as const;
 export const AE_FAMILIES_HINT =
@@ -432,4 +434,67 @@ export function useAeStableTree(tree: AeFamilyTree | null): AeFamilyTree | null 
     kept.current = { key, tree };
   }
   return kept.current.tree;
+}
+
+/**
+ * The Pinned section as a list of trees (omnigent-ae, 2026-10-31): *pinned*
+ * (in pin order) with each family whose lead is pinned drawn as its lead and
+ * the pinned open sessions under it, at the lead's pin slot. A session pinned
+ * without its lead, a reference session and a lead with nothing pinned under
+ * it stay flat rows. `top` is the draggable order: leads and flat rows;
+ * `children` the rows that move only with their lead.
+ */
+export function aePinnedTree(
+  pinned: readonly Conversation[],
+  families: AeFamilies,
+  folded: ReadonlySet<string>,
+): {
+  rows: Conversation[];
+  top: Conversation[];
+  children: ReadonlySet<string>;
+  tree: AeFamilyTree | null;
+} {
+  const pinnedIds = new Set(pinned.map((c) => c.id));
+  const rootOf = (c: Conversation) => families.byRow.get(c.id)?.family.root;
+  const under = new Map<string, number>();
+  const joins = (c: Conversation) => {
+    const root = rootOf(c);
+    return root !== undefined && pinnedIds.has(root) && (c.id === root || !aeIsClosedMember(c));
+  };
+  for (const c of pinned) {
+    const root = rootOf(c);
+    if (joins(c) && c.id !== root) under.set(root!, (under.get(root!) ?? 0) + 1);
+  }
+  const inTree = pinned.filter((c) => joins(c) && (under.get(rootOf(c)!) ?? 0) > 0);
+  if (inTree.length === 0) {
+    return { rows: [...pinned], top: [...pinned], children: new Set(), tree: null };
+  }
+  const inTreeIds = new Set(inTree.map((c) => c.id));
+  const { sessions, tree } = aeFamilyTree(inTree, families, { folded, byLead: true });
+  const blocks = new Map<string, Conversation[]>();
+  for (const c of sessions) {
+    const root = tree.rows.get(c.id)?.family.root ?? c.id;
+    const block = blocks.get(root);
+    if (block) block.push(c);
+    else blocks.set(root, [c]);
+  }
+  const rows: Conversation[] = [];
+  const top: Conversation[] = [];
+  const children = new Set<string>();
+  for (const c of pinned) {
+    const row = tree.rows.get(c.id);
+    if (!row && inTreeIds.has(c.id)) {
+      // Folded away under its lead.
+      children.add(c.id);
+    } else if (!row) {
+      rows.push(c);
+      top.push(c);
+    } else if (row.depth === 0) {
+      rows.push(...blocks.get(row.family.root)!);
+      top.push(c);
+    } else {
+      children.add(c.id);
+    }
+  }
+  return { rows, top, children, tree };
 }

@@ -1,25 +1,33 @@
-// Settings > Chat > Pin a lead's family (omnigent-ae, 2026-10-26): whether
-// pinning a family's lead also pins its open sessions, and unpinning it unpins
-// the family. Device-local, off by default. The cascade: shell/aePinFamily.ts.
+// Settings > Chat > Pin a lead's family (omnigent-ae, 2026-10-26; three choices
+// 2026-10-31): what pinning a family's lead does with its open sessions, and
+// unpinning with its pinned ones. "ask" (default) asks each time, "family"
+// always takes the whole family, "parent" only the lead. Device-local. The
+// older "on" reads as "family" and "off" as "ask". The cascade and the dialog:
+// shell/aePinFamily.ts, shell/AePinFamilyChoice.tsx.
 
 import { useSyncExternalStore } from "react";
 
 const STORAGE_KEY = "omnigent:ae-pin-family";
 
-export function readAePinFamily(): boolean {
-  if (typeof window === "undefined") return false;
+export type AePinFamilyMode = "ask" | "family" | "parent";
+
+export function readAePinFamily(): AePinFamilyMode {
+  if (typeof window === "undefined") return "ask";
   try {
-    return window.localStorage.getItem(STORAGE_KEY) === "on";
+    const stored = window.localStorage.getItem(STORAGE_KEY);
+    if (stored === "family" || stored === "on") return "family";
+    if (stored === "parent") return "parent";
   } catch {
-    return false;
+    // Storage unreadable: the default.
   }
+  return "ask";
 }
 
 const listeners = new Set<() => void>();
 
-export function writeAePinFamily(on: boolean): void {
+export function writeAePinFamily(mode: AePinFamilyMode): void {
   try {
-    window.localStorage.setItem(STORAGE_KEY, on ? "on" : "off");
+    window.localStorage.setItem(STORAGE_KEY, mode);
   } catch {
     // A local preference; losing it is harmless.
   }
@@ -38,6 +46,6 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
-export function useAePinFamily(): boolean {
-  return useSyncExternalStore(subscribe, readAePinFamily, () => false);
+export function useAePinFamily(): AePinFamilyMode {
+  return useSyncExternalStore(subscribe, readAePinFamily, () => "ask");
 }

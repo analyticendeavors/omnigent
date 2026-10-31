@@ -1,11 +1,14 @@
-// Pin and unpin a family with its lead (omnigent-ae, 2026-10-26). With
-// Settings > Chat > "Pin a lead's family" on (lib/aePinFamily.ts), pinning a
-// session that leads a family also pins its open sessions (not reference or
-// archived ones), lead first so the family lists together in Pinned; a family
-// that needs more pin spots than are free pins nothing and says so. Unpinning
-// the lead unpins every pinned session of the family, with one Undo. With the
-// setting off, or for a session that leads no family, `alone` runs the single
-// pin or unpin as before. The family comes from a fresh read (lib/aeFamilyRead.ts).
+// Pin and unpin a family with its lead (omnigent-ae, 2026-10-26; the question
+// 2026-10-31). Settings > Chat > "Pin a lead's family" (lib/aePinFamily.ts) is
+// "ask" (a dialog each time), "family" (always) or "parent" (never). Taking the
+// family, pinning a session that leads one also pins its open sessions (not
+// reference or archived ones), lead first so the family lists together in
+// Pinned; a family that needs more pin spots than are free pins nothing and
+// says so. Unpinning the lead unpins every pinned session of the family, with
+// one Undo. Only the parent, or a session that leads no family or has nothing
+// to bring along, runs `alone`, the single pin or unpin, with no question.
+// The family comes from a fresh read (lib/aeFamilyRead.ts); when asking, a
+// failed read falls back to the single pin or unpin.
 
 import type { QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -19,6 +22,7 @@ import { aeFamilyParent } from "@/lib/aeFamily";
 import { aeIsClosedMember } from "@/lib/aeFamilyClosed";
 import { aeFamilyOf, aeReadFamilySessions } from "@/lib/aeFamilyRead";
 import { readAePinFamily } from "@/lib/aePinFamily";
+import { askPinFamily } from "@/lib/aePinFamilyChoice";
 import { getCurrentUserId } from "@/lib/identity";
 import { PINNED_LABEL_KEY } from "@/lib/sessionListCache";
 import { sessionVisibility } from "@/lib/sessionVisibility";
@@ -205,7 +209,8 @@ export function aeTogglePinFamily({
   includeShared: boolean;
   alone: () => void;
 }): void {
-  if (!readAePinFamily()) {
+  const mode = readAePinFamily();
+  if (mode === "parent") {
     alone();
     return;
   }
@@ -229,25 +234,45 @@ export function aeTogglePinFamily({
           alone();
           return undefined;
         }
+        const title = lead.title ?? null;
+        const cascade = async (takeFamily: () => Promise<void>) => {
+          if (mode === "ask") {
+            const answer = await askPinFamily({ action: pinned ? "unpin" : "pin", title });
+            if (answer === "cancel") return;
+            if (answer === "parent") {
+              alone();
+              return;
+            }
+          }
+          await takeFamily();
+        };
         if (pinned) {
           const now = pinnedNow(queryClient);
           if (!others.some((c) => now.has(c.id))) {
             alone();
             return undefined;
           }
-          return unpinFamily(queryClient, writePin, family, lead);
+          return cascade(() => unpinFamily(queryClient, writePin, family, lead));
         }
         const open = others.filter((c) => c.archived !== true && !aeIsClosedMember(c));
         if (open.length === 0) {
           alone();
           return undefined;
         }
-        return pinFamily(queryClient, writePin, family, session.id, pinCap, includeShared);
+        return cascade(() =>
+          pinFamily(queryClient, writePin, family, session.id, pinCap, includeShared),
+        );
       },
-      () =>
+      () => {
+        // Asking is the default, so a failed read must not stop a plain pin.
+        if (mode === "ask") {
+          alone();
+          return;
+        }
         showToast(
           `Couldn't read the family's sessions, so nothing was ${pinned ? "unpinned" : "pinned"}. Try again.`,
-        ),
+        );
+      },
     );
 }
 

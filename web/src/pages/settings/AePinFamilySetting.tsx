@@ -6,21 +6,24 @@ import { useId } from "react";
 import { SettingsLabel } from "@/components/SettingsLabel";
 import { CardRadioGroup } from "@/components/theme/CardRadioGroup";
 import { AE_PIN_FAMILY_SHORT, aeHint } from "@/lib/aeSettingHints";
-import { useAePinFamily, writeAePinFamily } from "@/lib/aePinFamily";
+import { type AePinFamilyMode, useAePinFamily, writeAePinFamily } from "@/lib/aePinFamily";
 
-type Choice = "yes" | "no";
-
-const CARDS: { value: Choice; label: string; title: string }[] = [
+const CARDS: { value: AePinFamilyMode; label: string; title: string }[] = [
   {
-    value: "yes",
-    label: "Yes",
+    value: "ask",
+    label: "Ask each time",
+    title: "Pinning or unpinning a lead asks whether to take its family too.",
+  },
+  {
+    value: "family",
+    label: "Always the whole family",
     title: "Pinning a lead pins its open sessions; unpinning it unpins the family.",
   },
-  { value: "no", label: "No", title: "Pinning a lead pins only the lead." },
+  { value: "parent", label: "Only the parent", title: "Pinning a lead pins only the lead." },
 ];
 
 export function AePinFamilySetting() {
-  const on = useAePinFamily();
+  const mode = useAePinFamily();
   const labelId = useId();
   return (
     <div data-testid="ae-pin-family" className="flex flex-col gap-3">
@@ -30,12 +33,12 @@ export function AePinFamilySetting() {
         description={AE_PIN_FAMILY_SHORT}
         tooltipDescription={aeHint("chat.pin_family")}
       />
-      <CardRadioGroup<Choice>
+      <CardRadioGroup<AePinFamilyMode>
         labelledBy={labelId}
-        value={on ? "yes" : "no"}
-        onSelect={(value) => writeAePinFamily(value === "yes")}
+        value={mode}
+        onSelect={writeAePinFamily}
         componentId="settings.chat.pin_family"
-        className="grid grid-cols-1 gap-3 sm:grid-cols-2"
+        className="grid grid-cols-1 gap-3 sm:grid-cols-3"
         cardClassName="items-center gap-2 p-4"
         items={CARDS.map((card) => ({
           value: card.value,

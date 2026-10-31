@@ -7,6 +7,7 @@ import {
   AE_FAMILIES_SECTION,
   AE_FAMILY_REST_SECTION,
   aeFamilyTree,
+  aePinnedTree,
   aeWithFamiliesSection,
   resetAeFamilyFoldsCache,
   toggleAeFamilyFold,
@@ -389,5 +390,39 @@ describe("aeFamilyTree closed rows", () => {
       closed: input({ capped: true }),
     });
     expect(tree.leads.get("lead")!.archivedCapped).toBe(true);
+  });
+});
+
+describe("aePinnedTree", () => {
+  const tree = (pinned: Conversation[], folded: string[] = []) =>
+    aePinnedTree(pinned, aeFamilies(pinned, true), new Set(folded));
+
+  it("seats a family at its lead's pin slot, children under it in tree order", () => {
+    const pinned = [row("lead"), row("solo"), row("kid", orch("lead")), row("grand", orch("kid"))];
+    const out = tree(pinned);
+    expect(out.rows.map((c) => c.id)).toEqual(["lead", "kid", "grand", "solo"]);
+    expect(out.top.map((c) => c.id)).toEqual(["lead", "solo"]);
+    expect([...out.children]).toEqual(["kid", "grand"]);
+    expect(out.tree?.rows.get("grand")?.depth).toBe(2);
+  });
+
+  it("leaves a child pinned without its lead, a lone lead and a reference session flat", () => {
+    const pinned = [
+      row("kid", orch("gone")),
+      row("lone"),
+      row("lead2"),
+      row("ref", { ...orch("lead2"), "ae.status": "reference" }),
+    ];
+    const out = tree([...pinned, row("other", orch("lone-x"))]);
+    expect(out.tree).toBeNull();
+    expect(out.rows.map((c) => c.id)).toEqual(["kid", "lone", "lead2", "ref", "other"]);
+    expect(out.top).toHaveLength(5);
+  });
+
+  it("keeps only the lead of a folded family", () => {
+    const out = tree([row("lead"), row("kid", orch("lead")), row("solo")], ["lead"]);
+    expect(out.rows.map((c) => c.id)).toEqual(["lead", "solo"]);
+    expect(out.top.map((c) => c.id)).toEqual(["lead", "solo"]);
+    expect([...out.children]).toEqual(["kid"]);
   });
 });

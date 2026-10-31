@@ -38,6 +38,7 @@ import { AeConversationStatusIcon } from "@/components/AeStatusIcon";
 import {
   AE_FAMILIES_HINT,
   AE_FAMILIES_SECTION,
+  AE_PINNED_SECTION,
   AE_FAMILY_REST_SECTION,
   AE_FAMILY_TREE_STEP,
   type AeClosedEntry,
@@ -540,6 +541,14 @@ export function AeFamilyTreeSlot({
   children: ReactNode;
 }) {
   const { tree } = useContext(AeFamilyContext);
+  // Pinned draws its pinned families as trees (`aePinnedTree`); other rows stay plain.
+  if (tree && section === AE_PINNED_SECTION) {
+    return tree.rows.has(conversationId) ? (
+      <InFamilies.Provider value>{children}</InFamilies.Provider>
+    ) : (
+      children
+    );
+  }
   if (!tree || section !== AE_FAMILIES_SECTION) return children;
   const closed = tree.closed.get(conversationId);
   if (closed) {

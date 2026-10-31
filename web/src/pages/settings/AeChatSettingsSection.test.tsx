@@ -82,16 +82,18 @@ describe("AeChatSettingsSection", () => {
     );
   });
 
-  it("offers Pin a lead's family, off by default, and saves the choice", () => {
+  it("offers Pin a lead's family, asking by default, and saves the choice", () => {
     renderAt("/settings/chat", <AeChatSettingsSection />);
     expect(screen.getByRole("radiogroup", { name: "Pin a lead's family" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "About Pin a lead's family" })).toBeInTheDocument();
-    expect(screen.getByTestId("ae-pin-family-no")).toHaveAttribute("aria-checked", "true");
-    fireEvent.click(screen.getByTestId("ae-pin-family-yes"));
-    expect(window.localStorage.getItem("omnigent:ae-pin-family")).toBe("on");
-    expect(screen.getByTestId("ae-pin-family-yes")).toHaveAttribute("aria-checked", "true");
-    fireEvent.click(screen.getByTestId("ae-pin-family-no"));
-    expect(window.localStorage.getItem("omnigent:ae-pin-family")).toBe("off");
+    expect(screen.getByTestId("ae-pin-family-ask")).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(screen.getByTestId("ae-pin-family-family"));
+    expect(window.localStorage.getItem("omnigent:ae-pin-family")).toBe("family");
+    expect(screen.getByTestId("ae-pin-family-family")).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(screen.getByTestId("ae-pin-family-parent"));
+    expect(window.localStorage.getItem("omnigent:ae-pin-family")).toBe("parent");
+    fireEvent.click(screen.getByTestId("ae-pin-family-ask"));
+    expect(window.localStorage.getItem("omnigent:ae-pin-family")).toBe("ask");
   });
 
   it("is what /settings/chat renders", () => {

@@ -1,20 +1,24 @@
-// Pin a lead's family (omnigent-ae, 2026-10-26):
-//   1. Setting off: the single toggle runs, with no read.
+// Pin a lead's family (omnigent-ae, 2026-10-26; the question 2026-10-31):
+//   1. Setting "parent": the single toggle runs, with no read and no question.
 //   2. On: pinning a lead pins it and its open sessions, lead first; reference,
 //      archived and already pinned sessions are left alone.
 //   3. On: a family that needs more pin spots than are free pins nothing and says so.
 //   4. On: unpinning the lead unpins every pinned session of the family, with one Undo
 //      that re-pins them at their old values.
 //   5. On: a session started by another, or one that leads nothing, toggles alone.
-//   6. A failed read changes nothing and says so; a double click reads once.
+//   6. A failed read changes nothing and says so (when asking, it toggles alone); a double click reads once.
 //   7. Without shared pins, only the viewer's sessions count and get pinned.
 //   8. A member the sidebar has not loaded is seeded into the cache before its pin.
+//   9. Setting "ask" (the default, and the old "off"): a dialog first; each button, Cancel,
+//      and no question for a lead with nothing to bring along. The old "on" is "family".
 
 import { QueryClient } from "@tanstack/react-query";
+import { renderHook } from "@testing-library/react";
 import { type Mock, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as ConversationsModule from "@/hooks/useConversations";
 import { PINNED_CONVERSATIONS_KEY, type Conversation } from "@/hooks/useConversations";
-import { writeAePinFamily } from "@/lib/aePinFamily";
+import { readAePinFamily, writeAePinFamily } from "@/lib/aePinFamily";
+import { answerPinFamily, usePinFamilyQuestion } from "@/lib/aePinFamilyChoice";
 import { PINNED_LABEL_KEY } from "@/lib/sessionListCache";
 
 const mocks = vi.hoisted(() => ({ read: vi.fn(), toast: vi.fn(), showToast: vi.fn() }));
@@ -99,7 +103,8 @@ const settle = () =>
 
 beforeEach(() => {
   window.localStorage.clear();
-  writeAePinFamily(true);
+  writeAePinFamily("family");
+  answerPinFamily("cancel");
   resetAePinFamilyForTests();
   queryClient = new QueryClient();
   pinned({});
@@ -115,8 +120,8 @@ afterEach(() => {
 });
 
 describe("aeTogglePinFamily", () => {
-  it("toggles alone, with no read, while the setting is off", () => {
-    writeAePinFamily(false);
+  it("toggles alone, with no read, while the setting is parent", () => {
+    writeAePinFamily("parent");
     sessionList([LEAD, child("a")]);
     toggle(LEAD, false);
     expect(alone).toHaveBeenCalledTimes(1);
@@ -306,5 +311,101 @@ describe("aeTogglePinFamily", () => {
     await vi.waitFor(() => expect(writePin).toHaveBeenCalledTimes(2));
     // Two slices per read: open and archived.
     expect(mocks.read).toHaveBeenCalledTimes(2);
+  });
+
+  describe("asking", () => {
+    const question = () => renderHook(() => usePinFamilyQuestion()).result.current;
+
+    beforeEach(() => writeAePinFamily("ask"));
+
+    it("reads the old stored values: on is family, off is ask, nothing is ask", () => {
+      window.localStorage.setItem("omnigent:ae-pin-family", "on");
+      expect(readAePinFamily()).toBe("family");
+      window.localStorage.setItem("omnigent:ae-pin-family", "off");
+      expect(readAePinFamily()).toBe("ask");
+      window.localStorage.clear();
+      expect(readAePinFamily()).toBe("ask");
+    });
+
+    it("asks before pinning; the whole family pins every open session", async () => {
+      sessionList([LEAD, child("a")]);
+      toggle(LEAD, false);
+      await vi.waitFor(() => expect(question()).toEqual({ action: "pin", title: "lead" }));
+      expect(writePin).not.toHaveBeenCalled();
+      answerPinFamily("family");
+      await vi.waitFor(() => expect(writePin).toHaveBeenCalledTimes(2));
+      expect(alone).not.toHaveBeenCalled();
+    });
+
+    it("pins only the parent when asked to", async () => {
+      sessionList([LEAD, child("a")]);
+      toggle(LEAD, false);
+      await vi.waitFor(() => expect(question()).not.toBeNull());
+      answerPinFamily("parent");
+      await vi.waitFor(() => expect(alone).toHaveBeenCalledTimes(1));
+      expect(writePin).not.toHaveBeenCalled();
+    });
+
+    it("does nothing on Cancel", async () => {
+      sessionList([LEAD, child("a")]);
+      toggle(LEAD, false);
+      await vi.waitFor(() => expect(question()).not.toBeNull());
+      answerPinFamily("cancel");
+      await settle();
+      expect(alone).not.toHaveBeenCalled();
+      expect(writePin).not.toHaveBeenCalled();
+      expect(question()).toBeNull();
+    });
+
+    it("asks before unpinning; the whole family unpins, only the parent runs alone", async () => {
+      sessionList([LEAD, child("a")]);
+      pinned({ lead: 1, a: 2 });
+      toggle(LEAD, true);
+      await vi.waitFor(() => expect(question()).toEqual({ action: "unpin", title: "lead" }));
+      answerPinFamily("family");
+      await vi.waitFor(() => expect(writePin).toHaveBeenCalledTimes(2));
+      expect(writePin.mock.calls.map(([w]) => w)).toEqual([
+        { id: "lead", pinned: false },
+        { id: "a", pinned: false },
+      ]);
+
+      resetAePinFamilyForTests();
+      writePin.mockClear();
+      toggle(LEAD, true);
+      await vi.waitFor(() => expect(question()).not.toBeNull());
+      answerPinFamily("parent");
+      await vi.waitFor(() => expect(alone).toHaveBeenCalledTimes(1));
+      expect(writePin).not.toHaveBeenCalled();
+    });
+
+    it("does not ask for a lead with no open session, or none pinned to unpin", async () => {
+      sessionList([LEAD, child("ref", "reference")]);
+      toggle(LEAD, false);
+      await vi.waitFor(() => expect(alone).toHaveBeenCalledTimes(1));
+      expect(question()).toBeNull();
+
+      resetAePinFamilyForTests();
+      sessionList([LEAD, child("a")]);
+      pinned({ lead: 1 });
+      toggle(LEAD, true);
+      await vi.waitFor(() => expect(alone).toHaveBeenCalledTimes(2));
+      expect(question()).toBeNull();
+    });
+
+    it("falls back to the single toggle when the family cannot be read", async () => {
+      mocks.read.mockRejectedValue(new Error("offline"));
+      toggle(LEAD, false);
+      await vi.waitFor(() => expect(alone).toHaveBeenCalledTimes(1));
+      expect(mocks.showToast).not.toHaveBeenCalled();
+      expect(question()).toBeNull();
+    });
+
+    it("does not ask while the setting is family", async () => {
+      writeAePinFamily("family");
+      sessionList([LEAD, child("a")]);
+      toggle(LEAD, false);
+      await vi.waitFor(() => expect(writePin).toHaveBeenCalledTimes(2));
+      expect(question()).toBeNull();
+    });
   });
 });

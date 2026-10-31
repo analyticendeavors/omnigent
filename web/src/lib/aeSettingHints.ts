@@ -25,7 +25,7 @@ export const AE_SPEND_SHORT =
   "Tokens (default): new input plus output. Cost: API-rate estimate. Both: each. Off: none.";
 /** The one-line description under "Pin a lead's family". */
 export const AE_PIN_FAMILY_SHORT =
-  "Yes pins a lead's open sessions with it. No (default) pins only the lead.";
+  "Ask each time (default), take the whole family always, or pin only the parent.";
 
 const EFFORT = "Effort: low is fastest, max is slowest.";
 
@@ -167,7 +167,7 @@ export const AE_SETTING_HINTS = {
   },
   "chat.pin_family": {
     label: "Pin a lead's family",
-    hint: "Yes: also pins its open sessions, or none if pin spots run short. No (default): lead only. Unpinning removes all pinned members, closed too.",
+    hint: "Ask (default): choose each time. Whole family: pins its open sessions too, or none if spots run short. Parent: lead only.",
     source: "existing",
   },
   "family.child_prompts": {

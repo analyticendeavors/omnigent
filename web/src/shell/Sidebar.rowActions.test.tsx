@@ -386,7 +386,7 @@ describe("quick pin/unpin hover button", () => {
     expect(screen.getByTestId("new-project")).toBeInTheDocument();
   });
 
-  it("toggles the pin without opening the kebab menu, moving the row under Pinned", () => {
+  it("toggles the pin without opening the kebab menu, moving the row under Pinned", async () => {
     renderSidebar();
 
     // No "Pinned" section to start; the row lives under Recent.
@@ -406,7 +406,8 @@ describe("quick pin/unpin hover button", () => {
     // The row is now grouped under a "Pinned" header, and the quick button
     // flips to its unpin affordance — both prove the toggle ran through the
     // sidebar's pin state (not just a local no-op).
-    const pinnedHeader = screen.getByText("Pinned");
+    // Pinning first looks for a family to ask about, so the move lands a tick later.
+    const pinnedHeader = await screen.findByText("Pinned");
     const pinnedSection = pinnedHeader.closest("section")!;
     expect(within(pinnedSection).getByText("My Session")).toBeInTheDocument();
     expect(screen.getByTestId("quick-pin-conversation")).toHaveAttribute(
@@ -420,7 +421,7 @@ describe("quick pin/unpin hover button", () => {
 
     // Clicking again unpins: the Pinned section disappears.
     fireEvent.click(screen.getByTestId("quick-pin-conversation"));
-    expect(screen.queryByText("Pinned")).toBeNull();
+    await waitFor(() => expect(screen.queryByText("Pinned")).toBeNull());
   });
 
   it.each([
@@ -434,7 +435,7 @@ describe("quick pin/unpin hover button", () => {
     expect(await screen.findByRole("tooltip")).toHaveTextContent(label);
   });
 
-  it("also offers Pin in the kebab menu (mobile affordance) and toggles the same pin state", () => {
+  it("also offers Pin in the kebab menu (mobile affordance) and toggles the same pin state", async () => {
     renderSidebar();
 
     expect(screen.queryByText("Pinned")).toBeNull();
@@ -449,7 +450,7 @@ describe("quick pin/unpin hover button", () => {
     expect(pinItem).toHaveTextContent("Pin");
     fireEvent.click(pinItem);
 
-    const pinnedHeader = screen.getByText("Pinned");
+    const pinnedHeader = await screen.findByText("Pinned");
     const pinnedSection = pinnedHeader.closest("section")!;
     expect(within(pinnedSection).getByText("My Session")).toBeInTheDocument();
     expect(mocks.pinnedStore.ids).toContain("conv_1");

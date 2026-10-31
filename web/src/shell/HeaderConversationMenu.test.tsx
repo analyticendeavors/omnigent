@@ -211,12 +211,15 @@ describe("HeaderConversationMenu", () => {
     expect(screen.getByRole("menuitem", { name: "Pin" })).toHaveFocus();
   });
 
-  it("runs pin and mark-unread actions for the active session", () => {
+  it("runs pin and mark-unread actions for the active session", async () => {
     renderMenu();
 
     openMenu();
     fireEvent.click(screen.getByRole("menuitem", { name: "Pin" }));
-    expect(mocks.togglePinned).toHaveBeenCalledWith({ id: "conv-1", pinned: true });
+    // Pinning first looks for a family to ask about.
+    await waitFor(() =>
+      expect(mocks.togglePinned).toHaveBeenCalledWith({ id: "conv-1", pinned: true }),
+    );
 
     openMenu();
     fireEvent.click(screen.getByRole("menuitem", { name: "Mark as unread" }));
@@ -230,7 +233,9 @@ describe("HeaderConversationMenu", () => {
 
     openMenu();
     fireEvent.click(screen.getByRole("menuitem", { name: "Unpin" }));
-    expect(mocks.togglePinnedAsync).toHaveBeenCalledWith({ id: "conv-1", pinned: false });
+    await waitFor(() =>
+      expect(mocks.togglePinnedAsync).toHaveBeenCalledWith({ id: "conv-1", pinned: false }),
+    );
     await waitFor(() =>
       expect(toast).toHaveBeenCalledWith(
         "Unpinned session",
