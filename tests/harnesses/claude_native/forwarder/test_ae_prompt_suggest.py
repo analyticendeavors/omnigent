@@ -312,11 +312,11 @@ async def test_timeout_kills_the_whole_process_group(on_path: Path) -> None:
         except ProcessLookupError:
             break
         # A killed but unreaped child shows as a zombie; that is dead too. The
-        # reaper can remove it between the kill probe and this read, which also
-        # means dead.
+        # reaper can remove it between the kill probe and this read, or after the
+        # open and before the read (ESRCH), which also means dead.
         try:
             fields = Path(f"/proc/{grandchild}/stat").read_text().split()
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError):
             break
         if fields[2] == "Z":
             break
