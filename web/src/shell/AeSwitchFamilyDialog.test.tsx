@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AeSwitchFamilyDialog } from "./AeSwitchFamilyDialog";
+import { AE_ACCOUNT_FOLLOW_UP_DELAYS_MS } from "@/lib/aeClaudeAccount";
 import { askAeSwitchFamily, dismissAeSwitchFamily } from "@/lib/aeSwitchFamily";
 
 vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
@@ -90,6 +91,41 @@ describe("AeSwitchFamilyDialog", () => {
     );
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["session", "c1"] });
     await waitFor(() => expect(screen.queryByTestId("ae-switch-family-dialog")).toBeNull());
+  });
+
+  it("a successful switch re-reads the chat and each moved child on the follow-up schedule", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.mocked(authenticatedFetch).mockImplementation(() =>
+        json({
+          account: "shared:Backup",
+          relaunched: true,
+          children: { moved: [{ id: "c1", title: "Builder" }], skipped: [], pending: [] },
+        }),
+      );
+      ask();
+      const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+      const reads = (id: string) =>
+        invalidate.mock.calls.filter(
+          ([a]: unknown[]) =>
+            (a as { queryKey?: unknown[] }).queryKey?.[0] === "ae-limits" &&
+            (a as { queryKey?: unknown[] }).queryKey?.[1] === id,
+        ).length;
+      fireEvent.click(await screen.findByTestId("ae-switch-family-both"));
+      await waitFor(() => expect(showToast).toHaveBeenCalled());
+      expect(reads("s1")).toBe(1);
+      expect(reads("c1")).toBe(1);
+      await AE_ACCOUNT_FOLLOW_UP_DELAYS_MS.reduce(async (prev, delay, n) => {
+        await prev;
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(delay - (AE_ACCOUNT_FOLLOW_UP_DELAYS_MS[n - 1] ?? 0));
+        });
+        expect(reads("s1")).toBe(2 + n);
+        expect(reads("c1")).toBe(2 + n);
+      }, Promise.resolve());
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("a failed switch re-reads once and schedules no follow-ups", async () => {

@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AeMoveAllChatsDialog } from "./AeMoveAllChatsDialog";
+import { AE_ACCOUNT_FOLLOW_UP_DELAYS_MS } from "@/lib/aeClaudeAccount";
 import { askAeMoveAll, dismissAeMoveAll } from "@/lib/aeMoveAllChats";
 
 vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
@@ -89,5 +90,52 @@ describe("AeMoveAllChatsDialog", () => {
     await waitFor(() =>
       expect(showToast).toHaveBeenCalledWith(expect.stringContaining("Could not")),
     );
+  });
+
+  describe("follow-up re-reads", () => {
+    const last = AE_ACCOUNT_FOLLOW_UP_DELAYS_MS[AE_ACCOUNT_FOLLOW_UP_DELAYS_MS.length - 1];
+    const reads = (spy: { mock: { calls: unknown[][] } }, id: string) =>
+      spy.mock.calls.filter(([a]) => {
+        const key = (a as { queryKey?: unknown[] }).queryKey;
+        return key?.[0] === "ae-limits" && key?.[1] === id;
+      }).length;
+    beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
+    afterEach(() => vi.useRealTimers());
+
+    it("a successful move schedules the schedule for every moved or still-switching chat only", async () => {
+      vi.mocked(authenticatedFetch).mockImplementation(() =>
+        json({
+          moved: ["a", "b"],
+          skipped: [{ id: "e", title: "Fix CI", reason: "mid-reply" }],
+          pending: [{ id: "f", title: "Slow chat", reason: "still switching" }],
+        }),
+      );
+      ask();
+      const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+      fireEvent.click(await screen.findByTestId("ae-move-all-confirm"));
+      await waitFor(() => expect(showToast).toHaveBeenCalled());
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(last);
+      });
+      for (const id of ["a", "b", "f"]) {
+        expect(reads(invalidate, id)).toBe(1 + AE_ACCOUNT_FOLLOW_UP_DELAYS_MS.length);
+      }
+      expect(reads(invalidate, "e")).toBe(0);
+    });
+
+    it("a failed move schedules nothing", async () => {
+      vi.mocked(authenticatedFetch).mockImplementation(() =>
+        json({ error: { message: "Could not move." } }, 500),
+      );
+      ask();
+      const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+      fireEvent.click(await screen.findByTestId("ae-move-all-confirm"));
+      await waitFor(() => expect(showToast).toHaveBeenCalled());
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(last * 2);
+      });
+      expect(invalidate).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    });
   });
 });
