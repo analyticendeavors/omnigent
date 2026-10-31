@@ -16,6 +16,7 @@ vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
 import { authenticatedFetch } from "@/lib/identity";
 import { useAeSessionRailStore } from "@/lib/aeSessionRail";
 import { useChatStore } from "@/store/chatStore";
+import { resetAeCompactPlans } from "@/lib/aeCompactPlan";
 import { resetAeContextSnapshots } from "../aeContextUsage";
 import { SNAPSHOT } from "../aeRailTestFixtures";
 import { AeRailContext } from "./AeRailContext";
@@ -254,7 +255,9 @@ describe("AeRailContext", () => {
 });
 
 describe("Compact session", () => {
-  it("asks once, then compacts on the second click", async () => {
+  afterEach(() => resetAeCompactPlans());
+
+  it("asks once, then queues the compact on the second click, and a third cancels it", async () => {
     const compact = vi.fn(() => Promise.resolve());
     setSession("claude-native", { compact });
     render(<AeRailContext sessionId={sessionId} />);
@@ -262,10 +265,13 @@ describe("Compact session", () => {
     expect(button.textContent).toBe("Compact");
     fireEvent.click(button);
     expect(button.textContent).toBe("Compact now?");
+    fireEvent.click(button);
+    // Queued, not compacted: the chat saves its notes at a safe point first.
+    await waitFor(() => expect(button.textContent).toBe("Cancel compact"));
     expect(compact).not.toHaveBeenCalled();
     fireEvent.click(button);
-    expect(compact).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(button.textContent).toBe("Compact"));
+    expect(compact).not.toHaveBeenCalled();
   });
 
   it("drops the confirmation after three seconds", async () => {
@@ -284,18 +290,6 @@ describe("Compact session", () => {
     expect(button.textContent).toBe("Compact");
     fireEvent.click(button);
     expect(compact).not.toHaveBeenCalled();
-  });
-
-  it("says what failed when compaction is refused", async () => {
-    const compact = vi.fn(() => Promise.reject(new Error("409 Conflict")));
-    setSession("claude-native", { compact });
-    render(<AeRailContext sessionId={sessionId} />);
-    const button = await screen.findByTestId("ae-rail-compact");
-    fireEvent.click(button);
-    fireEvent.click(button);
-    expect((await screen.findByRole("alert")).textContent).toBe(
-      "Could not compact the session (409 Conflict). Try again, or send /compact from the composer.",
-    );
   });
 
   it("reads nothing from the store for a session the composer is not on", async () => {

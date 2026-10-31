@@ -1,9 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type * as PlanModule from "@/lib/aeCompactPlan";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
+// The plan itself is covered in aeCompactPlan.test.ts; here the card only has to start it.
+vi.mock("@/lib/aeCompactPlan", async (importOriginal) => {
+  const real = await importOriginal<typeof PlanModule>();
+  return { ...real, startAeCompactPlan: vi.fn(real.startAeCompactPlan) };
+});
 // The family read behind Switch account; the rows are the session list it would find.
 const familyRows = vi.hoisted(() => ({ rows: [] as unknown[] }));
 vi.mock("@/lib/aeFamilyRead", () => ({
@@ -18,6 +24,7 @@ import { dismissAeSwitchFamily, useAeSwitchFamilyRequest } from "@/lib/aeSwitchF
 import type { AePrCard } from "@/lib/aePrs";
 import { ForkDialogContextProvider } from "@/shell/ForkDialogContext";
 import { useChatStore } from "@/store/chatStore";
+import { resetAeCompactPlans, startAeCompactPlan } from "@/lib/aeCompactPlan";
 import { aeRevealDock } from "@/lib/aeDockReveal";
 import { AE_ACCOUNT_FOLLOW_UP_DELAYS_MS } from "@/lib/aeClaudeAccount";
 import { AeActionDock } from "./AeActionDock";
@@ -1059,6 +1066,11 @@ describe("the Compact card", () => {
     vi.mocked(authenticatedFetch).mockImplementation(() => json({ ok: true }));
   });
 
+  afterEach(() => {
+    resetAeCompactPlans();
+    vi.mocked(startAeCompactPlan).mockClear();
+  });
+
   it("shows the size and Compact and Not now when the label asks", async () => {
     renderDock([], [], SUGGEST);
     const lead = await screen.findByTestId("ae-dock-lead");
@@ -1116,36 +1128,45 @@ describe("the Compact card", () => {
     expect(view.container.querySelector("[data-testid=ae-dock-compact]")).toBeNull();
   });
 
-  it("Compact asks twice, compacts the open chat, then snoozes", async () => {
-    const compact = vi.fn(() => Promise.resolve());
+  it("Compact asks twice, queues a compact for the open chat, then snoozes once it ran", async () => {
+    let ran: (() => void) | undefined;
+    vi.mocked(startAeCompactPlan).mockImplementationOnce((_id, done) => {
+      ran = done;
+    });
     renderDock([], [], SUGGEST);
-    useChatStore.setState({ compact });
     const button = await screen.findByTestId("ae-dock-compact");
     fireEvent.click(button);
     expect(button.textContent).toBe("Compact now?");
-    expect(compact).not.toHaveBeenCalled();
+    expect(startAeCompactPlan).not.toHaveBeenCalled();
     fireEvent.click(button);
-    expect(compact).toHaveBeenCalledTimes(1);
+    expect(startAeCompactPlan).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(startAeCompactPlan).mock.calls[0]![0]).toBe("s1");
+    // Queued is not compacted: nothing is snoozed until the compact went out.
+    expect(snoozeCalls()).toHaveLength(0);
+    ran?.();
     await waitFor(() => expect(snoozeCalls()).toHaveLength(1));
     expect(String(snoozeCalls()[0]![0])).toBe("/v1/ae/sessions/s1/handoff/snooze");
   });
 
-  it("does not snooze when the compact failed", async () => {
-    const compact = vi.fn(() => Promise.reject(new Error("409 Conflict")));
+  it("a queued Compact shows Cancel, and a click cancels it", async () => {
     renderDock([], [], SUGGEST);
-    useChatStore.setState({ compact });
     const button = await screen.findByTestId("ae-dock-compact");
     fireEvent.click(button);
     fireEvent.click(button);
-    await screen.findByRole("alert");
-    expect(snoozeCalls()).toHaveLength(0);
+    await waitFor(() => expect(button.textContent).toBe("Cancel compact"));
+    expect(button.getAttribute("data-compact-plan")).toBe("queued");
+    fireEvent.click(button);
+    await waitFor(() => expect(button.textContent).toBe("Compact"));
   });
 
-  it("disables Compact while the chat is running", async () => {
+  it("offers to queue Compact while the chat is running instead of disabling it", async () => {
     renderDock([], [], SUGGEST);
     act(() => useChatStore.setState({ sessionStatus: "running" }));
     try {
-      expect(await screen.findByTestId("ae-dock-compact")).toBeDisabled();
+      const button = await screen.findByTestId("ae-dock-compact");
+      expect(button).not.toBeDisabled();
+      fireEvent.click(button);
+      expect(button.textContent).toBe("Queue compact?");
     } finally {
       // The store keeps a per-session copy that the next render of "s1" would restore.
       act(() => useChatStore.setState({ sessionStatus: "idle" }));
@@ -1187,9 +1208,8 @@ describe("the Compact card", () => {
     const listen = (event: Event) => seen.push((event as CustomEvent).detail.content);
     window.addEventListener("omnigent:toast", listen);
     try {
-      const compact = vi.fn(() => Promise.resolve());
+      vi.mocked(startAeCompactPlan).mockImplementationOnce((_id, done) => done?.());
       renderDock([], [], SUGGEST);
-      useChatStore.setState({ compact });
       const button = await screen.findByTestId("ae-dock-compact");
       fireEvent.click(button);
       fireEvent.click(button);
@@ -1199,7 +1219,6 @@ describe("the Compact card", () => {
           setTimeout(resolve, 20);
         });
       });
-      expect(compact).toHaveBeenCalledTimes(1);
       expect(seen).toEqual([]);
     } finally {
       window.removeEventListener("omnigent:toast", listen);
@@ -1214,9 +1233,8 @@ describe("the Compact card", () => {
     const listen = (event: Event) => seen.push((event as CustomEvent).detail.content);
     window.addEventListener("omnigent:toast", listen);
     try {
-      const compact = vi.fn(() => Promise.resolve());
+      vi.mocked(startAeCompactPlan).mockImplementationOnce((_id, done) => done?.());
       renderDock([], [], SUGGEST);
-      useChatStore.setState({ compact });
       const button = await screen.findByTestId("ae-dock-compact");
       fireEvent.click(button);
       fireEvent.click(button);
