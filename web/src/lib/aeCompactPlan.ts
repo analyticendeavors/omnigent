@@ -57,6 +57,27 @@ function safeNow(s: StoreState, conversationId: string): boolean {
   return !s.queuedMessages.some((m) => m.conversationId === conversationId);
 }
 
+/**
+ * The blocks the prepare turn added. They follow the prepare message itself, which stays found
+ * however history loads or shrinks; without it, whatever was not in the transcript at send time.
+ */
+function blocksOfPrepareTurn(blocks: StoreState["blocks"], plan: Plan): StoreState["blocks"] {
+  let anchor = -1;
+  blocks.forEach((b, index) => {
+    if (
+      b.type === "user_message" &&
+      JSON.stringify(b.content).includes(AE_COMPACT_PREP_TEXT.slice(0, 40))
+    ) {
+      anchor = index;
+    }
+  });
+  if (anchor >= 0) return blocks.slice(anchor + 1);
+  return blocks.filter(
+    (b) =>
+      !plan.seenBlocks.has(b) && !(b.ctx.responseId && plan.seenResponses.has(b.ctx.responseId)),
+  );
+}
+
 function clearTimers(plan: Plan) {
   if (plan.stableTimer) clearTimeout(plan.stableTimer);
   if (plan.limitTimer) clearTimeout(plan.limitTimer);
@@ -142,12 +163,10 @@ async function advance(conversationId: string) {
   // Idle, but the prepare turn has not been seen running: the start timer decides.
   if (!plan.sawTurn) return;
   // A turn that failed, was cancelled, or raised an error did not finish saving: compact nothing.
-  const failed = store.blocks.some(
+  const failed = blocksOfPrepareTurn(store.blocks, plan).some(
     (b) =>
-      !plan.seenBlocks.has(b) &&
-      !(b.ctx.responseId && plan.seenResponses.has(b.ctx.responseId)) &&
-      ((b.type === "response_end" && b.status !== "completed") ||
-        (b.type === "error" && b.level !== "info")),
+      (b.type === "response_end" && b.status !== "completed") ||
+      (b.type === "error" && b.level !== "info"),
   );
   if (failed) {
     fail(

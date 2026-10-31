@@ -290,4 +290,38 @@ describe("queued compact", () => {
     await tick(2000);
     expect(compact).not.toHaveBeenCalled();
   });
+
+  it("judges only what follows the prepare message when it is in the transcript", async () => {
+    startAeCompactPlan(ID);
+    await tick(2000);
+    const prep = {
+      type: "user_message",
+      content: [{ type: "input_text", text: AE_COMPACT_PREP_TEXT }],
+      ctx: { responseId: "" },
+    };
+    // An old non-info error with an empty id, rehydrated as a new object, is history, not this turn.
+    setChat({
+      sessionStatus: "idle",
+      blocks: [{ type: "error", level: "error", message: "old", ctx: { responseId: "" } }, prep],
+    });
+    await tick(2000);
+    expect(compact).toHaveBeenCalledTimes(1);
+  });
+
+  it("catches a failure that carries a reused response id once it follows the prepare message", async () => {
+    setChat({ blocks: [{ type: "user_message", content: [], ctx: { responseId: "r1" } }] });
+    startAeCompactPlan(ID);
+    await tick(2000);
+    const prep = {
+      type: "user_message",
+      content: [{ type: "input_text", text: AE_COMPACT_PREP_TEXT }],
+      ctx: { responseId: "r1" },
+    };
+    setChat({
+      sessionStatus: "idle",
+      blocks: [prep, { type: "response_end", status: "failed", ctx: { responseId: "r1" } }],
+    });
+    await tick(2000);
+    expect(compact).not.toHaveBeenCalled();
+  });
 });
