@@ -480,6 +480,51 @@ describe("aeTogglePinFamily", () => {
       expect(b).toBeLessThan(11);
     });
 
+    it("says pin spot, not spots, when one is needed", async () => {
+      sessionList([LEAD, child("a")]);
+      pinned({ x: 1 });
+      toggle(LEAD, false, 2);
+      await vi.waitFor(() => expect(question()?.familyBlocked).toBe("Needs 2 pin spots, 1 free"));
+      answerPinFamily("cancel");
+      sessionList([LEAD, child("ref", "reference")]);
+      resetAePinFamilyForTests();
+      pinned({ a: 1 });
+      toggle(LEAD, false, 1);
+      await vi.waitFor(() => expect(alone).toHaveBeenCalledTimes(1));
+    });
+
+    it("files nothing on Cancel, and a family unpin from a drop leaves no Undo", async () => {
+      const onFamily = vi.fn<() => void>();
+      sessionList([LEAD, child("a")]);
+      pinned({ lead: 1, a: 2 });
+      const drop = () =>
+        aeTogglePinFamily({
+          queryClient,
+          writePin,
+          session: LEAD,
+          pinned: true,
+          pinCap: 30,
+          includeShared: true,
+          alone,
+          onFamily,
+          quiet: true,
+        });
+      drop();
+      await vi.waitFor(() => expect(question()).not.toBeNull());
+      answerPinFamily("cancel");
+      await settle();
+      expect(onFamily).not.toHaveBeenCalled();
+      expect(alone).not.toHaveBeenCalled();
+
+      resetAePinFamilyForTests();
+      drop();
+      await vi.waitFor(() => expect(question()).not.toBeNull());
+      answerPinFamily("family");
+      await vi.waitFor(() => expect(writePin).toHaveBeenCalledTimes(2));
+      expect(onFamily).toHaveBeenCalledTimes(1);
+      expect(mocks.toast).not.toHaveBeenCalled();
+    });
+
     it("does not ask while the setting is family", async () => {
       writeAePinFamily("family");
       sessionList([LEAD, child("a")]);

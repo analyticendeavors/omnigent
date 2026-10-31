@@ -190,6 +190,7 @@ async function unpinFamily(
   writePin: WritePin,
   family: Conversation[],
   lead: Pick<Conversation, "id" | "title">,
+  quiet: boolean,
 ): Promise<void> {
   const pinned = pinnedNow(queryClient);
   const members = [lead.id, ...family.map((c) => c.id).filter((m) => m !== lead.id)].filter((m) =>
@@ -199,7 +200,7 @@ async function unpinFamily(
     writePin,
     members.map((m) => ({ id: m, pinned: false })),
   );
-  if (done.length === 0) return;
+  if (done.length === 0 || quiet) return;
   toast(`Unpinned ${done.length} session${done.length === 1 ? "" : "s"}`, {
     id: UNDO_TOAST_ID,
     description: lead.title || undefined,
@@ -240,6 +241,8 @@ export function aeTogglePinFamily({
   includeShared,
   alone,
   place,
+  onFamily,
+  quiet = false,
 }: {
   queryClient: QueryClient;
   writePin: WritePin;
@@ -252,6 +255,10 @@ export function aeTogglePinFamily({
   alone: () => void;
   /** A pin dropped at a spot in Pinned: the whole family lands there. */
   place?: AePinPlace;
+  /** Runs when the whole family is taken, just before its writes (the caller's own step of `alone`). */
+  onFamily?: () => void;
+  /** No Undo pill after a family unpin. */
+  quiet?: boolean;
 }): void {
   const mode = readAePinFamily();
   if (mode === "parent") {
@@ -295,6 +302,7 @@ export function aeTogglePinFamily({
               return;
             }
           }
+          onFamily?.();
           await takeFamily();
         };
         if (pinned) {
@@ -303,7 +311,7 @@ export function aeTogglePinFamily({
             alone();
             return undefined;
           }
-          return cascade(() => unpinFamily(queryClient, writePin, family, lead));
+          return cascade(() => unpinFamily(queryClient, writePin, family, lead, quiet));
         }
         const open = others.filter((c) => c.archived !== true && !aeIsClosedMember(c));
         if (open.length === 0) {
@@ -315,7 +323,9 @@ export function aeTogglePinFamily({
         const free = freeSpots(queryClient, pinCap, includeShared);
         return cascade(
           () => pinFamily(queryClient, writePin, family, session.id, pinCap, includeShared, place),
-          needed > free ? `Needs ${needed} pin spots, ${free} free` : undefined,
+          needed > free
+            ? `Needs ${needed} pin ${needed === 1 ? "spot" : "spots"}, ${free} free`
+            : undefined,
         );
       },
       () => {

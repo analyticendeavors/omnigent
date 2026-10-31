@@ -2365,7 +2365,13 @@ function ConversationList({
   const queryClient = useQueryClient();
   // A drag that pins or unpins a lead asks about its family like the pin button does.
   const familyPin = useCallback(
-    (id: string, pinned: boolean, alone: () => void, place?: AePinPlace) =>
+    (
+      id: string,
+      pinned: boolean,
+      alone: () => void,
+      place?: AePinPlace,
+      extra?: { onFamily?: () => void; quiet?: boolean },
+    ) =>
       aeTogglePinFamily({
         queryClient,
         writePin: pinAt,
@@ -2376,6 +2382,7 @@ function ConversationList({
         includeShared: config.pinsIncludeShared && config.sharedAvailable,
         alone,
         place,
+        ...extra,
       }),
     [queryClient, pinAt, pinnedConversations, allConversations, config],
   );
@@ -2405,15 +2412,24 @@ function ConversationList({
         target,
       );
       if (action.kind === "move") {
-        moveToProject.mutate({ id: dragged.id, project: action.project });
+        const file = () => moveToProject.mutate({ id: dragged.id, project: action.project });
         // Unpin a pinned session so it actually drops into the folder instead of
         // staying floated up in Pinned (pin outranks project membership). No
         // Undo pill: re-pinning would leave the session filed in the new folder.
-        // A lead with pinned family asks, like any other unpin.
+        // A lead with pinned family asks first; Cancel neither files nor unpins.
         if (action.unpin) {
-          familyPin(dragged.id, true, () => {
-            pinAt({ id: dragged.id, pinned: false }).catch(() => {});
-          });
+          familyPin(
+            dragged.id,
+            true,
+            () => {
+              file();
+              pinAt({ id: dragged.id, pinned: false }).catch(() => {});
+            },
+            undefined,
+            { onFamily: file, quiet: true },
+          );
+        } else {
+          file();
         }
         // Open the (possibly brand-new) folder so the session is visible in it.
         expandProject(action.project);
@@ -2472,11 +2488,20 @@ function ConversationList({
       if (action.kind === "ungroup") {
         // Unfile silently — a first-class project persists when emptied, so
         // dragging out its last session deletes nothing. Mirrors the kebab flow.
-        moveToProject.mutate({ id: dragged.id, project: "" });
+        const unfile = () => moveToProject.mutate({ id: dragged.id, project: "" });
         if (action.unpin) {
-          familyPin(dragged.id, true, () => {
-            pinAt({ id: dragged.id, pinned: false }).catch(() => {});
-          });
+          familyPin(
+            dragged.id,
+            true,
+            () => {
+              unfile();
+              pinAt({ id: dragged.id, pinned: false }).catch(() => {});
+            },
+            undefined,
+            { onFamily: unfile, quiet: true },
+          );
+        } else {
+          unfile();
         }
       }
     },
