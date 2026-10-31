@@ -19,6 +19,7 @@ import type { AePrCard } from "@/lib/aePrs";
 import { ForkDialogContextProvider } from "@/shell/ForkDialogContext";
 import { useChatStore } from "@/store/chatStore";
 import { aeRevealDock } from "@/lib/aeDockReveal";
+import { AE_ACCOUNT_FOLLOW_UP_DELAYS_MS } from "@/lib/aeClaudeAccount";
 import { AeActionDock } from "./AeActionDock";
 import { ComposerWorkspaceBar } from "./composer/ComposerControls";
 import { ComposerPrLink } from "./composer/ComposerPrLink";
@@ -674,7 +675,7 @@ function renderLimitDock({
       </MemoryRouter>
     </QueryClientProvider>,
   );
-  return { onSwitchModel, openForkDialog };
+  return { onSwitchModel, openForkDialog, qc };
 }
 
 describe("AeActionDock usage gate", () => {
@@ -757,6 +758,30 @@ describe("AeActionDock usage gate", () => {
       ),
     );
     expect(screen.getByTestId("ask").textContent).toBe("");
+  });
+
+  it("a switch that went through re-reads this chat's Usage on the follow-up schedule", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      serveLimits(() => limitsAnswer(95));
+      const { qc } = renderLimitDock();
+      const invalidate = vi.spyOn(qc, "invalidateQueries");
+      const reads = () =>
+        invalidate.mock.calls.filter(([a]: unknown[]) => {
+          const key = (a as { queryKey?: unknown[] }).queryKey;
+          return key?.[0] === "ae-limits" && key?.[1] === "s1";
+        }).length;
+      fireEvent.click(await screen.findByTestId("ae-dock-limit-account"));
+      await waitFor(() => expect(reads()).toBe(1));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(
+          AE_ACCOUNT_FOLLOW_UP_DELAYS_MS[AE_ACCOUNT_FOLLOW_UP_DELAYS_MS.length - 1],
+        );
+      });
+      expect(reads()).toBe(1 + AE_ACCOUNT_FOLLOW_UP_DELAYS_MS.length);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("opens a menu of logins when more than one other login exists", async () => {
