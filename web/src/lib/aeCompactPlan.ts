@@ -28,10 +28,11 @@ export const AE_COMPACT_PREP_LIMIT_MS = 15 * 60_000;
 
 interface Plan {
   phase: AeCompactPhase;
-  sawBusy: boolean;
-  preparingSince: number;
+  sawTurn: boolean;
+  blocksAtSend: number;
   stableTimer: ReturnType<typeof setTimeout> | null;
   limitTimer: ReturnType<typeof setTimeout> | null;
+  startTimer: ReturnType<typeof setTimeout> | null;
   onCompacted?: () => void;
 }
 
@@ -49,15 +50,18 @@ type StoreState = ReturnType<typeof useChatStore.getState>;
 function safeNow(s: StoreState, conversationId: string): boolean {
   if (s.status === "streaming") return false;
   if (s.sessionStatus !== "idle") return false;
-  if (s.backgroundTasks.some((t) => t.status === "running")) return false;
+  if (s.backgroundTaskCount > 0 || s.backgroundTasks.some((t) => t.status === "running"))
+    return false;
   return !s.queuedMessages.some((m) => m.conversationId === conversationId);
 }
 
 function clearTimers(plan: Plan) {
   if (plan.stableTimer) clearTimeout(plan.stableTimer);
   if (plan.limitTimer) clearTimeout(plan.limitTimer);
+  if (plan.startTimer) clearTimeout(plan.startTimer);
   plan.stableTimer = null;
   plan.limitTimer = null;
+  plan.startTimer = null;
 }
 
 function finish(conversationId: string) {
@@ -93,15 +97,21 @@ async function advance(conversationId: string) {
       return;
     }
     plan.phase = "preparing";
-    plan.sawBusy = false;
-    plan.preparingSince = Date.now();
+    plan.sawTurn = false;
+    plan.blocksAtSend = store.blocks.length;
     plan.limitTimer = setTimeout(
       () => fail(conversationId, "Compact cancelled: the chat took too long to save its notes."),
       AE_COMPACT_PREP_LIMIT_MS,
     );
+    // Only the server reporting the session running proves the prepare turn started; a busy
+    // blip from the send latch, a background shell or a queued message does not.
+    plan.startTimer = setTimeout(() => {
+      plan.startTimer = null;
+      if (!plan.sawTurn) {
+        fail(conversationId, "Compact cancelled: the chat never started saving its notes.");
+      }
+    }, AE_COMPACT_START_LIMIT_MS);
     emit();
-    // If the prepare turn never shows as running, this re-checks until the start limit.
-    schedule(conversationId, plan);
     try {
       await store.send(AE_COMPACT_PREP_TEXT, agentId, undefined, {
         onError: (error: unknown) => {
@@ -124,13 +134,21 @@ async function advance(conversationId: string) {
     return;
   }
   if (plan.phase !== "preparing") return;
-  if (!plan.sawBusy) {
-    // Idle before the prepare turn ever showed as running: wait for it, up to the start limit.
-    if (Date.now() - plan.preparingSince > AE_COMPACT_START_LIMIT_MS) {
-      fail(conversationId, "Compact cancelled: the chat never started saving its notes.");
-    } else {
-      schedule(conversationId, plan);
-    }
+  // Idle, but the prepare turn has not been seen running: the start timer decides.
+  if (!plan.sawTurn) return;
+  // A turn that failed, was cancelled, or raised an error did not finish saving: compact nothing.
+  const failed = store.blocks
+    .slice(plan.blocksAtSend)
+    .some(
+      (b) =>
+        (b.type === "response_end" && b.status !== "completed") ||
+        (b.type === "error" && b.level !== "info"),
+    );
+  if (failed) {
+    fail(
+      conversationId,
+      "Compact cancelled: the chat did not finish saving its notes cleanly, so nothing was compacted.",
+    );
     return;
   }
   plan.phase = "compacting";
@@ -167,12 +185,16 @@ function onStore() {
       fail(conversationId, "Compact cancelled: you left the chat before it ran.");
       continue;
     }
+    if (plan.phase === "preparing" && !plan.sawTurn && store.sessionStatus === "running") {
+      plan.sawTurn = true;
+      if (plan.startTimer) clearTimeout(plan.startTimer);
+      plan.startTimer = null;
+    }
     if (safeNow(store, conversationId)) {
       if (!plan.stableTimer) schedule(conversationId, plan);
     } else {
       if (plan.stableTimer) clearTimeout(plan.stableTimer);
       plan.stableTimer = null;
-      if (plan.phase === "preparing") plan.sawBusy = true;
     }
   }
 }
@@ -182,10 +204,11 @@ export function startAeCompactPlan(conversationId: string, onCompacted?: () => v
   if (plans.has(conversationId)) return;
   const plan: Plan = {
     phase: "queued",
-    sawBusy: false,
-    preparingSince: 0,
+    sawTurn: false,
+    blocksAtSend: 0,
     stableTimer: null,
     limitTimer: null,
+    startTimer: null,
     onCompacted,
   };
   plans.set(conversationId, plan);

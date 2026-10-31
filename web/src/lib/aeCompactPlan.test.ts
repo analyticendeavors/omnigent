@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatStore } from "@/store/chatStore";
 import {
   AE_COMPACT_PREP_TEXT,
+  AE_COMPACT_PREP_LIMIT_MS,
   AE_COMPACT_START_LIMIT_MS,
   cancelAeCompactPlan,
   resetAeCompactPlans,
@@ -17,6 +18,8 @@ function setChat(patch: Record<string, unknown> = {}) {
     status: "idle",
     sessionStatus: "idle",
     backgroundTasks: [],
+    backgroundTaskCount: 0,
+    blocks: [],
     queuedMessages: [],
     ...patch,
   } as never);
@@ -87,6 +90,7 @@ describe("queued compact", () => {
 
   it.each([
     ["a background shell is running", { backgroundTasks: [{ status: "running" }] }],
+    ["an older runner reports only a shell count", { backgroundTaskCount: 1 }],
     ["the chat waits on the user", { sessionStatus: "waiting" }],
     [
       "a message is queued ahead",
@@ -170,5 +174,91 @@ describe("queued compact", () => {
     expect(compact).toHaveBeenCalledTimes(1);
     expect(done).not.toHaveBeenCalled();
     expect(toasts.join("\n")).toContain("Could not compact the session (409 Conflict)");
+  });
+  it("does not count a send-latch blip or a background shell as the prepare turn", async () => {
+    // Busy states other than the server reporting the session running prove nothing.
+    send.mockImplementation(() => {
+      setChat({ status: "streaming" });
+      setChat({ status: "idle", backgroundTasks: [{ status: "running" }] });
+      setChat();
+      return Promise.resolve();
+    });
+    startAeCompactPlan(ID);
+    await tick(2000);
+    await tick(AE_COMPACT_START_LIMIT_MS + 4000);
+    expect(compact).not.toHaveBeenCalled();
+    expect(toasts.join("\n")).toContain("never started saving its notes");
+  });
+
+  it("gives up when the prepare turn runs past the limit", async () => {
+    startAeCompactPlan(ID);
+    await tick(2000);
+    // Running, and it never ends.
+    await tick(AE_COMPACT_PREP_LIMIT_MS + 1000);
+    expect(compact).not.toHaveBeenCalled();
+    expect(toasts.join("\n")).toContain("took too long");
+  });
+
+  it("waits for a message the user sends during the prepare turn", async () => {
+    startAeCompactPlan(ID);
+    await tick(2000);
+    setChat({
+      sessionStatus: "idle",
+      queuedMessages: [{ queueId: "q1", text: "also this", conversationId: ID }],
+    });
+    await tick(5000);
+    expect(compact).not.toHaveBeenCalled();
+    setChat({ sessionStatus: "running", queuedMessages: [] });
+    setChat({ sessionStatus: "idle" });
+    await tick(2000);
+    expect(compact).toHaveBeenCalledTimes(1);
+  });
+
+  it("cannot be cancelled once the compact event is going out", async () => {
+    let finishCompact: () => void = () => {};
+    compact.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishCompact = resolve;
+        }),
+    );
+    const done = vi.fn();
+    startAeCompactPlan(ID, done);
+    await tick(2000);
+    setChat({ sessionStatus: "idle" });
+    await tick(2000);
+    expect(compact).toHaveBeenCalledTimes(1);
+    cancelAeCompactPlan(ID);
+    finishCompact();
+    await tick(0);
+    expect(done).toHaveBeenCalledTimes(1);
+  });
+  it.each([
+    ["the turn ended failed", [{ type: "response_end", status: "failed" }]],
+    ["the turn was cancelled", [{ type: "response_end", status: "cancelled" }]],
+    ["the turn raised an error", [{ type: "error", level: "error", message: "boom" }]],
+  ])("compacts nothing when %s", async (_name, blocks) => {
+    startAeCompactPlan(ID);
+    await tick(2000);
+    setChat({ sessionStatus: "idle", blocks });
+    await tick(2000);
+    expect(compact).not.toHaveBeenCalled();
+    expect(toasts.join("\n")).toContain("did not finish saving its notes cleanly");
+  });
+
+  it("still compacts after a clean finish, and ignores blocks from before the send", async () => {
+    setChat({ blocks: [{ type: "response_end", status: "failed" }] });
+    startAeCompactPlan(ID);
+    await tick(2000);
+    setChat({
+      sessionStatus: "idle",
+      blocks: [
+        { type: "response_end", status: "failed" },
+        { type: "response_end", status: "completed" },
+        { type: "error", level: "info", message: "note" },
+      ],
+    });
+    await tick(2000);
+    expect(compact).toHaveBeenCalledTimes(1);
   });
 });
