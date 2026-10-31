@@ -29,7 +29,9 @@ export const AE_COMPACT_PREP_LIMIT_MS = 15 * 60_000;
 interface Plan {
   phase: AeCompactPhase;
   sawTurn: boolean;
-  blocksAtSend: number;
+  /** What the transcript held when the prepare message went out: history is not this turn's. */
+  seenBlocks: WeakSet<object>;
+  seenResponses: Set<string>;
   stableTimer: ReturnType<typeof setTimeout> | null;
   limitTimer: ReturnType<typeof setTimeout> | null;
   startTimer: ReturnType<typeof setTimeout> | null;
@@ -98,7 +100,10 @@ async function advance(conversationId: string) {
     }
     plan.phase = "preparing";
     plan.sawTurn = false;
-    plan.blocksAtSend = store.blocks.length;
+    for (const b of store.blocks) {
+      plan.seenBlocks.add(b);
+      if (b.ctx.responseId) plan.seenResponses.add(b.ctx.responseId);
+    }
     plan.limitTimer = setTimeout(
       () => fail(conversationId, "Compact cancelled: the chat took too long to save its notes."),
       AE_COMPACT_PREP_LIMIT_MS,
@@ -137,13 +142,13 @@ async function advance(conversationId: string) {
   // Idle, but the prepare turn has not been seen running: the start timer decides.
   if (!plan.sawTurn) return;
   // A turn that failed, was cancelled, or raised an error did not finish saving: compact nothing.
-  const failed = store.blocks
-    .slice(plan.blocksAtSend)
-    .some(
-      (b) =>
-        (b.type === "response_end" && b.status !== "completed") ||
-        (b.type === "error" && b.level !== "info"),
-    );
+  const failed = store.blocks.some(
+    (b) =>
+      !plan.seenBlocks.has(b) &&
+      !(b.ctx.responseId && plan.seenResponses.has(b.ctx.responseId)) &&
+      ((b.type === "response_end" && b.status !== "completed") ||
+        (b.type === "error" && b.level !== "info")),
+  );
   if (failed) {
     fail(
       conversationId,
@@ -205,7 +210,8 @@ export function startAeCompactPlan(conversationId: string, onCompacted?: () => v
   const plan: Plan = {
     phase: "queued",
     sawTurn: false,
-    blocksAtSend: 0,
+    seenBlocks: new WeakSet(),
+    seenResponses: new Set(),
     stableTimer: null,
     limitTimer: null,
     startTimer: null,

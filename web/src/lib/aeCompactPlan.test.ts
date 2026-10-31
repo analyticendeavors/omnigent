@@ -234,9 +234,18 @@ describe("queued compact", () => {
     expect(done).toHaveBeenCalledTimes(1);
   });
   it.each([
-    ["the turn ended failed", [{ type: "response_end", status: "failed" }]],
-    ["the turn was cancelled", [{ type: "response_end", status: "cancelled" }]],
-    ["the turn raised an error", [{ type: "error", level: "error", message: "boom" }]],
+    [
+      "the turn ended failed",
+      [{ type: "response_end", status: "failed", ctx: { responseId: "r2" } }],
+    ],
+    [
+      "the turn was cancelled",
+      [{ type: "response_end", status: "cancelled", ctx: { responseId: "r2" } }],
+    ],
+    [
+      "the turn raised an error",
+      [{ type: "error", level: "error", message: "boom", ctx: { responseId: "" } }],
+    ],
   ])("compacts nothing when %s", async (_name, blocks) => {
     startAeCompactPlan(ID);
     await tick(2000);
@@ -246,19 +255,39 @@ describe("queued compact", () => {
     expect(toasts.join("\n")).toContain("did not finish saving its notes cleanly");
   });
 
-  it("still compacts after a clean finish, and ignores blocks from before the send", async () => {
-    setChat({ blocks: [{ type: "response_end", status: "failed" }] });
+  it("still compacts after a clean finish, and ignores history that was there before the send", async () => {
+    const old = { type: "response_end", status: "failed", ctx: { responseId: "r1" } };
+    setChat({ blocks: [old] });
     startAeCompactPlan(ID);
     await tick(2000);
     setChat({
       sessionStatus: "idle",
       blocks: [
-        { type: "response_end", status: "failed" },
-        { type: "response_end", status: "completed" },
-        { type: "error", level: "info", message: "note" },
+        // Rehydrated copy of the old block: a new object, the same response.
+        { ...old },
+        { type: "response_end", status: "completed", ctx: { responseId: "r2" } },
+        { type: "error", level: "info", message: "note", ctx: { responseId: "r2" } },
       ],
     });
     await tick(2000);
     expect(compact).toHaveBeenCalledTimes(1);
+  });
+
+  it("still sees a failure when the transcript is replaced by a shorter one mid-turn", async () => {
+    setChat({
+      blocks: [
+        { type: "user_message", ctx: { responseId: "r0" } },
+        { type: "user_message", ctx: { responseId: "r0" } },
+        { type: "user_message", ctx: { responseId: "r1" } },
+      ],
+    });
+    startAeCompactPlan(ID);
+    await tick(2000);
+    setChat({
+      sessionStatus: "idle",
+      blocks: [{ type: "response_end", status: "failed", ctx: { responseId: "r2" } }],
+    });
+    await tick(2000);
+    expect(compact).not.toHaveBeenCalled();
   });
 });
