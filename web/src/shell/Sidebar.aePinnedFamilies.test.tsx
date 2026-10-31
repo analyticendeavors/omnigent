@@ -58,6 +58,7 @@ vi.mock("@/components/PermissionsModal", () => ({ PermissionsModal: () => null }
 import { useConversations } from "@/hooks/useConversations";
 
 const ROW_HEIGHT = 30;
+const DND_CLICK_GUARD_MS = 60;
 const pin = (value: number, extra: Record<string, string> = {}) => ({
   labels: { "omnigent.pinned": String(value), ...extra },
 });
@@ -119,6 +120,13 @@ async function drag(sourceId: string, targetId: string) {
   const insertion = screen.queryByTestId("pin-order-insertion") !== null;
   await act(async () => {
     fireEvent.mouseUp(document, target);
+  });
+  // dnd-kit keeps a document click guard for 50 ms after a drag ends; wait it out so
+  // the next click, even in the next test, is not swallowed.
+  await act(async () => {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, DND_CLICK_GUARD_MS);
+    });
   });
   return insertion;
 }
