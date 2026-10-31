@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AeClaudeAccountSubmenu } from "./AeClaudeAccountSubmenu";
 import { DropdownMenu, DropdownMenuContent } from "@/components/ui/dropdown-menu";
 import type { Host } from "@/hooks/useHosts";
+import { AE_ACCOUNT_FOLLOW_UP_DELAYS_MS } from "@/lib/aeClaudeAccount";
 import { dismissAeMoveAll } from "@/lib/aeMoveAllChats";
 import { dismissAeSwitchFamily, useAeSwitchFamilyRequest } from "@/lib/aeSwitchFamily";
 
@@ -110,6 +111,32 @@ describe("Account submenu inside a chat", () => {
     await waitFor(() => {
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ["session", "s1"] });
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ["ae-limits", "s1"] });
+    });
+  });
+
+  describe("follow-up re-reads", () => {
+    afterEach(() => vi.useRealTimers());
+    const reads = (spy: { mock: { calls: unknown[][] } }) =>
+      spy.mock.calls.filter(([a]) => {
+        const key = (a as { queryKey?: unknown[] }).queryKey;
+        return key?.[0] === "ae-limits" && key?.[1] === "s7";
+      }).length;
+
+    it("a switch that went through re-reads this chat's Usage on the schedule", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      vi.mocked(authenticatedFetch).mockImplementation(() =>
+        json({ account: "", relaunched: true }),
+      );
+      renderMenu(false, "s7");
+      const invalidate = vi.spyOn(qc, "invalidateQueries");
+      fireEvent.click(screen.getByTestId("composer-claude-account-chat-default"));
+      await waitFor(() => expect(reads(invalidate)).toBe(1));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(
+          AE_ACCOUNT_FOLLOW_UP_DELAYS_MS[AE_ACCOUNT_FOLLOW_UP_DELAYS_MS.length - 1],
+        );
+      });
+      expect(reads(invalidate)).toBe(1 + AE_ACCOUNT_FOLLOW_UP_DELAYS_MS.length);
     });
   });
 
