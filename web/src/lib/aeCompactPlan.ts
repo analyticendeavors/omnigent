@@ -1,8 +1,12 @@
 // Queued compact (omnigent-ae). Clicking Compact never compacts on the spot: it queues a
-// plan for the open chat. At a safe point (the chat idle and quiet) the chat gets one
-// normal turn that asks it to save what is worth keeping, and only when that turn ends
-// does the compact event go out. The plan lives in the page: a reload forgets it, and
+// plan for the open chat. At a safe point (no turn running and nothing queued) the chat
+// gets one normal turn that asks it to save what is worth keeping, and only when that turn
+// ends does the compact event go out. The plan lives in the page: a reload forgets it, and
 // nothing compacts by accident.
+//
+// Background shells do not hold a plan back (2026-11-01). A shell outlives the turn that
+// started it and survives /compact, and the page's shell tally stays sticky until the next
+// turn ends, so a lead chat with a CI wait running kept its Compact queued forever.
 //
 // The driver is module level, not a component effect, so folding the rail or losing the
 // dock card never drops a queued compact.
@@ -48,12 +52,16 @@ function emit() {
 
 type StoreState = ReturnType<typeof useChatStore.getState>;
 
-/** Idle and quiet: no turn, nothing waiting on the user, no background shell, nothing queued. */
+/**
+ * A turn end: no turn streaming or running, nothing queued for this chat. `waiting` counts as
+ * idle, because it is the turn-end status a claude-native chat publishes while a background
+ * shell still runs (the store's message queue treats it the same way). Background shells are
+ * not looked at: they outlive turns, survive /compact, and their tally stays sticky until the
+ * next turn ends.
+ */
 function safeNow(s: StoreState, conversationId: string): boolean {
   if (s.status === "streaming") return false;
-  if (s.sessionStatus !== "idle") return false;
-  if (s.backgroundTaskCount > 0 || s.backgroundTasks.some((t) => t.status === "running"))
-    return false;
+  if (s.sessionStatus !== "idle" && s.sessionStatus !== "waiting") return false;
   return !s.queuedMessages.some((m) => m.conversationId === conversationId);
 }
 
@@ -200,7 +208,7 @@ function schedule(conversationId: string, plan: Plan) {
   }, AE_COMPACT_STABLE_MS);
 }
 
-/** Runs on every store change: re-arms the quiet timer while idle, cancels it while busy. */
+/** Runs on every store change: re-arms the quiet timer at a turn end, cancels it while busy. */
 function onStore() {
   const store = useChatStore.getState();
   for (const [conversationId, plan] of [...plans]) {
