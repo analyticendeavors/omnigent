@@ -15,7 +15,6 @@ import {
   aeReviewerNumbers,
   aeReviewsCard,
   aeReviewerSummary,
-  aeWithReviewScope,
   aeWriteReviewers,
 } from "./aeReviewers";
 
@@ -235,61 +234,67 @@ describe("aeReviewers", () => {
   });
 });
 
-describe("the security reviewer slot", () => {
+describe("reviewer personas on a slot", () => {
   const opus = { mode: "fixed" as const, model: "claude-opus-5-5", effort: "high" as const };
-  const security = { ...opus, when: "risky" as const, focus: "security" as const };
+  const security = { mode: "fixed" as const, persona: "security" };
+  const agent = { ...codex, agent_name: null };
 
-  it("parses and writes back when and focus on a later slot, Claude or agent", () => {
-    const value = { mode: "multi", reviewers: [opus, { ...codex, agent_name: null }, security] };
+  it("parses and writes back a persona on a Claude or agent slot, with or without a model", () => {
+    const value = {
+      mode: "multi",
+      reviewers: [opus, { ...agent, persona: "tests" }, security],
+    };
     expect(aeParseReviewerMulti(value)).toEqual(value);
-    const agent = { ...codex, agent_name: null, when: "risky", focus: "security" };
-    expect(aeParseReviewerMulti({ mode: "multi", reviewers: [opus, agent] })?.reviewers[1]).toEqual(
-      agent,
-    );
+    const override = { ...security, model: "claude-sonnet-5-5", effort: "medium" as const };
+    expect(aeParseReviewerMulti({ mode: "multi", reviewers: [opus, override] })).toEqual({
+      mode: "multi",
+      reviewers: [opus, override],
+    });
     expect(aeWriteReviewers([opus, security])).toEqual({
       mode: "multi",
       reviewers: [opus, security],
     });
   });
 
-  it("leaves slots without the fields exactly as they were", () => {
+  it("leaves slots without a persona exactly as they were", () => {
     const parsed = aeParseReviewerMulti({ mode: "multi", reviewers: [opus, opus] });
     expect(parsed?.reviewers[1]).toStrictEqual(opus);
+    expect(aeWriteReviewers([opus])).toEqual(opus);
   });
 
-  it("refuses a risky first slot and values the server would refuse", () => {
+  it("needs a model and effort without a persona, and refuses a bad persona id", () => {
+    const bare = { mode: "fixed" };
+    expect(aeParseReviewerMulti({ mode: "multi", reviewers: [opus, bare] })).toBeNull();
     expect(
-      aeParseReviewerMulti({ mode: "multi", reviewers: [{ ...opus, when: "risky" }] }),
+      aeParseReviewerMulti({
+        mode: "multi",
+        reviewers: [opus, { ...bare, model: "claude-opus-5-5" }],
+      }),
     ).toBeNull();
-    for (const bad of [{ when: "sometimes" }, { focus: "speed" }]) {
+    for (const persona of ["Not A Slug", 3, ""]) {
       expect(
-        aeParseReviewerMulti({ mode: "multi", reviewers: [opus, { ...opus, ...bad }] }),
+        aeParseReviewerMulti({ mode: "multi", reviewers: [opus, { ...opus, persona }] }),
       ).toBeNull();
     }
   });
 
-  it("accepts a first slot that is security only and always runs", () => {
-    const first = { ...opus, when: "always" as const, focus: "security" as const };
-    expect(aeParseReviewerMulti({ mode: "multi", reviewers: [first] })?.reviewers[0]).toEqual(
-      first,
-    );
+  it("drops fields the revision removed, so a stale slot reads as a plain one", () => {
+    const stale = { ...opus, when: "risky", focus: "security" };
+    expect(
+      aeParseReviewerMulti({ mode: "multi", reviewers: [opus, stale] })?.reviewers[1],
+    ).toStrictEqual(opus);
   });
 
-  it("keeps a lone security-only slot in the multi shape", () => {
-    const lone = { ...opus, focus: "security" as const };
-    expect(aeWriteReviewers([lone])).toEqual({ mode: "multi", reviewers: [lone] });
-    expect(aeWriteReviewers([opus])).toEqual(opus);
+  it("keeps a lone persona slot in the multi shape", () => {
+    expect(aeWriteReviewers([security])).toEqual({ mode: "multi", reviewers: [security] });
   });
 
-  it("sets and clears the scope, leaving the default unwritten", () => {
-    expect(aeWithReviewScope(opus, { when: "risky", focus: "security" })).toEqual(security);
-    expect(aeWithReviewScope(security, { when: "always" })).toStrictEqual(opus);
-    expect(aeWithReviewScope({ mode: "auto" }, { when: "risky" })).toEqual({ mode: "auto" });
-  });
-
-  it("names the scope in the summary", () => {
+  it("names the persona in the summary", () => {
     expect(aeReviewerSummary({ mode: "multi", reviewers: [opus, security] })).toBe(
-      "Opus 5.5 high + Opus 5.5 high, security only, only if risky",
+      "Opus 5.5 high + security",
     );
+    expect(
+      aeReviewerSummary({ mode: "multi", reviewers: [opus, { ...opus, persona: "tests" }] }),
+    ).toBe("Opus 5.5 high + Opus 5.5 high, tests");
   });
 });

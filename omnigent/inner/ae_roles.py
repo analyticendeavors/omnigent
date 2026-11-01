@@ -222,6 +222,7 @@ def resolve_roles(conv: Conversation, store: ConversationStore) -> dict[str, Any
     roles = _resolve_roles(conv, store)
     roles = _own_helpers(roles) if _legacy_solo(conv) else roles
     roles = ae_reviewers.resolve_agents(roles, _agent_lookup(store))
+    roles = ae_reviewers.attach_personas(roles, ae_reviewers.persona_lookup(_owner(conv, store)))
     return {**roles, "current": _current_ids()}
 
 
@@ -572,7 +573,7 @@ def render_roles(roles: object) -> str | None:
             setting = preset.get("roles") if isinstance(preset.get("roles"), dict) else {}
             parts = [
                 ae_reviewers.reviewers_short(
-                    setting.get(role), preset.get("rules"), current, _model
+                    setting.get(role), preset.get("rules"), current, _model, roles.get("personas")
                 )
                 if role == "reviewer"
                 else f"{role} "
@@ -597,6 +598,9 @@ def render_roles(roles: object) -> str | None:
             for p in presets[:LEAD_PICKS_SHOWN]
         ):
             lines.append(ae_reviewers.MANY_PICKS)
+        lines += ae_reviewers.picks_personas_block(
+            presets[:LEAD_PICKS_SHOWN], roles.get("personas")
+        )
         return "\n".join(lines)
     preset = roles.get("preset")
     if not isinstance(preset, dict):
@@ -613,7 +617,7 @@ def render_roles(roles: object) -> str | None:
     for role in ROLES[1:]:
         if role == "reviewer":
             lines += ae_reviewers.reviewer_lines(
-                setting.get(role), preset.get("rules"), current, _model
+                setting.get(role), preset.get("rules"), current, _model, roles.get("personas")
             )
             continue
         shown = (

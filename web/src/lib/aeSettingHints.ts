@@ -65,14 +65,49 @@ export const AE_SETTING_HINTS = {
     hint: "Earlier versions sit under Older models. The group with the model you use now opens on its own, so it is never hidden.",
     source: "tooltip",
   },
-  "reviewer.when": {
-    label: "Reviewer runs",
-    hint: "Always (default): every final review. Only if risky: skipped unless the diff touches auth, secrets, endpoints or policies. Not Reviewer 1.",
+  "reviewer.persona": {
+    label: "Reviewer persona",
+    hint: "No persona (default): a plain review. A persona adds its purpose and instructions. Reviewer 1 cannot use one that runs only if risky.",
     source: "tooltip",
   },
-  "reviewer.focus": {
-    label: "Reviewer focus",
-    hint: "General review (default) looks at everything. Security only checks for security issues and reports only those with a concrete attack path.",
+  personas: {
+    label: "Reviewer personas",
+    hint: "Reusable reviewer briefs. Built-in ones are read-only: duplicate one to change it. You can keep up to 20 of your own.",
+    source: "tooltip",
+  },
+  "persona.name": {
+    label: "Persona name",
+    hint: "What the persona is called in the reviewer list and in the lead's notice. Up to 40 characters, one line.",
+    source: "tooltip",
+  },
+  "persona.purpose": {
+    label: "Persona purpose",
+    hint: "One line on what this reviewer checks. The lead reads it beside the reviewer. Up to 200 characters.",
+    source: "tooltip",
+  },
+  "persona.model": {
+    label: "Persona model",
+    hint: "The model it reviews on. A reviewer's own model wins. Left empty (default): the reviewer's, else the lead's pick.",
+    source: "tooltip",
+  },
+  "persona.effort": {
+    label: "Persona effort",
+    hint: "How hard it thinks. Effort: low is fastest, max is slowest. A reviewer's own effort wins. Left empty (default): the reviewer's.",
+    source: "tooltip",
+  },
+  "persona.when": {
+    label: "Persona runs",
+    hint: "Always (default): at every final review. Only if the diff is risky: skipped unless the trigger fits. Not for Reviewer 1.",
+    source: "tooltip",
+  },
+  "persona.trigger": {
+    label: "Persona trigger",
+    hint: "For a persona that runs only if risky: what in a diff makes it worth running. The lead reads it. Up to 200 characters.",
+    source: "tooltip",
+  },
+  "persona.instructions": {
+    label: "Persona instructions",
+    hint: "What the reviewer is told, copied word for word into its brief. Up to 1000 characters; line breaks are kept.",
     source: "tooltip",
   },
   "reviewer.add": {

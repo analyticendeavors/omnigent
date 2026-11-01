@@ -121,7 +121,8 @@ function updateOf(
   value: AeRowValue,
   catalogs: AeModelCatalogs,
 ): AeModelUpdate | null {
-  if (value.mode === "fixed") {
+  // A persona-only slot names no model, so there is nothing to update.
+  if (value.mode === "fixed" && value.model && value.effort) {
     const found = aeNewerClaudeUpdate(value.model, catalogs.claude);
     if (!found) return null;
     const toModel = found.model;

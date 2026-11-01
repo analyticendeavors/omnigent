@@ -5,6 +5,7 @@
 // shapes, the parser for the server's answer and the pure edits Settings >
 // Roles makes before it saves the whole list.
 
+import { type AePersona, aeParsePersonas } from "@/lib/aePersonas";
 import { aeClaudeVersion } from "@/lib/aeClaudeModels";
 import {
   AE_ROLE_EFFORTS,
@@ -207,6 +208,8 @@ export interface AeRolesDoc {
   child_relay?: boolean;
   /** Context tokens at which a top-level chat shows a Compact card; 0 is off, absent reads as 300000. */
   lead_handoff_tokens?: number | null;
+  /** The user's own reviewer personas (the built-in ones come in `builtin_personas`); absent keeps them. */
+  personas?: AePersona[];
 }
 
 /** The context size, in tokens, that shows a chat the Compact card when the user never set one. */
@@ -215,6 +218,8 @@ export const AE_HANDOFF_DEFAULT_TOKENS = 300_000;
 /** What `GET` and `PUT /v1/ae/roles` answer. */
 export interface AeRolesState extends AeRolesDoc {
   starters: AeRolePreset[];
+  /** The read-only personas every user has; never sent back in a save. */
+  builtin_personas?: AePersona[];
 }
 
 export const AE_ROLE_LABELS: Record<AeRoleId, { label: string; hint: string }> = {
@@ -351,6 +356,8 @@ export function aeParseRolesState(value: unknown): AeRolesState | null {
     child_prompts,
     child_relay,
     lead_handoff_tokens,
+    personas,
+    builtin_personas,
   } = value;
   if (typeof revision !== "number" || !Number.isInteger(revision) || revision < 0) return null;
   if (typeof default_preset !== "string") return null;
@@ -362,6 +369,8 @@ export function aeParseRolesState(value: unknown): AeRolesState | null {
     apply_start_on: apply_start_on !== false,
     presets: list,
     starters: parsePresets(starters) ?? [],
+    builtin_personas: aeParsePersonas(builtin_personas) ?? [],
+    ...(aeParsePersonas(personas) ? { personas: aeParsePersonas(personas) as AePersona[] } : {}),
     ...(Array.isArray(starters_seen) && starters_seen.every((id) => typeof id === "string")
       ? { starters_seen: starters_seen as string[] }
       : {}),
@@ -390,6 +399,7 @@ export function aeRolesDoc(state: AeRolesDoc): AeRolesDoc {
     ...(state.lead_handoff_tokens !== undefined
       ? { lead_handoff_tokens: state.lead_handoff_tokens }
       : {}),
+    ...(state.personas ? { personas: state.personas } : {}),
   };
 }
 
@@ -542,10 +552,10 @@ export function aeTopModel(models: readonly string[]): string | null {
 export function aeIsTopTierEverywhere(roles: AeRoleTable, catalog: readonly string[]): boolean {
   // Agent reviewers run on another provider's models, so only Claude slots count.
   const settings = AE_ROLE_IDS.flatMap((role): (AeWorkerSetting | { mode: "agent" })[] =>
-    role === "reviewer" ? aeReviewerList(roles.reviewer) : [roles[role]],
+    role === "reviewer" ? (aeReviewerList(roles.reviewer) as AeWorkerSetting[]) : [roles[role]],
   ).filter((s) => s.mode !== "agent");
   if (!settings.every((s) => s.mode === "fixed" && s.effort === "max")) return false;
-  const models = settings.map((s) => (s.mode === "fixed" ? s.model : ""));
+  const models = settings.map((s) => (s.mode === "fixed" ? (s.model ?? "") : ""));
   const top = aeTopModel(catalog.length > 0 ? catalog : models);
   if (!top) return false;
   const target = comparableModelId(top);

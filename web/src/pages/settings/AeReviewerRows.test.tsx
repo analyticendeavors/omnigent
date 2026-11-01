@@ -3,6 +3,7 @@ import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AvailableAgent } from "@/hooks/useAvailableAgents";
 import { AE_CODEX_AGENT_ID, type AeReviewerSetting } from "@/lib/aeReviewers";
+import type { AePersonaEntry } from "@/lib/aePersonas";
 import type { AeRoleRules } from "@/lib/aeRoles";
 import type { AeTeamOption } from "@/lib/aeTeamOptions";
 import { AeReviewerRowsView, AeReviewSettings } from "./AeReviewerRows";
@@ -77,15 +78,19 @@ const codex = agent("codex-id", "Codex", "codex-native");
 const gemini = agent("gemini-id", "Gemini CLI", "gemini");
 const defaultOptions = [ready(codex), setup(gemini)];
 
+const NONE: AePersonaEntry[] = [];
+
 function Harness({
   initial,
   options = defaultOptions,
   hostStatus = "online",
+  personas = NONE,
   onSave,
 }: {
   initial: AeReviewerSetting;
   options?: AeTeamOption[];
   hostStatus?: string;
+  personas?: AePersonaEntry[];
   onSave: (value: AeReviewerSetting) => void;
 }) {
   const [value, setValue] = useState(initial);
@@ -100,6 +105,7 @@ function Harness({
         setting={value}
         models={models}
         disabled={false}
+        personas={personas}
         agents={{ options, host: { host_id: "h1", status: hostStatus } as never, loaded: true }}
         onChange={(next) => {
           setValue(next);
@@ -660,51 +666,152 @@ describe("Codex reviewers in the one dropdown", () => {
     expect(add).toHaveTextContent("codex host is offline");
   });
 
-  describe("the security reviewer controls", () => {
-    const security = { ...sonnet, when: "risky" as const, focus: "security" as const };
+  describe("the persona select", () => {
+    const PERSONAS: AePersonaEntry[] = [
+      {
+        id: "general",
+        name: "General",
+        purpose: "Correctness",
+        model: "claude-sonnet-5-5",
+        effort: "medium",
+        when: "always",
+        instructions: "Review.",
+        builtin: true,
+      },
+      {
+        id: "security",
+        name: "Security",
+        purpose: "Security only",
+        model: "claude-opus-5-5",
+        effort: "high",
+        when: "risky",
+        instructions: "Attack paths.",
+        builtin: true,
+      },
+      {
+        id: "docs",
+        name: "Docs",
+        purpose: "Docs match",
+        when: "always",
+        instructions: "Read the docs.",
+        builtin: false,
+      },
+    ];
+    const persona = { mode: "fixed" as const, persona: "security" };
+    const two = { mode: "multi" as const, reviewers: [sonnet, sonnet] };
 
-    it("offers when and focus on a later slot, and focus only on slot 1", () => {
-      render(<Harness initial={{ mode: "multi", reviewers: [sonnet, sonnet] }} onSave={vi.fn()} />);
-      expect(screen.getByLabelText("Reviewer 2 runs")).toBeInstanceOf(HTMLSelectElement);
-      expect(screen.getByLabelText("Reviewer 2 focus")).toBeInstanceOf(HTMLSelectElement);
-      expect(screen.getByLabelText("Reviewer 1 focus")).toBeInstanceOf(HTMLSelectElement);
-      expect(screen.queryByLabelText("Reviewer 1 runs")).toBeNull();
-      expect(screen.getAllByTestId("ae-hint-reviewer.when")).toHaveLength(1);
-      expect(screen.getAllByTestId("ae-hint-reviewer.focus")).toHaveLength(2);
+    it("is a native select on every Claude slot with a hint, and absent on an Auto slot", () => {
+      render(<Harness initial={two} personas={PERSONAS} onSave={vi.fn()} />);
+      expect(screen.getByLabelText("Reviewer 1 persona")).toBeInstanceOf(HTMLSelectElement);
+      expect(screen.getByLabelText("Reviewer 2 persona")).toBeInstanceOf(HTMLSelectElement);
+      expect(screen.getAllByTestId("ae-hint-reviewer.persona")).toHaveLength(2);
+      expect(screen.queryByLabelText(/focus|runs$/)).toBeNull();
     });
 
-    it("writes when and focus onto the slot, and nothing for the defaults", () => {
+    it("lists none, the built-in personas and then the user's own", () => {
+      render(<Harness initial={two} personas={PERSONAS} onSave={vi.fn()} />);
+      const select = screen.getByLabelText("Reviewer 2 persona");
+      const groups = Array.from(select.querySelectorAll("optgroup")).map((g) => [
+        g.label,
+        Array.from(g.querySelectorAll("option")).map((o) => o.textContent),
+      ]);
+      expect(Array.from(select.querySelectorAll("option"))[0].textContent).toBe("No persona");
+      expect(groups).toEqual([
+        ["Built-in", ["General", "Security"]],
+        ["Yours", ["Docs"]],
+      ]);
+    });
+
+    it("turns off the risky personas on reviewer 1 and says why, but not on reviewer 2", () => {
+      render(<Harness initial={two} personas={PERSONAS} onSave={vi.fn()} />);
+      const first = screen.getByLabelText("Reviewer 1 persona");
+      const risky = (select: HTMLElement) =>
+        within(select).getByRole("option", { name: /Security/ }) as HTMLOptionElement;
+      expect(risky(first).disabled).toBe(true);
+      expect(risky(first)).toHaveTextContent("Security (runs only if risky)");
+      expect(within(first).getByRole("option", { name: "General" })).not.toBeDisabled();
+      expect(risky(screen.getByLabelText("Reviewer 2 persona")).disabled).toBe(false);
+      expect(
+        screen.getByText(/Reviewer 1 always runs, so risky personas are off here/),
+      ).toBeVisible();
+    });
+
+    it("writes the persona onto the slot and keeps its model as an override", () => {
       const onSave = vi.fn();
-      render(<Harness initial={{ mode: "multi", reviewers: [sonnet, sonnet] }} onSave={onSave} />);
-      fireEvent.change(screen.getByLabelText("Reviewer 2 runs"), { target: { value: "risky" } });
-      expect(onSave).toHaveBeenLastCalledWith({
-        mode: "multi",
-        reviewers: [sonnet, { ...sonnet, when: "risky" }],
-      });
-      fireEvent.change(screen.getByLabelText("Reviewer 2 focus"), {
+      render(<Harness initial={two} personas={PERSONAS} onSave={onSave} />);
+      fireEvent.change(screen.getByLabelText("Reviewer 2 persona"), {
         target: { value: "security" },
       });
-      expect(onSave).toHaveBeenLastCalledWith({ mode: "multi", reviewers: [sonnet, security] });
-      fireEvent.change(screen.getByLabelText("Reviewer 2 runs"), { target: { value: "always" } });
       expect(onSave).toHaveBeenLastCalledWith({
         mode: "multi",
-        reviewers: [sonnet, { ...sonnet, focus: "security" }],
+        reviewers: [sonnet, { ...sonnet, persona: "security" }],
       });
     });
 
-    it("shows a saved security slot and keeps a lone security-only slot in the multi shape", () => {
+    it("shows a persona-only slot on the persona's model and writes a model pick as an override", () => {
       const onSave = vi.fn();
       render(
-        <Harness initial={{ mode: "multi", reviewers: [sonnet, security] }} onSave={onSave} />,
+        <Harness
+          initial={{ mode: "multi", reviewers: [sonnet, persona] }}
+          personas={PERSONAS}
+          onSave={onSave}
+        />,
       );
-      expect(screen.getByLabelText("Reviewer 2 runs")).toHaveValue("risky");
-      expect(screen.getByLabelText("Reviewer 2 focus")).toHaveValue("security");
-      fireEvent.change(screen.getByLabelText("Reviewer 1 focus"), {
-        target: { value: "security" },
+      expect(screen.getByLabelText("Reviewer 2 persona")).toHaveValue("security");
+      expect(screen.getByRole("button", { name: /^Reviewer 2 model/ })).toHaveTextContent(
+        "Opus 5.5",
+      );
+      fireEvent.click(
+        within(screen.getByRole("radiogroup", { name: "Reviewer 2 effort" })).getByRole("radio", {
+          name: "Low",
+        }),
+      );
+      expect(onSave).toHaveBeenLastCalledWith({
+        mode: "multi",
+        reviewers: [
+          sonnet,
+          { mode: "fixed", persona: "security", model: "claude-opus-5-5", effort: "low" },
+        ],
+      });
+    });
+
+    it("drops the persona on None and keeps the model it was showing", () => {
+      const onSave = vi.fn();
+      render(
+        <Harness
+          initial={{ mode: "multi", reviewers: [sonnet, persona] }}
+          personas={PERSONAS}
+          onSave={onSave}
+        />,
+      );
+      fireEvent.change(screen.getByLabelText("Reviewer 2 persona"), { target: { value: "" } });
+      expect(onSave).toHaveBeenLastCalledWith({
+        mode: "multi",
+        reviewers: [sonnet, { mode: "fixed", model: "claude-opus-5-5", effort: "high" }],
+      });
+    });
+
+    it("says so when the named persona is gone, and keeps it until changed", () => {
+      render(
+        <Harness
+          initial={{ mode: "multi", reviewers: [sonnet, { ...sonnet, persona: "gone-away" }] }}
+          personas={PERSONAS}
+          onSave={vi.fn()}
+        />,
+      );
+      expect(screen.getByLabelText("Reviewer 2 persona")).toHaveValue("gone-away");
+      expect(screen.getByTestId("ae-reviewer-persona-missing-2")).toHaveTextContent("plain review");
+    });
+
+    it("keeps a lone persona slot in the multi shape", () => {
+      const onSave = vi.fn();
+      render(<Harness initial={sonnet} personas={PERSONAS} onSave={onSave} />);
+      fireEvent.change(screen.getByLabelText("Reviewer 1 persona"), {
+        target: { value: "general" },
       });
       expect(onSave).toHaveBeenLastCalledWith({
         mode: "multi",
-        reviewers: [{ ...sonnet, focus: "security" }, security],
+        reviewers: [{ ...sonnet, persona: "general" }],
       });
     });
   });

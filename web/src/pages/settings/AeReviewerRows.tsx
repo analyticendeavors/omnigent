@@ -34,9 +34,9 @@ import {
   aeReviewerRowLabel,
   aeReviewerUnavailableOf,
   aeReviewMergeOf,
-  aeWithReviewScope,
   aeWriteReviewers,
 } from "@/lib/aeReviewers";
+import { type AePersonaEntry, aeEffectiveSlot, aePersonaBarredFromFirst } from "@/lib/aePersonas";
 import { AE_ROLE_LABELS, type AeRoleEffort, type AeRoleRules, aeHelpersOf } from "@/lib/aeRoles";
 import type { AeTeamOption } from "@/lib/aeTeamOptions";
 import { codexEffortLevelsForModel, comparableModelId } from "@/lib/codexNativeModels";
@@ -45,6 +45,8 @@ import { cn } from "@/lib/utils";
 import { AeUpdateChip } from "./AeModelUpdates";
 import { AeSegmented } from "./AeRolesControls";
 import { aeRoleModelPick } from "./AeRoleModelPicker";
+
+const NO_PERSONAS: readonly AePersonaEntry[] = [];
 
 const GRID =
   "grid grid-cols-[5.5rem_1fr] items-center gap-x-3 gap-y-2 @lg/roles:grid-cols-[7rem_minmax(0,14rem)_1fr]";
@@ -147,70 +149,104 @@ function AgentDetails({
   );
 }
 
-// Conditional security review (2026-11-01): when the slot runs, and what it looks at. Slot 1
-// has no "when" (it takes the fix checks, so it always runs). Native selects, as its neighbours.
-function ScopeControls({
+// Reviewer personas (2026-11-01): the slot's persona, a native select like its neighbours.
+// Reviewer 1 takes the fix checks, so it always runs and the personas that run only when the
+// diff is risky are not offered there. The slot's own model and effort override the persona's.
+function PersonaSelect({
   slot,
   index,
   label,
+  personas,
   disabled,
   onChange,
 }: {
   slot: AeReviewerSlot;
   index: number;
   label: string;
+  personas: readonly AePersonaEntry[];
   disabled: boolean;
-  onChange: (slot: AeReviewerSlot) => void;
+  onChange: (persona: string) => void;
 }) {
   if (slot.mode === "auto") return null;
-  const selectClass =
-    "min-w-0 rounded-md border border-input bg-background px-1.5 py-1 text-xs text-foreground";
-  const when = slot.when === "risky" ? "risky" : "always";
-  const focus = slot.focus === "security" ? "security" : "general";
+  const current = slot.persona ?? "";
+  const known = personas.some((p) => p.id === current);
+  const barred = (p: AePersonaEntry) => index === 0 && aePersonaBarredFromFirst(p);
+  const mine = personas.filter((p) => !p.builtin);
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-      {index > 0 && (
-        <>
-          <select
-            aria-label={`${label} runs`}
-            value={when}
-            disabled={disabled}
-            onChange={(e) =>
-              onChange(
-                aeWithReviewScope(slot, {
-                  when: e.target.value as "always" | "risky",
-                  focus: slot.focus,
-                }),
-              )
-            }
-            className={selectClass}
-          >
-            <option value="always">Always</option>
-            <option value="risky">Only if the diff is risky</option>
-          </select>
-          <AeHint id="reviewer.when" />
-        </>
-      )}
       <select
-        aria-label={`${label} focus`}
-        value={focus}
+        aria-label={`${label} persona`}
+        value={current}
         disabled={disabled}
-        onChange={(e) =>
-          onChange(
-            aeWithReviewScope(slot, {
-              when: slot.when,
-              focus: e.target.value === "security" ? "security" : undefined,
-            }),
-          )
-        }
-        className={selectClass}
+        onChange={(e) => onChange(e.target.value)}
+        className="min-w-0 rounded-md border border-input bg-background px-1.5 py-1 text-xs text-foreground"
       >
-        <option value="general">General review</option>
-        <option value="security">Security only</option>
+        <option value="">No persona</option>
+        {current && !known && <option value={current}>{current} (not found)</option>}
+        <optgroup label="Built-in">
+          {personas
+            .filter((p) => p.builtin)
+            .map((p) => (
+              <option key={p.id} value={p.id} disabled={barred(p) && p.id !== current}>
+                {p.name}
+                {barred(p) ? " (runs only if risky)" : ""}
+              </option>
+            ))}
+        </optgroup>
+        {mine.length > 0 && (
+          <optgroup label="Yours">
+            {mine.map((p) => (
+              <option key={p.id} value={p.id} disabled={barred(p) && p.id !== current}>
+                {p.name}
+                {barred(p) ? " (runs only if risky)" : ""}
+              </option>
+            ))}
+          </optgroup>
+        )}
       </select>
-      <AeHint id="reviewer.focus" />
+      <AeHint id="reviewer.persona" />
+      {index === 0 && (
+        <span className="text-[11px] text-muted-foreground">
+          Reviewer 1 always runs, so risky personas are off here.
+        </span>
+      )}
+      {current && !known && (
+        <span
+          data-testid={`ae-reviewer-persona-missing-${index + 1}`}
+          className="text-[11px] text-amber-500"
+        >
+          That persona is gone, so this reviewer runs as a plain review.
+        </span>
+      )}
     </div>
   );
+}
+
+/** `next` (a model pick) with the persona of the slot it replaces; Auto cannot hold one. */
+function withPersona(next: AeReviewerSlot, previous: AeReviewerSlot): AeReviewerSlot {
+  const persona = previous.mode === "auto" ? undefined : previous.persona;
+  return persona && next.mode !== "auto" ? { ...next, persona } : next;
+}
+
+/**
+ * The slot after the persona select picks `persona` ("" for none). Picking keeps the
+ * slot's own model and effort as overrides; dropping the persona writes the model the slot
+ * was showing, so the slot never ends up with neither.
+ */
+function withChosenPersona(
+  slot: AeReviewerSlot,
+  shown: AeReviewerSlot,
+  persona: string,
+): AeReviewerSlot {
+  if (slot.mode === "auto") return slot;
+  if (persona) return { ...slot, persona };
+  const { persona: _dropped, ...rest } = { ...slot, ...(shown.mode === "auto" ? {} : shown) };
+  // A persona with no model of its own leaves nothing to keep, so a plain slot needs one.
+  return (
+    rest.mode === "fixed" && !(rest.model && rest.effort)
+      ? { mode: "fixed", model: "claude-sonnet-5-5", effort: "medium" }
+      : rest
+  ) as AeReviewerSlot;
 }
 
 /** The dropdown's value for a Codex model, and the one for "no model named". */
@@ -227,6 +263,7 @@ function SlotRow({
   loaded,
   disabled,
   chip,
+  personas,
   onChange,
   onRemove,
 }: {
@@ -240,22 +277,27 @@ function SlotRow({
   loaded: boolean;
   disabled: boolean;
   chip: React.ReactNode;
+  personas: readonly AePersonaEntry[];
   onChange: (slot: AeReviewerSlot) => void;
   onRemove: (() => void) | null;
 }) {
   const slot = slots[index];
+  // What the pickers show: a persona-only slot takes the persona's model and effort.
+  const shown = aeEffectiveSlot(slot, personas);
   const label = `Reviewer ${index + 1}`;
   const usedBy = (model: string) => {
-    const at = slots.findIndex(
-      (s, i) =>
+    const at = slots.findIndex((s, i) => {
+      const other = aeEffectiveSlot(s, personas);
+      return (
         i !== index &&
-        s.mode === "fixed" &&
-        comparableModelId(s.model) === comparableModelId(model),
-    );
+        other.mode === "fixed" &&
+        comparableModelId(other.model ?? "") === comparableModelId(model)
+      );
+    });
     return at < 0 ? "" : `used by Reviewer ${at + 1}`;
   };
   const pick = aeRoleModelPick({
-    setting: slot,
+    setting: shown as Parameters<typeof aeRoleModelPick>[0]["setting"],
     groups: "all",
     auto: index === 0,
     ariaLabel: index === 0 ? "Reviewer model" : `${label} model`,
@@ -268,14 +310,8 @@ function SlotRow({
     disabled,
     usedBy,
     // A reviewer slot never offers the session model, so the pick is always a slot.
-    // Picking another model keeps the slot's scope (when it runs and its focus).
-    onChange: (next) =>
-      onChange(
-        aeWithReviewScope(next as AeReviewerSlot, {
-          when: "when" in slot ? slot.when : undefined,
-          focus: "focus" in slot ? slot.focus : undefined,
-        }),
-      ),
+    // Picking a model keeps the slot's persona and writes the pick as its override.
+    onChange: (next) => onChange(withPersona(next as AeReviewerSlot, slot)),
   });
   const { agentSlot, agentState, trigger, bar } = pick;
   const agentOption = agentState?.option ?? null;
@@ -311,12 +347,13 @@ function SlotRow({
             <span className="text-xs text-muted-foreground">The lead chooses</span>
           )}
           {chip}
-          <ScopeControls
+          <PersonaSelect
             slot={slot}
             index={index}
             label={label}
+            personas={personas}
             disabled={disabled}
-            onChange={onChange}
+            onChange={(persona) => onChange(withChosenPersona(slot, shown, persona))}
           />
           {agentSlot && loaded && agentState && agentState.status !== "ready" && (
             <span data-testid={`ae-reviewer-tag-${index + 1}`} className="flex items-center gap-1">
@@ -412,6 +449,8 @@ interface ReviewerRowsProps {
   disabled: boolean;
   /** The update nudge's state (Settings > Roles only): a chip on each slot with a newer model. */
   updates?: AeModelUpdatesState;
+  /** The personas a slot can name, built-in first (Settings > Roles passes them). */
+  personas?: readonly AePersonaEntry[];
 }
 
 /** Settings > Roles: reads the agents and host itself. */
@@ -428,6 +467,7 @@ export function AeReviewerRowsView({
   disabled,
   updates,
   agents,
+  personas = NO_PERSONAS,
 }: ReviewerRowsProps & { agents: AeReviewerAgents }) {
   const { options, host, loaded } = agents;
   const codex = useAeCodexCatalog(agents);
@@ -470,6 +510,7 @@ export function AeReviewerRowsView({
           host={host}
           loaded={loaded}
           disabled={disabled}
+          personas={personas}
           chip={
             updates ? (
               <AeUpdateChip rowKey={`reviewer:${index}`} state={updates} disabled={disabled} />

@@ -30,7 +30,10 @@ import { AeRolePresetTile, AeSegmented, AeStepper } from "./AeRolesControls";
 import type { AeReviewerAgents } from "@/hooks/useAeReviewerAgents";
 import { aeRoleModelPick } from "./AeRoleModelPicker";
 import { AeUpdateBanner, AeUpdateChip } from "./AeModelUpdates";
+import type { AePersonaEntry } from "@/lib/aePersonas";
 import { AeReviewerRowsView, AeReviewSettings } from "./AeReviewerRows";
+
+const NO_PERSONAS: readonly AePersonaEntry[] = [];
 
 export type { AeRoleModelChoice } from "@/hooks/useAeRoleModels";
 
@@ -169,6 +172,7 @@ export function AeRolesEditor({
   dirty,
   saving,
   canDelete,
+  personas = NO_PERSONAS,
   onChange,
   onRevert,
   onSave,
@@ -187,6 +191,8 @@ export function AeRolesEditor({
   dirty: boolean;
   saving: boolean;
   canDelete: boolean;
+  /** The personas a reviewer slot can name (built-in first). */
+  personas?: readonly AePersonaEntry[];
   onChange: (draft: AeRoleDraft) => void;
   onRevert: () => void;
   onSave: () => void;
@@ -277,6 +283,7 @@ export function AeRolesEditor({
               disabled={saving}
               agents={agents}
               updates={updates}
+              personas={personas}
             />
           ) : (
             <AeRoleRow

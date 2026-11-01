@@ -57,7 +57,7 @@ export interface AeModelUpdatesState {
 }
 
 const effortOf = (row: AeRowValue | null) =>
-  row && (row.mode === "fixed" || row.mode === "agent") ? row.effort : null;
+  row && (row.mode === "fixed" || row.mode === "agent") ? (row.effort ?? null) : null;
 
 /** `current` with the model put back, and the effort too only if Update's effort is still there. */
 function undone(current: AeRowValue, entry: AeUpdated): AeRowValue {

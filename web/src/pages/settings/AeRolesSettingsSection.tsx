@@ -36,6 +36,8 @@ import {
   aeSameRoles,
   aeSetPinned,
 } from "@/lib/aeRoles";
+import { aeAllPersonas } from "@/lib/aePersonas";
+import { AePersonasSection } from "./AePersonasSection";
 import { AePresetInsightsBlock } from "./AePresetInsightsBlock";
 import { type AeRoleDraft, AeRolesEditor } from "./AeRolesEditor";
 import { type AePresetDetails, AeRolesPresetForm } from "./AeRolesPresetForm";
@@ -104,6 +106,7 @@ export function AeRolesSettingsSection() {
     presets.find((p) => p.id === openPick) ??
     presets.find((p) => p.id === state.default_preset) ??
     presets[0];
+  const personas = aeAllPersonas(state.builtin_personas ?? [], state.personas);
   const starterIds = new Set(state.starters.map((s) => s.id));
   const missingStarters = state.starters.filter((s) => !presets.some((p) => p.id === s.id));
 
@@ -262,6 +265,7 @@ export function AeRolesSettingsSection() {
           dirty={dirty}
           saving={busy}
           canDelete={presets.length > 1}
+          personas={personas}
           onChange={(next) => setDrafts((d) => ({ ...d, [open.id]: next }))}
           onRevert={() => dropDraft(open.id)}
           onSave={() => void saveDraft()}
@@ -319,6 +323,12 @@ export function AeRolesSettingsSection() {
           </button>
         </p>
       )}
+
+      <AePersonasSection
+        state={state}
+        busy={busy}
+        onSave={(next, done) => commit({ ...state, personas: next }, done)}
+      />
 
       <AePresetInsightsBlock state={state} />
 

@@ -28,19 +28,7 @@ export const AE_CODEX_AGENT_ID = "16a06503889b0c3034496821afd41b9e";
 export const AE_CODEX_AGENT_NAME = "codex-native-ui";
 const AGENT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
-/**
- * Conditional security review (2026-11-01): "risky" runs the slot only when the diff
- * touches security-relevant areas (never slot 1, which takes the fix checks); "security"
- * reviews security alone. Absent reads as always, and a general review.
- */
-export type AeReviewWhen = "always" | "risky";
-export type AeReviewFocus = "security";
-export interface AeReviewScope {
-  when?: AeReviewWhen;
-  focus?: AeReviewFocus;
-}
-
-export interface AeReviewerAgentSlot extends AeReviewScope {
+export interface AeReviewerAgentSlot {
   mode: "agent";
   agent: string;
   /** The agent's registered name ("codex-native-ui"); the live id is found by it when set. */
@@ -51,12 +39,22 @@ export interface AeReviewerAgentSlot extends AeReviewScope {
   model: string | null;
   /** Null: the agent's default effort. */
   effort: AeAgentEffort | null;
+  /** A reviewer persona's id (aePersonas.ts); its purpose and instructions guide the slot. */
+  persona?: string;
 }
 
-export type AeReviewerSlot =
-  | { mode: "auto" }
-  | ({ mode: "fixed"; model: string; effort: AeRoleEffort } & AeReviewScope)
-  | AeReviewerAgentSlot;
+export type AeReviewerSlot = { mode: "auto" } | AeReviewerFixedSlot | AeReviewerAgentSlot;
+
+/**
+ * A Claude reviewer. With a persona the model and effort are optional overrides: left out,
+ * the persona's apply (see aeEffectiveSlot in aePersonas.ts).
+ */
+export interface AeReviewerFixedSlot {
+  mode: "fixed";
+  model?: string;
+  effort?: AeRoleEffort;
+  persona?: string;
+}
 
 export interface AeReviewerMulti {
   mode: "multi";
@@ -103,33 +101,39 @@ function isAgentEffort(value: unknown): value is AeAgentEffort {
   return (AE_AGENT_EFFORTS as readonly unknown[]).includes(value);
 }
 
-/** The `when` and `focus` a stored slot carries; null when either holds a value the server refuses. */
-function parseScope(value: Record<string, unknown>, index: number): AeReviewScope | null {
-  const { when, focus } = value;
-  if (when != null && when !== "always" && when !== "risky") return null;
-  if (focus != null && focus !== "security") return null;
-  // Slot 1 takes the fix checks, so it always runs.
-  if (when === "risky" && index === 0) return null;
-  return {
-    ...(when ? { when } : {}),
-    ...(focus ? { focus } : {}),
-  };
-}
-
 function parseSlot(value: unknown, index: number): AeReviewerSlot | null {
   if (!isObject(value)) return null;
   if (value.mode === "auto") return index === 0 ? { mode: "auto" } : null;
   if (value.mode === "fixed") {
-    if (typeof value.model !== "string" || !value.model || !isEffort(value.effort)) return null;
-    const scope = parseScope(value, index);
-    return scope && { mode: "fixed", model: value.model, effort: value.effort, ...scope };
+    const persona = parsePersona(value.persona);
+    if (persona === null) return null;
+    const { model, effort } = value;
+    if (model != null && (typeof model !== "string" || !model)) return null;
+    if (effort != null && !isEffort(effort)) return null;
+    // Without a persona the model and effort are required, as before personas.
+    if (!persona.id && (model == null || effort == null)) return null;
+    return {
+      mode: "fixed",
+      ...(model != null ? { model: model as string } : {}),
+      ...(effort != null ? { effort: effort as AeRoleEffort } : {}),
+      ...persona.field,
+    };
   }
   if (value.mode === "agent") {
-    const scope = parseScope(value, index);
-    const slot = scope && aeParseAgentSlot(value);
-    return slot && { ...slot, ...scope };
+    const persona = parsePersona(value.persona);
+    const slot = persona && aeParseAgentSlot(value);
+    return slot && { ...slot, ...persona.field };
   }
   return null;
+}
+
+const PERSONA_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}$/;
+
+/** A slot's persona id: `{ id: "" }` when absent, null when it is not a valid id. */
+function parsePersona(value: unknown): { id: string; field: { persona?: string } } | null {
+  if (value == null) return { id: "", field: {} };
+  if (typeof value !== "string" || !PERSONA_ID_PATTERN.test(value)) return null;
+  return { id: value, field: { persona: value } };
 }
 
 /** An agent slot (the reviewer's, or a Codex planner, builder or helper), or null when malformed. */
@@ -181,9 +185,9 @@ export function aeWriteReviewers(slots: readonly AeReviewerSlot[]): AeReviewerSe
     .filter((slot, i) => slot.mode !== "auto" || i === 0)
     .slice(0, AE_REVIEWERS_MAX);
   if (kept.length === 0) return { mode: "auto" };
-  // A lone slot with a security focus keeps the multi shape: the plain setting has no focus.
-  if (kept.length === 1 && kept[0].mode !== "agent" && !("focus" in kept[0] && kept[0].focus))
-    return kept[0];
+  // A lone slot with a persona keeps the multi shape: the plain setting has no persona.
+  if (kept.length === 1 && kept[0].mode !== "agent" && !("persona" in kept[0] && kept[0].persona))
+    return kept[0] as AeRoleSetting;
   return { mode: "multi", reviewers: kept };
 }
 
@@ -193,24 +197,15 @@ export function aeReviewerRowLabel(setting: AeReviewerSetting): string {
 }
 
 function slotSummary(slot: AeReviewerSlot): string {
-  const scope =
-    slot.mode === "auto"
-      ? ""
-      : `${slot.focus === "security" ? ", security only" : ""}${slot.when === "risky" ? ", only if risky" : ""}`;
-  if (slot.mode === "fixed") return `${aeModelLabel(slot.model)} ${slot.effort}${scope}`;
-  if (slot.mode === "agent") return `${slot.name}${scope}`;
-  return "auto";
-}
-
-/** A copy of `slot` with its review scope set; "always" and a general review are left unwritten. */
-export function aeWithReviewScope(slot: AeReviewerSlot, scope: AeReviewScope): AeReviewerSlot {
-  if (slot.mode === "auto") return slot;
-  const { when: _when, focus: _focus, ...rest } = slot;
-  return {
-    ...rest,
-    ...(scope.when === "risky" ? { when: "risky" as const } : {}),
-    ...(scope.focus === "security" ? { focus: "security" as const } : {}),
-  } as AeReviewerSlot;
+  if (slot.mode === "auto") return "auto";
+  const base =
+    slot.mode === "agent"
+      ? slot.name
+      : slot.model && slot.effort
+        ? `${aeModelLabel(slot.model)} ${slot.effort}`
+        : "";
+  // A persona-only slot has no model of its own; the persona's id names it.
+  return slot.persona ? [base, slot.persona].filter(Boolean).join(", ") : base;
 }
 
 /** "Sonnet 5.5 medium + Codex". */
@@ -395,7 +390,7 @@ export function aeReviewsCard(
 }
 
 function slotName(slot: AeReviewerSlot): string {
-  if (slot.mode === "fixed") return aeModelLabel(slot.model);
+  if (slot.mode === "fixed") return slot.model ? aeModelLabel(slot.model) : "a persona reviewer";
   if (slot.mode === "agent") return slot.name;
   return "the lead's pick";
 }
