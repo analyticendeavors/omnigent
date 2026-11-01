@@ -15,6 +15,7 @@ import {
   aeReviewerNumbers,
   aeReviewsCard,
   aeReviewerSummary,
+  aeWithReviewScope,
   aeWriteReviewers,
 } from "./aeReviewers";
 
@@ -231,5 +232,64 @@ describe("aeReviewers", () => {
       lead_steps_down: true,
       auto_raises: 1,
     });
+  });
+});
+
+describe("the security reviewer slot", () => {
+  const opus = { mode: "fixed" as const, model: "claude-opus-5-5", effort: "high" as const };
+  const security = { ...opus, when: "risky" as const, focus: "security" as const };
+
+  it("parses and writes back when and focus on a later slot, Claude or agent", () => {
+    const value = { mode: "multi", reviewers: [opus, { ...codex, agent_name: null }, security] };
+    expect(aeParseReviewerMulti(value)).toEqual(value);
+    const agent = { ...codex, agent_name: null, when: "risky", focus: "security" };
+    expect(aeParseReviewerMulti({ mode: "multi", reviewers: [opus, agent] })?.reviewers[1]).toEqual(
+      agent,
+    );
+    expect(aeWriteReviewers([opus, security])).toEqual({
+      mode: "multi",
+      reviewers: [opus, security],
+    });
+  });
+
+  it("leaves slots without the fields exactly as they were", () => {
+    const parsed = aeParseReviewerMulti({ mode: "multi", reviewers: [opus, opus] });
+    expect(parsed?.reviewers[1]).toStrictEqual(opus);
+  });
+
+  it("refuses a risky first slot and values the server would refuse", () => {
+    expect(
+      aeParseReviewerMulti({ mode: "multi", reviewers: [{ ...opus, when: "risky" }] }),
+    ).toBeNull();
+    for (const bad of [{ when: "sometimes" }, { focus: "speed" }]) {
+      expect(
+        aeParseReviewerMulti({ mode: "multi", reviewers: [opus, { ...opus, ...bad }] }),
+      ).toBeNull();
+    }
+  });
+
+  it("accepts a first slot that is security only and always runs", () => {
+    const first = { ...opus, when: "always" as const, focus: "security" as const };
+    expect(aeParseReviewerMulti({ mode: "multi", reviewers: [first] })?.reviewers[0]).toEqual(
+      first,
+    );
+  });
+
+  it("keeps a lone security-only slot in the multi shape", () => {
+    const lone = { ...opus, focus: "security" as const };
+    expect(aeWriteReviewers([lone])).toEqual({ mode: "multi", reviewers: [lone] });
+    expect(aeWriteReviewers([opus])).toEqual(opus);
+  });
+
+  it("sets and clears the scope, leaving the default unwritten", () => {
+    expect(aeWithReviewScope(opus, { when: "risky", focus: "security" })).toEqual(security);
+    expect(aeWithReviewScope(security, { when: "always" })).toStrictEqual(opus);
+    expect(aeWithReviewScope({ mode: "auto" }, { when: "risky" })).toEqual({ mode: "auto" });
+  });
+
+  it("names the scope in the summary", () => {
+    expect(aeReviewerSummary({ mode: "multi", reviewers: [opus, security] })).toBe(
+      "Opus 5.5 high + Opus 5.5 high, security only, only if risky",
+    );
   });
 });

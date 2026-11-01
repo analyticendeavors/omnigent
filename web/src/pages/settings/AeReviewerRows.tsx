@@ -34,6 +34,7 @@ import {
   aeReviewerRowLabel,
   aeReviewerUnavailableOf,
   aeReviewMergeOf,
+  aeWithReviewScope,
   aeWriteReviewers,
 } from "@/lib/aeReviewers";
 import { AE_ROLE_LABELS, type AeRoleEffort, type AeRoleRules, aeHelpersOf } from "@/lib/aeRoles";
@@ -146,6 +147,72 @@ function AgentDetails({
   );
 }
 
+// Conditional security review (2026-11-01): when the slot runs, and what it looks at. Slot 1
+// has no "when" (it takes the fix checks, so it always runs). Native selects, as its neighbours.
+function ScopeControls({
+  slot,
+  index,
+  label,
+  disabled,
+  onChange,
+}: {
+  slot: AeReviewerSlot;
+  index: number;
+  label: string;
+  disabled: boolean;
+  onChange: (slot: AeReviewerSlot) => void;
+}) {
+  if (slot.mode === "auto") return null;
+  const selectClass =
+    "min-w-0 rounded-md border border-input bg-background px-1.5 py-1 text-xs text-foreground";
+  const when = slot.when === "risky" ? "risky" : "always";
+  const focus = slot.focus === "security" ? "security" : "general";
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+      {index > 0 && (
+        <>
+          <select
+            aria-label={`${label} runs`}
+            value={when}
+            disabled={disabled}
+            onChange={(e) =>
+              onChange(
+                aeWithReviewScope(slot, {
+                  when: e.target.value as "always" | "risky",
+                  focus: slot.focus,
+                }),
+              )
+            }
+            className={selectClass}
+          >
+            <option value="always">Always</option>
+            <option value="risky">Only if the diff is risky</option>
+          </select>
+          <AeHint id="reviewer.when" />
+        </>
+      )}
+      <select
+        aria-label={`${label} focus`}
+        value={focus}
+        disabled={disabled}
+        onChange={(e) =>
+          onChange(
+            aeWithReviewScope(slot, {
+              when: slot.when,
+              focus: e.target.value === "security" ? "security" : undefined,
+            }),
+          )
+        }
+        className={selectClass}
+      >
+        <option value="general">General review</option>
+        <option value="security">Security only</option>
+      </select>
+      <AeHint id="reviewer.focus" />
+    </div>
+  );
+}
+
 /** The dropdown's value for a Codex model, and the one for "no model named". */
 const rowValue = (row: NativeModelOption) => row.model ?? row.id;
 
@@ -201,7 +268,14 @@ function SlotRow({
     disabled,
     usedBy,
     // A reviewer slot never offers the session model, so the pick is always a slot.
-    onChange: (next) => onChange(next as AeReviewerSlot),
+    // Picking another model keeps the slot's scope (when it runs and its focus).
+    onChange: (next) =>
+      onChange(
+        aeWithReviewScope(next as AeReviewerSlot, {
+          when: "when" in slot ? slot.when : undefined,
+          focus: "focus" in slot ? slot.focus : undefined,
+        }),
+      ),
   });
   const { agentSlot, agentState, trigger, bar } = pick;
   const agentOption = agentState?.option ?? null;
@@ -237,6 +311,13 @@ function SlotRow({
             <span className="text-xs text-muted-foreground">The lead chooses</span>
           )}
           {chip}
+          <ScopeControls
+            slot={slot}
+            index={index}
+            label={label}
+            disabled={disabled}
+            onChange={onChange}
+          />
           {agentSlot && loaded && agentState && agentState.status !== "ready" && (
             <span data-testid={`ae-reviewer-tag-${index + 1}`} className="flex items-center gap-1">
               <Tag tone="amber">

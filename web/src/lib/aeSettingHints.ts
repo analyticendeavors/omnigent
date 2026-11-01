@@ -65,6 +65,16 @@ export const AE_SETTING_HINTS = {
     hint: "Earlier versions sit under Older models. The group with the model you use now opens on its own, so it is never hidden.",
     source: "tooltip",
   },
+  "reviewer.when": {
+    label: "Reviewer runs",
+    hint: "Always (default): every final review. Only if risky: skipped unless the diff touches auth, secrets, endpoints or policies. Not Reviewer 1.",
+    source: "tooltip",
+  },
+  "reviewer.focus": {
+    label: "Reviewer focus",
+    hint: "General review (default) looks at everything. Security only checks for security issues and reports only those with a concrete attack path.",
+    source: "tooltip",
+  },
   "reviewer.add": {
     label: "Adding reviewers",
     hint: "Adds a reviewer, up to 3. The new one is Codex on its Sol model if ready, else a Claude model not used yet. The x removes one.",

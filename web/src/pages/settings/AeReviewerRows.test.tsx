@@ -659,4 +659,53 @@ describe("Codex reviewers in the one dropdown", () => {
     expect(add).toHaveAttribute("title", "Codex host is offline");
     expect(add).toHaveTextContent("codex host is offline");
   });
+
+  describe("the security reviewer controls", () => {
+    const security = { ...sonnet, when: "risky" as const, focus: "security" as const };
+
+    it("offers when and focus on a later slot, and focus only on slot 1", () => {
+      render(<Harness initial={{ mode: "multi", reviewers: [sonnet, sonnet] }} onSave={vi.fn()} />);
+      expect(screen.getByLabelText("Reviewer 2 runs")).toBeInstanceOf(HTMLSelectElement);
+      expect(screen.getByLabelText("Reviewer 2 focus")).toBeInstanceOf(HTMLSelectElement);
+      expect(screen.getByLabelText("Reviewer 1 focus")).toBeInstanceOf(HTMLSelectElement);
+      expect(screen.queryByLabelText("Reviewer 1 runs")).toBeNull();
+      expect(screen.getAllByTestId("ae-hint-reviewer.when")).toHaveLength(1);
+      expect(screen.getAllByTestId("ae-hint-reviewer.focus")).toHaveLength(2);
+    });
+
+    it("writes when and focus onto the slot, and nothing for the defaults", () => {
+      const onSave = vi.fn();
+      render(<Harness initial={{ mode: "multi", reviewers: [sonnet, sonnet] }} onSave={onSave} />);
+      fireEvent.change(screen.getByLabelText("Reviewer 2 runs"), { target: { value: "risky" } });
+      expect(onSave).toHaveBeenLastCalledWith({
+        mode: "multi",
+        reviewers: [sonnet, { ...sonnet, when: "risky" }],
+      });
+      fireEvent.change(screen.getByLabelText("Reviewer 2 focus"), {
+        target: { value: "security" },
+      });
+      expect(onSave).toHaveBeenLastCalledWith({ mode: "multi", reviewers: [sonnet, security] });
+      fireEvent.change(screen.getByLabelText("Reviewer 2 runs"), { target: { value: "always" } });
+      expect(onSave).toHaveBeenLastCalledWith({
+        mode: "multi",
+        reviewers: [sonnet, { ...sonnet, focus: "security" }],
+      });
+    });
+
+    it("shows a saved security slot and keeps a lone security-only slot in the multi shape", () => {
+      const onSave = vi.fn();
+      render(
+        <Harness initial={{ mode: "multi", reviewers: [sonnet, security] }} onSave={onSave} />,
+      );
+      expect(screen.getByLabelText("Reviewer 2 runs")).toHaveValue("risky");
+      expect(screen.getByLabelText("Reviewer 2 focus")).toHaveValue("security");
+      fireEvent.change(screen.getByLabelText("Reviewer 1 focus"), {
+        target: { value: "security" },
+      });
+      expect(onSave).toHaveBeenLastCalledWith({
+        mode: "multi",
+        reviewers: [{ ...sonnet, focus: "security" }, security],
+      });
+    });
+  });
 });

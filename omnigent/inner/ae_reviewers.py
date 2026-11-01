@@ -19,6 +19,12 @@ lead's own subagents (``own``) cannot start child sessions, so its agent slots
 are named as skipped. The planner, builder and helper settings may also be a Codex
 slot (2026-10-26, :func:`worker_text`); the same rule skips it.
 
+A Claude or agent slot may also carry ``when: "risky"`` and ``focus: "security"``
+(2026-11-01). A risky slot runs only when the diff touches the areas in
+:data:`RISKY_TRIGGERS`; a security-focus slot reviews security alone and reports only
+issues with a concrete attack path. Slot 1 never carries ``when``: it takes the fix
+checks. A slot with neither field renders exactly as before.
+
 :func:`ae_roles.render_roles` calls :func:`reviewer_lines` for the preset in
 force and :func:`reviewers_short` for each lead-picks line.
 """
@@ -38,6 +44,16 @@ CODEX_AGENT_ID = "16a06503889b0c3034496821afd41b9e"
 CODEX_AGENT_NAME = "codex-native-ui"
 _LABEL = "Reviewer (reviews, verifying a finding, fix checks)"
 _LABEL_MANY = "Reviewers (final review of a build)"
+
+RISKY_TRIGGERS = (
+    "authentication or OAuth, secrets or key vaults, MCP servers, HTTP endpoints or "
+    "Workers, parsing of outside input, permissions or policies, or anything bound for "
+    "the public repo"
+)
+_SECURITY_BRIEF = (
+    "brief it from the security-audit skill's focused-review mode and have it report "
+    "only issues with a concrete attack path"
+)
 
 ModelText = Callable[[object, object], str]
 
@@ -158,6 +174,30 @@ def _claude(slot: dict[str, object], model_text: ModelText, current: object) -> 
     return f"{model_text(slot, current)} (native subagent)"
 
 
+def _is_risky(slot: dict[str, object]) -> bool:
+    return slot.get("when") == "risky"
+
+
+def _is_security(slot: dict[str, object]) -> bool:
+    return slot.get("focus") == "security"
+
+
+def _scope(slot: dict[str, object]) -> str:
+    """What a slot's ``focus`` and ``when`` add to its listing; empty for a plain slot."""
+    parts = ["security only"] if _is_security(slot) else []
+    if _is_risky(slot):
+        parts.append(f"run only when the diff touches {RISKY_TRIGGERS}")
+    if _is_security(slot):
+        parts.append(_SECURITY_BRIEF)
+    return ", ".join(parts)
+
+
+def _slot_text(slot: dict[str, object], model_text: ModelText, current: object) -> str:
+    base = _agent(slot) if _is_agent(slot) else _claude(slot, model_text, current)
+    scope = _scope(slot)
+    return f"{base}, {scope}" if scope else base
+
+
 def _split(
     found: list[dict[str, object]], rules: dict[str, object]
 ) -> tuple[list[dict[str, object]], str]:
@@ -216,10 +256,12 @@ def reviewer_lines(
             one = f"{_agent(usable[0])}; a review never goes to an existing session"
         else:
             one = model_text(usable[0], current)
+        if usable and _scope(usable[0]):
+            one += f", {_scope(usable[0])}"
         note = f" ({skip_note})" if skip_note else ""
         return [f"- {_LABEL}: {one}{note}."]
     listed = " ".join(
-        f"{index}. {_agent(slot) if _is_agent(slot) else _claude(slot, model_text, current)}."
+        f"{index}. {_slot_text(slot, model_text, current)}."
         for index, slot in enumerate(usable, start=1)
     )
     lists = (
@@ -234,6 +276,15 @@ def reviewer_lines(
     )
     if skip_note:
         unavailable += f" {skip_note[0].upper()}{skip_note[1:]}."
+    risky = [index for index, slot in enumerate(usable, start=1) if _is_risky(slot)]
+    skipped_when = (
+        f" Reviewer{'s' if len(risky) > 1 else ''} {' and '.join(map(str, risky))} "
+        f"{'run' if len(risky) > 1 else 'runs'} only when the diff is risky as listed; "
+        "when it is not, skip "
+        f"{'them' if len(risky) > 1 else 'it'}, say so in one line, and merge the rest as usual."
+        if risky
+        else ""
+    )
     return [
         f"- {_LABEL_MANY}: {listed}",
         "  These reviewers replace the /dual-review offer; run them when the work is done, "
@@ -243,7 +294,7 @@ def reviewer_lines(
         "handing work to the team, for reviews only. Then merge into one verdict: dedupe, "
         "mark agreements, settle each disagreement with a one-line reason, rank by severity, "
         f"{lists}.",
-        f"  Fix checks and verifying one finding: reviewer 1 only. {unavailable}",
+        f"  Fix checks and verifying one finding: reviewer 1 only. {unavailable}{skipped_when}",
     ]
 
 
@@ -260,11 +311,13 @@ def reviewers_short(setting: object, rules: object, current: object, model_text:
     found = slots(setting)
     if not found:
         return f"reviewer {model_text(setting, current)}"
-    if not any(_is_agent(slot) for slot in found) and len(found) < 2:
+    if not any(_is_agent(slot) or _is_security(slot) for slot in found) and len(found) < 2:
         return f"reviewer {model_text(found[0], current)}"
     usable, skip_note = _split(found, rules)
     names = [
-        _agent(slot, brief=True) if _is_agent(slot) else model_text(slot, current)
+        (_agent(slot, brief=True) if _is_agent(slot) else model_text(slot, current))
+        + (" (security only, only when the diff is risky)" if _is_risky(slot) else "")
+        + (" (security only)" if _is_security(slot) and not _is_risky(slot) else "")
         for slot in usable
     ]
     text = f"reviewer{'s' if len(names) > 1 else ''} {' + '.join(names) or 'your pick'}"
@@ -285,7 +338,9 @@ def several(setting: object) -> bool:
 
 def explained(setting: object) -> bool:
     """Whether a lead-picks line for *setting* needs :data:`MANY_PICKS` to make sense."""
-    return several(setting) or any(_is_agent(slot) for slot in slots(setting))
+    return several(setting) or any(
+        _is_agent(slot) or _is_security(slot) for slot in slots(setting)
+    )
 
 
 MANY_PICKS = (
@@ -295,5 +350,9 @@ MANY_PICKS = (
     "agreements, settle disagreements, rank by severity; unless the line says otherwise, "
     "keep each list under it and, for a reviewer that cannot start, skip it and say so. "
     "Agents run as a fresh session each review, never an existing one; fix checks go "
-    "to reviewer 1."
+    "to reviewer 1. A reviewer marked security only reviews security alone; one marked "
+    "only when the diff is risky runs only when the diff touches authentication or OAuth, "
+    "secrets or key vaults, MCP servers, HTTP endpoints or Workers, parsing of outside "
+    "input, permissions or policies, or anything bound for the public repo, otherwise skip "
+    "it and merge the rest as usual."
 )

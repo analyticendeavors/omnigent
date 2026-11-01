@@ -20,6 +20,8 @@ const CHOICES = [
   "rules.lead_steps_down",
   "rules.auto_raises",
   "rules.helpers",
+  "reviewer.when",
+  "reviewer.focus",
   "rules.review_merge",
   "rules.reviewer_unavailable",
   "insights.show",
@@ -79,5 +81,18 @@ describe("the Older models hint", () => {
     const { hint } = AE_SETTING_HINTS["reviewer.older"];
     expect(hint).toMatch(/opens on its own/);
     expect(hint.length).toBeLessThanOrEqual(AE_HINT_MAX);
+  });
+});
+
+describe("the security reviewer hints", () => {
+  it("say what each choice does, and that Reviewer 1 always runs", () => {
+    const when = AE_SETTING_HINTS["reviewer.when"].hint;
+    expect(when).toContain("Always (default)");
+    expect(when).toContain("Only if risky");
+    expect(when).toContain("Not Reviewer 1");
+    const focus = AE_SETTING_HINTS["reviewer.focus"].hint;
+    expect(focus).toContain("General review (default)");
+    expect(focus).toContain("Security only");
+    expect(focus).toContain("concrete attack path");
   });
 });

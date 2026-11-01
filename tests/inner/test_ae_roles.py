@@ -344,8 +344,12 @@ def test_balanced_wording_matches_the_contract(prefs: dict[str, Any]) -> None:
         "Roles preset: Balanced. Name a role for each helper you start and give a native "
         "subagent that role's model and effort. Native subagents (Claude's Agent tool) take "
         "a tier alias (opus, sonnet, haiku, fable) and an effort. For a separate session, "
-        "name its role in the brief. " + ae_roles._SESSION_ROLE + " " + ae_roles._SUBAGENT_ROLE
-        + " " + ae_roles._REPORT_REVIEW,
+        "name its role in the brief. "
+        + ae_roles._SESSION_ROLE
+        + " "
+        + ae_roles._SUBAGENT_ROLE
+        + " "
+        + ae_roles._REPORT_REVIEW,
         "- Lead: you, on the session model.",
         "- Planner (design, architecture, unknown root cause): opus, high.",
         "- Reviewer (reviews, verifying a finding, fix checks): sonnet, medium.",
@@ -691,6 +695,99 @@ def test_junk_reviewer_values_render_safely() -> None:
         preset["roles"]["reviewer"] = junk
         text = render_roles({"preset": preset, "custom": False, "current": CURRENT}) or ""
         assert "- Reviewer (reviews, verifying a finding, fix checks): your pick." in text
+
+
+OPUS_HIGH = {"mode": "fixed", "model": "claude-opus-5-5", "effort": "high"}
+SECURITY = {**OPUS_HIGH, "when": "risky", "focus": "security"}
+_TRIGGERS = (
+    "authentication or OAuth, secrets or key vaults, MCP servers, HTTP endpoints or "
+    "Workers, parsing of outside input, permissions or policies, or anything bound for "
+    "the public repo"
+)
+
+
+def test_a_risky_security_slot_renders_in_its_numbered_position() -> None:
+    preset = _with_reviewers(SONNET_MEDIUM, CODEX, SECURITY)
+    lines = (render_roles({"preset": preset, "custom": False, "current": CURRENT}) or "").split(
+        "\n"
+    )
+    assert len(lines) == 9
+    assert lines[3].endswith(
+        f" 3. opus, high (native subagent), security only, run only when the diff touches "
+        f"{_TRIGGERS}, brief it from the security-audit skill's focused-review mode and have "
+        "it report only issues with a concrete attack path."
+    )
+    assert lines[3].startswith("- Reviewers (final review of a build): 1. sonnet, medium")
+    assert lines[5].endswith(
+        "Reviewer 3 runs only when the diff is risky as listed; when it is not, skip it, "
+        "say so in one line, and merge the rest as usual."
+    )
+
+
+def test_one_always_on_slot_and_one_risky_slot_read_correctly() -> None:
+    preset = _with_reviewers(SONNET_MEDIUM, SECURITY)
+    text = render_roles({"preset": preset, "custom": False, "current": CURRENT}) or ""
+    assert (
+        "1. sonnet, medium (native subagent). 2. opus, high (native subagent), security only"
+        in text
+    )
+    assert "when it is not, skip it, say so in one line, and merge the rest as usual." in text
+    assert "Fix checks and verifying one finding: reviewer 1 only." in text
+
+
+def test_a_security_slot_that_always_runs_has_no_skip_line() -> None:
+    always = {**OPUS_HIGH, "focus": "security"}
+    text = render_roles(
+        {"preset": _with_reviewers(SONNET_MEDIUM, always), "custom": False, "current": CURRENT}
+    )
+    assert "2. opus, high (native subagent), security only, brief it from the" in (text or "")
+    assert "run only when the diff touches" not in (text or "")
+    assert "skip it, say so" not in (text or "")
+
+
+def test_a_risky_agent_slot_is_scoped_too() -> None:
+    text = render_roles(
+        {
+            "preset": _with_reviewers(SONNET_MEDIUM, {**CODEX, "when": "risky"}),
+            "custom": False,
+            "current": CURRENT,
+        }
+    )
+    assert f"its default model), run only when the diff touches {_TRIGGERS}." in (text or "")
+
+
+def test_slots_without_the_new_fields_render_unchanged() -> None:
+    text = render_roles(
+        {
+            "preset": _with_reviewers(SONNET_MEDIUM, {**OPUS_HIGH, "when": "always"}),
+            "custom": False,
+            "current": CURRENT,
+        }
+    )
+    assert "2. opus, high (native subagent)." in (text or "")
+    assert "run only when" not in (text or "")
+
+
+def test_a_lone_usable_risky_slot_keeps_its_scope() -> None:
+    preset = _with_reviewers(CODEX, SECURITY, helpers="own")
+    text = render_roles({"preset": preset, "custom": False, "current": CURRENT}) or ""
+    assert f"opus, high, security only, run only when the diff touches {_TRIGGERS}" in text
+
+
+def test_lead_picks_name_the_risky_security_slot(prefs: dict[str, Any]) -> None:
+    prefs["presets"] = [
+        BALANCED,
+        _with_reviewers(SONNET_MEDIUM, SECURITY) | {"id": "two", "title": "Two"},
+    ]
+    roles = resolve_roles(conversation(team_label(roles={"preset": "lead-picks"})), owner_store())
+    lines = (render_roles(roles) or "").split("\n")
+    assert (
+        "reviewers sonnet, medium + opus, high (security only, only when the diff is risky);"
+        in lines[2]
+    )
+    assert lines[-1].startswith("Reviewers named with an agent or with several: run all")
+    assert "A reviewer marked security only reviews security alone" in lines[-1]
+    assert len(lines) < 12
 
 
 def test_real_balanced_starter_carries_codex(monkeypatch: pytest.MonkeyPatch) -> None:

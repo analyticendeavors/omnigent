@@ -28,7 +28,19 @@ export const AE_CODEX_AGENT_ID = "16a06503889b0c3034496821afd41b9e";
 export const AE_CODEX_AGENT_NAME = "codex-native-ui";
 const AGENT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
-export interface AeReviewerAgentSlot {
+/**
+ * Conditional security review (2026-11-01): "risky" runs the slot only when the diff
+ * touches security-relevant areas (never slot 1, which takes the fix checks); "security"
+ * reviews security alone. Absent reads as always, and a general review.
+ */
+export type AeReviewWhen = "always" | "risky";
+export type AeReviewFocus = "security";
+export interface AeReviewScope {
+  when?: AeReviewWhen;
+  focus?: AeReviewFocus;
+}
+
+export interface AeReviewerAgentSlot extends AeReviewScope {
   mode: "agent";
   agent: string;
   /** The agent's registered name ("codex-native-ui"); the live id is found by it when set. */
@@ -42,7 +54,9 @@ export interface AeReviewerAgentSlot {
 }
 
 export type AeReviewerSlot =
-  { mode: "auto" } | { mode: "fixed"; model: string; effort: AeRoleEffort } | AeReviewerAgentSlot;
+  | { mode: "auto" }
+  | ({ mode: "fixed"; model: string; effort: AeRoleEffort } & AeReviewScope)
+  | AeReviewerAgentSlot;
 
 export interface AeReviewerMulti {
   mode: "multi";
@@ -89,14 +103,32 @@ function isAgentEffort(value: unknown): value is AeAgentEffort {
   return (AE_AGENT_EFFORTS as readonly unknown[]).includes(value);
 }
 
+/** The `when` and `focus` a stored slot carries; null when either holds a value the server refuses. */
+function parseScope(value: Record<string, unknown>, index: number): AeReviewScope | null {
+  const { when, focus } = value;
+  if (when != null && when !== "always" && when !== "risky") return null;
+  if (focus != null && focus !== "security") return null;
+  // Slot 1 takes the fix checks, so it always runs.
+  if (when === "risky" && index === 0) return null;
+  return {
+    ...(when ? { when } : {}),
+    ...(focus ? { focus } : {}),
+  };
+}
+
 function parseSlot(value: unknown, index: number): AeReviewerSlot | null {
   if (!isObject(value)) return null;
   if (value.mode === "auto") return index === 0 ? { mode: "auto" } : null;
   if (value.mode === "fixed") {
     if (typeof value.model !== "string" || !value.model || !isEffort(value.effort)) return null;
-    return { mode: "fixed", model: value.model, effort: value.effort };
+    const scope = parseScope(value, index);
+    return scope && { mode: "fixed", model: value.model, effort: value.effort, ...scope };
   }
-  if (value.mode === "agent") return aeParseAgentSlot(value);
+  if (value.mode === "agent") {
+    const scope = parseScope(value, index);
+    const slot = scope && aeParseAgentSlot(value);
+    return slot && { ...slot, ...scope };
+  }
   return null;
 }
 
@@ -149,7 +181,9 @@ export function aeWriteReviewers(slots: readonly AeReviewerSlot[]): AeReviewerSe
     .filter((slot, i) => slot.mode !== "auto" || i === 0)
     .slice(0, AE_REVIEWERS_MAX);
   if (kept.length === 0) return { mode: "auto" };
-  if (kept.length === 1 && kept[0].mode !== "agent") return kept[0];
+  // A lone slot with a security focus keeps the multi shape: the plain setting has no focus.
+  if (kept.length === 1 && kept[0].mode !== "agent" && !("focus" in kept[0] && kept[0].focus))
+    return kept[0];
   return { mode: "multi", reviewers: kept };
 }
 
@@ -159,9 +193,24 @@ export function aeReviewerRowLabel(setting: AeReviewerSetting): string {
 }
 
 function slotSummary(slot: AeReviewerSlot): string {
-  if (slot.mode === "fixed") return `${aeModelLabel(slot.model)} ${slot.effort}`;
-  if (slot.mode === "agent") return slot.name;
+  const scope =
+    slot.mode === "auto"
+      ? ""
+      : `${slot.focus === "security" ? ", security only" : ""}${slot.when === "risky" ? ", only if risky" : ""}`;
+  if (slot.mode === "fixed") return `${aeModelLabel(slot.model)} ${slot.effort}${scope}`;
+  if (slot.mode === "agent") return `${slot.name}${scope}`;
   return "auto";
+}
+
+/** A copy of `slot` with its review scope set; "always" and a general review are left unwritten. */
+export function aeWithReviewScope(slot: AeReviewerSlot, scope: AeReviewScope): AeReviewerSlot {
+  if (slot.mode === "auto") return slot;
+  const { when: _when, focus: _focus, ...rest } = slot;
+  return {
+    ...rest,
+    ...(scope.when === "risky" ? { when: "risky" as const } : {}),
+    ...(scope.focus === "security" ? { focus: "security" as const } : {}),
+  } as AeReviewerSlot;
 }
 
 /** "Sonnet 5.5 medium + Codex". */
