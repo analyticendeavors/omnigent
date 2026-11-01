@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useChatStore } from "@/store/chatStore";
+import { handleSessionEvent, useChatStore } from "@/store/chatStore";
 import {
   AE_COMPACT_PREP_TEXT,
   AE_COMPACT_PREP_LIMIT_MS,
@@ -88,14 +88,27 @@ describe("queued compact", () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
+  // Background shells outlive turns and survive /compact, and `waiting` is the turn end a
+  // claude-native chat publishes while one still runs: none of them holds a compact back.
   it.each([
     ["a background shell is running", { backgroundTasks: [{ status: "running" }] }],
     ["an older runner reports only a shell count", { backgroundTaskCount: 1 }],
-    ["the chat waits on the user", { sessionStatus: "waiting" }],
+    ["the turn ended with a shell still running", { sessionStatus: "waiting" }],
+  ])("is a safe point while %s", async (_name, patch) => {
+    setChat(patch);
+    startAeCompactPlan(ID);
+    await tick(1999);
+    expect(send).not.toHaveBeenCalled();
+    await tick(1);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
     [
       "a message is queued ahead",
       { queuedMessages: [{ queueId: "q1", text: "next", conversationId: ID }] },
     ],
+    ["the session is launching", { sessionStatus: "launching" }],
   ])("is not a safe point while %s", async (_name, patch) => {
     setChat(patch);
     startAeCompactPlan(ID);
@@ -323,5 +336,37 @@ describe("queued compact", () => {
     });
     await tick(2000);
     expect(compact).not.toHaveBeenCalled();
+  });
+
+  it("runs after a claude-native turn ends with a background shell still running", async () => {
+    // Driven through the real store reducer with the event shapes a claude-native chat sends.
+    const status = (value: string, extra: Record<string, unknown> = {}) =>
+      handleSessionEvent({
+        type: "session_status",
+        conversationId: ID,
+        status: value,
+        ...extra,
+      } as never);
+    send.mockImplementation(() => Promise.resolve());
+    useChatStore.setState({ activeResponse: null } as never);
+    status("running", { responseId: "r1" });
+    startAeCompactPlan(ID);
+    await tick(10_000);
+    expect(send).not.toHaveBeenCalled();
+    // Stop hook: the turn ended, a shell (a CI wait) still runs. Then the bare PTY idle edge,
+    // which leaves the shell tally sticky.
+    status("waiting", { responseId: "r1", backgroundTaskCount: 1 });
+    status("idle");
+    expect(useChatStore.getState().backgroundTaskCount).toBe(1);
+    await tick(2000);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0]![0]).toBe(AE_COMPACT_PREP_TEXT);
+    // The prepare turn runs and ends with the shell still running.
+    status("running", { responseId: "r2" });
+    await tick(5000);
+    expect(compact).not.toHaveBeenCalled();
+    status("waiting", { responseId: "r2", backgroundTaskCount: 1 });
+    await tick(2000);
+    expect(compact).toHaveBeenCalledTimes(1);
   });
 });
