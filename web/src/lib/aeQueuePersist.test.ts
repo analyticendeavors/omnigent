@@ -472,7 +472,11 @@ describe("identity", () => {
     expect(toasts[0]).toContain("before the signed-in user was known");
   });
 
-  it("carries a user's note untouched while identity cannot be verified", async () => {
+  const carriedToast =
+    "from before the reload is waiting until your sign-in is confirmed. " +
+    "Reload the page to bring them back; don't retype them.";
+
+  it("carries a user's note untouched while identity cannot be verified, and says so", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
     seed([entry("a", { userId: "alice" })]);
     await install();
@@ -483,6 +487,41 @@ describe("identity", () => {
       ["b", null],
     ]);
     expect(info).toHaveBeenCalledWith(expect.stringContaining("carried=1"));
+    expect(toasts).toEqual([`1 queued note ${carriedToast}`]);
+  });
+
+  it("stops waiting for a hanging identity at the cap and carries the notes", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    persist.reset({ lockWaitMs: 20, identityWaitMs: 30 });
+    identity.resolve = () => new Promise(() => {});
+    seed([entry("a", { userId: "alice" }), entry("b", { userId: "alice" })]);
+    await install();
+    expect(queue()).toEqual([]);
+    expect(stored().map((e) => e.text)).toEqual(["a", "b"]);
+    expect(toasts).toEqual([
+      "2 queued notes from before the reload are waiting until your sign-in is confirmed. " +
+        "Reload the page to bring them back; don't retype them.",
+    ]);
+  });
+
+  it("carries owned notes when the identity probe fails, counting only the carried ones", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    identity.resolve = () => Promise.reject(new Error("unreachable"));
+    seed([
+      entry("a", { userId: "alice" }),
+      entry("b", { userId: null, fileNames: ["x.png"] }),
+      entry("c", { userId: null }),
+    ]);
+    await install();
+    // Unknown both ways: restored under the normal rules; the attachment one waits for Retry.
+    expect(queue().map((m) => [m.text, m.requiresRetry])).toEqual([
+      ["b", true],
+      ["c", undefined],
+    ]);
+    expect(stored().map((e) => e.text)).toEqual(["a", "b", "c"]);
+    expect(toasts).toHaveLength(2);
+    expect(toasts[0]).toBe(`1 queued note ${carriedToast}`);
+    expect(toasts[1]).toContain("had attachments");
   });
 
   it("restores normally when identity is unknown both when queued and now", async () => {

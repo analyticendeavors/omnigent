@@ -35,6 +35,8 @@ export const AE_QUEUE_TAB_ID_KEY = "omnigent:ae-queue-tab-id:v1";
 export const AE_QUEUE_LOCK_PREFIX = "omnigent:ae-queue-owner";
 /** How long a restore waits for the tab lock (a reload's dying page frees it almost at once). */
 export const AE_QUEUE_LOCK_WAIT_MS = 1000;
+/** How long a restore waits for `/v1/me`; past it the identity counts as unverifiable. */
+export const AE_QUEUE_IDENTITY_WAIT_MS = 10_000;
 /** A restored note older than this waits for Retry instead of sending on its own. */
 export const AE_QUEUE_AUTO_SEND_MAX_AGE_MS = 60 * 60_000;
 /** At most this many notes are stored; past it new ones stay in memory only. */
@@ -78,6 +80,7 @@ let carriedEntries: StoredEntry[] = [];
 let unsubscribe: (() => void) | null = null;
 let restorePromise: Promise<void> = Promise.resolve();
 let lockWaitMs = AE_QUEUE_LOCK_WAIT_MS;
+let identityWaitMs = AE_QUEUE_IDENTITY_WAIT_MS;
 let warnedCap = false;
 const firstSeen = new Map<string, number>();
 /** Owner of each restored note, kept as stored so a write never relabels it. */
@@ -307,11 +310,19 @@ async function claimOwnership(): Promise<Ownership> {
   return "other-tab";
 }
 
+/** The signed-in user, or null when it cannot be verified (failed, or no answer in time). */
 async function currentIdentity(): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  // A `/v1/me` that hangs (say right after a deploy) must not hold the restore for the page's life.
+  const timeout = new Promise<null>((settle) => {
+    timer = setTimeout(() => settle(null), identityWaitMs);
+  });
   try {
-    return await resolveIdentity();
+    return await Promise.race([resolveIdentity(), timeout]);
   } catch {
     return getCurrentUserId();
+  } finally {
+    if (timer !== null) clearTimeout(timer);
   }
 }
 
@@ -395,6 +406,13 @@ async function restore(): Promise<void> {
     );
   }
 
+  if (carried.length > 0) {
+    showToast(
+      `${plural(carried.length, "queued note", "queued notes")} from before the reload ` +
+        `${carried.length === 1 ? "is" : "are"} waiting until your sign-in is confirmed. ` +
+        "Reload the page to bring them back; don't retype them.",
+    );
+  }
   if (heldBack === 0) return;
   if (ownership === "other-tab") {
     showToast(
@@ -459,7 +477,7 @@ export function installAeQueuePersist(): () => void {
 export const aeQueuePersistTestHooks = {
   restored: (): Promise<void> => restorePromise,
   isRestoring: (): boolean => restoring,
-  reset(opts: { lockWaitMs?: number } = {}): void {
+  reset(opts: { lockWaitMs?: number; identityWaitMs?: number } = {}): void {
     unsubscribe?.();
     unsubscribe = null;
     for (const release of heldLocks.splice(0)) release();
@@ -471,6 +489,7 @@ export const aeQueuePersistTestHooks = {
     carriedEntries = [];
     restorePromise = Promise.resolve();
     lockWaitMs = opts.lockWaitMs ?? AE_QUEUE_LOCK_WAIT_MS;
+    identityWaitMs = opts.identityWaitMs ?? AE_QUEUE_IDENTITY_WAIT_MS;
     warnedCap = false;
     firstSeen.clear();
     restoredOwners.clear();
