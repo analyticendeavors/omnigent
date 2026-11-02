@@ -287,7 +287,7 @@ export function AeFoldPicker({
           aria-haspopup="dialog"
           aria-expanded={open}
           aria-controls={open ? contentId : undefined}
-          title={current ? undefined : value}
+          title={current ? currentLabel : value}
           disabled={disabled}
           onKeyDown={(event) => {
             if (event.key === "ArrowDown" || event.key === "ArrowUp") {

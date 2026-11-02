@@ -47,7 +47,7 @@ export const AE_SETTING_HINTS = {
   },
   "roles.reviewer": {
     label: "Reviewer",
-    hint: "Checks finished work. Up to 3 reviewers, each a Claude or Codex model and effort. Codex is skipped if Helpers is Own subagents only.",
+    hint: "Checks finished work. Up to 3 reviewers, each a Claude or Codex model and effort. Reviewer 1 always runs, so risky personas are off there.",
     source: "tooltip",
   },
   "roles.builder": {
@@ -63,11 +63,6 @@ export const AE_SETTING_HINTS = {
   "reviewer.older": {
     label: "Older models",
     hint: "Earlier versions sit under Older models. The group with the model you use now opens on its own, so it is never hidden.",
-    source: "tooltip",
-  },
-  "reviewer.persona": {
-    label: "Reviewer persona",
-    hint: "No persona (default): a plain review. A persona adds a purpose and instructions. Reviewer 1 always runs, so risky personas are off.",
     source: "tooltip",
   },
   personas: {

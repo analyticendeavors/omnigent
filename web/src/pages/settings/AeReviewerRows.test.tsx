@@ -188,7 +188,7 @@ describe("AeReviewerRows", () => {
     expect(screen.getByTestId("ae-review-settings")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Add reviewer/ }));
     expect(screen.queryByRole("button", { name: /Add reviewer/ })).not.toBeInTheDocument();
-    expect(screen.getByText("3 of 3 reviewers.")).toBeInTheDocument();
+    expect(screen.getByText("3 of 3 reviewers. Remove one to add another.")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /Remove Reviewer/ })).toHaveLength(3);
   });
 
@@ -717,7 +717,8 @@ describe("Codex reviewers in the one dropdown", () => {
       expect(picker(2)).toHaveAttribute("aria-haspopup", "dialog");
       expect(picker(1)).not.toBeInstanceOf(HTMLSelectElement);
       // One tip beside the Reviewers label, not one per slot.
-      expect(screen.getAllByTestId("ae-hint-reviewer.persona")).toHaveLength(1);
+      expect(screen.getAllByTestId("ae-hint-roles.reviewer")).toHaveLength(1);
+      expect(screen.queryByTestId("ae-hint-reviewer.persona")).toBeNull();
       expect(screen.queryByText(/risky personas are off here/)).toBeNull();
     });
 
@@ -748,8 +749,30 @@ describe("Codex reviewers in the one dropdown", () => {
 
     it("puts the 'always runs' reason in the tip beside the Reviewers label", () => {
       render(<Harness initial={two} personas={PERSONAS} onSave={vi.fn()} />);
-      expect(AE_SETTING_HINTS["reviewer.persona"].hint).toMatch(/Reviewer 1 always runs/);
-      expect(screen.getByRole("button", { name: "About Reviewer persona" })).toBeInTheDocument();
+      expect(AE_SETTING_HINTS["roles.reviewer"].hint).toMatch(/Reviewer 1 always runs/);
+      expect(screen.getAllByRole("button", { name: "About Reviewer" })).toHaveLength(1);
+    });
+
+    it("keeps Remove last in the DOM, so Tab goes persona, model, effort, Remove", () => {
+      render(<Harness initial={two} personas={PERSONAS} onSave={vi.fn()} />);
+      const slot = screen.getByTestId("ae-reviewer-slot-2");
+      const stops = Array.from(
+        slot.querySelectorAll<HTMLElement>("button, [role=radio], a[href]"),
+      ).map((el) => el.getAttribute("aria-label") ?? el.textContent);
+      expect(stops[0]).toMatch(/^Reviewer 2 persona/);
+      expect(stops[1]).toMatch(/^Reviewer 2 model/);
+      expect(stops[stops.length - 1]).toBe("Remove Reviewer 2");
+    });
+
+    it("gives a truncatable persona name a tooltip", () => {
+      render(
+        <Harness
+          initial={{ mode: "multi", reviewers: [sonnet, { ...sonnet, persona: "gone-away" }] }}
+          personas={PERSONAS}
+          onSave={vi.fn()}
+        />,
+      );
+      expect(picker(2)).toHaveAttribute("title", "gone-away (not found)");
     });
 
     it("shows a when chip on every reviewer: always, or risky diffs", () => {

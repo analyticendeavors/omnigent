@@ -54,6 +54,9 @@ import { AeUpdateChip } from "./AeModelUpdates";
 import { AeSegmented } from "./AeRolesControls";
 import { aeRoleModelPick } from "./AeRoleModelPicker";
 
+// Grid rows of the narrow layout (literal class names, so Tailwind sees them).
+const NARROW_ROW = ["", "", "row-start-2", "row-start-3", "row-start-4"] as const;
+
 const NO_PERSONAS: readonly AePersonaEntry[] = [];
 
 function Tag({ tone, children }: { tone: "amber" | "muted"; children: React.ReactNode }) {
@@ -328,21 +331,22 @@ function SlotRow({
           <div className="text-sm font-semibold">
             {rowLabel}
             <AeHint id="roles.reviewer" />
-            <AeHint id="reviewer.persona" />
           </div>
           <div className="text-xs leading-tight text-muted-foreground">{hint}</div>
         </div>
       ) : (
         <div className="hidden @lg/roles:block" />
       )}
-      <div className="grid min-w-0 grid-cols-[1.5rem_minmax(9rem,auto)_auto_1fr_auto] items-center gap-x-2 gap-y-2 @lg/roles:gap-x-1.5 @lg/roles:grid-cols-[1.25rem_6.5rem_minmax(0,1fr)_7rem_3rem_1.5rem]">
+      {/* Narrow: a header line (number, persona, when), then note, model, effort and Remove.
+          From 40rem: one line. The DOM order is the focus order in both; the grid places it. */}
+      <div className="grid min-w-0 grid-cols-[1.5rem_minmax(9rem,auto)_1fr_auto] items-center gap-x-2 gap-y-2 @[40rem]/roles:grid-cols-[1.25rem_7.5rem_minmax(0,1fr)_7rem_3rem_1.5rem] @[40rem]/roles:gap-x-1.5">
         <span
           aria-hidden="true"
-          className="grid size-5 place-items-center rounded-full border border-border bg-muted text-[11px] text-muted-foreground @lg/roles:order-1"
+          className="col-start-1 row-start-1 grid size-5 place-items-center rounded-full border border-border bg-muted text-[11px] text-muted-foreground"
         >
           {index + 1}
         </span>
-        <div className="min-w-0 @lg/roles:order-2">
+        <div className="col-start-2 row-start-1 min-w-0">
           <PersonaSelect
             slot={slot}
             index={index}
@@ -353,51 +357,25 @@ function SlotRow({
             onChange={(next) => onChange(withChosenPersona(slot, shown, next))}
           />
         </div>
-        <span
-          data-testid={`ae-reviewer-when-${index + 1}`}
+        <div
           className={cn(
-            aeWhenChipClass(risky ? "risky" : "always"),
-            "@lg/roles:order-5 @lg/roles:justify-self-start",
+            "col-span-full flex min-w-0 items-center gap-2 @[40rem]/roles:col-[3] @[40rem]/roles:row-start-1",
+            NARROW_ROW[missing ? 3 : 2],
           )}
         >
-          {risky ? (
-            <>
-              risky<span className="hidden @max-lg/roles:inline"> diffs</span>
-            </>
-          ) : (
-            "always"
-          )}
-        </span>
-        {onRemove && (
-          <button
-            type="button"
-            aria-label={`Remove ${label}`}
-            title={`Remove ${label}`}
-            disabled={disabled}
-            onClick={onRemove}
-            className="col-start-5 shrink-0 justify-self-end rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40 @lg/roles:order-6 @lg/roles:col-auto"
-          >
-            <XIcon className="size-3.5" />
-          </button>
-        )}
-        {missing && (
-          <span
-            id={noteId}
-            data-testid={`ae-reviewer-persona-missing-${index + 1}`}
-            className="col-span-full text-[11px] text-amber-500 @lg/roles:order-7 @lg/roles:col-[2/-1]"
-          >
-            That persona is gone, so this reviewer runs as a plain review.
-          </span>
-        )}
-        <div className="relative col-span-full min-w-0 @lg/roles:order-3 @lg/roles:col-span-1">
-          {trigger}
+          <div className="min-w-0 flex-1">{trigger}</div>
           {fromPersona && (
-            <span className="pointer-events-none absolute top-1/2 right-7 hidden -translate-y-1/2 text-[11px] text-muted-foreground @max-lg/roles:block @3xl/roles:block">
+            <span className="shrink-0 text-[11px] text-muted-foreground @[40rem]/roles:hidden">
               from persona
             </span>
           )}
         </div>
-        <div className="col-span-full flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 @lg/roles:order-4 @lg/roles:col-span-1">
+        <div
+          className={cn(
+            "col-[1/4] flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 @[40rem]/roles:col-[4] @[40rem]/roles:row-start-1",
+            NARROW_ROW[missing ? 4 : 3],
+          )}
+        >
           {bar ? (
             bar
           ) : agentSlot ? (
@@ -413,12 +391,51 @@ function SlotRow({
             <span className="text-xs text-muted-foreground">The lead chooses</span>
           )}
         </div>
+        <span
+          data-testid={`ae-reviewer-when-${index + 1}`}
+          className={cn(
+            aeWhenChipClass(risky ? "risky" : "always"),
+            "col-start-3 row-start-1 justify-self-start @[40rem]/roles:col-[5]",
+          )}
+        >
+          {risky ? (
+            <>
+              risky<span className="@[40rem]/roles:hidden"> diffs</span>
+            </>
+          ) : (
+            "always"
+          )}
+        </span>
+        {onRemove && (
+          <button
+            type="button"
+            aria-label={`Remove ${label}`}
+            title={`Remove ${label}`}
+            disabled={disabled}
+            onClick={onRemove}
+            className={cn(
+              "col-start-4 shrink-0 justify-self-end rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40 @[40rem]/roles:col-[6] @[40rem]/roles:row-start-1",
+              NARROW_ROW[missing ? 4 : 3],
+            )}
+          >
+            <XIcon className="size-3.5" />
+          </button>
+        )}
+        {missing && (
+          <span
+            id={noteId}
+            data-testid={`ae-reviewer-persona-missing-${index + 1}`}
+            className="col-span-full row-start-2 text-[11px] text-amber-700 @[40rem]/roles:col-[2/-1] dark:text-amber-500"
+          >
+            That persona is gone, so this reviewer runs as a plain review.
+          </span>
+        )}
         {fromPersona && (
-          <span className="hidden text-[11px] text-muted-foreground @lg/roles:order-8 @lg/roles:col-[2/-1] @lg/roles:block @3xl/roles:hidden">
+          <span className="col-span-full hidden text-[11px] text-muted-foreground @[40rem]/roles:col-[2/-1] @[40rem]/roles:row-start-2 @[40rem]/roles:block">
             Model and effort from the persona
           </span>
         )}
-        <div className="col-span-full flex flex-wrap items-center gap-x-3 gap-y-1 empty:hidden @lg/roles:order-9 @lg/roles:col-[2/-1]">
+        <div className="col-span-full row-start-6 flex flex-wrap items-center gap-x-3 gap-y-1 empty:hidden @[40rem]/roles:col-[2/-1] @[40rem]/roles:row-start-3">
           {chip}
           {unready && (
             <span data-testid={`ae-reviewer-tag-${index + 1}`} className="flex items-center gap-1">
@@ -622,8 +639,8 @@ export function AeReviewerRowsView({
               </span>
             </button>
           ) : (
-            <span className="text-xs text-muted-foreground" title="Remove one to add another.">
-              {AE_REVIEWERS_MAX} of {AE_REVIEWERS_MAX} reviewers.
+            <span className="text-xs text-muted-foreground">
+              {AE_REVIEWERS_MAX} of {AE_REVIEWERS_MAX} reviewers. Remove one to add another.
             </span>
           )}
           <AeHint id="reviewer.add" />

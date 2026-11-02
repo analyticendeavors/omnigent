@@ -20,7 +20,6 @@ const CHOICES = [
   "rules.lead_steps_down",
   "rules.auto_raises",
   "rules.helpers",
-  "reviewer.persona",
   "persona.model",
   "persona.effort",
   "persona.when",
@@ -87,9 +86,8 @@ describe("the Older models hint", () => {
 });
 
 describe("the reviewer persona hints", () => {
-  it("has a hint for the select, the section and every field", () => {
+  it("has a hint for the section and every field", () => {
     for (const id of [
-      "reviewer.persona",
       "personas",
       "persona.name",
       "persona.purpose",
@@ -104,7 +102,7 @@ describe("the reviewer persona hints", () => {
   });
 
   it("says why Reviewer 1 cannot use a risky persona, and what each choice does", () => {
-    expect(AE_SETTING_HINTS["reviewer.persona"].hint).toContain("Reviewer 1 always runs");
+    expect(AE_SETTING_HINTS["roles.reviewer"].hint).toContain("Reviewer 1 always runs");
     const when = AE_SETTING_HINTS["persona.when"].hint;
     expect(when).toContain("Always (default)");
     expect(when).toContain("Only if the diff is risky");

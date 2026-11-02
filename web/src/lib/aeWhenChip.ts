@@ -13,6 +13,6 @@ export const AE_CHIP_NEUTRAL = `${AE_CHIP} border-border text-muted-foreground`;
 export const aeWhenChipClass = (when: AePersonaWhen): string =>
   `${AE_CHIP} ${
     when === "risky"
-      ? "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
-      : "border-teal-500/40 bg-teal-500/10 text-teal-700 dark:text-teal-300"
+      ? "border-amber-600/40 bg-amber-500/10 text-amber-800 dark:border-amber-500/40 dark:text-amber-400"
+      : "border-teal-500/40 bg-teal-500/10 text-teal-800 dark:text-teal-300"
   }`;
