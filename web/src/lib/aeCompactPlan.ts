@@ -5,8 +5,14 @@
 // nothing compacts by accident.
 //
 // Background shells do not hold a plan back (2026-11-01). A shell outlives the turn that
-// started it and survives /compact, and the page's shell tally stays sticky until the next
-// turn ends, so a lead chat with a CI wait running kept its Compact queued forever.
+// started it and survives /compact, and the server reports a turn that ends with a shell still
+// running as `idle` with a shell count that stays sticky until the next turn ends, so a lead chat
+// with a CI wait running kept its Compact queued forever.
+//
+// The prepare turn is the one that carries the prepare message. Another turn (a shell's task
+// notification, a scheduled prompt, a sub-agent hand-back) can run while that message is still in
+// flight or buffered by the runner, so nothing counts until the prepare message itself is in the
+// transcript (2026-11-01).
 //
 // The driver is module level, not a component effect, so folding the rail or losing the
 // dock card never drops a queued compact.
@@ -32,10 +38,16 @@ export const AE_COMPACT_PREP_LIMIT_MS = 15 * 60_000;
 
 interface Plan {
   phase: AeCompactPhase;
+  /** Any turn ran after the prepare message went out: only the 30 s start timer reads it. */
+  sawRunning: boolean;
+  /** The session ran while the prepare message was in the transcript: the prepare turn. */
   sawTurn: boolean;
-  /** What the transcript held when the prepare message went out: history is not this turn's. */
+  /**
+   * The prepare messages the transcript already held at send time (an earlier compact's), by
+   * object and by server item id: neither is this plan's anchor.
+   */
   seenBlocks: WeakSet<object>;
-  seenResponses: Set<string>;
+  seenItems: Set<string>;
   stableTimer: ReturnType<typeof setTimeout> | null;
   limitTimer: ReturnType<typeof setTimeout> | null;
   startTimer: ReturnType<typeof setTimeout> | null;
@@ -53,11 +65,10 @@ function emit() {
 type StoreState = ReturnType<typeof useChatStore.getState>;
 
 /**
- * A turn end: no turn streaming or running, nothing queued for this chat. `waiting` counts as
- * idle, because it is the turn-end status a claude-native chat publishes while a background
- * shell still runs (the store's message queue treats it the same way). Background shells are
- * not looked at: they outlive turns, survive /compact, and their tally stays sticky until the
- * next turn ends.
+ * A turn end: no turn streaming or running, nothing queued for this chat. Background shells are
+ * not looked at: they outlive turns, survive /compact, and their count on an `idle` status stays
+ * sticky until the next turn ends. `waiting` counts as idle for parity with the store's message
+ * queue (`maybeFlushQueuedHead`), which treats it as free to take a turn.
  */
 function safeNow(s: StoreState, conversationId: string): boolean {
   if (s.status === "streaming") return false;
@@ -65,25 +76,26 @@ function safeNow(s: StoreState, conversationId: string): boolean {
   return !s.queuedMessages.some((m) => m.conversationId === conversationId);
 }
 
-/**
- * The blocks the prepare turn added. They follow the prepare message itself, which stays found
- * however history loads or shrinks; without it, whatever was not in the transcript at send time.
- */
-function blocksOfPrepareTurn(blocks: StoreState["blocks"], plan: Plan): StoreState["blocks"] {
-  let anchor = -1;
-  blocks.forEach((b, index) => {
-    if (
-      b.type === "user_message" &&
-      JSON.stringify(b.content).includes(AE_COMPACT_PREP_TEXT.slice(0, 40))
-    ) {
-      anchor = index;
-    }
-  });
-  if (anchor >= 0) return blocks.slice(anchor + 1);
-  return blocks.filter(
-    (b) =>
-      !plan.seenBlocks.has(b) && !(b.ctx.responseId && plan.seenResponses.has(b.ctx.responseId)),
+function isPrepareMessage(b: StoreState["blocks"][number]): boolean {
+  return (
+    b.type === "user_message" &&
+    JSON.stringify(b.content).includes(AE_COMPACT_PREP_TEXT.slice(0, 40))
   );
+}
+
+/**
+ * Where this plan's prepare message sits in the transcript, or -1 while it is not there yet. It
+ * lands only once the runner consumed it (`session_input_consumed`), and keeps its server item id
+ * however history loads or shrinks; a prepare message that was there at send time is not it.
+ */
+function prepareAnchor(blocks: StoreState["blocks"], plan: Plan): number {
+  for (let index = blocks.length - 1; index >= 0; index--) {
+    const b = blocks[index]!;
+    if (!isPrepareMessage(b) || plan.seenBlocks.has(b)) continue;
+    if (b.ctx.itemId && plan.seenItems.has(b.ctx.itemId)) continue;
+    return index;
+  }
+  return -1;
 }
 
 function clearTimers(plan: Plan) {
@@ -128,20 +140,24 @@ async function advance(conversationId: string) {
       return;
     }
     plan.phase = "preparing";
+    plan.sawRunning = false;
     plan.sawTurn = false;
     for (const b of store.blocks) {
+      if (!isPrepareMessage(b)) continue;
       plan.seenBlocks.add(b);
-      if (b.ctx.responseId) plan.seenResponses.add(b.ctx.responseId);
+      if (b.ctx.itemId) plan.seenItems.add(b.ctx.itemId);
     }
     plan.limitTimer = setTimeout(
       () => fail(conversationId, "Compact cancelled: the chat took too long to save its notes."),
       AE_COMPACT_PREP_LIMIT_MS,
     );
-    // Only the server reporting the session running proves the prepare turn started; a busy
-    // blip from the send latch, a background shell or a queued message does not.
+    // Only the server reporting the session running proves a turn started; a busy blip from the
+    // send latch, a background shell or a queued message does not. Any turn keeps the plan alive
+    // here (the prepare message may wait behind it); the 15 minute limit ends a plan whose
+    // prepare turn never comes.
     plan.startTimer = setTimeout(() => {
       plan.startTimer = null;
-      if (!plan.sawTurn) {
+      if (!plan.sawRunning && !plan.sawTurn) {
         fail(conversationId, "Compact cancelled: the chat never started saving its notes.");
       }
     }, AE_COMPACT_START_LIMIT_MS);
@@ -168,14 +184,19 @@ async function advance(conversationId: string) {
     return;
   }
   if (plan.phase !== "preparing") return;
-  // Idle, but the prepare turn has not been seen running: the start timer decides.
+  // Idle, but the prepare turn has not been seen running: keep waiting; the start timer and the
+  // 15 minute limit end it.
   if (!plan.sawTurn) return;
+  const anchor = prepareAnchor(store.blocks, plan);
+  if (anchor < 0) return;
   // A turn that failed, was cancelled, or raised an error did not finish saving: compact nothing.
-  const failed = blocksOfPrepareTurn(store.blocks, plan).some(
-    (b) =>
-      (b.type === "response_end" && b.status !== "completed") ||
-      (b.type === "error" && b.level !== "info"),
-  );
+  const failed = store.blocks
+    .slice(anchor + 1)
+    .some(
+      (b) =>
+        (b.type === "response_end" && b.status !== "completed") ||
+        (b.type === "error" && b.level !== "info"),
+    );
   if (failed) {
     fail(
       conversationId,
@@ -188,6 +209,8 @@ async function advance(conversationId: string) {
   plan.limitTimer = null;
   emit();
   try {
+    // A shell that finishes between the quiet window and this call wakes the chat into a new
+    // turn; Claude Code queues the typed /compact and runs it after that turn.
     await store.compact();
     const done = plan.onCompacted;
     finish(conversationId);
@@ -217,10 +240,15 @@ function onStore() {
       fail(conversationId, "Compact cancelled: you left the chat before it ran.");
       continue;
     }
+    // The prepare turn is the session running while this plan's prepare message is in the
+    // transcript: a turn that ran and ended before the message landed was some other turn.
     if (plan.phase === "preparing" && !plan.sawTurn && store.sessionStatus === "running") {
-      plan.sawTurn = true;
-      if (plan.startTimer) clearTimeout(plan.startTimer);
-      plan.startTimer = null;
+      plan.sawRunning = true;
+      if (prepareAnchor(store.blocks, plan) >= 0) {
+        plan.sawTurn = true;
+        if (plan.startTimer) clearTimeout(plan.startTimer);
+        plan.startTimer = null;
+      }
     }
     if (safeNow(store, conversationId)) {
       if (!plan.stableTimer) schedule(conversationId, plan);
@@ -236,9 +264,10 @@ export function startAeCompactPlan(conversationId: string, onCompacted?: () => v
   if (plans.has(conversationId)) return;
   const plan: Plan = {
     phase: "queued",
+    sawRunning: false,
     sawTurn: false,
     seenBlocks: new WeakSet(),
-    seenResponses: new Set(),
+    seenItems: new Set(),
     stableTimer: null,
     limitTimer: null,
     startTimer: null,
