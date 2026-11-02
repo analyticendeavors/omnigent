@@ -11,6 +11,7 @@ import {
 
 const ID = "conv_plan";
 
+/** Resets the chat to idle; the transcript is kept unless `blocks` is given. */
 function setChat(patch: Record<string, unknown> = {}) {
   useChatStore.setState({
     conversationId: ID,
@@ -19,11 +20,44 @@ function setChat(patch: Record<string, unknown> = {}) {
     sessionStatus: "idle",
     backgroundTasks: [],
     backgroundTaskCount: 0,
-    blocks: [],
+    blocks: useChatStore.getState().blocks,
     queuedMessages: [],
     ...patch,
   } as never);
 }
+
+/** The prepare message as the transcript shows it once the runner consumed it. */
+function prepBlock(itemId: string | null = "item_prep", responseId = "") {
+  return {
+    type: "user_message",
+    content: [{ type: "input_text", text: AE_COMPACT_PREP_TEXT }],
+    ctx: { responseId, itemId },
+  };
+}
+
+const blocksNow = () => useChatStore.getState().blocks as unknown[];
+
+/** Claude-native status edges, through the real store reducer. */
+const status = (value: string, extra: Record<string, unknown> = {}) =>
+  handleSessionEvent({
+    type: "session_status",
+    conversationId: ID,
+    status: value,
+    ...extra,
+  } as never);
+
+/** The runner consumed the prepare message: its committed block lands in the transcript. */
+const consumePrep = (itemId = "item_prep") =>
+  handleSessionEvent({
+    type: "session_input_consumed",
+    itemId,
+    itemType: "message",
+    data: {
+      role: "user",
+      user_authored: true,
+      content: [{ type: "input_text", text: AE_COMPACT_PREP_TEXT }],
+    },
+  } as never);
 
 const toasts: string[] = [];
 const listen = (event: Event) => toasts.push(String((event as CustomEvent).detail.content));
@@ -39,14 +73,14 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   toasts.length = 0;
   window.addEventListener("omnigent:toast", listen);
-  // A real turn flips the session to running as soon as the message lands.
+  // A real turn: the runner consumes the message and the session runs.
   send = vi.fn(() => {
-    setChat({ sessionStatus: "running" });
+    setChat({ sessionStatus: "running", blocks: [...blocksNow(), prepBlock()] });
     return Promise.resolve();
   });
   compact = vi.fn(() => Promise.resolve());
-  useChatStore.setState({ send, compact } as never);
-  setChat();
+  useChatStore.setState({ send, compact, activeResponse: null } as never);
+  setChat({ blocks: [] });
 });
 
 afterEach(() => {
@@ -262,7 +296,7 @@ describe("queued compact", () => {
   ])("compacts nothing when %s", async (_name, blocks) => {
     startAeCompactPlan(ID);
     await tick(2000);
-    setChat({ sessionStatus: "idle", blocks });
+    setChat({ sessionStatus: "idle", blocks: [...blocksNow(), ...blocks] });
     await tick(2000);
     expect(compact).not.toHaveBeenCalled();
     expect(toasts.join("\n")).toContain("did not finish saving its notes cleanly");
@@ -278,6 +312,7 @@ describe("queued compact", () => {
       blocks: [
         // Rehydrated copy of the old block: a new object, the same response.
         { ...old },
+        prepBlock(),
         { type: "response_end", status: "completed", ctx: { responseId: "r2" } },
         { type: "error", level: "info", message: "note", ctx: { responseId: "r2" } },
       ],
@@ -298,7 +333,7 @@ describe("queued compact", () => {
     await tick(2000);
     setChat({
       sessionStatus: "idle",
-      blocks: [{ type: "response_end", status: "failed", ctx: { responseId: "r2" } }],
+      blocks: [prepBlock(), { type: "response_end", status: "failed", ctx: { responseId: "r2" } }],
     });
     await tick(2000);
     expect(compact).not.toHaveBeenCalled();
@@ -338,35 +373,98 @@ describe("queued compact", () => {
     expect(compact).not.toHaveBeenCalled();
   });
 
+  // Driven through the real store reducer with the event shapes a claude-native chat gets. The
+  // server reports a Stop with a shell still running as `idle` with a shell count (a non-codex
+  // `waiting` is rewritten), then the PTY's bare `idle` edge leaves the count sticky.
   it("runs after a claude-native turn ends with a background shell still running", async () => {
-    // Driven through the real store reducer with the event shapes a claude-native chat sends.
-    const status = (value: string, extra: Record<string, unknown> = {}) =>
-      handleSessionEvent({
-        type: "session_status",
-        conversationId: ID,
-        status: value,
-        ...extra,
-      } as never);
     send.mockImplementation(() => Promise.resolve());
-    useChatStore.setState({ activeResponse: null } as never);
     status("running", { responseId: "r1" });
     startAeCompactPlan(ID);
     await tick(10_000);
     expect(send).not.toHaveBeenCalled();
-    // Stop hook: the turn ended, a shell (a CI wait) still runs. Then the bare PTY idle edge,
-    // which leaves the shell tally sticky.
-    status("waiting", { responseId: "r1", backgroundTaskCount: 1 });
+    status("idle", { responseId: "r1", backgroundTaskCount: 1 });
     status("idle");
     expect(useChatStore.getState().backgroundTaskCount).toBe(1);
     await tick(2000);
     expect(send).toHaveBeenCalledTimes(1);
     expect(send.mock.calls[0]![0]).toBe(AE_COMPACT_PREP_TEXT);
-    // The prepare turn runs and ends with the shell still running.
+    // The prepare message lands, its turn runs and ends with the shell still running.
+    consumePrep();
     status("running", { responseId: "r2" });
     await tick(5000);
     expect(compact).not.toHaveBeenCalled();
+    status("idle", { responseId: "r2", backgroundTaskCount: 1 });
+    status("idle");
+    await tick(2000);
+    expect(compact).toHaveBeenCalledTimes(1);
+  });
+
+  // Compatibility: `waiting` still reaches the page from SDK orchestrators parked on sub-agents
+  // and from codex-native children.
+  it("treats a waiting turn end like idle", async () => {
+    send.mockImplementation(() => Promise.resolve());
+    status("running", { responseId: "r1" });
+    startAeCompactPlan(ID);
+    status("waiting", { responseId: "r1", backgroundTaskCount: 1 });
+    await tick(2000);
+    expect(send).toHaveBeenCalledTimes(1);
+    consumePrep();
+    status("running", { responseId: "r2" });
     status("waiting", { responseId: "r2", backgroundTaskCount: 1 });
     await tick(2000);
     expect(compact).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not take a turn that ran before the prepare message landed for the prepare turn", async () => {
+    // The send stays in flight: the runner has not consumed the prepare message yet.
+    send.mockImplementation(() => new Promise<void>(() => {}));
+    startAeCompactPlan(ID);
+    await tick(2000);
+    expect(send).toHaveBeenCalledTimes(1);
+    // A shell's task notification wakes the chat for a turn of its own.
+    status("running", { responseId: "r_note" });
+    await tick(3000);
+    status("idle", { responseId: "r_note", backgroundTaskCount: 1 });
+    status("idle");
+    await tick(10_000);
+    expect(compact).not.toHaveBeenCalled();
+    // Past the start limit the plan is still alive: a turn did start.
+    await tick(30_000);
+    expect(toasts).toEqual([]);
+    consumePrep();
+    status("running", { responseId: "r2" });
+    await tick(5000);
+    status("idle", { responseId: "r2", backgroundTaskCount: 1 });
+    status("idle");
+    await tick(2000);
+    expect(compact).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a prepare message an earlier compact left in the transcript", async () => {
+    const old = prepBlock("item_old");
+    setChat({ blocks: [old] });
+    send.mockImplementation(() => Promise.resolve());
+    startAeCompactPlan(ID);
+    await tick(2000);
+    // History reloads (a new object, the same item) and another turn runs and ends.
+    setChat({ sessionStatus: "running", blocks: [{ ...old }] });
+    setChat({ sessionStatus: "idle" });
+    await tick(10_000);
+    expect(compact).not.toHaveBeenCalled();
+    setChat({ sessionStatus: "running", blocks: [...blocksNow(), prepBlock("item_new")] });
+    setChat({ sessionStatus: "idle" });
+    await tick(2000);
+    expect(compact).toHaveBeenCalledTimes(1);
+  });
+
+  it("compacts nothing when the prepare message never lands", async () => {
+    send.mockImplementation(() => Promise.resolve());
+    startAeCompactPlan(ID);
+    await tick(2000);
+    setChat({ sessionStatus: "running" });
+    setChat({ sessionStatus: "idle" });
+    await tick(AE_COMPACT_PREP_LIMIT_MS + 1000);
+    expect(compact).not.toHaveBeenCalled();
+    expect(toasts.join("\n")).toContain("took too long");
   });
 });
