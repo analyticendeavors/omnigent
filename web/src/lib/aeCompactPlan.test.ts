@@ -324,19 +324,31 @@ describe("queued compact", () => {
   it("still sees a failure when the transcript is replaced by a shorter one mid-turn", async () => {
     setChat({
       blocks: [
-        { type: "user_message", ctx: { responseId: "r0" } },
-        { type: "user_message", ctx: { responseId: "r0" } },
-        { type: "user_message", ctx: { responseId: "r1" } },
+        { type: "user_message", content: [], ctx: { responseId: "r0" } },
+        { type: "user_message", content: [], ctx: { responseId: "r0" } },
+        { type: "user_message", content: [], ctx: { responseId: "r1" } },
       ],
     });
     startAeCompactPlan(ID);
     await tick(2000);
+    expect(send).toHaveBeenCalledTimes(1);
     setChat({
       sessionStatus: "idle",
       blocks: [prepBlock(), { type: "response_end", status: "failed", ctx: { responseId: "r2" } }],
     });
     await tick(2000);
     expect(compact).not.toHaveBeenCalled();
+    expect(toasts.join("\n")).toContain("did not finish saving its notes cleanly");
+  });
+
+  it("treats a user message without content as no prepare message", async () => {
+    setChat({ blocks: [{ type: "user_message", ctx: { responseId: "r0", itemId: null } }] });
+    startAeCompactPlan(ID);
+    await tick(2000);
+    expect(send).toHaveBeenCalledTimes(1);
+    setChat({ sessionStatus: "idle" });
+    await tick(2000);
+    expect(compact).toHaveBeenCalledTimes(1);
   });
 
   it("judges only what follows the prepare message when it is in the transcript", async () => {
@@ -466,5 +478,66 @@ describe("queued compact", () => {
     await tick(AE_COMPACT_PREP_LIMIT_MS + 1000);
     expect(compact).not.toHaveBeenCalled();
     expect(toasts.join("\n")).toContain("took too long");
+  });
+
+  it("ignores an older prepare message loaded by scrolling back after the send", async () => {
+    const last = {
+      type: "response_end",
+      status: "completed",
+      ctx: { responseId: "r1", itemId: "item_r1" },
+    };
+    setChat({ blocks: [last] });
+    send.mockImplementation(() => new Promise<void>(() => {}));
+    startAeCompactPlan(ID);
+    await tick(2000);
+    // History loads older items in front: an earlier compact's prepare message among them.
+    setChat({ blocks: [prepBlock("item_older"), { ...last }] });
+    status("running", { responseId: "r_note" });
+    await tick(3000);
+    status("idle", { responseId: "r_note", backgroundTaskCount: 1 });
+    status("idle");
+    await tick(10_000);
+    expect(compact).not.toHaveBeenCalled();
+    consumePrep();
+    status("running", { responseId: "r2" });
+    status("idle", { responseId: "r2", backgroundTaskCount: 1 });
+    await tick(2000);
+    expect(compact).toHaveBeenCalledTimes(1);
+  });
+
+  it("counts a prepare message that lands only after its own turn went idle", async () => {
+    send.mockImplementation(() => Promise.resolve());
+    startAeCompactPlan(ID);
+    await tick(2000);
+    status("running", { responseId: "r2" });
+    await tick(4000);
+    status("idle", { responseId: "r2", backgroundTaskCount: 1 });
+    await tick(3000);
+    expect(compact).not.toHaveBeenCalled();
+    // A snapshot merge brings the message and its finished reply at once.
+    setChat({
+      sessionStatus: "idle",
+      blocks: [
+        ...blocksNow(),
+        prepBlock(),
+        { type: "response_end", status: "completed", ctx: { responseId: "r2" } },
+      ],
+    });
+    await tick(2000);
+    expect(compact).toHaveBeenCalledTimes(1);
+  });
+
+  it("counts a prepare message that lands while its turn is already running", async () => {
+    send.mockImplementation(() => Promise.resolve());
+    startAeCompactPlan(ID);
+    await tick(2000);
+    status("running", { responseId: "r2" });
+    await tick(1000);
+    consumePrep();
+    await tick(4000);
+    status("idle", { responseId: "r2", backgroundTaskCount: 1 });
+    status("idle");
+    await tick(2000);
+    expect(compact).toHaveBeenCalledTimes(1);
   });
 });

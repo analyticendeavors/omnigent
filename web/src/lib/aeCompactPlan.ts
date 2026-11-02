@@ -48,6 +48,12 @@ interface Plan {
    */
   seenBlocks: WeakSet<object>;
   seenItems: Set<string>;
+  /**
+   * The newest block at send time, and the newest server item id: the anchor must follow them,
+   * so an older prepare message loaded by scrolling back is never taken for this plan's.
+   */
+  sendTail: object | null;
+  sendTailItem: string | null;
   stableTimer: ReturnType<typeof setTimeout> | null;
   limitTimer: ReturnType<typeof setTimeout> | null;
   startTimer: ReturnType<typeof setTimeout> | null;
@@ -76,11 +82,27 @@ function safeNow(s: StoreState, conversationId: string): boolean {
   return !s.queuedMessages.some((m) => m.conversationId === conversationId);
 }
 
+/** A block with no content is not a prepare message. */
 function isPrepareMessage(b: StoreState["blocks"][number]): boolean {
   return (
     b.type === "user_message" &&
-    JSON.stringify(b.content).includes(AE_COMPACT_PREP_TEXT.slice(0, 40))
+    JSON.stringify(b.content ?? null).includes(AE_COMPACT_PREP_TEXT.slice(0, 40))
   );
+}
+
+/**
+ * Where the transcript stood at send time: the index of the send-time tail, found by object or
+ * by server item id so a rehydrate keeps it, or -1 when neither is there (an empty or replaced
+ * transcript, where only the send-time exclusions apply).
+ */
+function sendBoundary(blocks: StoreState["blocks"], plan: Plan): number {
+  if (!plan.sendTail && !plan.sendTailItem) return -1;
+  for (let index = blocks.length - 1; index >= 0; index--) {
+    const b = blocks[index]!;
+    if (b === plan.sendTail) return index;
+    if (plan.sendTailItem && b.ctx.itemId === plan.sendTailItem) return index;
+  }
+  return -1;
 }
 
 /**
@@ -89,7 +111,8 @@ function isPrepareMessage(b: StoreState["blocks"][number]): boolean {
  * however history loads or shrinks; a prepare message that was there at send time is not it.
  */
 function prepareAnchor(blocks: StoreState["blocks"], plan: Plan): number {
-  for (let index = blocks.length - 1; index >= 0; index--) {
+  const boundary = sendBoundary(blocks, plan);
+  for (let index = blocks.length - 1; index > boundary; index--) {
     const b = blocks[index]!;
     if (!isPrepareMessage(b) || plan.seenBlocks.has(b)) continue;
     if (b.ctx.itemId && plan.seenItems.has(b.ctx.itemId)) continue;
@@ -142,11 +165,7 @@ async function advance(conversationId: string) {
     plan.phase = "preparing";
     plan.sawRunning = false;
     plan.sawTurn = false;
-    for (const b of store.blocks) {
-      if (!isPrepareMessage(b)) continue;
-      plan.seenBlocks.add(b);
-      if (b.ctx.itemId) plan.seenItems.add(b.ctx.itemId);
-    }
+    // Both timers are armed first, so a plan can never sit in "preparing" with nothing to end it.
     plan.limitTimer = setTimeout(
       () => fail(conversationId, "Compact cancelled: the chat took too long to save its notes."),
       AE_COMPACT_PREP_LIMIT_MS,
@@ -161,6 +180,14 @@ async function advance(conversationId: string) {
         fail(conversationId, "Compact cancelled: the chat never started saving its notes.");
       }
     }, AE_COMPACT_START_LIMIT_MS);
+    plan.sendTail = store.blocks.at(-1) ?? null;
+    plan.sendTailItem = null;
+    for (const b of store.blocks) {
+      if (b.ctx.itemId) plan.sendTailItem = b.ctx.itemId;
+      if (!isPrepareMessage(b)) continue;
+      plan.seenBlocks.add(b);
+      if (b.ctx.itemId) plan.seenItems.add(b.ctx.itemId);
+    }
     emit();
     try {
       await store.send(AE_COMPACT_PREP_TEXT, agentId, undefined, {
@@ -184,11 +211,22 @@ async function advance(conversationId: string) {
     return;
   }
   if (plan.phase !== "preparing") return;
-  // Idle, but the prepare turn has not been seen running: keep waiting; the start timer and the
-  // 15 minute limit end it.
-  if (!plan.sawTurn) return;
   const anchor = prepareAnchor(store.blocks, plan);
   if (anchor < 0) return;
+  // The prepare turn was not seen running with its message in place. A message that lands only
+  // after its own turn's idle edge (a late consumed event or snapshot merge) still counts once a
+  // turn ran and a completed response follows it; otherwise keep waiting, and the start timer and
+  // the 15 minute limit end it.
+  if (
+    !plan.sawTurn &&
+    !(
+      plan.sawRunning &&
+      store.blocks
+        .slice(anchor + 1)
+        .some((b) => b.type === "response_end" && b.status === "completed")
+    )
+  )
+    return;
   // A turn that failed, was cancelled, or raised an error did not finish saving: compact nothing.
   const failed = store.blocks
     .slice(anchor + 1)
@@ -227,7 +265,11 @@ function schedule(conversationId: string, plan: Plan) {
   if (plan.stableTimer) clearTimeout(plan.stableTimer);
   plan.stableTimer = setTimeout(() => {
     plan.stableTimer = null;
-    void advance(conversationId);
+    advance(conversationId).catch((error: unknown) => {
+      if (plans.get(conversationId) === plan && plan.phase !== "compacting") {
+        fail(conversationId, `Compact cancelled: something went wrong (${reason(error)}).`);
+      }
+    });
   }, AE_COMPACT_STABLE_MS);
 }
 
@@ -268,6 +310,8 @@ export function startAeCompactPlan(conversationId: string, onCompacted?: () => v
     sawTurn: false,
     seenBlocks: new WeakSet(),
     seenItems: new Set(),
+    sendTail: null,
+    sendTailItem: null,
     stableTimer: null,
     limitTimer: null,
     startTimer: null,
