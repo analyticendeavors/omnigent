@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import type { ReactNode } from "react";
 
+import { installAeQueuePersist } from "@/lib/aeQueuePersist";
 import { useChatStore } from "@/store/chatStore";
 
 /**
@@ -23,6 +24,9 @@ export function QueueFlushProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const queuedMessages = useChatStore((s) => s.queuedMessages);
   const flushBackgroundQueues = useChatStore((s) => s.flushBackgroundQueues);
+
+  // omnigent-ae: keep the queue through a reload (restores once per page, before the flushes).
+  useEffect(() => installAeQueuePersist(), []);
 
   // Re-evaluate whenever the queue itself changes (e.g. a message enqueued in
   // another conversation, or one drained here).
