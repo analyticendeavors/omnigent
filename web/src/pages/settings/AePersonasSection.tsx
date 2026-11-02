@@ -36,9 +36,12 @@ import {
 } from "@/lib/aePersonas";
 import { AE_ROLE_EFFORTS, type AeRoleEffort, aeModelLabel } from "@/lib/aeRoleBase";
 import type { AeRolesState } from "@/lib/aeRoles";
+import type { AeRoleDraft } from "./AeRolesEditor";
 import { aeOneLine } from "@/lib/aeRoles";
 import { aeClaudeEffortLabel } from "@/lib/aeEffortDefault";
 import type { AeSettingHintId } from "@/lib/aeSettingHints";
+
+const NO_DRAFTS: Readonly<Record<string, AeRoleDraft>> = {};
 
 const FIELD =
   "w-full min-w-0 rounded-md border border-input bg-background px-2.5 py-1.5 text-sm text-foreground";
@@ -284,15 +287,18 @@ function PersonaForm({
               className={FIELD}
             />
           </Field>
-          {draft.name || draft.purpose || draft.instructions
-            ? problems.length > 0 && (
-                <ul data-testid="ae-persona-problems" className="text-xs text-amber-500">
-                  {problems.map((p) => (
-                    <li key={p}>{p}</li>
-                  ))}
-                </ul>
-              )
-            : null}
+          {/* Always mounted, so a screen reader hears a problem appear or change. */}
+          <div role="alert" aria-live="polite">
+            {draft.name || draft.purpose || draft.instructions
+              ? problems.length > 0 && (
+                  <ul data-testid="ae-persona-problems" className="text-xs text-amber-500">
+                    {problems.map((p) => (
+                      <li key={p}>{p}</li>
+                    ))}
+                  </ul>
+                )
+              : null}
+          </div>
           <DialogFooter>
             <Button type="button" variant="outline" size="sm" onClick={onCancel}>
               Cancel
@@ -318,19 +324,27 @@ function meta(p: AePersona): string {
 export function AePersonasSection({
   state,
   busy,
+  drafts = NO_DRAFTS,
   onSave,
 }: {
   state: AeRolesState;
   busy: boolean;
-  /** Save the user's personas; true once saved. */
-  onSave: (personas: AePersona[], done: string) => Promise<boolean>;
+  /** Unsaved edits to presets (by preset id): deleting a persona counts and updates them too. */
+  drafts?: Readonly<Record<string, AeRoleDraft>>;
+  /**
+   * Save the user's personas; true once saved. `retire` is the deleted persona: the caller
+   * saves the presets with it turned into plain reviewers (aeRetirePersona) and does the same
+   * to its drafts, so no preset is left invalid.
+   */
+  onSave: (change: { personas: AePersona[]; retire?: AePersona }, done: string) => Promise<boolean>;
 }) {
+  const capId = useId();
   const { models } = useAeRoleModels();
   const mine = state.personas ?? [];
   const all = aeAllPersonas(state.builtin_personas ?? [], mine);
   const taken = all.map((p) => p.id);
   const [form, setForm] = useState<{ mode: "new" | "edit"; draft: Draft } | null>(null);
-  const [removing, setRemoving] = useState<AePersona | null>(null);
+  const [removing, setRemoving] = useState<AePersonaEntry | null>(null);
   const full = mine.length >= AE_PERSONAS_MAX;
   const fullNote = `You have ${AE_PERSONAS_MAX} personas of your own, the most there can be. Delete one first.`;
 
@@ -339,17 +353,23 @@ export function AePersonasSection({
     const next = editing
       ? mine.map((p) => (p.id === persona.id ? persona : p))
       : [...mine, persona];
-    if (await onSave(next, editing ? `Saved ${persona.name}.` : `Added ${persona.name}.`)) {
+    if (
+      await onSave(
+        { personas: next },
+        editing ? `Saved ${persona.name}.` : `Added ${persona.name}.`,
+      )
+    ) {
       setForm(null);
     }
   };
-  const users = removing ? aePersonaUsers(state.presets, removing.id) : [];
+  const users = removing ? aePersonaUsers(state.presets, removing.id, drafts) : [];
   const remove = async () => {
     if (!removing) return;
     const target = removing;
+    const { builtin: _builtin, ...plain } = target;
     if (
       await onSave(
-        mine.filter((p) => p.id !== target.id),
+        { personas: mine.filter((p) => p.id !== target.id), retire: plain },
         `Deleted ${target.name}.`,
       )
     ) {
@@ -380,7 +400,8 @@ export function AePersonasSection({
           variant="outline"
           size="sm"
           aria-label={`Duplicate ${p.name}`}
-          title={full ? fullNote : "Duplicate"}
+          title="Duplicate"
+          aria-describedby={full ? capId : undefined}
           disabled={busy || full}
           onClick={() =>
             setForm({
@@ -440,7 +461,7 @@ export function AePersonasSection({
         <Button
           variant="outline"
           size="sm"
-          title={full ? fullNote : undefined}
+          aria-describedby={full ? capId : undefined}
           disabled={busy || full}
           onClick={() => setForm({ mode: "new", draft: EMPTY })}
         >
@@ -448,6 +469,11 @@ export function AePersonasSection({
           Add persona
         </Button>
       </div>
+      {full && (
+        <p id={capId} data-testid="ae-personas-full" className="pt-2 text-xs text-amber-500">
+          {fullNote}
+        </p>
+      )}
       <ul aria-label="Personas" className="mt-2 divide-y divide-border">
         {all.map(row)}
       </ul>
@@ -468,7 +494,7 @@ export function AePersonasSection({
             <DialogTitle>Delete {removing?.name}?</DialogTitle>
             <DialogDescription>
               {users.length > 0
-                ? `${users.join(", ")} ${users.length > 1 ? "use" : "uses"} it. Those reviewers keep their model but run as a plain review.`
+                ? `${users.join(", ")} ${users.length > 1 ? "use" : "uses"} it${drafts && Object.keys(drafts).length > 0 ? " (unsaved edits included)" : ""}. Those reviewers stay, as plain reviewers on the model and effort they show now, without the persona's instructions.`
                 : "No preset uses it."}
             </DialogDescription>
           </DialogHeader>

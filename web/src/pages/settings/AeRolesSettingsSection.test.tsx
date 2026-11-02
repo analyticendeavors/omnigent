@@ -624,4 +624,42 @@ describe("AeRolesSettingsSection", () => {
     await waitFor(() => expect(puts()).toHaveLength(1));
     expect(puts()[0].apply_start_on).toBe(false);
   });
+
+  it("deleting a persona turns the slots that named it into plain reviewers in the same save", async () => {
+    const docs = {
+      id: "docs",
+      name: "Docs",
+      purpose: "Docs match",
+      model: OPUS,
+      effort: "high",
+      when: "always",
+      instructions: "Read the docs.",
+    };
+    const usesDocs: AeRolePreset = {
+      ...BALANCED,
+      roles: {
+        ...BALANCED.roles,
+        reviewer: {
+          mode: "multi",
+          reviewers: [fixed(SONNET, "medium"), { mode: "fixed", persona: "docs" }],
+        },
+      },
+    };
+    serve({ ...stateOf({ presets: [SAVE_TOKENS, usesDocs, YOLO] }), personas: [docs] } as never);
+    renderSection();
+    fireEvent.click(await screen.findByRole("button", { name: "Delete Docs" }));
+    const dialog = within(screen.getByTestId("ae-persona-delete"));
+    expect(dialog.getByText(/Balanced uses it/)).toBeInTheDocument();
+    fireEvent.click(dialog.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    const body = puts()[0] as AeRolesState;
+    expect(body.personas).toEqual([]);
+    const saved = body.presets.find((p) => p.id === "balanced");
+    // The persona-only slot is now a plain Opus reviewer: valid for any position.
+    expect(saved?.roles.reviewer).toEqual({
+      mode: "multi",
+      reviewers: [fixed(SONNET, "medium"), fixed(OPUS, "high")],
+    });
+    expect(JSON.stringify(body.presets)).not.toContain("persona");
+  });
 });

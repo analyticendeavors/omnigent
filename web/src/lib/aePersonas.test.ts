@@ -13,6 +13,7 @@ import {
   aePersonaOf,
   aePersonaProblems,
   aePersonaUsers,
+  aeRetirePersona,
 } from "./aePersonas";
 import { aeParseRolesState, aeRolesDoc } from "./aeRoles";
 
@@ -59,7 +60,8 @@ describe("aePersonas", () => {
     ]) {
       expect(aeParsePersona(bad)).toBeNull();
     }
-    expect(aeParsePersonas([mine, { id: 1 }])).toBeNull();
+    // One bad entry is skipped on its own; the others stay (patch 0278).
+    expect(aeParsePersonas([mine, { id: 1 }])).toEqual([mine]);
     expect(aeParsePersonas("x")).toBeNull();
   });
 
@@ -135,6 +137,62 @@ describe("aePersonas", () => {
     expect(aePersonaUsers(presets, "other")).toEqual([]);
   });
 
+  it("counts a preset whose unsaved draft names the persona", () => {
+    const plain = { mode: "fixed" as const, model: "m", effort: "low" as const };
+    const presets = [{ id: "a", title: "A", roles: { reviewer: plain } }];
+    const draft = {
+      roles: {
+        reviewer: {
+          mode: "multi" as const,
+          reviewers: [plain, { mode: "fixed" as const, persona: "docs" }],
+        },
+      },
+    };
+    expect(aePersonaUsers(presets, "docs")).toEqual([]);
+    expect(aePersonaUsers(presets, "docs", { a: draft })).toEqual(["A"]);
+  });
+
+  it("retires a persona into plain reviewers that stay valid", () => {
+    const first = { mode: "fixed" as const, model: "claude-sonnet-5-5", effort: "medium" as const };
+    const codex = {
+      mode: "agent" as const,
+      agent: "a",
+      agent_name: "a",
+      name: "C",
+      model: null,
+      effort: null,
+      persona: "security",
+    };
+    const setting = {
+      mode: "multi" as const,
+      reviewers: [first, { mode: "fixed" as const, persona: "security" }, codex],
+    };
+    expect(aeRetirePersona(setting, security)).toEqual({
+      mode: "multi",
+      reviewers: [
+        first,
+        { mode: "fixed", model: "claude-opus-5-5", effort: "high" },
+        { ...codex, persona: undefined },
+      ],
+    });
+    // The slot's own model wins; a persona with no model gives Sonnet medium, never Auto.
+    const own = { mode: "fixed" as const, persona: "docs", model: "claude-haiku-5-5" };
+    const bare = {
+      mode: "multi" as const,
+      reviewers: [first, own, { mode: "fixed" as const, persona: "docs" }],
+    };
+    expect(aeRetirePersona(bare, mine)).toEqual({
+      mode: "multi",
+      reviewers: [
+        first,
+        { mode: "fixed", model: "claude-haiku-5-5", effort: "medium" },
+        { mode: "fixed", model: "claude-sonnet-5-5", effort: "medium" },
+      ],
+    });
+    // A setting that does not name it comes back unchanged.
+    expect(aeRetirePersona(first, security)).toBe(first);
+  });
+
   it("makes ids from names and avoids the ones in use, built-in ones included", () => {
     expect(aePersonaId("Docs Check!", [])).toBe("docs-check");
     expect(aePersonaId("Security", ["security"])).toBe("security-2");
@@ -158,7 +216,16 @@ describe("aePersonas", () => {
       "Write its instructions.",
     ]);
     expect(aePersonaProblems({ ...draft, name: "n".repeat(41) })[0]).toContain("40");
-    expect(aePersonaProblems({ ...draft, purpose: "a\nb" })[0]).toContain("one line");
+    expect(aePersonaProblems({ ...draft, purpose: "a\nb" })[0]).toBe(
+      "The purpose cannot contain a control character (U+000A). Remove it.",
+    );
+    expect(aePersonaProblems({ ...draft, name: "a\u200bb" })[0]).toContain("invisible");
+    // A tab is fine in instructions and a control character is not.
+    expect(aePersonaProblems({ ...draft, instructions: "a\n\tb" })).toEqual([]);
+    expect(aePersonaProblems({ ...draft, instructions: "a\u0007b" })[0]).toContain(
+      "The instructions cannot contain a control character",
+    );
+    expect(aePersonaProblems({ ...draft, name: "a\tb" })[0]).toContain("The name cannot contain");
     expect(
       aePersonaProblems({ ...draft, instructions: "x".repeat(AE_PERSONA_INSTRUCTIONS_MAX + 1) })[0],
     ).toContain("1000");
@@ -198,6 +265,13 @@ describe("the roles state with personas", () => {
     expect(state?.personas).toBeUndefined();
     expect(state?.builtin_personas).toEqual([]);
     expect("personas" in aeRolesDoc(state!)).toBe(false);
-    expect(aeParseRolesState({ ...body, personas: [{ id: 1 }] })?.personas).toBeUndefined();
+    expect(aeParseRolesState({ ...body, personas: [{ id: 1 }] })?.personas).toEqual([]);
+    // One malformed stored persona costs only itself; the built-ins from the server stay.
+    const mixed = aeParseRolesState({ ...body, personas: [{ id: 1 }, mine, "x"] });
+    expect(mixed?.personas).toEqual([mine]);
+    expect(
+      aeParseRolesState({ ...body, personas: [{ id: 1 }], builtin_personas: [general, {}] })
+        ?.builtin_personas,
+    ).toEqual([general]);
   });
 });

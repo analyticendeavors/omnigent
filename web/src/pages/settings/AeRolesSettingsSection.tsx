@@ -36,7 +36,7 @@ import {
   aeSameRoles,
   aeSetPinned,
 } from "@/lib/aeRoles";
-import { aeAllPersonas } from "@/lib/aePersonas";
+import { aeAllPersonas, aeRetirePersona } from "@/lib/aePersonas";
 import { AePersonasSection } from "./AePersonasSection";
 import { AePresetInsightsBlock } from "./AePresetInsightsBlock";
 import { type AeRoleDraft, AeRolesEditor } from "./AeRolesEditor";
@@ -327,7 +327,29 @@ export function AeRolesSettingsSection() {
       <AePersonasSection
         state={state}
         busy={busy}
-        onSave={(next, done) => commit({ ...state, personas: next }, done)}
+        drafts={drafts}
+        onSave={async ({ personas: next, retire }, done) => {
+          // Deleting a persona turns every slot that named it into a plain reviewer, in the
+          // saved presets and in unsaved drafts, so no preset is left invalid (patch 0278).
+          const retired = (r: AeRoleDraft["roles"]): AeRoleDraft["roles"] =>
+            retire ? { ...r, reviewer: aeRetirePersona(r.reviewer, retire) } : r;
+          const ok = await commit(
+            {
+              ...state,
+              personas: next,
+              presets: state.presets.map((p) => ({ ...p, roles: retired(p.roles) })),
+            },
+            done,
+          );
+          if (ok && retire) {
+            setDrafts((all) =>
+              Object.fromEntries(
+                Object.entries(all).map(([id, d]) => [id, { ...d, roles: retired(d.roles) }]),
+              ),
+            );
+          }
+          return ok;
+        }}
       />
 
       <AePresetInsightsBlock state={state} />

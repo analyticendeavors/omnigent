@@ -43,6 +43,7 @@ import { AeRoleRow } from "@/pages/settings/AeRolesEditor";
 import { AeReviewerRowsView, AeReviewSettings } from "@/pages/settings/AeReviewerRows";
 import type { AeReviewerAgents } from "@/hooks/useAeReviewerAgents";
 import { aeReviewsCard } from "@/lib/aeReviewers";
+import { aeAllPersonas } from "@/lib/aePersonas";
 
 const chipClass = (on: boolean) =>
   cn(
@@ -70,6 +71,8 @@ export function AeSessionPresetRow({
   const [naming, setNaming] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   if (!state) return null;
+  // The same catalog Settings > Roles passes: the built-in personas first, then the user's own.
+  const personas = aeAllPersonas(state.builtin_personas ?? [], state.personas);
   const choice = aeResolveSessionPreset(value, state);
   const activeId = aeChoiceId(choice);
   const base =
@@ -273,6 +276,7 @@ export function AeSessionPresetRow({
                 setting={shown.roles.reviewer}
                 models={models}
                 agents={reviewerAgents}
+                personas={personas}
                 disabled={disabled || saving}
                 onChange={(reviewer) => setRoles({ ...shown.roles, reviewer })}
               />

@@ -800,7 +800,65 @@ describe("Codex reviewers in the one dropdown", () => {
         />,
       );
       expect(screen.getByLabelText("Reviewer 2 persona")).toHaveValue("gone-away");
-      expect(screen.getByTestId("ae-reviewer-persona-missing-2")).toHaveTextContent("plain review");
+      const note = screen.getByTestId("ae-reviewer-persona-missing-2");
+      expect(note).toHaveTextContent("plain review");
+      // The note is tied to its select, so a screen reader reads it with the control.
+      expect(screen.getByLabelText("Reviewer 2 persona")).toHaveAttribute(
+        "aria-describedby",
+        note.id,
+      );
+      expect(screen.getByLabelText("Reviewer 1 persona")).not.toHaveAttribute("aria-describedby");
+    });
+
+    it("removing reviewer 1 drops a risky persona that moves up into its place, and says so", () => {
+      const onSave = vi.fn();
+      render(
+        <Harness
+          initial={{ mode: "multi", reviewers: [sonnet, persona] }}
+          personas={PERSONAS}
+          onSave={onSave}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Remove Reviewer 1" }));
+      // Reviewer 2 (Security, only if risky) is now reviewer 1, which always runs: it keeps the
+      // model and effort it showed (the persona's) and loses the persona.
+      expect(onSave).toHaveBeenLastCalledWith({
+        mode: "fixed",
+        model: "claude-opus-5-5",
+        effort: "high",
+      });
+      expect(screen.getByTestId("ae-reviewer-promoted-note")).toHaveTextContent(
+        "Security runs only when the diff is risky, and reviewer 1 always runs",
+      );
+      expect(screen.getByRole("status")).toBeInTheDocument();
+    });
+
+    it("keeps a promoted reviewer's own model, and says nothing for a persona that always runs", () => {
+      const onSave = vi.fn();
+      const own = { ...sonnet, persona: "security" };
+      const { unmount } = render(
+        <Harness
+          initial={{ mode: "multi", reviewers: [sonnet, own] }}
+          personas={PERSONAS}
+          onSave={onSave}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Remove Reviewer 1" }));
+      expect(onSave).toHaveBeenLastCalledWith(sonnet);
+      unmount();
+      render(
+        <Harness
+          initial={{ mode: "multi", reviewers: [sonnet, { ...sonnet, persona: "general" }] }}
+          personas={PERSONAS}
+          onSave={onSave}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Remove Reviewer 1" }));
+      expect(onSave).toHaveBeenLastCalledWith({
+        mode: "multi",
+        reviewers: [{ ...sonnet, persona: "general" }],
+      });
+      expect(screen.queryByTestId("ae-reviewer-promoted-note")).toBeNull();
     });
 
     it("keeps a lone persona slot in the multi shape", () => {

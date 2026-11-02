@@ -5,6 +5,7 @@
 // bar has the steps that model offers) or another agent. The two review
 // settings show with 2 or more.
 
+import { useId, useState } from "react";
 import { AeHint } from "@/components/AeHint";
 import { PlusIcon, XIcon } from "lucide-react";
 import { type AeReviewerAgents, useAeReviewerAgents } from "@/hooks/useAeReviewerAgents";
@@ -167,6 +168,7 @@ function PersonaSelect({
   disabled: boolean;
   onChange: (persona: string) => void;
 }) {
+  const noteId = useId();
   if (slot.mode === "auto") return null;
   const current = slot.persona ?? "";
   const known = personas.some((p) => p.id === current);
@@ -176,6 +178,7 @@ function PersonaSelect({
     <div className="flex min-w-0 flex-wrap items-center gap-1.5">
       <select
         aria-label={`${label} persona`}
+        aria-describedby={current && !known ? noteId : undefined}
         value={current}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
@@ -212,6 +215,7 @@ function PersonaSelect({
       )}
       {current && !known && (
         <span
+          id={noteId}
           data-testid={`ae-reviewer-persona-missing-${index + 1}`}
           className="text-[11px] text-amber-500"
         >
@@ -472,7 +476,29 @@ export function AeReviewerRowsView({
   const { options, host, loaded } = agents;
   const codex = useAeCodexCatalog(agents);
   const slots = aeReviewerList(setting);
-  const write = (next: AeReviewerSlot[]) => onChange(aeWriteReviewers(next));
+  // Said when removing reviewer 1 moved a persona that runs only if risky up into its place.
+  const [promoted, setPromoted] = useState<string | null>(null);
+  const write = (next: AeReviewerSlot[]) => {
+    setPromoted(null);
+    onChange(aeWriteReviewers(next));
+  };
+  // Removing a reviewer moves the next one up. Reviewer 1 always runs (it takes the fix
+  // checks), so a persona that runs only if risky is dropped from the slot that lands there;
+  // the slot keeps the model and effort it was showing (review fix, patch 0278).
+  const remove = (index: number) => {
+    const next = slots.filter((__, i) => i !== index);
+    const first = next[0];
+    const barred =
+      index === 0 && first && first.mode !== "auto" && first.persona
+        ? personas.find((p) => p.id === first.persona && aePersonaBarredFromFirst(p))
+        : undefined;
+    if (!first || !barred) return write(next);
+    next[0] = withChosenPersona(first, aeEffectiveSlot(first, personas), "");
+    write(next);
+    setPromoted(
+      `${barred.name} runs only when the diff is risky, and reviewer 1 always runs, so it is now a plain reviewer with the same model and effort.`,
+    );
+  };
   const candidate =
     slots.length < AE_REVIEWERS_MAX ? nextSlot(slots, models, options, codex.rows) : null;
   // Codex is the next pick but cannot give a model yet: wait rather than save a slot with no model.
@@ -517,9 +543,18 @@ export function AeReviewerRowsView({
             ) : null
           }
           onChange={(slot) => write(slots.map((s, i) => (i === index ? slot : s)))}
-          onRemove={slots.length >= 2 ? () => write(slots.filter((__, i) => i !== index)) : null}
+          onRemove={slots.length >= 2 ? () => remove(index) : null}
         />
       ))}
+      {promoted && (
+        <p
+          role="status"
+          data-testid="ae-reviewer-promoted-note"
+          className="pt-2 text-xs text-amber-600 dark:text-amber-400"
+        >
+          {promoted}
+        </p>
+      )}
       <div className={cn(GRID, "pt-2")}>
         <div className="col-start-2 flex items-center">
           {slots.length < AE_REVIEWERS_MAX ? (

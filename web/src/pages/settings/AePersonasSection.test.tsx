@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { AePersona } from "@/lib/aePersonas";
 import type { AeRolePreset, AeRolesState } from "@/lib/aeRoles";
 import { AePersonasSection } from "./AePersonasSection";
+import type { AeRoleDraft } from "./AeRolesEditor";
 
 vi.mock("@/hooks/useAeRoleModels", () => ({
   useAeRoleModels: () => ({
@@ -75,8 +76,12 @@ function stateOf(patch: Partial<AeRolesState> = {}): AeRolesState {
   };
 }
 
-function renderSection(state: AeRolesState, onSave = vi.fn().mockResolvedValue(true)) {
-  render(<AePersonasSection state={state} busy={false} onSave={onSave} />);
+function renderSection(
+  state: AeRolesState,
+  onSave = vi.fn().mockResolvedValue(true),
+  drafts?: Record<string, AeRoleDraft>,
+) {
+  render(<AePersonasSection state={state} busy={false} drafts={drafts} onSave={onSave} />);
   return onSave;
 }
 
@@ -125,18 +130,20 @@ describe("AePersonasSection", () => {
     fireEvent.click(submit);
     await waitFor(() => expect(onSave).toHaveBeenCalled());
     expect(onSave).toHaveBeenCalledWith(
-      [
-        {
-          id: "database",
-          name: "Database",
-          purpose: "Check migrations",
-          model: "claude-opus-5-5",
-          effort: "high",
-          when: "risky",
-          trigger: "schema changes",
-          instructions: "Check each migration.\nName the rollback.",
-        },
-      ],
+      {
+        personas: [
+          {
+            id: "database",
+            name: "Database",
+            purpose: "Check migrations",
+            model: "claude-opus-5-5",
+            effort: "high",
+            when: "risky",
+            trigger: "schema changes",
+            instructions: "Check each migration.\nName the rollback.",
+          },
+        ],
+      },
       "Added Database.",
     );
     await waitFor(() => expect(screen.queryByTestId("ae-persona-form")).toBeNull());
@@ -152,7 +159,7 @@ describe("AePersonasSection", () => {
     fireEvent.change(form.getByLabelText(/^Instructions/), { target: { value: "do it" } });
     fireEvent.click(form.getByRole("button", { name: "Add persona" }));
     await waitFor(() => expect(onSave).toHaveBeenCalled());
-    expect(onSave.mock.calls[0][0]).toEqual([
+    expect(onSave.mock.calls[0][0].personas).toEqual([
       { id: "plain", name: "Plain", purpose: "p", when: "always", instructions: "do it" },
     ]);
   });
@@ -190,7 +197,7 @@ describe("AePersonasSection", () => {
     expect(onSave).not.toHaveBeenCalled();
     fireEvent.click(form.getByRole("button", { name: "Add persona" }));
     await waitFor(() => expect(onSave).toHaveBeenCalled());
-    const saved = onSave.mock.calls[0][0] as AePersona[];
+    const saved = (onSave.mock.calls[0][0] as { personas: AePersona[] }).personas;
     expect(saved.map((p) => p.id)).toEqual(["docs", "security-copy"]);
   });
 
@@ -202,7 +209,7 @@ describe("AePersonasSection", () => {
     fireEvent.change(form.getByLabelText(/^Name/), { target: { value: "Documentation" } });
     fireEvent.click(form.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(onSave).toHaveBeenCalled());
-    expect(onSave.mock.calls[0][0]).toEqual([{ ...docs, name: "Documentation" }]);
+    expect(onSave.mock.calls[0][0].personas).toEqual([{ ...docs, name: "Documentation" }]);
     expect(onSave.mock.calls[0][1]).toBe("Saved Documentation.");
   });
 
@@ -229,9 +236,57 @@ describe("AePersonasSection", () => {
     const dialog = within(screen.getByTestId("ae-persona-delete"));
     expect(dialog.getByText("Delete Docs?")).toBeInTheDocument();
     expect(dialog.getByText(/Balanced, Deep use it/)).toBeInTheDocument();
+    // The text is true: they stay as plain reviewers, not "keeping their model" they never had.
+    expect(dialog.getByText(/plain reviewers on the model and effort they show now/)).toBeVisible();
     expect(onSave).not.toHaveBeenCalled();
     fireEvent.click(dialog.getByRole("button", { name: "Delete" }));
-    await waitFor(() => expect(onSave).toHaveBeenCalledWith([], "Deleted Docs."));
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith({ personas: [], retire: docs }, "Deleted Docs."),
+    );
+  });
+
+  it("counts a preset whose unsaved draft uses the persona, though the saved one does not", () => {
+    const draft = {
+      roles: preset("Quick", {
+        mode: "multi",
+        reviewers: [sonnet, { mode: "fixed", persona: "docs" }],
+      }).roles,
+      rules: preset("Quick", sonnet).rules,
+    };
+    renderSection(
+      stateOf({ presets: [preset("Quick", sonnet)] }),
+      vi.fn().mockResolvedValue(true),
+      { quick: draft },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Delete Docs" }));
+    const dialog = within(screen.getByTestId("ae-persona-delete"));
+    expect(dialog.getByText(/Quick uses it \(unsaved edits included\)/)).toBeInTheDocument();
+  });
+
+  it("announces the form's problems in a live region that is always on the page", () => {
+    renderSection(stateOf());
+    fireEvent.click(screen.getByRole("button", { name: "Add persona" }));
+    const region = within(screen.getByTestId("ae-persona-form")).getByRole("alert");
+    expect(region).toHaveAttribute("aria-live", "polite");
+    expect(region).toBeEmptyDOMElement();
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "x" } });
+    expect(region).toHaveTextContent("Say what it is for.");
+  });
+
+  it("says which character it refuses, and lets instructions keep a tab", () => {
+    renderSection(stateOf());
+    fireEvent.click(screen.getByRole("button", { name: "Add persona" }));
+    const form = within(screen.getByTestId("ae-persona-form"));
+    fireEvent.change(form.getByLabelText(/^Name/), { target: { value: "a\u202eb" } });
+    fireEvent.change(form.getByLabelText(/^Purpose/), { target: { value: "p" } });
+    fireEvent.change(form.getByLabelText(/^Instructions/), {
+      target: { value: "Check:\n\t- one" },
+    });
+    expect(screen.getByTestId("ae-persona-problems")).toHaveTextContent(
+      "The name cannot contain an invisible or direction-changing character (U+202E). Remove it.",
+    );
+    fireEvent.change(form.getByLabelText(/^Name/), { target: { value: "ab" } });
+    expect(screen.queryByTestId("ae-persona-problems")).toBeNull();
   });
 
   it("cancels a delete without saving, and says when no preset uses the persona", () => {
@@ -248,7 +303,12 @@ describe("AePersonasSection", () => {
     renderSection(stateOf({ personas: many }));
     const add = screen.getByRole("button", { name: "Add persona" });
     expect(add).toBeDisabled();
-    expect(add).toHaveAttribute("title", expect.stringContaining("20 personas"));
-    expect(screen.getByRole("button", { name: "Duplicate General" })).toBeDisabled();
+    // The reason is on the page, not only in a tooltip, and the disabled buttons point at it.
+    const note = screen.getByTestId("ae-personas-full");
+    expect(note).toHaveTextContent("20 personas");
+    expect(add).toHaveAttribute("aria-describedby", note.id);
+    const duplicate = screen.getByRole("button", { name: "Duplicate General" });
+    expect(duplicate).toBeDisabled();
+    expect(duplicate).toHaveAttribute("aria-describedby", note.id);
   });
 });

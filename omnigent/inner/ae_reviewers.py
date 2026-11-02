@@ -38,6 +38,7 @@ force and :func:`reviewers_short` for each lead-picks line.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -54,6 +55,14 @@ _LABEL_MANY = "Reviewers (final review of a build)"
 
 INSTRUCTIONS_MAX = 1000
 _LINE_MAX = 240
+# Bidi overrides and isolates, zero-width and other invisible characters: removed from persona
+# text in the notice (the server refuses them too), written as escapes so none sits in this file.
+_HIDDEN = re.compile(
+    "[\\u00ad\\u034f\\u061c\\u180e\\u200b-\\u200f\\u202a-\\u202e\\u2060-\\u2064"
+    "\\u2066-\\u2069\\ufeff]"
+)
+# Controls but tab, which instructions may hold, plus line and paragraph separators.
+_BODY_CONTROL = re.compile("[\\x00-\\x08\\x0b-\\x1f\\x7f-\\x9f\\u2028\\u2029]")
 _NO_TRIGGER = "the diff is relevant to this persona (see its instructions); otherwise skip it"
 
 ModelText = Callable[[object, object], str]
@@ -184,6 +193,13 @@ def _is_risky(slot: dict[str, object]) -> bool:
     return slot.get("_risky") is True
 
 
+def _quote(value: object, limit: int) -> str:
+    """*value* as one clean line in quotation marks, so user text reads as a quotation and
+    never as the notice's own sentence; empty when there is nothing to quote."""
+    clean = _text(_HIDDEN.sub("", str(value or "")), limit).replace('"', "'")
+    return f'"{clean}"' if clean else ""
+
+
 def _scope(slot: dict[str, object]) -> str:
     """What a slot's persona adds to its listing; empty for a slot without one."""
     persona = _persona_of(slot)
@@ -192,11 +208,11 @@ def _scope(slot: dict[str, object]) -> str:
         if missing:
             return f"persona {_text(missing, 40)} not found, so a plain review"
         return ""
-    name = _text(persona.get("name"), 40) or "Persona"
-    purpose = _text(persona.get("purpose"), _LINE_MAX)
+    name = _quote(persona.get("name"), 40) or '"Persona"'
+    purpose = _quote(persona.get("purpose"), _LINE_MAX)
     out = f"{name}: {purpose}" if purpose else name
     if _is_risky(slot):
-        trigger = _text(persona.get("trigger"), _LINE_MAX)
+        trigger = _quote(persona.get("trigger"), _LINE_MAX)
         out += (
             f", run only when the diff touches {trigger}"
             if trigger
@@ -257,17 +273,24 @@ def _persona_block(usable: list[dict[str, object]]) -> list[str]:
         if persona is None or id(persona) in seen:
             continue
         seen.add(id(persona))
-        name = _text(persona.get("name"), 40) or "Persona"
+        name = _text(_HIDDEN.sub("", str(persona.get("name") or "")), 40) or "Persona"
         raw = str(persona.get("instructions") or "")[:INSTRUCTIONS_MAX]
-        body = [_text(part, INSTRUCTIONS_MAX) for part in raw.splitlines()]
-        body = [part for part in body if part]
+        # Indentation and blank lines stay (the lead copies these word for word); a blank line
+        # is a lone ``>``. Blank lines at either end go.
+        body = [
+            _BODY_CONTROL.sub(" ", _HIDDEN.sub("", part)).rstrip() for part in raw.splitlines()
+        ]
+        while body and not body[0]:
+            body.pop(0)
+        while body and not body[-1]:
+            body.pop()
         if not body:
             continue
         lines.append(
             f"  {name} reviewer instructions (copy these word for word into that reviewer's "
             "brief):"
         )
-        lines += [f"  > {part}" for part in body]
+        lines += [f"  > {part}" if part else "  >" for part in body]
     return lines
 
 
@@ -416,12 +439,18 @@ def reviewers_short(
 
 
 def _persona_tag(slot: dict[str, object]) -> str:
-    """`` (Security, only if risky)`` for a lead-picks part: the name, never the instructions."""
+    """`` ("Security", only if the diff touches "...")`` for a lead-picks part: the name and
+    trigger, never the instructions."""
     persona = _persona_of(slot)
     if persona is None:
         return ""
-    name = _text(persona.get("name"), 40) or "persona"
-    return f" ({name}, only if risky)" if _is_risky(slot) else f" ({name})"
+    name = _quote(persona.get("name"), 40) or '"persona"'
+    if not _is_risky(slot):
+        return f" ({name})"
+    trigger = _quote(persona.get("trigger"), _LINE_MAX)
+    if trigger:
+        return f" ({name}, only if the diff touches {trigger})"
+    return f" ({name}, only if risky)"
 
 
 def persona_ids(roles: object) -> list[str]:
@@ -512,6 +541,7 @@ MANY_PICKS = (
     "keep each list under it and, for a reviewer that cannot start, skip it and say so. "
     "Agents run as a fresh session each review, never an existing one; fix checks go "
     "to reviewer 1. A reviewer with a persona in brackets reviews as that persona; one "
-    "marked only if risky runs only when the diff meets that persona's trigger, otherwise "
-    "skip it and merge the rest as usual. The persona instructions follow the list."
+    "marked only if the diff touches something runs only when the diff does (only if risky: "
+    "when the diff is risky), otherwise skip it and merge the rest as usual. The persona "
+    "instructions follow the list."
 )
