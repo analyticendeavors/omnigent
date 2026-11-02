@@ -54,8 +54,23 @@ import { AeUpdateChip } from "./AeModelUpdates";
 import { AeSegmented } from "./AeRolesControls";
 import { aeRoleModelPick } from "./AeRoleModelPicker";
 
-// Grid rows of the narrow layout (literal class names, so Tailwind sees them).
-const NARROW_ROW = ["", "", "row-start-2", "row-start-3", "row-start-4"] as const;
+// Grid rows (literal class names, so Tailwind sees them). Narrow: header on row 1, then the
+// optional note or caption, model, effort and extras; wide: one line, then note and extras.
+const NARROW_ROW = [
+  "",
+  "row-start-1",
+  "row-start-2",
+  "row-start-3",
+  "row-start-4",
+  "row-start-5",
+  "row-start-6",
+] as const;
+const WIDE_ROW = [
+  "",
+  "@[40rem]/roles:row-start-1",
+  "@[40rem]/roles:row-start-2",
+  "@[40rem]/roles:row-start-3",
+] as const;
 
 const NO_PERSONAS: readonly AePersonaEntry[] = [];
 
@@ -318,6 +333,13 @@ function SlotRow({
   const risky = persona?.when === "risky";
   const unready =
     agentSlot && loaded && agentState && agentState.status !== "ready" ? agentState : null;
+  // Rows in use, so the grid has no empty row (each would add a row gap). The note and the
+  // caption never show together: a missing persona supplies no model.
+  const modelRow = missing ? 3 : 2;
+  const captionRow = fromPersona ? modelRow + 1 : 0;
+  const effortRow = modelRow + (fromPersona ? 2 : 1);
+  const extrasRow = effortRow + 1;
+  const wideExtrasRow = missing || fromPersona ? 3 : 2;
   return (
     <div
       data-testid={`ae-reviewer-slot-${index + 1}`}
@@ -357,23 +379,37 @@ function SlotRow({
             onChange={(next) => onChange(withChosenPersona(slot, shown, next))}
           />
         </div>
+        {missing && (
+          <span
+            id={noteId}
+            data-testid={`ae-reviewer-persona-missing-${index + 1}`}
+            className="col-span-full row-start-2 text-[11px] text-amber-700 @[40rem]/roles:col-[2/-1] @[40rem]/roles:row-start-2 dark:text-amber-500"
+          >
+            That persona is gone, so this reviewer runs as a plain review.
+          </span>
+        )}
         <div
           className={cn(
-            "col-span-full flex min-w-0 items-center gap-2 @[40rem]/roles:col-[3] @[40rem]/roles:row-start-1",
-            NARROW_ROW[missing ? 3 : 2],
+            "col-span-full min-w-0 @[40rem]/roles:col-[3] @[40rem]/roles:row-start-1",
+            NARROW_ROW[modelRow],
           )}
         >
-          <div className="min-w-0 flex-1">{trigger}</div>
-          {fromPersona && (
-            <span className="shrink-0 text-[11px] text-muted-foreground @[40rem]/roles:hidden">
-              from persona
-            </span>
-          )}
+          {trigger}
         </div>
+        {fromPersona && (
+          <span
+            className={cn(
+              "col-span-full text-[11px] text-muted-foreground @[40rem]/roles:col-[2/-1] @[40rem]/roles:row-start-2",
+              NARROW_ROW[captionRow],
+            )}
+          >
+            Model and effort from the persona
+          </span>
+        )}
         <div
           className={cn(
             "col-[1/4] flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 @[40rem]/roles:col-[4] @[40rem]/roles:row-start-1",
-            NARROW_ROW[missing ? 4 : 3],
+            NARROW_ROW[effortRow],
           )}
         >
           {bar ? (
@@ -415,27 +451,19 @@ function SlotRow({
             onClick={onRemove}
             className={cn(
               "col-start-4 shrink-0 justify-self-end rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40 @[40rem]/roles:col-[6] @[40rem]/roles:row-start-1",
-              NARROW_ROW[missing ? 4 : 3],
+              NARROW_ROW[effortRow],
             )}
           >
             <XIcon className="size-3.5" />
           </button>
         )}
-        {missing && (
-          <span
-            id={noteId}
-            data-testid={`ae-reviewer-persona-missing-${index + 1}`}
-            className="col-span-full row-start-2 text-[11px] text-amber-700 @[40rem]/roles:col-[2/-1] dark:text-amber-500"
-          >
-            That persona is gone, so this reviewer runs as a plain review.
-          </span>
-        )}
-        {fromPersona && (
-          <span className="col-span-full hidden text-[11px] text-muted-foreground @[40rem]/roles:col-[2/-1] @[40rem]/roles:row-start-2 @[40rem]/roles:block">
-            Model and effort from the persona
-          </span>
-        )}
-        <div className="col-span-full row-start-6 flex flex-wrap items-center gap-x-3 gap-y-1 empty:hidden @[40rem]/roles:col-[2/-1] @[40rem]/roles:row-start-3">
+        <div
+          className={cn(
+            "col-span-full flex flex-wrap items-center gap-x-3 gap-y-1 empty:hidden @[40rem]/roles:col-[2/-1]",
+            NARROW_ROW[extrasRow],
+            WIDE_ROW[wideExtrasRow],
+          )}
+        >
           {chip}
           {unready && (
             <span data-testid={`ae-reviewer-tag-${index + 1}`} className="flex items-center gap-1">

@@ -795,7 +795,7 @@ describe("Codex reviewers in the one dropdown", () => {
           onSave={vi.fn()}
         />,
       );
-      expect(screen.getAllByText("from persona")).toHaveLength(1);
+      expect(screen.getAllByText("Model and effort from the persona")).toHaveLength(1);
     });
 
     it("writes the persona onto the slot and keeps its model as an override", () => {
@@ -865,6 +865,11 @@ describe("Codex reviewers in the one dropdown", () => {
       // The note is tied to its picker, so a screen reader reads it with the control.
       expect(picker(2)).toHaveAttribute("aria-describedby", note.id);
       expect(picker(1)).not.toHaveAttribute("aria-describedby");
+      // The note comes right after its picker in the page order, and before the model.
+      const after = (a: Element, b: Element) =>
+        Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+      expect(after(picker(2), note)).toBe(true);
+      expect(after(note, screen.getByRole("button", { name: /^Reviewer 2 model/ }))).toBe(true);
     });
 
     it("removing reviewer 1 drops a risky persona that moves up into its place, and says so", () => {
