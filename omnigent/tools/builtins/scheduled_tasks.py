@@ -126,6 +126,14 @@ class SysScheduledTaskCreateTool(Tool):
                                 "server's default project; null leaves runs unfiled."
                             ),
                         },
+                        "claude_account": {
+                            "type": "string",
+                            "description": (
+                                "Claude account every run signs in with, by its id (for example "
+                                "'shared:AE Backup'); an empty string is the default login. "
+                                "Omit to follow the host's active account."
+                            ),
+                        },
                         "workspace": {
                             "type": "string",
                             "description": (
@@ -269,6 +277,13 @@ class SysScheduledTaskUpdateTool(Tool):
                             "description": (
                                 "New project each run session is filed into. Null or an "
                                 "empty string leaves runs unfiled."
+                            ),
+                        },
+                        "claude_account": {
+                            "type": "string",
+                            "description": (
+                                "New Claude account every run signs in with; an empty string is "
+                                "the default login. Null follows the host's active account."
                             ),
                         },
                         "workspace": {

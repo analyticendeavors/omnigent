@@ -1906,3 +1906,48 @@ async def test_default_project_applies_only_when_create_omits_one(
     assert deleted.status_code == 200
     store = SqlAlchemyScheduledTaskStore(db_uri)
     assert task_project.project_ids_for(store, [task_id]) == {task_id: None}
+
+
+# ── claude_account ───────────────────────────────────────────────────────
+
+
+async def test_claude_account_round_trips_and_clears(auth_client: httpx.AsyncClient) -> None:
+    created = await auth_client.post(
+        "/v1/scheduled-tasks", json=_create_body(), headers=_headers()
+    )
+    assert created.status_code == 200, created.text
+    task_id = created.json()["id"]
+    assert created.json()["claude_account"] is None
+
+    # The default login is the empty string, and it is a pin, not "no pin".
+    pinned = await auth_client.patch(
+        f"/v1/scheduled-tasks/{task_id}", json={"claude_account": ""}, headers=_headers()
+    )
+    assert pinned.status_code == 200, pinned.text
+    assert pinned.json()["claude_account"] == ""
+    got = await auth_client.get(f"/v1/scheduled-tasks/{task_id}", headers=_headers())
+    assert got.json()["claude_account"] == ""
+    listed = await auth_client.get("/v1/scheduled-tasks", headers=_headers())
+    [row] = [t for t in listed.json()["scheduled_tasks"] if t["id"] == task_id]
+    assert row["claude_account"] == ""
+
+    # Patching another field leaves the pin alone; null clears it.
+    renamed = await auth_client.patch(
+        f"/v1/scheduled-tasks/{task_id}", json={"name": "renamed"}, headers=_headers()
+    )
+    assert renamed.json()["claude_account"] == ""
+    cleared = await auth_client.patch(
+        f"/v1/scheduled-tasks/{task_id}", json={"claude_account": None}, headers=_headers()
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["claude_account"] is None
+
+
+async def test_claude_account_can_be_set_on_create(auth_client: httpx.AsyncClient) -> None:
+    resp = await auth_client.post(
+        "/v1/scheduled-tasks",
+        json=_create_body(claude_account="shared:AE Default"),
+        headers=_headers(),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["claude_account"] == "shared:AE Default"

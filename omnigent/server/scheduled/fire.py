@@ -69,6 +69,7 @@ from omnigent.server.routes._session_create_validation import (
 )
 from omnigent.server.scheduled.checkin_relay import relay_checkin
 from omnigent.server.scheduled.retention import notify_fire_observers
+from omnigent.server.scheduled.task_account import pin_fired_session
 from omnigent.server.scheduled.task_project import file_fired_session
 from omnigent.server.schemas import SessionEventInput
 
@@ -888,6 +889,8 @@ async def _create_session(deps: FireDeps, task: ScheduledTask) -> Conversation:
     if labels:
         await asyncio.to_thread(deps.conversation_store.set_labels, conv.id, labels)
         conv.labels.update(labels)
+    # A task pinned to a Claude account launches on it, not the host's active one.
+    conv.labels.update(await pin_fired_session(deps, task, conv.id))
     return conv
 
 

@@ -80,6 +80,9 @@ class ScheduledTask:
         resolved from :mod:`omnigent.server.scheduled.retention`.
     :param project_id: The project each run session is filed into, or ``None``.
         Resolved from :mod:`omnigent.server.scheduled.task_project`.
+    :param claude_account: The Claude account run sessions are pinned to, ``""``
+        for the default login, or ``None`` to follow the host's active account.
+        Resolved from :mod:`omnigent.server.scheduled.task_account`.
     """
 
     id: str
@@ -106,6 +109,7 @@ class ScheduledTask:
     account_generation: str | None = None
     keep_runs: int | None = DEFAULT_KEEP_RUNS
     project_id: str | None = None
+    claude_account: str | None = None
 
 
 @dataclass

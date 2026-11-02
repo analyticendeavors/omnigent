@@ -59,6 +59,8 @@ export interface ScheduledTask {
   executionTarget: ScheduledTaskExecutionTarget;
   /** Project each run session is filed into, or `null` for unfiled runs. */
   projectId?: string | null;
+  /** Claude account every run signs in with; `""` is the default login, `null` follows the active account. */
+  claudeAccount?: string | null;
   state: ScheduledTaskState;
   /** Epoch seconds of the last fire, or `null` if it has never fired. */
   lastRunAt: number | null;
@@ -118,6 +120,8 @@ export interface CreateScheduledTaskInput {
    * project; `null` leaves runs unfiled.
    */
   projectId?: string | null;
+  /** Claude account to pin runs to (`""` is the default login). Omit to follow the host's active account. */
+  claudeAccount?: string | null;
 }
 
 /**
@@ -149,6 +153,8 @@ export interface UpdateScheduledTaskInput {
   executionTarget?: ScheduledTaskExecutionTarget;
   /** New project for run sessions; `null` leaves runs unfiled. */
   projectId?: string | null;
+  /** New pinned Claude account; `null` follows the host's active account. */
+  claudeAccount?: string | null;
   state?: ScheduledTaskState;
 }
 
@@ -170,6 +176,7 @@ interface ScheduledTaskWire {
   host_id: string | null;
   execution_target: ScheduledTaskExecutionTarget;
   project_id?: string | null;
+  claude_account?: string | null;
   state: ScheduledTaskState;
   last_run_at: number | null;
   last_run_status: ScheduledTaskRunStatus | null;
@@ -247,6 +254,7 @@ function taskFromWire(wire: ScheduledTaskWire): ScheduledTask {
     hostId: wire.host_id,
     executionTarget: wire.execution_target,
     projectId: wire.project_id ?? null,
+    claudeAccount: wire.claude_account ?? null,
     state: wire.state,
     lastRunAt: wire.last_run_at,
     lastRunStatus: wire.last_run_status,
@@ -309,6 +317,7 @@ export async function createScheduledTask(input: CreateScheduledTaskInput): Prom
   if (input.hostId != null) body.host_id = input.hostId;
   if (input.executionTarget !== undefined) body.execution_target = input.executionTarget;
   if (input.projectId !== undefined) body.project_id = input.projectId;
+  if (input.claudeAccount !== undefined) body.claude_account = input.claudeAccount;
   const res = await authenticatedFetch("/v1/scheduled-tasks", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -339,6 +348,7 @@ export async function updateScheduledTask(
   if (input.hostId !== undefined) body.host_id = input.hostId;
   if (input.executionTarget !== undefined) body.execution_target = input.executionTarget;
   if (input.projectId !== undefined) body.project_id = input.projectId ?? "";
+  if (input.claudeAccount !== undefined) body.claude_account = input.claudeAccount;
   if (input.state !== undefined) body.state = input.state;
   const res = await authenticatedFetch(`/v1/scheduled-tasks/${encodeURIComponent(id)}`, {
     method: "PATCH",

@@ -30,6 +30,12 @@ import {
   initialProjectChoice,
   projectIdInput,
 } from "@/components/scheduled/AeTaskProjectField";
+import { AeTaskClaudeAccountField } from "@/components/scheduled/AeTaskClaudeAccountField";
+import {
+  FOLLOW_ACTIVE_ACCOUNT,
+  accountChoiceFor,
+  claudeAccountInput,
+} from "@/lib/aeTaskClaudeAccount";
 import { WorkspacePickerDialog } from "@/shell/WorkspacePickerDialog";
 import { AgentHarnessPicker } from "@/shell/NewChatDialog";
 import { useAvailableAgents, type AvailableAgent } from "@/hooks/useAvailableAgents";
@@ -218,6 +224,7 @@ export function CreateScheduledTaskDialog({
   // pickers. Only offered when the server advertises managed sandboxes.
   const [sandboxMode, setSandboxMode] = useState(false);
   const [projectChoice, setProjectChoice] = useState<string>(DEFAULT_PROJECT);
+  const [accountChoice, setAccountChoice] = useState<string>(FOLLOW_ACTIVE_ACCOUNT);
   const [error, setError] = useState<string | null>(null);
   const [scheduleUnsupported, setScheduleUnsupported] = useState(false);
 
@@ -245,6 +252,7 @@ export function CreateScheduledTaskDialog({
         setWorkspace(editingTask.workspace ?? "");
         setSandboxMode(editingTask.executionTarget === "managed_sandbox");
         setProjectChoice(initialProjectChoice(editingTask.projectId, true));
+        setAccountChoice(accountChoiceFor(editingTask.claudeAccount));
       } else {
         setName(initialName ?? "");
         setPrompt(initialPrompt ?? "");
@@ -258,6 +266,7 @@ export function CreateScheduledTaskDialog({
         setWorkspace("");
         setSandboxMode(false);
         setProjectChoice(DEFAULT_PROJECT);
+        setAccountChoice(FOLLOW_ACTIVE_ACCOUNT);
       }
       setError(null);
     }
@@ -340,6 +349,10 @@ export function CreateScheduledTaskDialog({
           ? { workspace: workspace.trim() }
           : {}),
         ...projectIdInput(projectChoice, editingTask ? (editingTask.projectId ?? null) : undefined),
+        // A sandbox run has no host login to pin.
+        ...(sandboxMode
+          ? {}
+          : claudeAccountInput(accountChoice, editingTask?.claudeAccount, isEdit)),
       };
       if (editingTask) {
         // Thread model/effort ONLY when the agent supports them. Each control's
@@ -642,6 +655,15 @@ export function CreateScheduledTaskDialog({
             isEdit={isEdit}
             onSelectOpenChange={handleSelectOpenChange}
           />
+
+          {!sandboxMode && (
+            <AeTaskClaudeAccountField
+              value={accountChoice}
+              onValueChange={setAccountChoice}
+              hostId={hostId || hostOptions[0]?.host_id}
+              onSelectOpenChange={handleSelectOpenChange}
+            />
+          )}
 
           {error && (
             <div
