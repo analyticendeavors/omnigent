@@ -99,7 +99,8 @@ describe("AePersonasSection", () => {
     expect(builtin.getByRole("button", { name: "Duplicate General" })).toBeEnabled();
     expect(builtin.queryByRole("button", { name: /^Edit/ })).toBeNull();
     expect(builtin.queryByRole("button", { name: /^Delete/ })).toBeNull();
-    expect(within(rows[1]).getByText(/only if the diff is risky/)).toBeInTheDocument();
+    expect(within(rows[1]).getByTestId("ae-persona-when-risky")).toHaveTextContent("risky diffs");
+    expect(within(rows[0]).getByTestId("ae-persona-when-always")).toHaveTextContent("always");
     const mine = within(rows[2]);
     expect(mine.queryByText("Built-in")).toBeNull();
     for (const name of ["Edit Docs", "Duplicate Docs", "Delete Docs"]) {

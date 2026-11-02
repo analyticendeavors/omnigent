@@ -40,6 +40,7 @@ import type { AeRoleDraft } from "./AeRolesEditor";
 import { aeOneLine } from "@/lib/aeRoles";
 import { aeClaudeEffortLabel } from "@/lib/aeEffortDefault";
 import type { AeSettingHintId } from "@/lib/aeSettingHints";
+import { AE_CHIP_NEUTRAL, aeWhenChipClass } from "@/lib/aeWhenChip";
 
 const NO_DRAFTS: Readonly<Record<string, AeRoleDraft>> = {};
 
@@ -313,12 +314,19 @@ function PersonaForm({
   );
 }
 
-function meta(p: AePersona): string {
-  const parts = [
-    p.model ? `${aeModelLabel(p.model)}${p.effort ? ` ${p.effort}` : ""}` : "Reviewer's own model",
-    p.when === "risky" ? "only if the diff is risky" : "always",
-  ];
-  return parts.join(" · ");
+function modelChip(p: AePersona): string {
+  return p.model
+    ? `${aeModelLabel(p.model)}${p.effort ? ` ${p.effort}` : ""}`
+    : "Reviewer's own model";
+}
+
+/** The "when" chip shared with the reviewer rows: teal for always, amber for risky diffs. */
+function WhenChip({ when }: { when: AePersonaWhen }) {
+  return (
+    <span data-testid={`ae-persona-when-${when}`} className={aeWhenChipClass(when)}>
+      {when === "risky" ? "risky diffs" : "always"}
+    </span>
+  );
 }
 
 export function AePersonasSection({
@@ -393,12 +401,16 @@ export function AePersonasSection({
           )}
         </div>
         <div className="text-xs text-muted-foreground">{p.purpose}</div>
-        <div className="text-xs text-muted-foreground">{meta(p)}</div>
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          <span className={AE_CHIP_NEUTRAL}>{modelChip(p)}</span>
+          <WhenChip when={p.when} />
+        </div>
       </div>
       <div className="flex shrink-0 items-center gap-1">
         <Button
           variant="outline"
           size="sm"
+          className="@max-lg/personas:size-7 @max-lg/personas:px-0"
           aria-label={`Duplicate ${p.name}`}
           title="Duplicate"
           aria-describedby={full ? capId : undefined}
@@ -411,7 +423,7 @@ export function AePersonasSection({
           }
         >
           <CopyIcon />
-          Duplicate
+          <span className="@max-lg/personas:sr-only">Duplicate</span>
         </Button>
         {!p.builtin && (
           <>
@@ -445,7 +457,7 @@ export function AePersonasSection({
     <section
       data-testid="ae-personas"
       aria-labelledby="ae-personas-title"
-      className="rounded-xl border border-border p-4"
+      className="@container/personas rounded-xl border border-border p-4"
     >
       <div className="flex items-center justify-between gap-2">
         <div>

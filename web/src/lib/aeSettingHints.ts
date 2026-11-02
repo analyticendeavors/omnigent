@@ -67,7 +67,7 @@ export const AE_SETTING_HINTS = {
   },
   "reviewer.persona": {
     label: "Reviewer persona",
-    hint: "No persona (default): a plain review. A persona adds its purpose and instructions. Reviewer 1 cannot use one that runs only if risky.",
+    hint: "No persona (default): a plain review. A persona adds a purpose and instructions. Reviewer 1 always runs, so risky personas are off.",
     source: "tooltip",
   },
   personas: {

@@ -7,6 +7,8 @@
 
 import { useId, useState } from "react";
 import { AeHint } from "@/components/AeHint";
+import { aeWhenChipClass } from "@/lib/aeWhenChip";
+import { AeFoldPicker } from "./AeFoldPicker";
 import { PlusIcon, XIcon } from "lucide-react";
 import { type AeReviewerAgents, useAeReviewerAgents } from "@/hooks/useAeReviewerAgents";
 import type { AeRoleModelChoice } from "@/hooks/useAeRoleModels";
@@ -37,7 +39,12 @@ import {
   aeReviewMergeOf,
   aeWriteReviewers,
 } from "@/lib/aeReviewers";
-import { type AePersonaEntry, aeEffectiveSlot, aePersonaBarredFromFirst } from "@/lib/aePersonas";
+import {
+  type AePersonaEntry,
+  aeEffectiveSlot,
+  aePersonaBarredFromFirst,
+  aePersonaOf,
+} from "@/lib/aePersonas";
 import { AE_ROLE_LABELS, type AeRoleEffort, type AeRoleRules, aeHelpersOf } from "@/lib/aeRoles";
 import type { AeTeamOption } from "@/lib/aeTeamOptions";
 import { codexEffortLevelsForModel, comparableModelId } from "@/lib/codexNativeModels";
@@ -48,9 +55,6 @@ import { AeSegmented } from "./AeRolesControls";
 import { aeRoleModelPick } from "./AeRoleModelPicker";
 
 const NO_PERSONAS: readonly AePersonaEntry[] = [];
-
-const GRID =
-  "grid grid-cols-[5.5rem_1fr] items-center gap-x-3 gap-y-2 @lg/roles:grid-cols-[7rem_minmax(0,14rem)_1fr]";
 
 function Tag({ tone, children }: { tone: "amber" | "muted"; children: React.ReactNode }) {
   return (
@@ -150,15 +154,17 @@ function AgentDetails({
   );
 }
 
-// Reviewer personas (2026-11-01): the slot's persona, a native select like its neighbours.
-// Reviewer 1 takes the fix checks, so it always runs and the personas that run only when the
-// diff is risky are not offered there. The slot's own model and effort override the persona's.
+// Reviewer personas (2026-11-01): the slot's persona, in the same picker as the model next to
+// it (2026-11-01, patch 0282). Reviewer 1 takes the fix checks, so it always runs and the
+// personas that run only when the diff is risky are not offered there. The slot's own model
+// and effort override the persona's.
 function PersonaSelect({
   slot,
   index,
   label,
   personas,
   disabled,
+  noteId,
   onChange,
 }: {
   slot: AeReviewerSlot;
@@ -166,62 +172,43 @@ function PersonaSelect({
   label: string;
   personas: readonly AePersonaEntry[];
   disabled: boolean;
+  /** Id of the "persona is gone" note under the header, when the slot names a missing one. */
+  noteId: string;
   onChange: (persona: string) => void;
 }) {
-  const noteId = useId();
-  if (slot.mode === "auto") return null;
+  if (slot.mode === "auto") return <div />;
   const current = slot.persona ?? "";
   const known = personas.some((p) => p.id === current);
   const barred = (p: AePersonaEntry) => index === 0 && aePersonaBarredFromFirst(p);
+  const option = (p: AePersonaEntry) => ({
+    value: p.id,
+    label: p.name,
+    ...(barred(p) && p.id !== current ? { note: "runs only if risky", disabled: true } : {}),
+  });
   const mine = personas.filter((p) => !p.builtin);
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-      <select
-        aria-label={`${label} persona`}
-        aria-describedby={current && !known ? noteId : undefined}
+    <div className="min-w-0">
+      <AeFoldPicker
+        ariaLabel={`${label} persona`}
+        describedBy={current && !known ? noteId : undefined}
         value={current}
         disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-        className="min-w-0 rounded-md border border-input bg-background px-1.5 py-1 text-xs text-foreground"
-      >
-        <option value="">No persona</option>
-        {current && !known && <option value={current}>{current} (not found)</option>}
-        <optgroup label="Built-in">
-          {personas
-            .filter((p) => p.builtin)
-            .map((p) => (
-              <option key={p.id} value={p.id} disabled={barred(p) && p.id !== current}>
-                {p.name}
-                {barred(p) ? " (runs only if risky)" : ""}
-              </option>
-            ))}
-        </optgroup>
-        {mine.length > 0 && (
-          <optgroup label="Yours">
-            {mine.map((p) => (
-              <option key={p.id} value={p.id} disabled={barred(p) && p.id !== current}>
-                {p.name}
-                {barred(p) ? " (runs only if risky)" : ""}
-              </option>
-            ))}
-          </optgroup>
-        )}
-      </select>
-      <AeHint id="reviewer.persona" />
-      {index === 0 && (
-        <span className="text-[11px] text-muted-foreground">
-          Reviewer 1 always runs, so risky personas are off here.
-        </span>
-      )}
-      {current && !known && (
-        <span
-          id={noteId}
-          data-testid={`ae-reviewer-persona-missing-${index + 1}`}
-          className="text-[11px] text-amber-500"
-        >
-          That persona is gone, so this reviewer runs as a plain review.
-        </span>
-      )}
+        top={[
+          { value: "", label: "No persona" },
+          ...(current && !known ? [{ value: current, label: `${current} (not found)` }] : []),
+        ]}
+        groups={[
+          {
+            id: "builtin",
+            label: "Built-in",
+            options: personas.filter((p) => p.builtin).map(option),
+            older: [],
+          },
+          { id: "yours", label: "Yours", options: mine.map(option), older: [] },
+        ]}
+        triggerClassName="px-2"
+        onPick={onChange}
+      />
     </div>
   );
 }
@@ -320,22 +307,97 @@ function SlotRow({
   const { agentSlot, agentState, trigger, bar } = pick;
   const agentOption = agentState?.option ?? null;
   const { hint } = AE_ROLE_LABELS.reviewer;
+  const noteId = useId();
+  const persona = slot.mode === "auto" ? undefined : aePersonaOf(slot, personas);
+  const missing = slot.mode !== "auto" && !!slot.persona && !persona;
+  // A persona with a model supplies it when the slot has none of its own.
+  const fromPersona = slot.mode === "fixed" && !slot.model && !!persona?.model;
+  const risky = persona?.when === "risky";
+  const unready =
+    agentSlot && loaded && agentState && agentState.status !== "ready" ? agentState : null;
   return (
-    <div data-testid={`ae-reviewer-slot-${index + 1}`} className={cn(GRID, index > 0 && "pt-2")}>
+    <div
+      data-testid={`ae-reviewer-slot-${index + 1}`}
+      className={cn(
+        "grid grid-cols-1 gap-y-1.5 @lg/roles:grid-cols-[7rem_minmax(0,1fr)] @lg/roles:items-center @lg/roles:gap-x-3",
+        index > 0 && "pt-2",
+      )}
+    >
       {index === 0 ? (
-        <div className="min-w-0">
+        <div className="min-w-0 @lg/roles:self-start">
           <div className="text-sm font-semibold">
             {rowLabel}
             <AeHint id="roles.reviewer" />
+            <AeHint id="reviewer.persona" />
           </div>
           <div className="text-xs leading-tight text-muted-foreground">{hint}</div>
         </div>
       ) : (
-        <div className="pr-1 text-right text-xs font-medium text-muted-foreground">{index + 1}</div>
+        <div className="hidden @lg/roles:block" />
       )}
-      {trigger}
-      <div className="col-start-2 flex min-w-0 items-center justify-between gap-2 @lg/roles:col-start-3">
-        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 @[480px]/roles:flex-nowrap">
+      <div className="grid min-w-0 grid-cols-[1.5rem_minmax(9rem,auto)_auto_1fr_auto] items-center gap-x-2 gap-y-2 @lg/roles:gap-x-1.5 @lg/roles:grid-cols-[1.25rem_6.5rem_minmax(0,1fr)_7rem_3rem_1.5rem]">
+        <span
+          aria-hidden="true"
+          className="grid size-5 place-items-center rounded-full border border-border bg-muted text-[11px] text-muted-foreground @lg/roles:order-1"
+        >
+          {index + 1}
+        </span>
+        <div className="min-w-0 @lg/roles:order-2">
+          <PersonaSelect
+            slot={slot}
+            index={index}
+            label={label}
+            personas={personas}
+            disabled={disabled}
+            noteId={noteId}
+            onChange={(next) => onChange(withChosenPersona(slot, shown, next))}
+          />
+        </div>
+        <span
+          data-testid={`ae-reviewer-when-${index + 1}`}
+          className={cn(
+            aeWhenChipClass(risky ? "risky" : "always"),
+            "@lg/roles:order-5 @lg/roles:justify-self-start",
+          )}
+        >
+          {risky ? (
+            <>
+              risky<span className="hidden @max-lg/roles:inline"> diffs</span>
+            </>
+          ) : (
+            "always"
+          )}
+        </span>
+        {onRemove && (
+          <button
+            type="button"
+            aria-label={`Remove ${label}`}
+            title={`Remove ${label}`}
+            disabled={disabled}
+            onClick={onRemove}
+            className="col-start-5 shrink-0 justify-self-end rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40 @lg/roles:order-6 @lg/roles:col-auto"
+          >
+            <XIcon className="size-3.5" />
+          </button>
+        )}
+        {missing && (
+          <span
+            id={noteId}
+            data-testid={`ae-reviewer-persona-missing-${index + 1}`}
+            className="col-span-full text-[11px] text-amber-500 @lg/roles:order-7 @lg/roles:col-[2/-1]"
+          >
+            That persona is gone, so this reviewer runs as a plain review.
+          </span>
+        )}
+        <div className="relative col-span-full min-w-0 @lg/roles:order-3 @lg/roles:col-span-1">
+          {trigger}
+          {fromPersona && (
+            <span className="pointer-events-none absolute top-1/2 right-7 hidden -translate-y-1/2 text-[11px] text-muted-foreground @max-lg/roles:block @3xl/roles:block">
+              from persona
+            </span>
+          )}
+        </div>
+        <div className="col-span-full flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 @lg/roles:order-4 @lg/roles:col-span-1">
           {bar ? (
             bar
           ) : agentSlot ? (
@@ -350,27 +412,26 @@ function SlotRow({
           ) : (
             <span className="text-xs text-muted-foreground">The lead chooses</span>
           )}
+        </div>
+        {fromPersona && (
+          <span className="hidden text-[11px] text-muted-foreground @lg/roles:order-8 @lg/roles:col-[2/-1] @lg/roles:block @3xl/roles:hidden">
+            Model and effort from the persona
+          </span>
+        )}
+        <div className="col-span-full flex flex-wrap items-center gap-x-3 gap-y-1 empty:hidden @lg/roles:order-9 @lg/roles:col-[2/-1]">
           {chip}
-          <PersonaSelect
-            slot={slot}
-            index={index}
-            label={label}
-            personas={personas}
-            disabled={disabled}
-            onChange={(persona) => onChange(withChosenPersona(slot, shown, persona))}
-          />
-          {agentSlot && loaded && agentState && agentState.status !== "ready" && (
+          {unready && (
             <span data-testid={`ae-reviewer-tag-${index + 1}`} className="flex items-center gap-1">
               <Tag tone="amber">
-                {agentState.status === "setup"
+                {unready.status === "setup"
                   ? "Needs setup"
-                  : agentState.status === "missing"
+                  : unready.status === "missing"
                     ? "Not found"
                     : "Offline"}
               </Tag>
-              {agentState.status === "setup" && (
+              {unready.status === "setup" && (
                 <a
-                  href={aeAgentSetupHref(agentState.option?.agent.harness)}
+                  href={aeAgentSetupHref(unready.option?.agent.harness)}
                   className="text-xs text-primary hover:underline"
                 >
                   Set up
@@ -379,18 +440,6 @@ function SlotRow({
             </span>
           )}
         </div>
-        {onRemove && (
-          <button
-            type="button"
-            aria-label={`Remove ${label}`}
-            title={`Remove ${label}`}
-            disabled={disabled}
-            onClick={onRemove}
-            className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-          >
-            <XIcon className="size-3.5" />
-          </button>
-        )}
       </div>
     </div>
   );
@@ -555,8 +604,8 @@ export function AeReviewerRowsView({
           {promoted}
         </p>
       )}
-      <div className={cn(GRID, "pt-2")}>
-        <div className="col-start-2 flex items-center">
+      <div className="grid grid-cols-1 pt-2 @lg/roles:grid-cols-[7rem_minmax(0,1fr)] @lg/roles:gap-x-3">
+        <div className="flex items-center @lg/roles:col-start-2">
           {slots.length < AE_REVIEWERS_MAX ? (
             <button
               type="button"
@@ -573,8 +622,8 @@ export function AeReviewerRowsView({
               </span>
             </button>
           ) : (
-            <span className="text-xs text-muted-foreground">
-              {AE_REVIEWERS_MAX} of {AE_REVIEWERS_MAX}. Remove one to add another.
+            <span className="text-xs text-muted-foreground" title="Remove one to add another.">
+              {AE_REVIEWERS_MAX} of {AE_REVIEWERS_MAX} reviewers.
             </span>
           )}
           <AeHint id="reviewer.add" />

@@ -104,7 +104,7 @@ describe("the reviewer persona hints", () => {
   });
 
   it("says why Reviewer 1 cannot use a risky persona, and what each choice does", () => {
-    expect(AE_SETTING_HINTS["reviewer.persona"].hint).toContain("Reviewer 1 cannot use");
+    expect(AE_SETTING_HINTS["reviewer.persona"].hint).toContain("Reviewer 1 always runs");
     const when = AE_SETTING_HINTS["persona.when"].hint;
     expect(when).toContain("Always (default)");
     expect(when).toContain("Only if the diff is risky");

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { type AeRolesState, aeParseRolesState } from "@/lib/aeRoles";
 import { AeSessionPresetRow } from "./AeSessionPresetRow";
@@ -83,10 +83,13 @@ describe("AeSessionPresetRow", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /customize/i }));
-    const persona = screen.getByLabelText("Reviewer 2 persona") as HTMLSelectElement;
-    expect(persona.value).toBe("security");
+    const persona = screen.getByRole("button", { name: /^Reviewer 2 persona/ });
+    expect(persona).toHaveAccessibleName("Reviewer 2 persona, Security");
     expect(screen.queryByTestId("ae-reviewer-persona-missing-2")).toBeNull();
-    const names = Array.from(persona.querySelectorAll("option")).map((o) => o.textContent);
+    fireEvent.click(persona);
+    const names = within(screen.getByRole("tree", { name: "Reviewer 2 persona list" }))
+      .getAllByRole("treeitem")
+      .map((o) => o.textContent);
     expect(names).toEqual(["No persona", "Security", "Docs"]);
     // The slot reads as Opus on the persona's model, not "The lead chooses".
     expect(screen.queryByText("The lead chooses")).toBeNull();

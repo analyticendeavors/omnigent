@@ -65,6 +65,7 @@ export function AeFoldPicker({
   triggerClassName,
   nameClassName,
   headingHint,
+  describedBy,
   onPick,
 }: {
   value: string;
@@ -82,6 +83,8 @@ export function AeFoldPicker({
   nameClassName?: string;
   /** An info icon in the popover header, outside the tree (reached by Shift+Tab or pointer). */
   headingHint?: ReactNode;
+  /** Id of a note that describes the control (the trigger's aria-describedby). */
+  describedBy?: string;
   onPick: (value: string) => void;
 }) {
   const uid = useId();
@@ -280,6 +283,7 @@ export function AeFoldPicker({
           ref={triggerRef}
           type="button"
           aria-label={`${ariaLabel}, ${currentLabel}${nameSuffix}`}
+          aria-describedby={describedBy}
           aria-haspopup="dialog"
           aria-expanded={open}
           aria-controls={open ? contentId : undefined}

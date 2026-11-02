@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AvailableAgent } from "@/hooks/useAvailableAgents";
 import { AE_CODEX_AGENT_ID, type AeReviewerSetting } from "@/lib/aeReviewers";
 import type { AePersonaEntry } from "@/lib/aePersonas";
+import { AE_SETTING_HINTS } from "@/lib/aeSettingHints";
 import type { AeRoleRules } from "@/lib/aeRoles";
 import type { AeTeamOption } from "@/lib/aeTeamOptions";
 import { AeReviewerRowsView, AeReviewSettings } from "./AeReviewerRows";
@@ -187,7 +188,7 @@ describe("AeReviewerRows", () => {
     expect(screen.getByTestId("ae-review-settings")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Add reviewer/ }));
     expect(screen.queryByRole("button", { name: /Add reviewer/ })).not.toBeInTheDocument();
-    expect(screen.getByText("3 of 3. Remove one to add another.")).toBeInTheDocument();
+    expect(screen.getByText("3 of 3 reviewers.")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /Remove Reviewer/ })).toHaveLength(3);
   });
 
@@ -700,48 +701,84 @@ describe("Codex reviewers in the one dropdown", () => {
     const persona = { mode: "fixed" as const, persona: "security" };
     const two = { mode: "multi" as const, reviewers: [sonnet, sonnet] };
 
-    it("is a native select on every Claude slot with a hint, and absent on an Auto slot", () => {
+    // The persona picker is the same popover tree as the model picker.
+    const picker = (n: number) =>
+      screen.getByRole("button", { name: new RegExp(`^Reviewer ${n} persona`) });
+    const open = (n: number) => {
+      fireEvent.click(picker(n));
+      return screen.getByRole("tree", { name: `Reviewer ${n} persona list` });
+    };
+    const choose = (n: number, name: string) =>
+      fireEvent.click(within(open(n)).getByRole("treeitem", { name: new RegExp(`^${name}`) }));
+
+    it("is the model picker's popover on every Claude slot, with a hint, and absent on an Auto slot", () => {
       render(<Harness initial={two} personas={PERSONAS} onSave={vi.fn()} />);
-      expect(screen.getByLabelText("Reviewer 1 persona")).toBeInstanceOf(HTMLSelectElement);
-      expect(screen.getByLabelText("Reviewer 2 persona")).toBeInstanceOf(HTMLSelectElement);
-      expect(screen.getAllByTestId("ae-hint-reviewer.persona")).toHaveLength(2);
-      expect(screen.queryByLabelText(/focus|runs$/)).toBeNull();
+      expect(picker(1)).toHaveAttribute("aria-haspopup", "dialog");
+      expect(picker(2)).toHaveAttribute("aria-haspopup", "dialog");
+      expect(picker(1)).not.toBeInstanceOf(HTMLSelectElement);
+      // One tip beside the Reviewers label, not one per slot.
+      expect(screen.getAllByTestId("ae-hint-reviewer.persona")).toHaveLength(1);
+      expect(screen.queryByText(/risky personas are off here/)).toBeNull();
     });
 
     it("lists none, the built-in personas and then the user's own", () => {
       render(<Harness initial={two} personas={PERSONAS} onSave={vi.fn()} />);
-      const select = screen.getByLabelText("Reviewer 2 persona");
-      const groups = Array.from(select.querySelectorAll("optgroup")).map((g) => [
-        g.label,
-        Array.from(g.querySelectorAll("option")).map((o) => o.textContent),
-      ]);
-      expect(Array.from(select.querySelectorAll("option"))[0].textContent).toBe("No persona");
-      expect(groups).toEqual([
-        ["Built-in", ["General", "Security"]],
-        ["Yours", ["Docs"]],
-      ]);
+      const tree = open(2);
+      expect(
+        within(tree)
+          .getAllByRole("treeitem")
+          .map((i) => i.textContent),
+      ).toEqual(["No persona", "General", "Security", "Docs"]);
+      expect(within(tree).getByRole("group", { name: "Built-in" })).toBeInTheDocument();
+      expect(within(tree).getByRole("group", { name: "Yours" })).toBeInTheDocument();
     });
 
     it("turns off the risky personas on reviewer 1 and says why, but not on reviewer 2", () => {
       render(<Harness initial={two} personas={PERSONAS} onSave={vi.fn()} />);
-      const first = screen.getByLabelText("Reviewer 1 persona");
-      const risky = (select: HTMLElement) =>
-        within(select).getByRole("option", { name: /Security/ }) as HTMLOptionElement;
-      expect(risky(first).disabled).toBe(true);
-      expect(risky(first)).toHaveTextContent("Security (runs only if risky)");
-      expect(within(first).getByRole("option", { name: "General" })).not.toBeDisabled();
-      expect(risky(screen.getByLabelText("Reviewer 2 persona")).disabled).toBe(false);
-      expect(
-        screen.getByText(/Reviewer 1 always runs, so risky personas are off here/),
-      ).toBeVisible();
+      const first = within(open(1));
+      const risky = first.getByRole("treeitem", { name: /Security/ });
+      expect(risky).toHaveAttribute("aria-disabled", "true");
+      expect(risky).toHaveTextContent("Securityruns only if risky");
+      expect(first.getByRole("treeitem", { name: "General" })).not.toHaveAttribute("aria-disabled");
+      fireEvent.keyDown(screen.getByRole("tree"), { key: "Escape" });
+      expect(within(open(2)).getByRole("treeitem", { name: "Security" })).not.toHaveAttribute(
+        "aria-disabled",
+      );
+    });
+
+    it("puts the 'always runs' reason in the tip beside the Reviewers label", () => {
+      render(<Harness initial={two} personas={PERSONAS} onSave={vi.fn()} />);
+      expect(AE_SETTING_HINTS["reviewer.persona"].hint).toMatch(/Reviewer 1 always runs/);
+      expect(screen.getByRole("button", { name: "About Reviewer persona" })).toBeInTheDocument();
+    });
+
+    it("shows a when chip on every reviewer: always, or risky diffs", () => {
+      render(
+        <Harness
+          initial={{ mode: "multi", reviewers: [sonnet, persona] }}
+          personas={PERSONAS}
+          onSave={vi.fn()}
+        />,
+      );
+      expect(screen.getByTestId("ae-reviewer-when-1")).toHaveTextContent("always");
+      expect(screen.getByTestId("ae-reviewer-when-2")).toHaveTextContent("risky diffs");
+    });
+
+    it("says 'from persona' only when the persona supplies the model", () => {
+      render(
+        <Harness
+          initial={{ mode: "multi", reviewers: [sonnet, persona] }}
+          personas={PERSONAS}
+          onSave={vi.fn()}
+        />,
+      );
+      expect(screen.getAllByText("from persona")).toHaveLength(1);
     });
 
     it("writes the persona onto the slot and keeps its model as an override", () => {
       const onSave = vi.fn();
       render(<Harness initial={two} personas={PERSONAS} onSave={onSave} />);
-      fireEvent.change(screen.getByLabelText("Reviewer 2 persona"), {
-        target: { value: "security" },
-      });
+      choose(2, "Security");
       expect(onSave).toHaveBeenLastCalledWith({
         mode: "multi",
         reviewers: [sonnet, { ...sonnet, persona: "security" }],
@@ -757,7 +794,7 @@ describe("Codex reviewers in the one dropdown", () => {
           onSave={onSave}
         />,
       );
-      expect(screen.getByLabelText("Reviewer 2 persona")).toHaveValue("security");
+      expect(picker(2)).toHaveAccessibleName("Reviewer 2 persona, Security");
       expect(screen.getByRole("button", { name: /^Reviewer 2 model/ })).toHaveTextContent(
         "Opus 5.5",
       );
@@ -784,7 +821,7 @@ describe("Codex reviewers in the one dropdown", () => {
           onSave={onSave}
         />,
       );
-      fireEvent.change(screen.getByLabelText("Reviewer 2 persona"), { target: { value: "" } });
+      choose(2, "No persona");
       expect(onSave).toHaveBeenLastCalledWith({
         mode: "multi",
         reviewers: [sonnet, { mode: "fixed", model: "claude-opus-5-5", effort: "high" }],
@@ -799,15 +836,12 @@ describe("Codex reviewers in the one dropdown", () => {
           onSave={vi.fn()}
         />,
       );
-      expect(screen.getByLabelText("Reviewer 2 persona")).toHaveValue("gone-away");
+      expect(picker(2)).toHaveAccessibleName("Reviewer 2 persona, gone-away (not found)");
       const note = screen.getByTestId("ae-reviewer-persona-missing-2");
       expect(note).toHaveTextContent("plain review");
-      // The note is tied to its select, so a screen reader reads it with the control.
-      expect(screen.getByLabelText("Reviewer 2 persona")).toHaveAttribute(
-        "aria-describedby",
-        note.id,
-      );
-      expect(screen.getByLabelText("Reviewer 1 persona")).not.toHaveAttribute("aria-describedby");
+      // The note is tied to its picker, so a screen reader reads it with the control.
+      expect(picker(2)).toHaveAttribute("aria-describedby", note.id);
+      expect(picker(1)).not.toHaveAttribute("aria-describedby");
     });
 
     it("removing reviewer 1 drops a risky persona that moves up into its place, and says so", () => {
@@ -864,9 +898,7 @@ describe("Codex reviewers in the one dropdown", () => {
     it("keeps a lone persona slot in the multi shape", () => {
       const onSave = vi.fn();
       render(<Harness initial={sonnet} personas={PERSONAS} onSave={onSave} />);
-      fireEvent.change(screen.getByLabelText("Reviewer 1 persona"), {
-        target: { value: "general" },
-      });
+      choose(1, "General");
       expect(onSave).toHaveBeenLastCalledWith({
         mode: "multi",
         reviewers: [{ ...sonnet, persona: "general" }],
