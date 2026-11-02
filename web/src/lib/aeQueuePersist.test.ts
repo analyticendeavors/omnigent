@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as Identity from "@/lib/identity";
+import { AE_SPLIT_PANE_NAME_PREFIX } from "@/lib/aeSplitLayout";
 import { serializeReplyDraft } from "@/lib/replyDraft";
 import { useChatStore, type QueuedMessage } from "@/store/chatStore";
 import {
@@ -12,13 +13,17 @@ import {
   installAeQueuePersist,
 } from "./aeQueuePersist";
 
-const identity = vi.hoisted(() => ({ userId: null as string | null }));
+/** `current` is what getCurrentUserId says now; `resolve` is the /v1/me probe. */
+const identity = vi.hoisted(() => ({
+  current: null as string | null,
+  resolve: null as null | (() => Promise<string | null>),
+}));
 vi.mock("@/lib/identity", async (importOriginal) => {
   const actual = await importOriginal<typeof Identity>();
   return {
     ...actual,
-    getCurrentUserId: () => identity.userId,
-    resolveIdentity: () => Promise.resolve(identity.userId),
+    getCurrentUserId: () => identity.current,
+    resolveIdentity: () => identity.resolve?.() ?? Promise.resolve(identity.current),
   };
 });
 
@@ -109,10 +114,7 @@ function entry(text: string, extra: Record<string, unknown> = {}) {
 }
 
 function seed(entries: unknown[], extra: Record<string, unknown> = {}) {
-  sessionStorage.setItem(
-    AE_QUEUE_STORAGE_KEY,
-    JSON.stringify({ v: 1, userId: null, entries, ...extra }),
-  );
+  sessionStorage.setItem(AE_QUEUE_STORAGE_KEY, JSON.stringify({ v: 1, entries, ...extra }));
 }
 
 const queue = (): QueuedMessage[] => useChatStore.getState().queuedMessages;
@@ -126,7 +128,8 @@ async function install() {
 beforeEach(() => {
   sessionStorage.clear();
   persist.reset({ lockWaitMs: 20 });
-  identity.userId = null;
+  identity.current = null;
+  identity.resolve = null;
   locks = new FakeLocks();
   setLocks(locks);
   toasts.length = 0;
@@ -317,27 +320,52 @@ describe("restore", () => {
     expect(toasts[0]).toContain("another tab");
   });
 
-  it("leaves notes owned by another tab there, clears this copy and takes a new tab id", async () => {
+  it("brings back notes whose lock another tab holds as Retry only, and takes a new tab id", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
     seed([entry("a"), entry("b")]);
     sessionStorage.setItem(AE_QUEUE_TAB_ID_KEY, "tab1");
     locks.holdElsewhere(`${AE_QUEUE_LOCK_PREFIX}:tab1`);
     await install();
-    expect(queue()).toEqual([]);
-    expect(sessionStorage.getItem(AE_QUEUE_STORAGE_KEY)).toBeNull();
+    expect(queue().map((m) => [m.text, m.requiresRetry])).toEqual([
+      ["a", true],
+      ["b", true],
+    ]);
+    expect(stored().map((e) => e.text)).toEqual(["a", "b"]);
     const tabId = sessionStorage.getItem(AE_QUEUE_TAB_ID_KEY);
     expect(tabId).not.toBe("tab1");
     expect(locks.held.has(`${AE_QUEUE_LOCK_PREFIX}:${tabId}`)).toBe(true);
-    expect(toasts).toEqual(["2 queued notes stay in the other tab this one was copied from."]);
-    expect(info).toHaveBeenCalledWith(expect.stringContaining("otherTab=2"));
+    expect(toasts).toEqual([
+      "2 queued notes came back from before the reload. They may also be waiting in a tab this " +
+        "one was copied from; use Retry only for ones that never arrived.",
+    ]);
+    expect(info).toHaveBeenCalledWith(expect.stringContaining("ownership=other-tab"));
   });
 
-  it("drops notes stored for another signed-in user", async () => {
-    vi.spyOn(console, "info").mockImplementation(() => {});
-    identity.userId = "bob";
-    seed([entry("a")], { userId: "alice" });
+  it("treats a lock error as no Web Locks, not as another tab", async () => {
+    vi.spyOn(locks, "request").mockImplementation(() =>
+      Promise.reject(new DOMException("denied", "SecurityError")),
+    );
+    seed([entry("a")]);
+    sessionStorage.setItem(AE_QUEUE_TAB_ID_KEY, "tab1");
     await install();
-    expect(queue()).toEqual([]);
+    expect(queue().map((m) => [m.text, m.requiresRetry])).toEqual([["a", true]]);
+    expect(stored().map((e) => e.text)).toEqual(["a"]);
+    expect(sessionStorage.getItem(AE_QUEUE_TAB_ID_KEY)).toBe("tab1");
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0]).toContain("cannot tell whether another tab");
+  });
+
+  it("keeps attachment names and the attachment reason through two reloads", async () => {
+    seed([entry("file", { fileNames: ["a.png", "b.pdf"] })]);
+    await install();
+    expect(stored()[0]!.fileNames).toEqual(["a.png", "b.pdf"]);
+    persist.reset({ lockWaitMs: 20 });
+    setChat();
+    toasts.length = 0;
+    await install();
+    expect(queue().map((m) => [m.text, m.requiresRetry])).toEqual([["file", true]]);
+    expect(stored()[0]!.fileNames).toEqual(["a.png", "b.pdf"]);
+    expect(toasts[0]).toContain("had attachments");
   });
 
   it("keeps firstSeenAt through a restore and later writes", async () => {
@@ -377,5 +405,143 @@ describe("restore", () => {
     );
     expect(queue()).toEqual([]);
     expect(sessionStorage.getItem(AE_QUEUE_STORAGE_KEY)).toBeNull();
+  });
+});
+
+describe("identity", () => {
+  function deferred() {
+    let resolve: (value: string | null) => void = () => {};
+    const promise = new Promise<string | null>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+
+  it("drops another user's note and counts it", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    identity.current = "bob";
+    seed([entry("a", { userId: "alice" }), entry("b", { userId: "bob" })]);
+    await install();
+    expect(queue().map((m) => [m.text, m.requiresRetry])).toEqual([["b", undefined]]);
+    expect(stored().map((e) => [e.text, e.userId])).toEqual([["b", "bob"]]);
+    expect(info).toHaveBeenCalledWith(expect.stringContaining("otherUser=1"));
+  });
+
+  it("waits for a delayed identity, and a note queued meanwhile is this page's user's", async () => {
+    const probe = deferred();
+    identity.resolve = () => probe.promise;
+    seed([entry("a", { userId: "alice" })]);
+    installAeQueuePersist();
+    useChatStore.getState().enqueueMessage("b");
+    expect(stored().map((e) => [e.text, e.userId])).toEqual([
+      ["a", "alice"],
+      ["b", null],
+    ]);
+    identity.current = "alice";
+    probe.resolve("alice");
+    await persist.restored();
+    expect(queue().map((m) => [m.text, m.requiresRetry])).toEqual([
+      ["a", undefined],
+      ["b", undefined],
+    ]);
+    expect(stored().map((e) => [e.text, e.userId])).toEqual([
+      ["a", "alice"],
+      ["b", "alice"],
+    ]);
+  });
+
+  it("a second reload during the identity wait relabels nobody", async () => {
+    identity.resolve = () => new Promise(() => {});
+    seed([entry("a", { userId: "alice" })]);
+    installAeQueuePersist();
+    useChatStore.getState().enqueueMessage("b");
+    // The page dies with identity still unknown, and the next one learns it is alice.
+    persist.reset({ lockWaitMs: 20 });
+    setChat();
+    identity.resolve = null;
+    identity.current = "alice";
+    await install();
+    expect(queue().map((m) => [m.text, m.requiresRetry])).toEqual([
+      ["a", undefined],
+      ["b", true],
+    ]);
+    expect(stored().map((e) => [e.text, e.userId])).toEqual([
+      ["a", "alice"],
+      ["b", null],
+    ]);
+    expect(toasts[0]).toContain("before the signed-in user was known");
+  });
+
+  it("carries a user's note untouched while identity cannot be verified", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    seed([entry("a", { userId: "alice" })]);
+    await install();
+    expect(queue()).toEqual([]);
+    useChatStore.getState().enqueueMessage("b");
+    expect(stored().map((e) => [e.text, e.userId])).toEqual([
+      ["a", "alice"],
+      ["b", null],
+    ]);
+    expect(info).toHaveBeenCalledWith(expect.stringContaining("carried=1"));
+  });
+
+  it("restores normally when identity is unknown both when queued and now", async () => {
+    seed([entry("a", { userId: null })]);
+    await install();
+    expect(queue().map((m) => [m.text, m.requiresRetry])).toEqual([["a", undefined]]);
+    expect(toasts).toEqual([]);
+  });
+});
+
+describe("split view panes", () => {
+  const parent = Object.getOwnPropertyDescriptor(window, "parent");
+
+  function asPane(name: string) {
+    Object.defineProperty(window, "parent", { value: {}, configurable: true });
+    window.name = name;
+  }
+
+  afterEach(() => {
+    if (parent) Object.defineProperty(window, "parent", parent);
+    else Reflect.deleteProperty(window, "parent");
+    window.name = "";
+  });
+
+  const read = (key: string) =>
+    (
+      JSON.parse(sessionStorage.getItem(key) ?? '{"entries":[]}') as {
+        entries: { text: string }[];
+      }
+    ).entries.map((e) => e.text);
+
+  it("keeps each pane's notes apart and a pane reload restores its own", async () => {
+    const one = `${AE_SPLIT_PANE_NAME_PREFIX}-1`;
+    const two = `${AE_SPLIT_PANE_NAME_PREFIX}-2`;
+    asPane(one);
+    await install();
+    useChatStore.getState().enqueueMessage("pane one");
+
+    // A second frame in the same tab: same sessionStorage, its own keys and lock.
+    persist.reset({ lockWaitMs: 20 });
+    setChat();
+    asPane(two);
+    await install();
+    expect(queue()).toEqual([]);
+    useChatStore.getState().enqueueMessage("pane two");
+    expect(read(`${AE_QUEUE_STORAGE_KEY}:${one}`)).toEqual(["pane one"]);
+    expect(read(`${AE_QUEUE_STORAGE_KEY}:${two}`)).toEqual(["pane two"]);
+    expect(sessionStorage.getItem(AE_QUEUE_STORAGE_KEY)).toBeNull();
+    const twoTab = sessionStorage.getItem(`${AE_QUEUE_TAB_ID_KEY}:${two}`);
+    expect(sessionStorage.getItem(`${AE_QUEUE_TAB_ID_KEY}:${one}`)).not.toBe(twoTab);
+
+    // Pane one reloads while pane two keeps running and holding its own lock.
+    persist.reset({ lockWaitMs: 20 });
+    locks.holdElsewhere(`${AE_QUEUE_LOCK_PREFIX}:${twoTab}`);
+    setChat();
+    asPane(one);
+    await install();
+    expect(queue().map((m) => [m.text, m.requiresRetry])).toEqual([["pane one", undefined]]);
+    expect(read(`${AE_QUEUE_STORAGE_KEY}:${two}`)).toEqual(["pane two"]);
+    expect(toasts).toEqual([]);
   });
 });
