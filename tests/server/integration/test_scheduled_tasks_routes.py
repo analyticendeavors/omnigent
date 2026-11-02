@@ -1951,3 +1951,70 @@ async def test_claude_account_can_be_set_on_create(auth_client: httpx.AsyncClien
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["claude_account"] == "shared:AE Default"
+
+
+async def test_claude_account_pin_is_dropped_when_the_task_moves_to_a_sandbox(
+    auth_app: FastAPI, auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    """A managed sandbox has no host login to pin: the pin goes with the switch."""
+    _make_user(db_uri)
+
+    class _Cfg:
+        managed_launch_supported = True
+
+    auth_app.state.sandbox_config = _Cfg()
+    try:
+        created = (
+            await auth_client.post(
+                "/v1/scheduled-tasks",
+                json=_create_body(claude_account="shared:AE Default"),
+                headers=_headers(),
+            )
+        ).json()
+        assert created["claude_account"] == "shared:AE Default"
+        moved = await auth_client.patch(
+            f"/v1/scheduled-tasks/{created['id']}",
+            json={"execution_target": "managed_sandbox"},
+            headers=_headers(),
+        )
+        assert moved.status_code == 200, moved.text
+        assert moved.json()["claude_account"] is None
+        # A sandbox task cannot be pinned, on create or update.
+        refused = await auth_client.patch(
+            f"/v1/scheduled-tasks/{created['id']}",
+            json={"claude_account": ""},
+            headers=_headers(),
+        )
+        assert refused.status_code == 400, refused.text
+    finally:
+        auth_app.state.sandbox_config = None
+
+
+async def test_claude_account_check_never_probes_a_host_the_caller_does_not_own(
+    auth_app: FastAPI,
+    auth_client: httpx.AsyncClient,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ownership is checked before the host is asked which accounts it holds."""
+    _make_user(db_uri, email="alice@example.com")
+    _make_user(db_uri, email="bob@example.com")
+    body = _create_body()
+    del body["workspace"]
+    del body["host_id"]
+    created = (await auth_client.post("/v1/scheduled-tasks", json=body, headers=_headers())).json()
+    _register_host(auth_app, "eeee5555ffff6666aaaa7777bbbb8888", "bob@example.com")
+    probed: list[object] = []
+
+    async def _detect(**kwargs: object) -> dict[str, object]:
+        probed.append(kwargs)
+        return {"credentials": []}
+
+    monkeypatch.setattr("omnigent.server.routes.hosts._proxy_detect_credentials", _detect)
+    denied = await auth_client.patch(
+        f"/v1/scheduled-tasks/{created['id']}",
+        json={"host_id": "eeee5555ffff6666aaaa7777bbbb8888", "claude_account": "Work"},
+        headers=_headers("alice@example.com"),
+    )
+    assert denied.status_code == 403, denied.text
+    assert probed == []

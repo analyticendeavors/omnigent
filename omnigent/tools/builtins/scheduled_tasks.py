@@ -280,7 +280,7 @@ class SysScheduledTaskUpdateTool(Tool):
                             ),
                         },
                         "claude_account": {
-                            "type": "string",
+                            "type": ["string", "null"],
                             "description": (
                                 "New Claude account every run signs in with; an empty string is "
                                 "the default login. Null follows the host's active account."

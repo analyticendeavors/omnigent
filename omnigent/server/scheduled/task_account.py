@@ -45,13 +45,16 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 
+#: ``shared:`` plus a 64-character name is 71; leave room.
+MAX_ACCOUNT_LENGTH = 80
+
 _metadata = MetaData()
 _account_table = Table(
     "ae_scheduled_task_account",
     _metadata,
     Column("workspace_id", Integer, primary_key=True),
     Column("scheduled_task_id", String(32), primary_key=True),
-    Column("claude_account", String(64), nullable=False),
+    Column("claude_account", String(MAX_ACCOUNT_LENGTH), nullable=False),
 )
 # custom-lint: disable-next=workspace-scoped-cache -- schema readiness is shared per engine
 _ready_engines: set[int] = set()
@@ -180,3 +183,33 @@ async def pin_fired_session(
     labels = {CLAUDE_ACCOUNT_LABEL_KEY: account}
     await asyncio.to_thread(deps.conversation_store.set_labels, conversation_id, labels)
     return labels
+
+
+async def validate_agent_supports_account(agent: Any, agent_cache: Any) -> None:
+    """Reject a pin on an agent that is not Claude Code native.
+
+    Only the claude-native harness reads the account label at launch; a Claude
+    SDK, Codex or other task would run on the host's active account while the
+    task claims a pin. When the harness cannot be resolved the check is skipped
+    (the same fail-open as the permission-mode gate).
+
+    :raises OmnigentError: 400 when the agent's harness is resolved and is not claude-native.
+    """
+    if agent is None or agent_cache is None or getattr(agent, "bundle_location", None) is None:
+        return
+    from omnigent.harness_aliases import canonicalize_harness
+
+    try:
+        loaded = await asyncio.to_thread(agent_cache.load, agent.id, agent.bundle_location)
+        executor = getattr(loaded.spec, "executor", None)
+        raw = (executor.config.get("harness") or executor.type) if executor is not None else None
+        harness = canonicalize_harness(raw) or raw
+    except Exception:
+        _logger.exception("Failed to load agent spec for Claude account gating")
+        return
+    if harness != "claude-native":
+        raise OmnigentError(
+            "A Claude account pin needs a Claude Code agent; this task's agent runs on "
+            f"{harness or 'another harness'}. Clear the pin or pick a Claude Code agent.",
+            code=ErrorCode.INVALID_INPUT,
+        )

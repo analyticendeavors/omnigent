@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AeTaskClaudeAccountField } from "@/components/scheduled/AeTaskClaudeAccountField";
 import {
   DEFAULT_LOGIN_ACCOUNT,
@@ -8,14 +8,21 @@ import {
   claudeAccountInput,
 } from "@/lib/aeTaskClaudeAccount";
 
-vi.mock("@/hooks/useHosts", () => ({
-  useDetectedCredentials: () => ({
-    data: [
-      { family: "claude-oauth", env_var: "", source: "AE Default" },
-      { family: "claude-oauth", env_var: "shared:AE Backup", source: "AE Backup" },
-    ],
-  }),
+const { detected } = vi.hoisted(() => ({
+  detected: {
+    rows: [] as { family: string; env_var: string; source: string }[],
+  },
 }));
+vi.mock("@/hooks/useHosts", () => ({
+  useDetectedCredentials: () => ({ data: detected.rows }),
+}));
+
+beforeEach(() => {
+  detected.rows = [
+    { family: "claude-oauth", env_var: "", source: "AE Default" },
+    { family: "claude-oauth", env_var: "shared:AE Backup", source: "AE Backup" },
+  ];
+});
 
 describe("accountChoiceFor", () => {
   it("maps no pin, the default login and a named account", () => {
@@ -63,5 +70,18 @@ describe("AeTaskClaudeAccountField", () => {
       />,
     );
     expect(screen.getByText(/whichever Claude account the host has active/)).toBeTruthy();
+  });
+  it("never renders a blank trigger for a default-login pin the host does not list", () => {
+    detected.rows = [{ family: "claude-oauth", env_var: "shared:AE Backup", source: "AE Backup" }];
+    render(
+      <AeTaskClaudeAccountField
+        value={DEFAULT_LOGIN_ACCOUNT}
+        onValueChange={() => {}}
+        hostId="h1"
+      />,
+    );
+    expect(screen.getByTestId("task-claude-account-trigger").textContent).toContain(
+      "Default login (not listed)",
+    );
   });
 });

@@ -118,3 +118,39 @@ async def test_fire_without_a_pin_writes_no_account_label() -> None:
 
     written = deps.conversation_store.label_writes.get("conv_1", {})
     assert CLAUDE_ACCOUNT_LABEL_KEY not in written
+
+
+# ── The agent gate ───────────────────────────────────────────────────────
+
+
+class _Cache:
+    def __init__(self, executor: Any) -> None:
+        self._executor = executor
+
+    def load(self, agent_id: str, bundle: str) -> Any:
+        return SimpleNamespace(spec=SimpleNamespace(executor=self._executor))
+
+
+_AGENT = SimpleNamespace(id="ag_1", bundle_location="/bundle")
+
+
+@pytest.mark.asyncio
+async def test_pin_needs_a_claude_code_agent() -> None:
+    native = SimpleNamespace(config={"harness": "claude-native"}, type="x")
+    sdk = SimpleNamespace(config={"harness": "claude-sdk"}, type="x")
+    await task_account.validate_agent_supports_account(_AGENT, _Cache(native))
+    with pytest.raises(OmnigentError, match="needs a Claude Code agent"):
+        await task_account.validate_agent_supports_account(_AGENT, _Cache(sdk))
+
+
+@pytest.mark.asyncio
+async def test_agent_gate_skips_what_it_cannot_resolve() -> None:
+    await task_account.validate_agent_supports_account(None, None)
+    await task_account.validate_agent_supports_account(_AGENT, None)
+    await task_account.validate_agent_supports_account(
+        SimpleNamespace(id="ag_1", bundle_location=None), _Cache(None)
+    )
+
+
+def test_a_shared_account_with_a_64_character_name_fits() -> None:
+    assert len("shared:" + "a" * 64) <= task_account.MAX_ACCOUNT_LENGTH

@@ -76,7 +76,7 @@ class CreateScheduledTaskRequest(BaseModel):
     project_id: str | None = None
     # Claude account every run signs in with; "" is the default login, omitted
     # follows the host's active account.
-    claude_account: str | None = Field(default=None, max_length=64)
+    claude_account: str | None = Field(default=None, max_length=task_account.MAX_ACCOUNT_LENGTH)
     # Optional: no PINNED host/workspace. When both are unset the fire path
     # resolves the owner's online host at fire time and defaults the workspace to
     # that host's home directory (a failed run is recorded if none is online) —
@@ -120,7 +120,9 @@ class UpdateScheduledTaskRequest(BaseModel):
     max_cost_usd: float | None = Field(default=None, gt=0)  # null clears the cap
     keep_runs: int | None = Field(default=None, ge=1, le=retention.MAX_KEEP_RUNS)  # null keeps all
     project_id: str | None = None  # null or "" leaves runs unfiled
-    claude_account: str | None = Field(default=None, max_length=64)  # null clears the pin
+    claude_account: str | None = Field(
+        default=None, max_length=task_account.MAX_ACCOUNT_LENGTH
+    )  # null clears the pin
     workspace: str | None = Field(default=None, min_length=1)
     host_id: str | None = Field(default=None, min_length=1)
     execution_target: str | None = Field(default=None, min_length=1)
@@ -426,6 +428,12 @@ def create_scheduled_tasks_router(
         else:
             project_id = task_project.default_project_id(project_store, owner_id)
         if body.claude_account is not None:
+            if body.execution_target == "managed_sandbox":
+                raise OmnigentError(
+                    "A managed-sandbox task cannot be pinned to a Claude account.",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            await task_account.validate_agent_supports_account(agent, agent_cache)
             await task_account.validate_account(request, body.claude_account, body.host_id)
         bound = await _bind_agent(agent, owner_id)
         try:
@@ -453,7 +461,14 @@ def create_scheduled_tasks_router(
             retention.set_keep_runs(store, task.id, body.keep_runs)
         task_project.set_project(store, task.id, project_id)
         if body.claude_account is not None:
-            task_account.set_account(store, task.id, body.claude_account)
+            try:
+                task_account.set_account(store, task.id, body.claude_account)
+            except Exception:
+                # Never leave an unpinned task that would fire on the active account.
+                store.delete(task.id)
+                if bound.id != agent.id:
+                    agent_store.delete(bound.id)
+                raise
         task = _with_settings(store, [task])[0]
         scheduler = _scheduler(request)
         if scheduler is not None:
@@ -622,10 +637,6 @@ def create_scheduled_tasks_router(
         project_id = _owned_project_id(fields.pop("project_id", None), owner_id)
         account_set = "claude_account" in fields
         claude_account = fields.pop("claude_account", None)
-        if claude_account is not None:
-            await task_account.validate_account(
-                request, claude_account, fields.get("host_id") or existing.host_id
-            )
         target_agent_id = fields.get("agent_id") or existing.agent_id
         agent_changed = target_agent_id != existing.agent_id
         new_copy: Agent | None = None
@@ -677,6 +688,43 @@ def create_scheduled_tasks_router(
                 _MANAGED_SANDBOX_WITH_HOST_MSG,
                 code=ErrorCode.INVALID_INPUT,
             )
+        account_settled = False
+
+        async def _settle_account() -> tuple[bool, str | None]:
+            """The pin to store after this PATCH, checked against the host it will run on.
+
+            A pin follows the task's host and agent: it is dropped when the task moves
+            to a managed sandbox (no host login to pin) or to another agent unless the
+            request sets one, and is re-checked when the host changes. Runs only after
+            the host's ownership check, so no other user's host is probed.
+            """
+            nonlocal account_settled
+            account_settled = True
+            new_host = None if switching_to_managed else fields.get("host_id", existing.host_id)
+            if account_set:
+                pin, write = claude_account, True
+            else:
+                pin = task_account.accounts_for(store, [existing.id])[existing.id]
+                write = False
+                if pin is not None and (switching_to_managed or agent_changed):
+                    pin, write = None, True
+            if switching_to_managed and pin is not None:
+                raise OmnigentError(
+                    "A managed-sandbox task cannot be pinned to a Claude account.",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            if pin is not None and (account_set or agent_changed or new_host != existing.host_id):
+                pin_agent = await validate_session_agent(
+                    user_id=owner_id,
+                    agent_id=target_agent_id,
+                    agent_store=agent_store,
+                    permission_store=permission_store,
+                    conversation_store=conversation_store,
+                )
+                await task_account.validate_agent_supports_account(pin_agent, agent_cache)
+                await task_account.validate_account(request, pin, new_host)
+            return write, pin
+
         if agent_changed or {"workspace", "host_id", "execution_target"}.intersection(fields):
             # On a switch this runs the full create-time gauntlet against the NEW
             # agent: existence + bindability, and the pinned workspace re-checked
@@ -706,10 +754,15 @@ def create_scheduled_tasks_router(
                 fields["workspace"] = None
             elif "workspace" in fields:
                 fields["workspace"] = workspace
+            # After the host's ownership check above and before the agent copy is
+            # bound, so a refused pin leaves nothing behind.
+            account_set, claude_account = await _settle_account()
             if agent_changed:
                 bound = await _bind_agent(agent, owner_id)
                 fields["agent_id"] = bound.id
                 new_copy = bound if bound.id != agent.id else None
+        if not account_settled:
+            account_set, claude_account = await _settle_account()
         try:
             updated = store.update(scheduled_task_id, **fields)
             if updated is None:

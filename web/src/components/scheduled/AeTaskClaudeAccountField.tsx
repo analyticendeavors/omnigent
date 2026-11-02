@@ -31,11 +31,10 @@ export function AeTaskClaudeAccountField({
 }) {
   const { data: credentials = [] } = useDetectedCredentials(hostId, true);
   const accounts = aeForkClaudeAccounts(credentials);
-  // A saved pin the host no longer lists stays visible rather than silently changing.
+  const listed = (account: string) => accounts.some((choice) => choice.account === account);
   const known =
-    value === FOLLOW_ACTIVE_ACCOUNT ||
-    value === DEFAULT_LOGIN_ACCOUNT ||
-    accounts.some((choice) => choice.account === value);
+    value === FOLLOW_ACTIVE_ACCOUNT || (value !== DEFAULT_LOGIN_ACCOUNT && listed(value));
+  const defaultListed = listed("");
   return (
     <div className="flex flex-col gap-1.5" data-testid="task-claude-account-field">
       <Label htmlFor="task-claude-account">Claude account</Label>
@@ -54,7 +53,13 @@ export function AeTaskClaudeAccountField({
         </SelectTrigger>
         <SelectContent position="popper" align="start">
           <SelectItem value={FOLLOW_ACTIVE_ACCOUNT}>Follow the active account</SelectItem>
-          {!known && <SelectItem value={value}>{value} (not listed)</SelectItem>}
+          {/* A saved pin the host no longer lists stays visible, never a blank trigger. */}
+          {!known && value !== DEFAULT_LOGIN_ACCOUNT && (
+            <SelectItem value={value}>{value} (not listed)</SelectItem>
+          )}
+          {value === DEFAULT_LOGIN_ACCOUNT && !defaultListed && (
+            <SelectItem value={DEFAULT_LOGIN_ACCOUNT}>Default login (not listed)</SelectItem>
+          )}
           {accounts.map((choice) => (
             <SelectItem
               key={choice.account || DEFAULT_LOGIN_ACCOUNT}
