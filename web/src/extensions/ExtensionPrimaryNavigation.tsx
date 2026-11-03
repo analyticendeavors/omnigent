@@ -8,6 +8,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { MouseEvent } from "react";
+import { AeAttentionBadge } from "@/components/AeAttentionBadge";
+import { AE_ATTENTION_NAV_ID } from "@/lib/aeAttention";
 import { PrimaryNavLink } from "@/shell/PrimaryNavLink";
 import { useExtensions } from "./ExtensionProvider";
 
@@ -52,6 +54,7 @@ export function ExtensionPrimaryNavigation({
         onClick={onNavigate}
         componentId={`sidebar.extension.${navigation.id}`}
         testId={`extension-nav-${navigation.id}`}
+        trailing={navigation.id === AE_ATTENTION_NAV_ID ? <AeAttentionBadge /> : undefined}
       />
     );
   });
