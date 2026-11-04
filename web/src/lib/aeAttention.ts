@@ -115,5 +115,7 @@ export function useAeAttention(): AeAttentionView {
     staleTime: 30_000,
     retry: false,
   });
-  return aeAttentionView(data, isError && !data);
+  // Any query error wins: react-query keeps the last data through a failed refetch, and an old
+  // count through an outage would read as current (review round 1, 2026-11-03).
+  return aeAttentionView(isError ? null : data, isError);
 }

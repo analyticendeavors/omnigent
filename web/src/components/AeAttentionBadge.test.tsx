@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const fetchMock = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/identity", () => ({ authenticatedFetch: fetchMock }));
 
+import { AE_ATTENTION_QUERY_KEY } from "@/lib/aeAttention";
 import { AeAttentionBadge } from "./AeAttentionBadge";
 
 function answer(body: unknown, ok = true, status = 200) {
@@ -44,6 +45,8 @@ describe("AeAttentionBadge", () => {
     expect(pill.textContent).toBe("17");
     expect(pill.dataset.kind).toBe("review");
     expect(pill.className).not.toContain("bg-destructive");
+    expect(pill.className).toContain("ring-1");
+    expect(pill.className).toContain("ring-border");
   });
 
   it("draws a red pill with the urgent count and an aria-label with the split", async () => {
@@ -75,6 +78,23 @@ describe("AeAttentionBadge", () => {
     const pill = await screen.findByTestId("ae-attention-pill");
     expect(pill.textContent).toBe("?");
     expect(pill.dataset.kind).toBe("unknown");
+  });
+
+  it("shows a lone question mark when a refetch fails after a good read, not the old count", async () => {
+    answer(counts(6, 17));
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <AeAttentionBadge />
+      </QueryClientProvider>,
+    );
+    expect((await screen.findByTestId("ae-attention-pill")).textContent).toBe("6");
+    answer({}, false, 500);
+    await qc.refetchQueries({ queryKey: AE_ATTENTION_QUERY_KEY });
+    await waitFor(() => expect(screen.getByTestId("ae-attention-pill").textContent).toBe("?"));
+    answer(counts(2, 0));
+    await qc.refetchQueries({ queryKey: AE_ATTENTION_QUERY_KEY });
+    await waitFor(() => expect(screen.getByTestId("ae-attention-pill").textContent).toBe("2"));
   });
 
   it("shows a lone question mark when the answer has no counts", async () => {

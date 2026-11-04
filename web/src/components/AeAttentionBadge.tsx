@@ -42,7 +42,8 @@ export function AeAttentionBadge({ compact = false }: { compact?: boolean }) {
         "ml-auto inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-10 font-medium tabular-nums",
         red
           ? "bg-destructive text-white dark:text-background"
-          : "bg-[var(--sidebar-active)] text-[var(--sidebar-active-foreground)]",
+          : // The ring keeps the neutral pill visible on the active row, which paints the same wash.
+            "bg-[var(--sidebar-active)] text-[var(--sidebar-active-foreground)] ring-1 ring-border",
         view.kind === "unknown" && "border border-muted-foreground bg-transparent",
       )}
     >
