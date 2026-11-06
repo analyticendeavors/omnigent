@@ -4,6 +4,8 @@ import {
   isAeDatabricksLinkUrl,
   isAeFabricAdminLinkUrl,
   isAeGithubLinkUrl,
+  isAeLinkedinShareUrl,
+  isAeYoutubePostsUrl,
 } from "./aeExternalUrls";
 
 describe("isAeGithubLinkUrl", () => {
@@ -194,5 +196,93 @@ describe("isAeAzureCostLinkUrl", () => {
     ["an upper case host", COST.replace("portal.azure.com", "PORTAL.AZURE.COM")],
   ])("rejects %s", (_name, url) => {
     expect(isAeAzureCostLinkUrl(url)).toBe(false);
+  });
+});
+
+describe("isAeLinkedinShareUrl", () => {
+  const BASE = "https://www.linkedin.com/feed/?shareActive=true";
+  const withText = (text: string) =>
+    `${BASE}&text=${encodeURIComponent(text).replace(/'/g, "%27")}`;
+
+  it.each([
+    ["the bare share box", BASE],
+    ["plain text", withText("New video is up")],
+    [
+      "newlines, punctuation and a link",
+      withText("Line one\n\nLine two! (a) 'b' *c* https://youtu.be/abc?x=1&y=2#t"),
+    ],
+    ["non-ASCII text and an emoji", withText("café \u{1F680} \u65E5\u672C")],
+    ["exactly 3,000 characters", withText("a".repeat(3000))],
+    ["3,000 emoji", withText("\u{1F680}".repeat(3000))],
+  ])("admits %s", (_name, url) => {
+    expect(isAeLinkedinShareUrl(url)).toBe(true);
+  });
+
+  it.each([
+    ["not a string", 42],
+    ["http", BASE.replace("https:", "http:")],
+    ["another host", BASE.replace("www.linkedin.com", "www.linkedin.com.evil.example")],
+    ["no www", BASE.replace("www.", "")],
+    ["userinfo", BASE.replace("https://", "https://evil.example@")],
+    ["a port", BASE.replace("linkedin.com", "linkedin.com:8443")],
+    ["another path", BASE.replace("/feed/", "/messaging/")],
+    ["no shareActive", "https://www.linkedin.com/feed/"],
+    ["shareActive false", BASE.replace("true", "false")],
+    ["a second parameter", `${BASE}&url=https%3A%2F%2Fevil.example`],
+    ["a parameter before text", `${BASE}&x=1&text=hi`],
+    ["text twice", `${withText("a")}&text=b`],
+    ["a fragment", `${BASE}#x`],
+    ["a fragment after text", `${withText("hi")}#x`],
+    ["empty text", `${BASE}&text=`],
+    ["a bare apostrophe in text", `${BASE}&text=it's`],
+    ["a raw space in text", `${BASE}&text=hello world`],
+    ["a raw ampersand in text", `${BASE}&text=a&b=c`],
+    ["lower-case escapes", `${BASE}&text=%e2%9c%93`],
+    ["a bad escape", `${BASE}&text=%zz`],
+    ["a lone continuation byte", `${BASE}&text=%80`],
+    ["3,001 characters", withText("a".repeat(3001))],
+    ["3,001 emoji", withText("\u{1F680}".repeat(3001))],
+    ["a trailing space", `${BASE} `],
+    ["a trailing newline", `${BASE}\n`],
+    ["an upper case host", BASE.replace("www.linkedin.com", "WWW.LINKEDIN.COM")],
+  ])("rejects %s", (_name, url) => {
+    expect(isAeLinkedinShareUrl(url)).toBe(false);
+  });
+});
+
+describe("isAeYoutubePostsUrl", () => {
+  const ID = "UCQSSIe3typhsBuFEoTeeqLg";
+  const POSTS = `https://www.youtube.com/channel/${ID}/posts`;
+
+  it.each([
+    ["a channel Posts tab", POSTS],
+    [
+      "an id with hyphen and underscore",
+      "https://www.youtube.com/channel/UCjlfQwqb-0S40XQ8seYPLSw/posts",
+    ],
+    ["an id with an underscore", "https://www.youtube.com/channel/UC_abcdefghijklmnopqrstu/posts"],
+  ])("admits %s", (_name, url) => {
+    expect(isAeYoutubePostsUrl(url)).toBe(true);
+  });
+
+  it.each([
+    ["not a string", 42],
+    ["http", POSTS.replace("https:", "http:")],
+    ["another host", POSTS.replace("www.youtube.com", "www.youtube.com.evil.example")],
+    ["no www", POSTS.replace("www.", "")],
+    ["userinfo", POSTS.replace("https://", "https://evil.example@")],
+    ["a port", POSTS.replace("youtube.com", "youtube.com:8443")],
+    ["an id that does not start with UC", POSTS.replace("UCQ", "UDQ")],
+    ["a short id", POSTS.replace(ID, ID.slice(0, 22))],
+    ["a long id", POSTS.replace(ID, `${ID}x`)],
+    ["a handle", "https://www.youtube.com/@analyticendeavors/posts"],
+    ["another tab", POSTS.replace("/posts", "/videos")],
+    ["a query", `${POSTS}?x=1`],
+    ["a fragment", `${POSTS}#x`],
+    ["a trailing slash", `${POSTS}/`],
+    ["an encoded character", POSTS.replace("Q", "%51")],
+    ["a trailing newline", `${POSTS}\n`],
+  ])("rejects %s", (_name, url) => {
+    expect(isAeYoutubePostsUrl(url)).toBe(false);
   });
 });

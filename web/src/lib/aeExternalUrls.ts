@@ -129,6 +129,69 @@ export function isAeAzureCostLinkUrl(url: unknown): url is string {
   return url === AZURE_COST_LINK;
 }
 
+// Social card links (omnigent-ae patch, 2026-11-06). The Admin Center's Social
+// card offers "Open LinkedIn" and "Open YouTube posts" for the next post, which
+// the allowlists above refused, so the page could only say "paste it yourself".
+// Exactly two shapes are admitted, both https on a fixed host with no userinfo
+// or port. First, LinkedIn's share box, `https://www.linkedin.com/feed/?shareActive=true`,
+// optionally followed by `&text=<percent-encoded text>`: `text` is the only
+// parameter allowed, it must be percent-encoded the way `encodeURIComponent`
+// writes it (with the apostrophe written as %27), and it must decode to valid text of at
+// most 3,000 characters. The link only pre-fills the composer; nothing is posted until the signed-in person
+// presses Post. On an iPhone a clipboard write can fail after the host round
+// trip, so the pre-filled text is the path that works there. Second, one
+// YouTube channel's Posts tab, `https://www.youtube.com/channel/UC<22 characters>/posts`,
+// which is a page view and carries nothing. A fragment, a second parameter or
+// any other path is refused in both.
+const LINKEDIN_SHARE_BASE = "https://www.linkedin.com/feed/?shareActive=true";
+const LINKEDIN_TEXT_MAX = 3000;
+// What encodeURIComponent leaves alone, minus the apostrophe (the URL parser rewrites a bare
+// one to %27, so it would fail the round trip below), plus upper-case %XX escapes.
+const LINKEDIN_TEXT = /^(?:[A-Za-z0-9\-._~!*()]|%[0-9A-F]{2})+$/;
+// 3,000 characters of UTF-8 are at most 12,000 bytes, 36,000 characters once escaped.
+const LINKEDIN_URL_MAX = LINKEDIN_SHARE_BASE.length + "&text=".length + 36_000;
+
+/**
+ * True for `https://www.linkedin.com/feed/?shareActive=true`, with or without
+ * `&text=<percent-encoded text of at most 3,000 characters>` after it, and
+ * nothing else.
+ */
+export function isAeLinkedinShareUrl(url: unknown): url is string {
+  if (typeof url !== "string" || url.length > LINKEDIN_URL_MAX) return false;
+  if (url !== LINKEDIN_SHARE_BASE) {
+    const prefix = `${LINKEDIN_SHARE_BASE}&text=`;
+    if (!url.startsWith(prefix)) return false;
+    const encoded = url.slice(prefix.length);
+    if (!LINKEDIN_TEXT.test(encoded)) return false;
+    let text: string;
+    try {
+      text = decodeURIComponent(encoded);
+    } catch {
+      return false; // an escape that is not valid UTF-8
+    }
+    if ([...text].length > LINKEDIN_TEXT_MAX) return false;
+  }
+  // The browser must read the string as the same URL, character for character.
+  try {
+    return new URL(url).href === url;
+  } catch {
+    return false;
+  }
+}
+
+const YOUTUBE_POSTS_LINK = /^https:\/\/www\.youtube\.com\/channel\/UC[A-Za-z0-9_-]{22}\/posts$/;
+
+/** True for `https://www.youtube.com/channel/UC<22 characters>/posts`, and nothing else. */
+export function isAeYoutubePostsUrl(url: unknown): url is string {
+  if (typeof url !== "string" || !YOUTUBE_POSTS_LINK.test(url)) return false;
+  // The browser must read the string as the same URL, character for character.
+  try {
+    return new URL(url).href === url;
+  } catch {
+    return false;
+  }
+}
+
 /** The error code `navigation.openExternal` rejects with when no tab opened. */
 export const AE_POPUP_BLOCKED = "PopupBlocked";
 

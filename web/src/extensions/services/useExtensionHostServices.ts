@@ -9,6 +9,8 @@ import {
   isAeDatabricksLinkUrl,
   isAeFabricAdminLinkUrl,
   isAeGithubLinkUrl,
+  isAeLinkedinShareUrl,
+  isAeYoutubePostsUrl,
 } from "@/lib/aeExternalUrls";
 import { fetchPullRequestInfo } from "@/hooks/usePullRequests";
 import { useNavigate } from "@/lib/routing";
@@ -128,7 +130,9 @@ export function useExtensionHostServices(extension: ExtensionCatalogItem) {
             !isAeGithubLinkUrl(url) &&
             !isAeFabricAdminLinkUrl(url) &&
             !isAeDatabricksLinkUrl(url) &&
-            !isAeAzureCostLinkUrl(url))
+            !isAeAzureCostLinkUrl(url) &&
+            !isAeLinkedinShareUrl(url) &&
+            !isAeYoutubePostsUrl(url))
         ) {
           throw new ExtensionHostServiceError(
             "PermissionDenied",

@@ -192,3 +192,30 @@ describe("navigation.openExternal and the Azure cost link", () => {
     expect(open).not.toHaveBeenCalled();
   });
 });
+
+describe("navigation.openExternal and the Social card links", () => {
+  let open: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    open = vi.spyOn(window, "open").mockReturnValue({ opener: window } as unknown as Window);
+  });
+
+  afterEach(() => {
+    open.mockRestore();
+  });
+
+  it.each([
+    "https://www.linkedin.com/feed/?shareActive=true&text=New%20video%20is%20up",
+    "https://www.youtube.com/channel/UCQSSIe3typhsBuFEoTeeqLg/posts",
+  ])("opens %s", async (url) => {
+    await expect(openExternal()?.({ url }, signal())).resolves.toBeNull();
+    expect(open).toHaveBeenCalledWith(url, "_blank");
+  });
+
+  it("still refuses another LinkedIn page", async () => {
+    await expect(
+      openExternal()?.({ url: "https://www.linkedin.com/in/someone" }, signal()),
+    ).rejects.toMatchObject({ code: "PermissionDenied" });
+    expect(open).not.toHaveBeenCalled();
+  });
+});
