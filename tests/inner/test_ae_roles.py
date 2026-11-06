@@ -207,6 +207,7 @@ def test_lead_picks_tells_the_lead_to_ask_the_advisor_when_it_is_available(
     lines = (render_roles(resolve_roles(conversation(labels), owner_store())) or "").splitlines()
     assert lines[0].startswith("Step 1, for every task including small ones")
     assert "call advise_preset with a one-line neutral" in lines[0]
+    assert "that describes the kind of work, not its subject" in lines[0]
     assert 'ToolSearch query "select:mcp__ae__advise_preset"' in lines[0]
     assert "Decision-1 picked X" in lines[0]
     assert lines[1].startswith("Roles preset: lead picks.")  # the advisor line comes first
