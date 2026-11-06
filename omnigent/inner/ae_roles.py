@@ -568,8 +568,9 @@ def _advisor_line(roles: dict[str, Any]) -> str | None:
         return None
     return (
         "Step 1, for every task including small ones: before you pick a preset or start work, "
-        "call advise_preset with a one-line neutral summary of the task (no client, person or "
-        "product names, no quoted text) and rough counts. In Claude Code it is a deferred tool: "
+        "call advise_preset with a one-line neutral summary of the task that describes the kind "
+        "of work, not its subject (no client, person or product names, no quoted text) and "
+        "rough counts. In Claude Code it is a deferred tool: "
         'load it first with ToolSearch query "select:mcp__ae__advise_preset" (Codex has no '
         "ToolSearch; call it directly). If it answers use, take that preset and say "
         '"Decision-1 picked X"; if decide_yourself, or the tool is missing or fails, pick as '
