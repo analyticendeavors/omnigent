@@ -549,7 +549,7 @@ _REPORT_REVIEW = (
 
 
 def _advisor_available(owner: str) -> bool:
-    """Whether the Decision-1 advisor is on for this owner. Server side only: the host has no env."""
+    """Whether the Decision-1 advisor is on for this owner (server side: the host has no env)."""
     try:
         from ae_omni_policies import decision_advisor
 
