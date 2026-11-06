@@ -205,8 +205,11 @@ def test_lead_picks_tells_the_lead_to_ask_the_advisor_when_it_is_available(
     monkeypatch.setattr(decision_advisor, "available", available)
     labels = team_label(roles={"preset": "lead-picks"})
     lines = (render_roles(resolve_roles(conversation(labels), owner_store())) or "").splitlines()
-    assert lines[1].startswith("Before picking, call advise_preset with a one-line neutral")
-    assert "Decision-1 picked it" in lines[1]
+    assert lines[0].startswith("Step 1, for every task including small ones")
+    assert "call advise_preset with a one-line neutral" in lines[0]
+    assert 'ToolSearch query "select:mcp__ae__advise_preset"' in lines[0]
+    assert "Decision-1 picked X" in lines[0]
+    assert lines[1].startswith("Roles preset: lead picks.")  # the advisor line comes first
     assert lines[2].startswith("- ") and lines[3].startswith("- ")  # the full block stays
     assert seen == ["local"]
 
@@ -224,6 +227,7 @@ def test_lead_picks_has_no_advisor_line_when_it_is_off_or_broken(
 
     monkeypatch.setattr(decision_advisor, "available", lambda owner: False)
     assert "advise_preset" not in render()
+    assert render().startswith("Roles preset: lead picks.")
 
     def boom(owner: str) -> bool:
         raise RuntimeError("broken")
@@ -249,7 +253,7 @@ def test_the_advisor_line_renders_in_a_process_that_cannot_see_the_advisor(
     monkeypatch.setitem(sys.modules, "ae_omni_policies.decision_advisor", None)
     monkeypatch.setitem(sys.modules, "ae_omni_policies", None)
     lines = (render_roles(roles) or "").splitlines()
-    assert lines[1].startswith("Before picking, call advise_preset")
+    assert lines[0].startswith("Step 1, for every task including small ones")
 
 
 def test_resolve_roles_sets_the_advisor_flag_only_when_available(
