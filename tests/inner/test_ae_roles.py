@@ -189,6 +189,60 @@ def test_lead_picks_line_shows_each_presets_change_rules(prefs: dict[str, Any]) 
     assert "changes: no changes, no step down, 0 raises, any agent or session" in lines[2]
 
 
+def test_lead_picks_tells_the_lead_to_ask_the_advisor_when_it_is_available(
+    prefs: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ae_omni_policies import decision_advisor
+
+    prefs["presets"] = [BALANCED, YOLO]
+    seen: list[str] = []
+
+    def available(owner: str) -> bool:
+        seen.append(owner)
+        return True
+
+    monkeypatch.setattr(decision_advisor, "available", available)
+    labels = team_label(roles={"preset": "lead-picks"})
+    lines = (render_roles(resolve_roles(conversation(labels), owner_store())) or "").splitlines()
+    assert lines[1].startswith("Before picking, call advise_preset with a one-line neutral")
+    assert "Decision-1 picked it" in lines[1]
+    assert lines[2].startswith("- ") and lines[3].startswith("- ")  # the full block stays
+    assert seen == ["local"]
+
+
+def test_lead_picks_has_no_advisor_line_when_it_is_off_or_broken(
+    prefs: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ae_omni_policies import decision_advisor
+
+    prefs["presets"] = [BALANCED, YOLO]
+    labels = team_label(roles={"preset": "lead-picks"})
+
+    def render() -> str:
+        return render_roles(resolve_roles(conversation(labels), owner_store())) or ""
+
+    monkeypatch.setattr(decision_advisor, "available", lambda owner: False)
+    assert "advise_preset" not in render()
+
+    def boom(owner: str) -> bool:
+        raise RuntimeError("broken")
+
+    monkeypatch.setattr(decision_advisor, "available", boom)
+    assert "advise_preset" not in render()
+
+
+def test_a_fixed_preset_never_gets_the_advisor_line(
+    prefs: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ae_omni_policies import decision_advisor
+
+    monkeypatch.setattr(decision_advisor, "available", lambda owner: True)
+    labels = team_label(roles={"preset": BALANCED["id"]})
+    assert "advise_preset" not in (
+        render_roles(resolve_roles(conversation(labels), owner_store())) or ""
+    )
+
+
 SOLO: dict[str, Any] = {
     **copy.deepcopy(BALANCED),
     "id": "solo",

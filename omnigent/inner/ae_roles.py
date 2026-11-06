@@ -242,6 +242,7 @@ def _resolve_roles(conv: Conversation, store: ConversationStore) -> dict[str, An
                 for p in shown
             ],
             "more": len(presets) - len(shown),
+            "advisor_owner": _owner(conv, store),
         }
     if chosen_id in by_id:
         preset = _summary(by_id[chosen_id])
@@ -545,6 +546,25 @@ _REPORT_REVIEW = (
 )
 
 
+def _advisor_line(roles: dict[str, Any]) -> str | None:
+    """The line telling the lead to ask the Decision-1 advisor first, when it is available."""
+    try:
+        from ae_omni_policies import decision_advisor
+    except ImportError:
+        return None
+    owner = roles.get("advisor_owner")
+    try:
+        if not isinstance(owner, str) or not decision_advisor.available(owner):
+            return None
+    except Exception:  # noqa: BLE001 (a broken advisor must never block a turn)
+        return None
+    return (
+        "Before picking, call advise_preset with a one-line neutral summary of the task (no "
+        "client, person or product names, no quoted text) and rough counts. If it answers "
+        "use, take that preset and say Decision-1 picked it; if decide_yourself, pick as below."
+    )
+
+
 def _tools(roles: dict[str, Any]) -> str:
     """The Agent tool sentence for the lead, plus how to name a role on each start."""
     session = roles.get("lead_session")
@@ -569,6 +589,9 @@ def render_roles(roles: object) -> str | None:
             "which in one line, then name a role for each helper you start and give a "
             f"native subagent that role's model and effort. {tools}"
         ]
+        advisor = _advisor_line(roles)
+        if advisor:
+            lines.append(advisor)
         for preset in presets[:LEAD_PICKS_SHOWN]:
             setting = preset.get("roles") if isinstance(preset.get("roles"), dict) else {}
             parts = [
