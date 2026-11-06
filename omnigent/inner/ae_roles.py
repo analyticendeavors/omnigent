@@ -567,9 +567,13 @@ def _advisor_line(roles: dict[str, Any]) -> str | None:
     if roles.get("advisor") is not True:
         return None
     return (
-        "Before picking, call advise_preset with a one-line neutral summary of the task (no "
-        "client, person or product names, no quoted text) and rough counts. If it answers "
-        "use, take that preset and say Decision-1 picked it; if decide_yourself, pick as below."
+        "Step 1, for every task including small ones: before you pick a preset or start work, "
+        "call advise_preset with a one-line neutral summary of the task (no client, person or "
+        "product names, no quoted text) and rough counts. In Claude Code it is a deferred tool: "
+        'load it first with ToolSearch query "select:mcp__ae__advise_preset" (Codex has no '
+        "ToolSearch; call it directly). If it answers use, take that preset and say "
+        '"Decision-1 picked X"; if decide_yourself, or the tool is missing or fails, pick as '
+        "below and say so in one line."
     )
 
 
@@ -592,14 +596,15 @@ def render_roles(roles: object) -> str | None:
         presets = [p for p in roles.get("presets") or [] if isinstance(p, dict)]
         if not presets:
             return None
-        lines = [
-            "Roles preset: lead picks. Pick the preset below that fits this task and say "
-            "which in one line, then name a role for each helper you start and give a "
-            f"native subagent that role's model and effort. {tools}"
-        ]
+        lines = []
         advisor = _advisor_line(roles)
         if advisor:
             lines.append(advisor)
+        lines.append(
+            "Roles preset: lead picks. Pick the preset below that fits this task and say "
+            "which in one line, then name a role for each helper you start and give a "
+            f"native subagent that role's model and effort. {tools}"
+        )
         for preset in presets[:LEAD_PICKS_SHOWN]:
             setting = preset.get("roles") if isinstance(preset.get("roles"), dict) else {}
             parts = [
