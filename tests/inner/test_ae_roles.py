@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
@@ -229,6 +230,54 @@ def test_lead_picks_has_no_advisor_line_when_it_is_off_or_broken(
 
     monkeypatch.setattr(decision_advisor, "available", boom)
     assert "advise_preset" not in render()
+
+
+def test_the_advisor_line_renders_in_a_process_that_cannot_see_the_advisor(
+    prefs: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The host renders the notice with no AE_DECISION_* env, so the flag alone must decide."""
+    from ae_omni_policies import decision_advisor
+
+    prefs["presets"] = [BALANCED, YOLO]
+    monkeypatch.setattr(decision_advisor, "available", lambda owner: True)
+    labels = team_label(roles={"preset": "lead-picks"})
+    roles = resolve_roles(conversation(labels), owner_store())
+    assert roles["advisor"] is True
+
+    monkeypatch.setattr(decision_advisor, "available", lambda owner: False)
+    assert "advise_preset" in (render_roles(roles) or "")
+    monkeypatch.setitem(sys.modules, "ae_omni_policies.decision_advisor", None)
+    monkeypatch.setitem(sys.modules, "ae_omni_policies", None)
+    lines = (render_roles(roles) or "").splitlines()
+    assert lines[1].startswith("Before picking, call advise_preset")
+
+
+def test_resolve_roles_sets_the_advisor_flag_only_when_available(
+    prefs: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ae_omni_policies import decision_advisor
+
+    prefs["presets"] = [BALANCED, YOLO]
+    labels = team_label(roles={"preset": "lead-picks"})
+
+    def resolved() -> dict[str, Any]:
+        return resolve_roles(conversation(labels), owner_store())
+
+    monkeypatch.setattr(decision_advisor, "available", lambda owner: True)
+    roles = resolved()
+    assert roles["advisor"] is True
+    assert "advisor_owner" not in roles
+
+    monkeypatch.setattr(decision_advisor, "available", lambda owner: False)
+    roles = resolved()
+    assert "advisor" not in roles
+    assert "advisor_owner" not in roles
+
+    def boom(owner: str) -> bool:
+        raise RuntimeError("broken")
+
+    monkeypatch.setattr(decision_advisor, "available", boom)
+    assert "advisor" not in resolved()
 
 
 def test_a_fixed_preset_never_gets_the_advisor_line(

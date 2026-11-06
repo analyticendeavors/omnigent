@@ -235,15 +235,17 @@ def _resolve_roles(conv: Conversation, store: ConversationStore) -> dict[str, An
         chosen_id = SOLO
     if chosen_id == LEAD_PICKS:
         shown = presets[:LEAD_PICKS_SHOWN]
-        return {
+        picks: dict[str, Any] = {
             "lead_picks": True,
             "presets": [
                 {**_summary(p), "when_to_use": str(p.get("when_to_use") or "")[:200]}
                 for p in shown
             ],
             "more": len(presets) - len(shown),
-            "advisor_owner": _owner(conv, store),
         }
+        if _advisor_available(_owner(conv, store)):
+            picks["advisor"] = True
+        return picks
     if chosen_id in by_id:
         preset = _summary(by_id[chosen_id])
         custom = override.get("custom") if override else None
@@ -546,17 +548,23 @@ _REPORT_REVIEW = (
 )
 
 
-def _advisor_line(roles: dict[str, Any]) -> str | None:
-    """The line telling the lead to ask the Decision-1 advisor first, when it is available."""
+def _advisor_available(owner: str) -> bool:
+    """Whether the Decision-1 advisor is on for this owner. Server side only: the host has no env."""
     try:
         from ae_omni_policies import decision_advisor
-    except ImportError:
-        return None
-    owner = roles.get("advisor_owner")
-    try:
-        if not isinstance(owner, str) or not decision_advisor.available(owner):
-            return None
-    except Exception:  # noqa: BLE001 (a broken advisor must never block a turn)
+
+        return bool(decision_advisor.available(owner))
+    except Exception:  # noqa: BLE001 (a missing or broken advisor must never block a turn)
+        return False
+
+
+def _advisor_line(roles: dict[str, Any]) -> str | None:
+    """The line telling the lead to ask the Decision-1 advisor first, when the flag is set.
+
+    The server decides availability when it builds the roles; this only reads the flag, because
+    a terminal-mode host renders the notice with no AE_DECISION_* settings.
+    """
+    if roles.get("advisor") is not True:
         return None
     return (
         "Before picking, call advise_preset with a one-line neutral summary of the task (no "
