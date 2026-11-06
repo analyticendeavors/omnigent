@@ -33,7 +33,7 @@ const calls = (method: string, tail = "") =>
     );
 
 /** What the next GET answers; the test moves it like the server would. */
-const server = { phase: null as string | null, failure: null as unknown };
+const server = { phase: null as string | null, failure: null as unknown, seenFails: false };
 
 async function tick(ms = 0) {
   await act(async () => {
@@ -45,10 +45,16 @@ beforeEach(() => {
   vi.useFakeTimers();
   server.phase = null;
   server.failure = null;
+  server.seenFails = false;
+  window.localStorage.clear();
   vi.mocked(authenticatedFetch).mockReset();
   vi.mocked(showToast).mockReset();
   vi.mocked(authenticatedFetch).mockImplementation((_input, init) => {
-    if (init?.method === "POST" && String(_input).endsWith("/seen")) return json({ ok: true });
+    if (init?.method === "POST" && String(_input).endsWith("/seen")) {
+      if (server.seenFails) return Promise.reject(new Error("offline"));
+      server.failure = null; // the server forgets a failure once it is acknowledged
+      return json({ ok: true });
+    }
     if (init?.method === "POST") return json({ session_id: ID, phase: "queued" }, 202);
     if (init?.method === "DELETE") return json({ session_id: ID, phase: null });
     return json({ session_id: ID, phase: server.phase, failure: server.failure });
@@ -121,6 +127,32 @@ describe("aeCompactPlan (thin client)", () => {
     expect(showToast).toHaveBeenCalledWith("Compact cancelled: nope.");
     expect(calls("POST", "/seen")).toHaveLength(1);
     expect(JSON.parse(String(calls("POST", "/seen")[0]![1]?.body))).toEqual({ failure_id: "f1" });
+  });
+
+  it("keeps polling and retries /seen until it lands, without toasting twice", async () => {
+    server.failure = { id: "f2", message: "Compact cancelled: later.", at: 1 };
+    server.seenFails = true;
+    const first = renderHook(() => useAeCompactPlan(ID));
+    await tick();
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(calls("POST", "/seen")).toHaveLength(1);
+    // A reload: the page starts over, but the toasted id survives in localStorage.
+    first.unmount();
+    resetAeCompactPlans();
+    renderHook(() => useAeCompactPlan(ID));
+    await tick();
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(calls("POST", "/seen")).toHaveLength(2);
+    // The poll goes on with no plan, and /seen is tried again; once it lands the poll stops.
+    await tick(AE_COMPACT_POLL_MS);
+    expect(calls("POST", "/seen")).toHaveLength(3);
+    server.seenFails = false;
+    await tick(AE_COMPACT_POLL_MS);
+    expect(calls("POST", "/seen")).toHaveLength(4);
+    const seen = calls("GET").length;
+    await tick(AE_COMPACT_POLL_MS * 3);
+    expect(calls("GET").length).toBeLessThanOrEqual(seen + 1);
+    expect(showToast).toHaveBeenCalledTimes(1);
   });
 
   it("cancel DELETEs and the phase becomes null; a 409 keeps compacting", async () => {

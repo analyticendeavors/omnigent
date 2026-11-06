@@ -16,6 +16,8 @@ export const AE_COMPACT_POLL_MS = 1500;
 
 interface Entry {
   phase: AeCompactPhase | null;
+  /** The server still holds a failure for this chat, so the poll goes on until /seen lands. */
+  failureOpen: boolean;
   refs: number;
   timer: ReturnType<typeof setInterval> | null;
   toasted: Set<string>;
@@ -31,12 +33,43 @@ interface Failure {
 
 const entries = new Map<string, Entry>();
 
+const TOASTED_KEY = "ae.compact.toasted";
+const TOASTED_KEEP = 20;
+
+/** Failure ids already toasted in this browser, so a reload does not toast one twice. */
+function readToasted(): string[] {
+  try {
+    const raw = window.localStorage.getItem(TOASTED_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberToasted(id: string): void {
+  try {
+    const ids = [...readToasted().filter((v) => v !== id), id].slice(-TOASTED_KEEP);
+    window.localStorage.setItem(TOASTED_KEY, JSON.stringify(ids));
+  } catch {
+    // The page works without it; the in-memory set still stops a repeat within this load.
+  }
+}
+
 const url = (id: string, tail = "") => `/v1/ae/sessions/${encodeURIComponent(id)}/compact${tail}`;
 
 function entryFor(id: string): Entry {
   let entry = entries.get(id);
   if (!entry) {
-    entry = { phase: null, refs: 0, timer: null, toasted: new Set(), rev: 0, listeners: new Set() };
+    entry = {
+      phase: null,
+      failureOpen: false,
+      refs: 0,
+      timer: null,
+      toasted: new Set(),
+      rev: 0,
+      listeners: new Set(),
+    };
     entries.set(id, entry);
   }
   return entry;
@@ -52,7 +85,7 @@ function setPhase(id: string, phase: AeCompactPhase | null): void {
 
 function syncTimer(id: string): void {
   const entry = entryFor(id);
-  const wanted = entry.phase !== null && entry.refs > 0;
+  const wanted = (entry.phase !== null || entry.failureOpen) && entry.refs > 0;
   if (wanted && entry.timer === null) {
     entry.timer = setInterval(() => void refresh(id), AE_COMPACT_POLL_MS);
   } else if (!wanted && entry.timer !== null) {
@@ -81,17 +114,23 @@ async function refresh(id: string): Promise<void> {
     return;
   }
   if (entryFor(id).rev !== rev) return;
+  const failure = body.failure ?? null;
+  entryFor(id).failureOpen = failure !== null;
   setPhase(id, body.phase ?? null);
-  const failure = body.failure;
-  if (failure && !entryFor(id).toasted.has(failure.id)) {
-    entryFor(id).toasted.add(failure.id);
+  syncTimer(id);
+  if (!failure) return;
+  const entry = entryFor(id);
+  if (!entry.toasted.has(failure.id) && !readToasted().includes(failure.id)) {
     showToast(failure.message);
-    authenticatedFetch(url(id, "/seen"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ failure_id: failure.id }),
-    }).catch(() => undefined);
   }
+  entry.toasted.add(failure.id);
+  rememberToasted(failure.id);
+  // Until /seen lands the server keeps the failure, so every poll tries again.
+  authenticatedFetch(url(id, "/seen"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ failure_id: failure.id }),
+  }).catch(() => undefined);
 }
 
 /** The phase a 409 names in its error body, if any. */
