@@ -1,350 +1,177 @@
-// Queued compact (omnigent-ae). Clicking Compact never compacts on the spot: it queues a
-// plan for the open chat. At a safe point (no turn running and nothing queued) the chat
-// gets one normal turn that asks it to save what is worth keeping, and only when that turn
-// ends does the compact event go out. The plan lives in the page: a reload forgets it, and
-// nothing compacts by accident.
-//
-// Background shells do not hold a plan back (2026-11-01). A shell outlives the turn that
-// started it and survives /compact, and the server reports a turn that ends with a shell still
-// running as `idle` with a shell count that stays sticky until the next turn ends, so a lead chat
-// with a CI wait running kept its Compact queued forever.
-//
-// The prepare turn is the one that carries the prepare message. Another turn (a shell's task
-// notification, a scheduled prompt, a sub-agent hand-back) can run while that message is still in
-// flight or buffered by the runner, so nothing counts until the prepare message itself is in the
-// transcript (2026-11-01).
-//
-// The driver is module level, not a component effect, so folding the rail or losing the
-// dock card never drops a queued compact.
+// Queued compact (omnigent-ae), the page's side. The plan lives on the server, which saves the
+// chat's notes at the end of a real turn and then compacts, so it survives leaving the chat, a
+// reload, closing the tab and a deploy. This file only asks the server to queue or cancel, and
+// polls the plan's phase while one exists. The driver is
+// packages/ae_omni_policies/src/ae_omni_policies/compact_queue.py.
 
-import { useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import { showToast } from "@/components/ui/toast";
-import { useChatStore } from "@/store/chatStore";
+import { authenticatedFetch } from "@/lib/identity";
+import { apiErrorFromResponse } from "@/lib/sessionsApi";
 
 export type AeCompactPhase = "queued" | "preparing" | "compacting";
 
-/** The text the chat gets at the safe point. */
-export const AE_COMPACT_PREP_TEXT =
-  "Compaction runs right after this turn. Save anything worth keeping to memory or a handoff note now: " +
-  "decisions and why, open work, file paths, what to do next. Start no new work and do not compact yourself. " +
-  "Reply with one line, 'ready', when you are done.";
+/** How often the page asks the server for the phase while a plan exists. */
+export const AE_COMPACT_POLL_MS = 1500;
 
-/** The chat must stay idle this long before a step goes ahead (turns hand off to queued work). */
-export const AE_COMPACT_STABLE_MS = 2000;
-/** The prepare turn never started within this long: give up, compact nothing. */
-export const AE_COMPACT_START_LIMIT_MS = 30_000;
-/** The prepare turn never finished within this long: give up, compact nothing. */
-export const AE_COMPACT_PREP_LIMIT_MS = 15 * 60_000;
-
-interface Plan {
-  phase: AeCompactPhase;
-  /** Any turn ran after the prepare message went out: only the 30 s start timer reads it. */
-  sawRunning: boolean;
-  /** The session ran while the prepare message was in the transcript: the prepare turn. */
-  sawTurn: boolean;
-  /**
-   * The prepare messages the transcript already held at send time (an earlier compact's), by
-   * object and by server item id: neither is this plan's anchor.
-   */
-  seenBlocks: WeakSet<object>;
-  seenItems: Set<string>;
-  /**
-   * The newest block at send time, and the newest server item id: the anchor must follow them,
-   * so an older prepare message loaded by scrolling back is never taken for this plan's.
-   */
-  sendTail: object | null;
-  sendTailItem: string | null;
-  stableTimer: ReturnType<typeof setTimeout> | null;
-  limitTimer: ReturnType<typeof setTimeout> | null;
-  startTimer: ReturnType<typeof setTimeout> | null;
-  onCompacted?: () => void;
+interface Entry {
+  phase: AeCompactPhase | null;
+  refs: number;
+  timer: ReturnType<typeof setInterval> | null;
+  toasted: Set<string>;
+  /** Bumped by the page's own POST and DELETE, so a GET started before them cannot undo them. */
+  rev: number;
+  listeners: Set<() => void>;
 }
 
-const plans = new Map<string, Plan>();
-const listeners = new Set<() => void>();
-let unsubscribe: (() => void) | null = null;
-
-function emit() {
-  for (const listener of listeners) listener();
+interface Failure {
+  id: string;
+  message: string;
 }
 
-type StoreState = ReturnType<typeof useChatStore.getState>;
+const entries = new Map<string, Entry>();
 
-/**
- * A turn end: no turn streaming or running, nothing queued for this chat. Background shells are
- * not looked at: they outlive turns, survive /compact, and their count on an `idle` status stays
- * sticky until the next turn ends. `waiting` counts as idle for parity with the store's message
- * queue (`maybeFlushQueuedHead`), which treats it as free to take a turn.
- */
-function safeNow(s: StoreState, conversationId: string): boolean {
-  if (s.status === "streaming") return false;
-  if (s.sessionStatus !== "idle" && s.sessionStatus !== "waiting") return false;
-  return !s.queuedMessages.some((m) => m.conversationId === conversationId);
-}
+const url = (id: string, tail = "") => `/v1/ae/sessions/${encodeURIComponent(id)}/compact${tail}`;
 
-/** A block with no content is not a prepare message. */
-function isPrepareMessage(b: StoreState["blocks"][number]): boolean {
-  return (
-    b.type === "user_message" &&
-    JSON.stringify(b.content ?? null).includes(AE_COMPACT_PREP_TEXT.slice(0, 40))
-  );
-}
-
-/**
- * Where the transcript stood at send time: the index of the send-time tail, found by object or
- * by server item id so a rehydrate keeps it, or -1 when neither is there (an empty or replaced
- * transcript, where only the send-time exclusions apply).
- */
-function sendBoundary(blocks: StoreState["blocks"], plan: Plan): number {
-  if (!plan.sendTail && !plan.sendTailItem) return -1;
-  for (let index = blocks.length - 1; index >= 0; index--) {
-    const b = blocks[index]!;
-    if (b === plan.sendTail) return index;
-    if (plan.sendTailItem && b.ctx.itemId === plan.sendTailItem) return index;
+function entryFor(id: string): Entry {
+  let entry = entries.get(id);
+  if (!entry) {
+    entry = { phase: null, refs: 0, timer: null, toasted: new Set(), rev: 0, listeners: new Set() };
+    entries.set(id, entry);
   }
-  return -1;
+  return entry;
 }
 
-/**
- * Where this plan's prepare message sits in the transcript, or -1 while it is not there yet. It
- * lands only once the runner consumed it (`session_input_consumed`), and keeps its server item id
- * however history loads or shrinks; a prepare message that was there at send time is not it.
- */
-function prepareAnchor(blocks: StoreState["blocks"], plan: Plan): number {
-  const boundary = sendBoundary(blocks, plan);
-  for (let index = blocks.length - 1; index > boundary; index--) {
-    const b = blocks[index]!;
-    if (!isPrepareMessage(b) || plan.seenBlocks.has(b)) continue;
-    if (b.ctx.itemId && plan.seenItems.has(b.ctx.itemId)) continue;
-    return index;
+function setPhase(id: string, phase: AeCompactPhase | null): void {
+  const entry = entryFor(id);
+  if (entry.phase === phase) return;
+  entry.phase = phase;
+  for (const listener of entry.listeners) listener();
+  syncTimer(id);
+}
+
+function syncTimer(id: string): void {
+  const entry = entryFor(id);
+  const wanted = entry.phase !== null && entry.refs > 0;
+  if (wanted && entry.timer === null) {
+    entry.timer = setInterval(() => void refresh(id), AE_COMPACT_POLL_MS);
+  } else if (!wanted && entry.timer !== null) {
+    clearInterval(entry.timer);
+    entry.timer = null;
   }
-  return -1;
 }
 
-function clearTimers(plan: Plan) {
-  if (plan.stableTimer) clearTimeout(plan.stableTimer);
-  if (plan.limitTimer) clearTimeout(plan.limitTimer);
-  if (plan.startTimer) clearTimeout(plan.startTimer);
-  plan.stableTimer = null;
-  plan.limitTimer = null;
-  plan.startTimer = null;
-}
-
-function finish(conversationId: string) {
-  const plan = plans.get(conversationId);
-  if (!plan) return;
-  clearTimers(plan);
-  plans.delete(conversationId);
-  if (plans.size === 0 && unsubscribe) {
-    unsubscribe();
-    unsubscribe = null;
+async function refresh(id: string): Promise<void> {
+  const rev = entryFor(id).rev;
+  let res: Response;
+  try {
+    res = await authenticatedFetch(url(id));
+  } catch {
+    return; // keep the last phase and keep polling
   }
-  emit();
+  if (res.status === 403 || res.status === 404) {
+    if (entryFor(id).rev === rev) setPhase(id, null);
+    return;
+  }
+  if (!res.ok) return;
+  let body: { phase?: AeCompactPhase | null; failure?: Failure | null };
+  try {
+    body = (await res.json()) as typeof body;
+  } catch {
+    return;
+  }
+  if (entryFor(id).rev !== rev) return;
+  setPhase(id, body.phase ?? null);
+  const failure = body.failure;
+  if (failure && !entryFor(id).toasted.has(failure.id)) {
+    entryFor(id).toasted.add(failure.id);
+    showToast(failure.message);
+    authenticatedFetch(url(id, "/seen"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ failure_id: failure.id }),
+    }).catch(() => undefined);
+  }
 }
 
-function fail(conversationId: string, message: string) {
-  finish(conversationId);
-  showToast(message);
+/** The phase a 409 names in its error body, if any. */
+async function phaseOfConflict(res: Response): Promise<AeCompactPhase | null> {
+  try {
+    const body = (await res.clone().json()) as { error?: { phase?: AeCompactPhase } };
+    return body.error?.phase ?? null;
+  } catch {
+    return null;
+  }
 }
 
-function reason(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-async function advance(conversationId: string) {
-  const plan = plans.get(conversationId);
-  if (!plan) return;
-  const store = useChatStore.getState();
-  if (store.conversationId !== conversationId || !safeNow(store, conversationId)) return;
-  if (plan.phase === "queued") {
-    const agentId = store.boundAgentId;
-    if (agentId === null) {
-      fail(conversationId, "Compact cancelled: this chat has no agent to ask to save its notes.");
+/** Queue a compact for the chat on the server. Rejects with the server's reason. */
+export async function startAeCompactPlan(
+  conversationId: string,
+  options?: { snooze?: boolean },
+): Promise<void> {
+  const res = await authenticatedFetch(url(conversationId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ snooze: Boolean(options?.snooze) }),
+  });
+  entryFor(conversationId).rev += 1;
+  if (res.ok) {
+    setPhase(conversationId, "queued");
+    return;
+  }
+  if (res.status === 409) {
+    const phase = await phaseOfConflict(res);
+    if (phase) {
+      setPhase(conversationId, phase);
       return;
     }
-    plan.phase = "preparing";
-    plan.sawRunning = false;
-    plan.sawTurn = false;
-    // Both timers are armed first, so a plan can never sit in "preparing" with nothing to end it.
-    plan.limitTimer = setTimeout(
-      () => fail(conversationId, "Compact cancelled: the chat took too long to save its notes."),
-      AE_COMPACT_PREP_LIMIT_MS,
-    );
-    // Only the server reporting the session running proves a turn started; a busy blip from the
-    // send latch, a background shell or a queued message does not. Any turn keeps the plan alive
-    // here (the prepare message may wait behind it); the 15 minute limit ends a plan whose
-    // prepare turn never comes.
-    plan.startTimer = setTimeout(() => {
-      plan.startTimer = null;
-      if (!plan.sawRunning && !plan.sawTurn) {
-        fail(conversationId, "Compact cancelled: the chat never started saving its notes.");
-      }
-    }, AE_COMPACT_START_LIMIT_MS);
-    plan.sendTail = store.blocks.at(-1) ?? null;
-    plan.sendTailItem = null;
-    for (const b of store.blocks) {
-      if (b.ctx.itemId) plan.sendTailItem = b.ctx.itemId;
-      if (!isPrepareMessage(b)) continue;
-      plan.seenBlocks.add(b);
-      if (b.ctx.itemId) plan.seenItems.add(b.ctx.itemId);
-    }
-    emit();
-    try {
-      await store.send(AE_COMPACT_PREP_TEXT, agentId, undefined, {
-        onError: (error: unknown) => {
-          if (plans.get(conversationId) === plan) {
-            fail(
-              conversationId,
-              `Compact cancelled: could not ask the chat to save its notes (${reason(error)}).`,
-            );
-          }
-        },
-      });
-    } catch (error) {
-      if (plans.get(conversationId) === plan) {
-        fail(
-          conversationId,
-          `Compact cancelled: could not ask the chat to save its notes (${reason(error)}).`,
-        );
-      }
-    }
+  }
+  throw await apiErrorFromResponse(res);
+}
+
+/** Cancel the chat's queued compact. Once the compact is going out it cannot be cancelled. */
+export async function cancelAeCompactPlan(conversationId: string): Promise<void> {
+  const res = await authenticatedFetch(url(conversationId), { method: "DELETE" });
+  entryFor(conversationId).rev += 1;
+  if (res.ok) {
+    setPhase(conversationId, null);
     return;
   }
-  if (plan.phase !== "preparing") return;
-  const anchor = prepareAnchor(store.blocks, plan);
-  if (anchor < 0) return;
-  // The prepare turn was not seen running with its message in place. A message that lands only
-  // after its own turn's idle edge (a late consumed event or snapshot merge) still counts once a
-  // turn ran and a completed response follows it; otherwise keep waiting, and the start timer and
-  // the 15 minute limit end it.
-  if (
-    !plan.sawTurn &&
-    !(
-      plan.sawRunning &&
-      store.blocks
-        .slice(anchor + 1)
-        .some((b) => b.type === "response_end" && b.status === "completed")
-    )
-  )
-    return;
-  // A turn that failed, was cancelled, or raised an error did not finish saving: compact nothing.
-  const failed = store.blocks
-    .slice(anchor + 1)
-    .some(
-      (b) =>
-        (b.type === "response_end" && b.status !== "completed") ||
-        (b.type === "error" && b.level !== "info"),
-    );
-  if (failed) {
-    fail(
-      conversationId,
-      "Compact cancelled: the chat did not finish saving its notes cleanly, so nothing was compacted.",
-    );
+  if (res.status === 409) {
+    setPhase(conversationId, "compacting");
     return;
   }
-  plan.phase = "compacting";
-  if (plan.limitTimer) clearTimeout(plan.limitTimer);
-  plan.limitTimer = null;
-  emit();
-  try {
-    // A shell that finishes between the quiet window and this call wakes the chat into a new
-    // turn; Claude Code queues the typed /compact and runs it after that turn.
-    await store.compact();
-    const done = plan.onCompacted;
-    finish(conversationId);
-    done?.();
-  } catch (error) {
-    fail(
-      conversationId,
-      `Could not compact the session (${reason(error)}). Try again, or send /compact from the composer.`,
-    );
-  }
+  throw await apiErrorFromResponse(res);
 }
 
-function schedule(conversationId: string, plan: Plan) {
-  if (plan.stableTimer) clearTimeout(plan.stableTimer);
-  plan.stableTimer = setTimeout(() => {
-    plan.stableTimer = null;
-    advance(conversationId).catch((error: unknown) => {
-      if (plans.get(conversationId) === plan && plan.phase !== "compacting") {
-        fail(conversationId, `Compact cancelled: something went wrong (${reason(error)}).`);
-      }
-    });
-  }, AE_COMPACT_STABLE_MS);
-}
-
-/** Runs on every store change: re-arms the quiet timer at a turn end, cancels it while busy. */
-function onStore() {
-  const store = useChatStore.getState();
-  for (const [conversationId, plan] of [...plans]) {
-    if (plan.phase === "compacting") continue;
-    if (store.conversationId !== conversationId) {
-      fail(conversationId, "Compact cancelled: you left the chat before it ran.");
-      continue;
-    }
-    // The prepare turn is the session running while this plan's prepare message is in the
-    // transcript: a turn that ran and ended before the message landed was some other turn.
-    if (plan.phase === "preparing" && !plan.sawTurn && store.sessionStatus === "running") {
-      plan.sawRunning = true;
-      if (prepareAnchor(store.blocks, plan) >= 0) {
-        plan.sawTurn = true;
-        if (plan.startTimer) clearTimeout(plan.startTimer);
-        plan.startTimer = null;
-      }
-    }
-    if (safeNow(store, conversationId)) {
-      if (!plan.stableTimer) schedule(conversationId, plan);
-    } else {
-      if (plan.stableTimer) clearTimeout(plan.stableTimer);
-      plan.stableTimer = null;
-    }
-  }
-}
-
-/** Queue a compact for the chat. A chat that already has one queued is left alone. */
-export function startAeCompactPlan(conversationId: string, onCompacted?: () => void): void {
-  if (plans.has(conversationId)) return;
-  const plan: Plan = {
-    phase: "queued",
-    sawRunning: false,
-    sawTurn: false,
-    seenBlocks: new WeakSet(),
-    seenItems: new Set(),
-    sendTail: null,
-    sendTailItem: null,
-    stableTimer: null,
-    limitTimer: null,
-    startTimer: null,
-    onCompacted,
-  };
-  plans.set(conversationId, plan);
-  unsubscribe ??= useChatStore.subscribe(onStore);
-  emit();
-  onStore();
-}
-
-/** Cancel a plan before it compacts. Once the compact event is going out it cannot be stopped. */
-export function cancelAeCompactPlan(conversationId: string): void {
-  const plan = plans.get(conversationId);
-  if (!plan || plan.phase === "compacting") return;
-  finish(conversationId);
-}
-
-/** Where the chat's plan stands, or `null` when none is queued. */
-export function useAeCompactPlan(conversationId: string | null | undefined): AeCompactPhase | null {
-  return useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener);
+/** The chat's compact phase, or null when none is queued. */
+export function useAeCompactPlan(conversationId: string | null): AeCompactPhase | null {
+  // A stable subscribe: React resubscribes whenever it changes, and each subscribe may fetch.
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      if (!conversationId) return () => undefined;
+      const entry = entryFor(conversationId);
+      entry.listeners.add(listener);
+      entry.refs += 1;
+      if (entry.refs === 1) void refresh(conversationId);
+      syncTimer(conversationId);
       return () => {
-        listeners.delete(listener);
+        entry.listeners.delete(listener);
+        entry.refs -= 1;
+        syncTimer(conversationId);
       };
     },
-    () => (conversationId ? (plans.get(conversationId)?.phase ?? null) : null),
-    () => null,
+    [conversationId],
+  );
+  return useSyncExternalStore(subscribe, () =>
+    conversationId ? (entries.get(conversationId)?.phase ?? null) : null,
   );
 }
 
-/** Test helper: drop every plan without a toast. */
+/** Forget every plan and stop every poll (tests). */
 export function resetAeCompactPlans(): void {
-  for (const id of [...plans.keys()]) finish(id);
+  for (const entry of entries.values()) {
+    if (entry.timer !== null) clearInterval(entry.timer);
+  }
+  entries.clear();
 }

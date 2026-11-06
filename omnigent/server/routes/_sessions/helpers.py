@@ -102,7 +102,13 @@ from omnigent.runtime import (
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.runtime.policies.engine import PolicyEngine
 from omnigent.runtime.tool_output import cap_tool_output
-from omnigent.server import ae_family_prompts, presence, session_live_state, shutdown_state
+from omnigent.server import (
+    ae_family_prompts,
+    ae_turn_edges,
+    presence,
+    session_live_state,
+    shutdown_state,
+)
 from omnigent.server._elicitation_registry import (
     _harness_elicitation_owners,
     _harness_parked_elicitations,
@@ -4919,6 +4925,7 @@ def _publish_status(
     :param failure_context: Untrusted optional native evidence, normalized at
         the failure-log boundary. Malformed values cannot reject the status edge.
     """
+    ae_turn_edges.notify_turn_edge(session_id, status, response_id=response_id)
     # ``failed`` is sticky against a trailing ``idle``. A turn error is
     # terminal — it must not be silently downgraded to ``idle`` by a
     # follow-on quiescence signal. This matters for claude-native: the
@@ -5463,6 +5470,7 @@ def _publish_interrupted(session_id: str, response_id: str | None = None) -> Non
     :param response_id: Optional response id for terminal-backed
         interrupted turns, e.g. ``"codex_turn_abc123"``.
     """
+    ae_turn_edges.notify_turn_edge(session_id, "interrupted", response_id=response_id)
     event = SessionInterruptedEvent(
         type="session.interrupted",
         data=SessionInterruptedPayload(

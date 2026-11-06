@@ -1062,8 +1062,27 @@ describe("the Compact card", () => {
   const snoozeCalls = () =>
     vi.mocked(authenticatedFetch).mock.calls.filter(([u]) => String(u).endsWith("/handoff/snooze"));
 
+  // The compact routes keep a phase the way the server does; every other call answers ok.
+  const serveCompact = () => {
+    let phase: string | null = null;
+    vi.mocked(authenticatedFetch).mockImplementation(
+      (input: URL | RequestInfo, init?: RequestInit) => {
+        if (!String(input).endsWith("/compact")) return json({ ok: true });
+        if (init?.method === "POST") {
+          phase = "queued";
+          return json({ session_id: "s1", phase }, 202);
+        }
+        if (init?.method === "DELETE") {
+          phase = null;
+          return json({ session_id: "s1", phase });
+        }
+        return json({ session_id: "s1", phase, failure: null });
+      },
+    );
+  };
+
   beforeEach(() => {
-    vi.mocked(authenticatedFetch).mockImplementation(() => json({ ok: true }));
+    serveCompact();
   });
 
   afterEach(() => {
@@ -1128,11 +1147,7 @@ describe("the Compact card", () => {
     expect(view.container.querySelector("[data-testid=ae-dock-compact]")).toBeNull();
   });
 
-  it("Compact asks twice, queues a compact for the open chat, then snoozes once it ran", async () => {
-    let ran: (() => void) | undefined;
-    vi.mocked(startAeCompactPlan).mockImplementationOnce((_id, done) => {
-      ran = done;
-    });
+  it("Compact asks twice and queues a compact with snooze for the card's chat", async () => {
     renderDock([], [], SUGGEST);
     const button = await screen.findByTestId("ae-dock-compact");
     fireEvent.click(button);
@@ -1140,12 +1155,10 @@ describe("the Compact card", () => {
     expect(startAeCompactPlan).not.toHaveBeenCalled();
     fireEvent.click(button);
     expect(startAeCompactPlan).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(startAeCompactPlan).mock.calls[0]![0]).toBe("s1");
-    // Queued is not compacted: nothing is snoozed until the compact went out.
+    expect(vi.mocked(startAeCompactPlan).mock.calls[0]).toEqual(["s1", { snooze: true }]);
+    // The server snoozes after it compacted: the page never posts a snooze for Compact.
+    await waitFor(() => expect(button.textContent).toBe("Cancel compact"));
     expect(snoozeCalls()).toHaveLength(0);
-    ran?.();
-    await waitFor(() => expect(snoozeCalls()).toHaveLength(1));
-    expect(String(snoozeCalls()[0]![0])).toBe("/v1/ae/sessions/s1/handoff/snooze");
   });
 
   it("a queued Compact shows Cancel, and a click cancels it", async () => {
@@ -1200,49 +1213,21 @@ describe("the Compact card", () => {
     }
   });
 
-  it("does not toast when the snooze after Compact gets a 409", async () => {
-    vi.mocked(authenticatedFetch).mockImplementation(() =>
-      json({ error: { message: "this chat already handed off" } }, 409),
+  it("shows the server's refusal under the Compact button", async () => {
+    vi.mocked(authenticatedFetch).mockImplementation(
+      (input: URL | RequestInfo, init?: RequestInit) =>
+        String(input).endsWith("/compact") && init?.method === "POST"
+          ? json(
+              { error: { code: "ae_compact_unsupported", message: "Send /compact instead." } },
+              422,
+            )
+          : json({ phase: null, failure: null }),
     );
-    const seen: unknown[] = [];
-    const listen = (event: Event) => seen.push((event as CustomEvent).detail.content);
-    window.addEventListener("omnigent:toast", listen);
-    try {
-      vi.mocked(startAeCompactPlan).mockImplementationOnce((_id, done) => done?.());
-      renderDock([], [], SUGGEST);
-      const button = await screen.findByTestId("ae-dock-compact");
-      fireEvent.click(button);
-      fireEvent.click(button);
-      await waitFor(() => expect(snoozeCalls()).toHaveLength(1));
-      await act(async () => {
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, 20);
-        });
-      });
-      expect(seen).toEqual([]);
-    } finally {
-      window.removeEventListener("omnigent:toast", listen);
-    }
-  });
-
-  it("toasts when the snooze after Compact fails some other way", async () => {
-    vi.mocked(authenticatedFetch).mockImplementation(() =>
-      json({ error: { message: "only the owner" } }, 403),
-    );
-    const seen: unknown[] = [];
-    const listen = (event: Event) => seen.push((event as CustomEvent).detail.content);
-    window.addEventListener("omnigent:toast", listen);
-    try {
-      vi.mocked(startAeCompactPlan).mockImplementationOnce((_id, done) => done?.());
-      renderDock([], [], SUGGEST);
-      const button = await screen.findByTestId("ae-dock-compact");
-      fireEvent.click(button);
-      fireEvent.click(button);
-      await waitFor(() => expect(seen).toHaveLength(1));
-      expect(String(seen[0])).toContain("could not be snoozed");
-    } finally {
-      window.removeEventListener("omnigent:toast", listen);
-    }
+    renderDock([], [], SUGGEST);
+    const button = await screen.findByTestId("ae-dock-compact");
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect((await screen.findByRole("alert")).textContent).toBe("Send /compact instead.");
   });
 
   it("tells the viewer when Not now is refused", async () => {

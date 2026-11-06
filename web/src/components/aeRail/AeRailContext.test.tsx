@@ -259,6 +259,15 @@ describe("Compact session", () => {
 
   it("asks once, then queues the compact on the second click, and a third cancels it", async () => {
     const compact = vi.fn(() => Promise.resolve());
+    let phase: string | null = null;
+    vi.mocked(authenticatedFetch).mockImplementation(
+      (input: URL | RequestInfo, init?: RequestInit) => {
+        if (!String(input).endsWith("/compact")) return json(snapshotNow());
+        if (init?.method === "POST") phase = "queued";
+        if (init?.method === "DELETE") phase = null;
+        return json({ phase, failure: null }, init?.method === "POST" ? 202 : 200);
+      },
+    );
     setSession("claude-native", { compact });
     render(<AeRailContext sessionId={sessionId} />);
     const button = await screen.findByTestId("ae-rail-compact");

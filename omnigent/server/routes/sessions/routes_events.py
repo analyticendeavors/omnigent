@@ -68,7 +68,7 @@ from omnigent.runtime import (
 )
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.runtime.policies.approval import _ELICITATION_MODE
-from omnigent.server import presence
+from omnigent.server import ae_turn_edges, presence
 from omnigent.server._elicitation_registry import (
     _harness_elicitation_owners,
     _harness_elicitation_registry,
@@ -1550,6 +1550,7 @@ def register_events_routes(
         if body.type == _STOP_SESSION_TYPE:
             # Fence the cancelled turn, same as interrupt.
             _interrupt_fenced_sessions.add(session_id)
+            ae_turn_edges.notify_turn_edge(session_id, "interrupted")
             # Harness-agnostic forward: the runner kills the external
             # process for harnesses that have one (claude-native
             # hard-kills its tmux pane) and 204s otherwise. Unlike the
@@ -2046,6 +2047,10 @@ def register_events_routes(
                 background_tasks=bg_tasks,
                 blocked_on=blocked_on,
             )
+            if status == "idle" and data.get("turn_completed") is True:
+                ae_turn_edges.notify_turn_edge(
+                    session_id, "idle", response_id=response_id, turn_completed=True
+                )
             await note_claude_subagent_status(conv, status, conversation_store)
             if (
                 conv.parent_conversation_id is not None

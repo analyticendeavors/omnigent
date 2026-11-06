@@ -4,16 +4,16 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { showToast } from "@/components/ui/toast";
-import { aeSnoozeFailureIsQuiet, postAeHandoffSnooze } from "@/lib/aeCompactSuggestion";
 import { cancelAeCompactPlan, startAeCompactPlan, useAeCompactPlan } from "@/lib/aeCompactPlan";
 import { useChatStore } from "@/store/chatStore";
 
+const reason = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
 /**
- * Two clicks within three seconds queue a compact. It never runs on the spot: at a safe
- * point the chat first saves what is worth keeping, then compacts (see aeCompactPlan.ts).
- * A queued compact shows Cancel. With `sessionId` (the dock card) it first checks the chat
- * open in the store is that session, and snoozes the suggestion once the compact went out.
+ * Two clicks within three seconds queue a compact. It never runs on the spot: the server
+ * waits for the end of a real turn, has the chat save what is worth keeping, then compacts
+ * (see aeCompactPlan.ts), whether or not this chat stays open. A queued compact shows Cancel.
+ * With `sessionId` (the dock card) the server also snoozes the suggestion once it compacted.
  */
 export function AeCompactButton({
   sessionId,
@@ -35,7 +35,7 @@ export function AeCompactButton({
   }, [confirming]);
   const onClick = () => {
     if (plan === "queued" || plan === "preparing") {
-      if (targetId) cancelAeCompactPlan(targetId);
+      if (targetId) cancelAeCompactPlan(targetId).catch((e: unknown) => setError(reason(e)));
       return;
     }
     if (plan === "compacting") return;
@@ -45,24 +45,9 @@ export function AeCompactButton({
       return;
     }
     setConfirming(false);
-    if (!openId || (sessionId && openId !== sessionId)) {
-      setError("This chat is not open here. Open it, then compact.");
-      return;
-    }
-    startAeCompactPlan(
-      openId,
-      sessionId
-        ? () => {
-            postAeHandoffSnooze(sessionId).catch((reason: unknown) => {
-              if (aeSnoozeFailureIsQuiet(reason)) return;
-              showToast(
-                `Compacting started, but the card could not be snoozed (${
-                  reason instanceof Error ? reason.message : String(reason)
-                }).`,
-              );
-            });
-          }
-        : undefined,
+    if (!targetId) return;
+    startAeCompactPlan(targetId, { snooze: Boolean(sessionId) }).catch((e: unknown) =>
+      setError(reason(e)),
     );
   };
   const label =
