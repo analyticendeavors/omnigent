@@ -57,10 +57,18 @@ describe("aeCompactSuggestion", () => {
     expect(aeCompactSuggestion(row)).toBeNull();
   });
 
-  it("falls back to the context label when the size is missing", () => {
-    const labels = { ...LEAD, "omnigent.last_context_tokens": "310000" } as Record<string, string>;
-    delete labels["ae.handoff_at"];
-    expect(aeCompactSuggestion({ labels })).toEqual({ tokens: 310000 });
+  it("prefers the live context label over the size at labelling", () => {
+    const labels = { ...LEAD, "omnigent.last_context_tokens": "734000" };
+    expect(aeCompactSuggestion({ labels })).toEqual({ tokens: 734000 });
+  });
+
+  it("falls back to ae.handoff_at when the live context label is missing", () => {
+    expect(aeCompactSuggestion({ labels: LEAD })).toEqual({ tokens: 370400 });
+  });
+
+  it("falls back to ae.handoff_at when the live context label is 0", () => {
+    const labels = { ...LEAD, "omnigent.last_context_tokens": "0" };
+    expect(aeCompactSuggestion({ labels })).toEqual({ tokens: 370400 });
   });
 
   it("words the line in thousands", () => {

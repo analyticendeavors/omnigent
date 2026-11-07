@@ -1,7 +1,9 @@
 // The Compact card's model (omnigent-ae, 2026-10-29): the server sweep
 // (lead_handoff.py) labels a top-level Claude chat `ae.handoff=suggest` once its
-// context passes the owner's "Suggest compacting at" size, with the size in
-// `ae.handoff_at`. The dock and the rail both read it from the cached session row.
+// context passes the owner's "Suggest compacting at" size. The card shows the chat's latest
+// context reading (`omnigent.last_context_tokens`), so it keeps up as the chat grows.
+// `ae.handoff_at` is only the size when the label was written (the server still uses it as
+// the snooze base), so it is the fallback. The dock and the rail both read the cached session row.
 // Pure, so the rules are unit-tested (aeCompactSuggestion.test.ts).
 
 import { authenticatedFetch } from "@/lib/identity";
@@ -61,7 +63,7 @@ export function aeCompactSuggestion(
 ): AeCompactSuggestion | null {
   if (!row || row.labels[AE_HANDOFF_KEY] !== "suggest" || !aeCompactEligible(row)) return null;
   const { labels } = row;
-  return { tokens: positive(labels[AE_HANDOFF_AT_KEY]) ?? positive(labels[CONTEXT_KEY]) ?? 0 };
+  return { tokens: positive(labels[CONTEXT_KEY]) ?? positive(labels[AE_HANDOFF_AT_KEY]) ?? 0 };
 }
 
 /** "370k": the size in thousands, rounded. */
