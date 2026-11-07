@@ -54,8 +54,8 @@ function share(permissions: ExtensionCatalogItem["permissions"] = ["navigation"]
 const image = (type = "image/jpeg", size = 10) =>
   new File([new Uint8Array(size)], "post.jpg", { type });
 
-function setNavigator(share: unknown, canShare?: unknown): void {
-  Object.defineProperty(navigator, "share", { value: share, configurable: true });
+function setNavigator(shareFn: unknown, canShare?: unknown): void {
+  Object.defineProperty(navigator, "share", { value: shareFn, configurable: true });
   Object.defineProperty(navigator, "canShare", { value: canShare, configurable: true });
 }
 
