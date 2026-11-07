@@ -266,7 +266,8 @@ export function defineExtension(lifecycle: ExtensionLifecycle): void {
         await request("navigation.openExternal", { url });
       },
       share(options: object) {
-        return request("navigation.share", options);
+        // One method, two typed shapes (a share, and a probe): the host answers each its own way.
+        return request<never>("navigation.share", options);
       },
     },
     theme: {
