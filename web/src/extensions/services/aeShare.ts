@@ -12,7 +12,7 @@ export const AE_SHARE_MAX_TEXT = 3000;
 export const AE_SHARE_MAX_TITLE = 200;
 /** The largest image, in bytes. */
 export const AE_SHARE_MAX_FILE_BYTES = 5 * 1024 * 1024;
-const FILE_TYPES = new Set(["image/jpeg", "image/png"]);
+export const AE_SHARE_FILE_TYPES: ReadonlySet<string> = new Set(["image/jpeg", "image/png"]);
 
 export interface AeShareResult {
   shared: true;
@@ -37,18 +37,28 @@ function textField(value: unknown, name: string, max: number): string | undefine
   return value;
 }
 
-/** The File to share: a Blob of an allowed type under the size cap, named for the sheet. */
+/**
+ * The File to share: a Blob of an allowed type under the size cap, always wrapped in a new File
+ * named image.jpg or image.png, so an extension cannot choose the file name the sheet shows.
+ */
 function fileFrom(value: unknown): File {
   if (!(value instanceof Blob)) throw invalid("files must hold a File or Blob");
-  if (!FILE_TYPES.has(value.type)) throw invalid("the image must be image/jpeg or image/png");
+  if (!AE_SHARE_FILE_TYPES.has(value.type)) throw invalid("the image must be image/jpeg or image/png");
   if (value.size > AE_SHARE_MAX_FILE_BYTES) throw invalid("the image is larger than 5 MB");
-  if (value instanceof File) return value;
   return new File([value], value.type === "image/png" ? "image.png" : "image.jpg", {
     type: value.type,
   });
 }
 
-export async function aeShare(params: Record<string, unknown>): Promise<AeShareResult> {
+/**
+ * `{probe: true}` asks whether a share sheet exists and shares nothing, so the card can choose
+ * between the sheet and a link inside the tap (a fallback after a failed share runs outside the
+ * tap, where iOS can refuse to open a link).
+ */
+export async function aeShare(
+  params: Record<string, unknown>,
+): Promise<AeShareResult | { available: boolean }> {
+  if (params.probe === true) return { available: typeof navigator.share === "function" };
   const text = textField(params.text, "text", AE_SHARE_MAX_TEXT);
   const title = textField(params.title, "title", AE_SHARE_MAX_TITLE);
   const rawFiles = params.files;

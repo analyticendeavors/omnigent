@@ -395,6 +395,46 @@ describe("ExtensionViewHost", () => {
     );
   });
 
+  it("gives navigation.share ten minutes, not ten seconds (omnigent-ae patch 0301)", async () => {
+    vi.useFakeTimers();
+    const pending = vi.fn(() => new Promise<void>(() => {}));
+    render(
+      <ExtensionViewHost
+        extension={extension}
+        page={page}
+        refresh={refresh}
+        methods={{ "navigation.share": pending }}
+      />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    act(() => {
+      FakeMessageChannel.latest!.port1.onmessage?.({
+        data: { ...identity, source: EXTENSION_RPC_SOURCE, type: "ready" },
+      } as MessageEvent<unknown>);
+      FakeMessageChannel.latest!.port1.onmessage?.({
+        data: {
+          ...identity,
+          source: EXTENSION_RPC_SOURCE,
+          type: "request",
+          requestId: "request-1",
+          method: "navigation.share",
+          params: {},
+        },
+      } as MessageEvent<unknown>);
+      vi.advanceTimersByTime(60_000);
+    });
+    const timedOut = (call: unknown[]) =>
+      (call[0] as { error?: { code?: string } }).error?.code === "RequestTimeout";
+    expect(FakeMessageChannel.latest!.port1.postMessage.mock.calls.some(timedOut)).toBe(false);
+    act(() => {
+      vi.advanceTimersByTime(10 * 60_000);
+    });
+    expect(FakeMessageChannel.latest!.port1.postMessage.mock.calls.some(timedOut)).toBe(true);
+  });
+
   it("does not let one failed extension prevent another from mounting", async () => {
     const healthy = { ...extension, id: "acme.healthy" };
     const healthyIdentity = { ...identity, extensionId: healthy.id };

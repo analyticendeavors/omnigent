@@ -77,7 +77,13 @@ describe("navigation.share", () => {
     await expect(
       share()?.({ text: "Hello", title: "T", files: [file] }, signal()),
     ).resolves.toEqual({ shared: true });
-    expect(sheet).toHaveBeenCalledWith({ text: "Hello", title: "T", files: [file] });
+    // Always a new File with a fixed name: an extension cannot choose what the sheet shows.
+    const sent = sheet.mock.calls[0][0] as ShareData;
+    expect(sent.text).toBe("Hello");
+    expect(sent.files).toHaveLength(1);
+    expect(sent.files?.[0]).not.toBe(file);
+    expect(sent.files?.[0].name).toBe("image.jpg");
+    expect(sent.files?.[0].type).toBe("image/jpeg");
   });
 
   it("shares the text alone and says the image was dropped when canShare refuses files", async () => {
@@ -118,6 +124,14 @@ describe("navigation.share", () => {
     const sheet = vi.fn().mockResolvedValue(undefined);
     setNavigator(sheet, () => true);
     await expect(share()?.(params, signal())).rejects.toMatchObject({ code: "InvalidParams" });
+    expect(sheet).not.toHaveBeenCalled();
+  });
+
+  it("answers a probe with whether there is a share sheet, and shares nothing", async () => {
+    await expect(share()?.({ probe: true }, signal())).resolves.toEqual({ available: false });
+    const sheet = vi.fn().mockResolvedValue(undefined);
+    setNavigator(sheet, () => true);
+    await expect(share()?.({ probe: true }, signal())).resolves.toEqual({ available: true });
     expect(sheet).not.toHaveBeenCalled();
   });
 

@@ -19,6 +19,9 @@ import { ExtensionHostServiceError } from "./services/errors";
 
 const ACTIVATION_TIMEOUT_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 10_000;
+// omnigent-ae patch: `navigation.share` stays pending while the share sheet is open, so it gets
+// its own long limit; at 10 s a share that took longer ended as a timeout though it went through.
+const SHARE_REQUEST_TIMEOUT_MS = 10 * 60_000;
 const MAX_PENDING_HOST_REQUESTS = 32;
 
 type HostMethod = (params: unknown, signal: AbortSignal) => unknown | Promise<unknown>;
@@ -220,7 +223,7 @@ export function ExtensionViewHost({
           ...response,
           error: { code: "RequestTimeout", message: "Host request timed out" },
         });
-      }, REQUEST_TIMEOUT_MS);
+      }, message.method === "navigation.share" ? SHARE_REQUEST_TIMEOUT_MS : REQUEST_TIMEOUT_MS);
       pendingRef.current.set(message.requestId, { controller, timeout: requestTimeout });
       void Promise.resolve()
         .then(() => method(message.params, controller.signal))

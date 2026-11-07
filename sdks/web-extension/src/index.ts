@@ -90,6 +90,8 @@ export interface ExtensionContext {
       title?: string;
       files?: Blob[];
     }): Promise<{ shared: true; files_dropped?: true }>;
+    /** Asks whether the browser has a share sheet; shares nothing. */
+    share(options: { probe: true }): Promise<{ available: boolean }>;
   };
   theme: {
     getCurrent(): Promise<ThemeInfo>;
@@ -225,7 +227,7 @@ export function defineExtension(lifecycle: ExtensionLifecycle): void {
         reject(
           new ExtensionApiError("Timeout", `Host method ${method} timed out`),
         );
-      }, 10_000);
+      }, method === "navigation.share" ? 10 * 60_000 : 10_000);
       pending.set(requestId, {
         resolve: (value) => resolve(value as T),
         reject,
@@ -263,8 +265,8 @@ export function defineExtension(lifecycle: ExtensionLifecycle): void {
       async openExternal(url) {
         await request("navigation.openExternal", { url });
       },
-      share(options) {
-        return request<{ shared: true; files_dropped?: true }>("navigation.share", options);
+      share(options: object) {
+        return request("navigation.share", options);
       },
     },
     theme: {

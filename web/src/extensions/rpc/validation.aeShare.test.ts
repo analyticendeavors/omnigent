@@ -44,6 +44,17 @@ describe("navigation.share files", () => {
     ).toBe(false);
   });
 
+  it("refuses a Blob over 5 MB or of a type other than jpeg or png", () => {
+    const big = new Blob([new Uint8Array(5 * 1024 * 1024 + 1)], { type: "image/jpeg" });
+    const gif = new Blob([new Uint8Array(10)], { type: "image/gif" });
+    const png = new Blob([new Uint8Array(10)], { type: "image/png" });
+    const check = (file: Blob) =>
+      isExtensionInboundMessage(request("navigation.share", { text: "a", files: [file] }), identity);
+    expect(check(big)).toBe(false);
+    expect(check(gif)).toBe(false);
+    expect(check(png)).toBe(true);
+  });
+
   it("holds the rest of the share request to the usual budget", () => {
     expect(
       isExtensionInboundMessage(

@@ -1,3 +1,4 @@
+import { AE_SHARE_FILE_TYPES, AE_SHARE_MAX_FILE_BYTES } from "../services/aeShare";
 import {
   EXTENSION_RPC_SOURCE,
   MAX_EXTENSION_MESSAGE_BYTES,
@@ -72,7 +73,15 @@ function isRequestWithinBudget(message: Record<string, unknown>): boolean {
     typeof params === "object" &&
     Array.isArray(params.files)
   ) {
-    if (params.files.length > 1 || !params.files.every((file) => file instanceof Blob)) {
+    if (
+      params.files.length > 1 ||
+      !params.files.every(
+        (file) =>
+          file instanceof Blob &&
+          file.size <= AE_SHARE_MAX_FILE_BYTES &&
+          AE_SHARE_FILE_TYPES.has(file.type),
+      )
+    ) {
       return false;
     }
     return isExtensionPayloadWithinBudget({ ...message, params: { ...params, files: [] } });
