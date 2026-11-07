@@ -71,6 +71,11 @@ describe("aeCompactSuggestion", () => {
     expect(aeCompactSuggestion({ labels })).toEqual({ tokens: 370400 });
   });
 
+  it("falls back to ae.handoff_at when the live context label is not a number", () => {
+    const labels = { ...LEAD, "omnigent.last_context_tokens": "abc" };
+    expect(aeCompactSuggestion({ labels })).toEqual({ tokens: 370400 });
+  });
+
   it("words the line in thousands", () => {
     expect(aeCompactTokens(370_400)).toBe("370k");
     expect(aeCompactText(370_000)).toBe(
