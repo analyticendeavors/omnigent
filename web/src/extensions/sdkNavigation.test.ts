@@ -21,10 +21,10 @@ const identity: ExtensionIdentity = {
 // the port, so a test can read what the SDK posted.
 async function activate(): Promise<{
   context: ExtensionContext;
-  posted: Array<Record<string, unknown>>;
+  posted: Record<string, unknown>[];
 }> {
   globalThis.__OMNIGENT_EXTENSION__ = identity;
-  const posted: Array<Record<string, unknown>> = [];
+  const posted: Record<string, unknown>[] = [];
   const port = {
     postMessage: (message: Record<string, unknown>) => posted.push(message),
     start: vi.fn(),
