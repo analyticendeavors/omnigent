@@ -233,7 +233,13 @@ export function defineExtension(lifecycle: ExtensionLifecycle): void {
     capabilities: [...grantedCapabilities].sort(),
     navigation: {
       async openPage(pageId, params) {
-        await request("navigation.openPage", { pageId, params });
+        // Params are left out when absent, not sent as undefined: the host's
+        // payload budget rejects undefined values and drops the message, so
+        // the request would never be answered and would time out.
+        await request(
+          "navigation.openPage",
+          params === undefined ? { pageId } : { pageId, params },
+        );
       },
       async openSession(sessionId) {
         await request("navigation.openSession", { sessionId });
