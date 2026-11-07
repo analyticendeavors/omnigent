@@ -15,6 +15,7 @@ import {
 import { fetchPullRequestInfo } from "@/hooks/usePullRequests";
 import { useNavigate } from "@/lib/routing";
 import type { ExtensionCatalogItem, ExtensionPullRequest } from "../types";
+import { aeShare } from "./aeShare";
 import { ExtensionHostServiceError } from "./errors";
 import { grantedHostMethods } from "./registry";
 import {
@@ -141,6 +142,10 @@ export function useExtensionHostServices(extension: ExtensionCatalogItem) {
         }
         aeOpenExternalWindow(url);
         return null;
+      },
+      "navigation.share": async (params: unknown, signal: AbortSignal) => {
+        throwIfAborted(signal);
+        return aeShare(objectParams(params));
       },
       "navigation.openNewSession": async (params: unknown, signal: AbortSignal) => {
         throwIfAborted(signal);

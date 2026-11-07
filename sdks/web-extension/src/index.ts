@@ -80,6 +80,16 @@ export interface ExtensionContext {
     openNewSession(options?: { projectId?: string }): Promise<void>;
     /** Opens an https URL the host handed out (e.g. a pull request) in a new tab. */
     openExternal(url: string): Promise<void>;
+    /**
+     * Opens the device's share sheet with text and, optionally, one jpeg or png (at most 5 MB).
+     * Rejects with `ShareUnavailable` (no share sheet), `ShareCancelled` (closed) or
+     * `ShareFailed`. `files_dropped` means the sheet took the text only.
+     */
+    share(options: {
+      text?: string;
+      title?: string;
+      files?: Blob[];
+    }): Promise<{ shared: true; files_dropped?: true }>;
   };
   theme: {
     getCurrent(): Promise<ThemeInfo>;
@@ -252,6 +262,9 @@ export function defineExtension(lifecycle: ExtensionLifecycle): void {
       },
       async openExternal(url) {
         await request("navigation.openExternal", { url });
+      },
+      share(options) {
+        return request<{ shared: true; files_dropped?: true }>("navigation.share", options);
       },
     },
     theme: {

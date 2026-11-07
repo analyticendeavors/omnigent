@@ -60,6 +60,26 @@ export function isExtensionSessionPageWithinBudget(value: unknown): boolean {
   );
 }
 
+// omnigent-ae patch (2026-11-07): `navigation.share` may carry one image as a Blob, which the
+// budget walk refuses by design. The Blob is taken out before the walk (the host checks its
+// type and its 5 MB cap when it shares); the rest of the request is held to the same budget.
+function isRequestWithinBudget(message: Record<string, unknown>): boolean {
+  const params = message.params as Record<string, unknown> | null | undefined;
+  if (
+    message.type === "request" &&
+    message.method === "navigation.share" &&
+    params &&
+    typeof params === "object" &&
+    Array.isArray(params.files)
+  ) {
+    if (params.files.length > 1 || !params.files.every((file) => file instanceof Blob)) {
+      return false;
+    }
+    return isExtensionPayloadWithinBudget({ ...message, params: { ...params, files: [] } });
+  }
+  return isExtensionPayloadWithinBudget(message);
+}
+
 export function isExtensionInboundMessage(
   value: unknown,
   identity: ExtensionIdentity,
@@ -76,7 +96,7 @@ export function isExtensionInboundMessage(
   ) {
     return false;
   }
-  if (!isExtensionPayloadWithinBudget(value)) return false;
+  if (!isRequestWithinBudget(message)) return false;
   if (message.type === "ready") return true;
   if (message.type === "incompatible") return typeof message.sdkApiVersion === "number";
   if (message.type === "error") return typeof message.message === "string";

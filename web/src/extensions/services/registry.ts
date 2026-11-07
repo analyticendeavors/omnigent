@@ -5,6 +5,7 @@ export const HOST_METHOD_PERMISSIONS = {
   "navigation.openSession": "navigation",
   "navigation.openNewSession": "navigation",
   "navigation.openExternal": "navigation",
+  "navigation.share": "navigation",
   "theme.getCurrent": null,
   "theme.subscribe": null,
   "storage.user.get": "storage.user",
