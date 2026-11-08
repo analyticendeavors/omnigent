@@ -13,6 +13,7 @@ import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useSyncExternalStore } from "react";
 import type { Conversation } from "@/hooks/useConversations";
 import { AE_PARKING_LOT_PATH, aeDisplayStatus, type AeStatus } from "@/lib/aeLabels";
+import { subscribeToQueryKeys } from "@/lib/aeQueryCacheSubscribe";
 import { useAeSlotLimit } from "@/lib/aeSlotLimit";
 import { Link } from "@/lib/routing";
 import type { ConversationsInfiniteData } from "@/lib/sessionListCache";
@@ -36,7 +37,7 @@ export function readAeSessionStatus(queryClient: QueryClient, id: string): AeSta
 function useAeSessionStatus(id: string): AeStatus | null {
   const queryClient = useQueryClient();
   const subscribe = useCallback(
-    (onChange: () => void) => queryClient.getQueryCache().subscribe(onChange),
+    (onChange: () => void) => subscribeToQueryKeys(queryClient, [["conversations"]], onChange),
     [queryClient],
   );
   const read = useCallback(() => readAeSessionStatus(queryClient, id), [queryClient, id]);

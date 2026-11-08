@@ -7,6 +7,7 @@
 import { type QueryClient, QueryClientContext } from "@tanstack/react-query";
 import { useCallback, useContext, useSyncExternalStore } from "react";
 import type { Conversation } from "@/hooks/useConversations";
+import { subscribeToQueryKeys } from "@/lib/aeQueryCacheSubscribe";
 import { aeClaudeVersion } from "@/lib/aeClaudeModels";
 import { comparableModelId } from "@/lib/codexNativeModels";
 import { normalizeEffortLabel } from "@/lib/composerModelLabel";
@@ -37,7 +38,8 @@ export function readAeEffortDefault(queryClient: QueryClient, id: string): strin
 export function useAeEffortDefault(id: string | null): string | null {
   const queryClient = useContext(QueryClientContext);
   const subscribe = useCallback(
-    (onChange: () => void) => queryClient?.getQueryCache().subscribe(onChange) ?? (() => {}),
+    (onChange: () => void) =>
+      queryClient ? subscribeToQueryKeys(queryClient, [["conversations"]], onChange) : () => {},
     [queryClient],
   );
   const read = useCallback(

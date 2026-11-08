@@ -74,6 +74,20 @@ describe("AeSessionChip", () => {
     expect(chip).toHaveAttribute("data-full", "false");
   });
 
+  it("repaints when the session's row changes in the conversations cache", () => {
+    const qc = new QueryClient();
+    qc.setQueryData(["conversations", "", false], pages([row("p")]));
+    renderChip(qc, "p");
+    expect(screen.getByTestId("ae-session-chip")).toHaveAccessibleName(/^Working;/);
+    act(() => {
+      qc.setQueryData(
+        ["conversations", "", false],
+        pages([row("p", { labels: { "ae.status": "parked" } })]),
+      );
+    });
+    expect(screen.getByTestId("ae-session-chip")).toHaveAccessibleName(/^Parked;/);
+  });
+
   it("turns red at the limit and shows the count alone for an unknown session", () => {
     const qc = new QueryClient();
     renderChip(qc, "elsewhere");

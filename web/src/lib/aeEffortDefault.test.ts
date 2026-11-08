@@ -1,12 +1,16 @@
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, renderHook } from "@testing-library/react";
+import { createElement, type ReactNode } from "react";
 import { describe, expect, it } from "vitest";
 import {
+  AE_EFFORT_DEFAULT_LABEL,
   aeClaudeCodeDefaultEffort,
   aeClaudeEffortLabel,
   aeEffortDefaultFor,
   aeEffortResolved,
   aeEffortSourceTag,
   readAeEffortDefault,
+  useAeEffortDefault,
 } from "./aeEffortDefault";
 
 function cacheWith(labels: Record<string, string>) {
@@ -31,6 +35,28 @@ describe("readAeEffortDefault", () => {
     );
     expect(readAeEffortDefault(cacheWith({}), "conv_1")).toBe(null);
     expect(readAeEffortDefault(cacheWith({}), "conv_2")).toBe(null);
+  });
+});
+
+describe("useAeEffortDefault", () => {
+  it("repaints when the session's labels change in the conversations cache", () => {
+    const qc = cacheWith({ [AE_EFFORT_DEFAULT_LABEL]: "high" });
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: qc }, children);
+    const { result } = renderHook(() => useAeEffortDefault("conv_1"), { wrapper });
+    expect(result.current).toBe("high");
+    act(() => {
+      qc.setQueryData(["conversations", "all"], {
+        pages: [{ data: [{ id: "conv_1", labels: { [AE_EFFORT_DEFAULT_LABEL]: "max" } }] }],
+        pageParams: [null],
+      });
+    });
+    expect(result.current).toBe("max");
+  });
+
+  it("is null without a query client", () => {
+    const { result } = renderHook(() => useAeEffortDefault("conv_1"));
+    expect(result.current).toBeNull();
   });
 });
 

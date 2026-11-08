@@ -17,7 +17,13 @@ import { LayoutDashboardIcon } from "lucide-react";
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { type MouseEvent, useCallback, useEffect, useSyncExternalStore } from "react";
 import { AE_PARKING_LOT_PATH, countAeSlots, isAeDashboardPath } from "@/lib/aeLabels";
-import { readAeHelpersCount, useAeHelpersCount, useAeSlotLimit } from "@/lib/aeSlotLimit";
+import {
+  AE_HELPERS_COUNT_QUERY_KEY,
+  readAeHelpersCount,
+  useAeHelpersCount,
+  useAeSlotLimit,
+} from "@/lib/aeSlotLimit";
+import { subscribeToQueryKeys } from "@/lib/aeQueryCacheSubscribe";
 import { syncAeAppBadge } from "@/lib/aeAppBadge";
 import { AE_COUNT_PILL, AE_COUNT_PILL_ALERT, AE_COUNT_PILL_QUIET } from "@/lib/aeCountPill";
 import { useLocation } from "@/lib/routing";
@@ -33,11 +39,12 @@ export function readAeSlotCount(queryClient: QueryClient): number {
   return countAeSlots(rows, readAeHelpersCount(queryClient));
 }
 
-/** Subscribes to the query cache; the snapshot is a number, so React skips unchanged counts. */
+/** Subscribes to the list and helpers-count queries; the snapshot is a number, so React skips unchanged counts. */
 export function useAeSlotCount(): number {
   const queryClient = useQueryClient();
   const subscribe = useCallback(
-    (onChange: () => void) => queryClient.getQueryCache().subscribe(onChange),
+    (onChange: () => void) =>
+      subscribeToQueryKeys(queryClient, [["conversations"], AE_HELPERS_COUNT_QUERY_KEY], onChange),
     [queryClient],
   );
   const read = useCallback(() => readAeSlotCount(queryClient), [queryClient]);

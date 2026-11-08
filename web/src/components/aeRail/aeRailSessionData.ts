@@ -3,9 +3,10 @@
 // the backfill row, then the session snapshot), and the chat's loaded blocks.
 // Neither costs a request, and a push or the Status menu's overlay repaints both.
 
-import { type QueryClient, useQueryClient } from "@tanstack/react-query";
+import { type QueryClient, type QueryKey, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo, useRef, useSyncExternalStore } from "react";
 import type { Conversation } from "@/hooks/useConversations";
+import { subscribeToQueryKeys } from "@/lib/aeQueryCacheSubscribe";
 import type { AnyBlock } from "@/lib/blocks";
 import type { ConversationsInfiniteData } from "@/lib/sessionListCache";
 import type { Session } from "@/lib/types";
@@ -32,6 +33,17 @@ function fromConversation(row: Conversation): AeRailSessionRow {
     archived: row.archived === true,
     kind: null,
   };
+}
+
+/** The query keys `readAeRailSessionRow` reads for a session. */
+function railSessionKeys(id: string): QueryKey[] {
+  return [
+    ["conversations"],
+    ["project-sessions"],
+    ["pinned-conversations"],
+    ["conversation-backfill", id],
+    ["session", id],
+  ];
 }
 
 /** This session's row from any cached copy, or `null` when no cache holds it. */
@@ -78,8 +90,8 @@ export function readAeRailSessionLabels(queryClient: QueryClient, id: string): A
 export function useAeRailSessionRow(id: string): AeRailSessionRow | null {
   const queryClient = useQueryClient();
   const subscribe = useCallback(
-    (onChange: () => void) => queryClient.getQueryCache().subscribe(onChange),
-    [queryClient],
+    (onChange: () => void) => subscribeToQueryKeys(queryClient, railSessionKeys(id), onChange),
+    [queryClient, id],
   );
   const last = useRef<AeRailSessionRow | null>(null);
   const read = useCallback(() => {
@@ -105,8 +117,8 @@ export function useAeRailSessionRow(id: string): AeRailSessionRow | null {
 export function useAeRailSessionLabels(id: string): AeLabels | null {
   const queryClient = useQueryClient();
   const subscribe = useCallback(
-    (onChange: () => void) => queryClient.getQueryCache().subscribe(onChange),
-    [queryClient],
+    (onChange: () => void) => subscribeToQueryKeys(queryClient, railSessionKeys(id), onChange),
+    [queryClient, id],
   );
   const read = useCallback(() => readAeRailSessionLabels(queryClient, id), [queryClient, id]);
   return useSyncExternalStore(subscribe, read, read);

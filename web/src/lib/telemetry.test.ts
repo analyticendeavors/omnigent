@@ -54,12 +54,19 @@ afterEach(() => {
   vi.resetModules();
 });
 
+// Lets the dynamic import in initBrowserTelemetry settle before asserting a non-call.
+const flushImports = () =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, 20);
+  });
+
 describe("initBrowserTelemetry", () => {
   it("no-ops when no collector endpoint is configured", async () => {
     vi.stubEnv("VITE_OTEL_EXPORTER_OTLP_ENDPOINT", "");
     const { initBrowserTelemetry } = await import("./telemetry");
 
     initBrowserTelemetry();
+    await flushImports();
 
     // With no collector, nothing is registered — production builds without
     // a backend pay zero overhead and never patch fetch.
@@ -67,13 +74,25 @@ describe("initBrowserTelemetry", () => {
     expect(m.registerInstrumentations).not.toHaveBeenCalled();
   });
 
+  it("does not load the OpenTelemetry module when no endpoint is configured", async () => {
+    vi.stubEnv("VITE_OTEL_EXPORTER_OTLP_ENDPOINT", "");
+    const { initBrowserTelemetry } = await import("./telemetry");
+
+    initBrowserTelemetry();
+    await flushImports();
+
+    // zone.js loads with the SDK, so the module must stay unloaded.
+    expect(m.ZoneContextManager).not.toHaveBeenCalled();
+    expect(m.OTLPTraceExporter).not.toHaveBeenCalled();
+  });
+
   it("registers a provider + fetch/XHR instrumentation when an endpoint is set", async () => {
     vi.stubEnv("VITE_OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318");
     const { initBrowserTelemetry } = await import("./telemetry");
 
     initBrowserTelemetry();
+    await vi.waitFor(() => expect(m.WebTracerProvider).toHaveBeenCalledTimes(1));
 
-    expect(m.WebTracerProvider).toHaveBeenCalledTimes(1);
     expect(m.register).toHaveBeenCalledTimes(1);
     // Traces post to the collector's /v1/traces path.
     expect(m.OTLPTraceExporter).toHaveBeenCalledWith({
@@ -90,6 +109,8 @@ describe("initBrowserTelemetry", () => {
 
     initBrowserTelemetry();
     initBrowserTelemetry();
+    await vi.waitFor(() => expect(m.WebTracerProvider).toHaveBeenCalled());
+    await flushImports();
 
     expect(m.WebTracerProvider).toHaveBeenCalledTimes(1);
   });
@@ -99,9 +120,10 @@ describe("initBrowserTelemetry", () => {
     const { initBrowserTelemetry } = await import("./telemetry");
 
     initBrowserTelemetry();
-
-    expect(m.OTLPTraceExporter).toHaveBeenCalledWith({
-      url: "http://localhost:4318/v1/traces",
-    });
+    await vi.waitFor(() =>
+      expect(m.OTLPTraceExporter).toHaveBeenCalledWith({
+        url: "http://localhost:4318/v1/traces",
+      }),
+    );
   });
 });
