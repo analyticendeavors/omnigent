@@ -1,11 +1,11 @@
 // The "Needs you" pill on the sidebar's Admin Center row (omnigent-ae, 2026-11-03, plan v1.5).
-// Red when the number is urgent, neutral when it is the review count, nothing at zero. The text
-// is white on the light theme's red and the dark theme's background colour on its lighter red,
-// since white on that red is under AA contrast. A compact form (a filled dot for something to
+// Red when the number is urgent, grey when it is the review count, nothing at zero; the size and
+// colours are the slots pill's (aeCountPill.ts). A compact form (a filled dot for something to
 // act on, a hollow ring when a source could not be read) serves narrow rails; the count is then
 // in the tooltip and the aria-label spells out everything the colour says.
 
 import { useAeAttention } from "@/lib/aeAttention";
+import { AE_COUNT_PILL, AE_COUNT_PILL_ALERT, AE_COUNT_PILL_QUIET } from "@/lib/aeCountPill";
 import { cn } from "@/lib/utils";
 
 export function AeAttentionBadge({ compact = false }: { compact?: boolean }) {
@@ -39,11 +39,9 @@ export function AeAttentionBadge({ compact = false }: { compact?: boolean }) {
       aria-label={view.label}
       title={view.tooltip}
       className={cn(
-        "ml-auto inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-10 font-medium tabular-nums",
-        red
-          ? "bg-destructive text-white dark:text-background"
-          : // The ring keeps the neutral pill visible on the active row, which paints the same wash.
-            "bg-[var(--sidebar-active)] text-[var(--sidebar-active-foreground)] ring-1 ring-border",
+        // The Session Dashboard's slots pill shares this size and these colours (aeCountPill.ts).
+        AE_COUNT_PILL,
+        red ? AE_COUNT_PILL_ALERT : AE_COUNT_PILL_QUIET,
         view.kind === "unknown" && "border border-muted-foreground bg-transparent",
       )}
     >

@@ -19,6 +19,7 @@ import { type MouseEvent, useCallback, useEffect, useSyncExternalStore } from "r
 import { AE_PARKING_LOT_PATH, countAeSlots, isAeDashboardPath } from "@/lib/aeLabels";
 import { readAeHelpersCount, useAeHelpersCount, useAeSlotLimit } from "@/lib/aeSlotLimit";
 import { syncAeAppBadge } from "@/lib/aeAppBadge";
+import { AE_COUNT_PILL, AE_COUNT_PILL_ALERT, AE_COUNT_PILL_QUIET } from "@/lib/aeCountPill";
 import { useLocation } from "@/lib/routing";
 import type { ConversationsInfiniteData } from "@/lib/sessionListCache";
 import { cn } from "@/lib/utils";
@@ -73,10 +74,7 @@ export function AeSlotsPill({ onNavigate }: AeSlotsPillProps) {
           <span
             data-testid="ae-slots-count"
             data-full={full ? "true" : "false"}
-            className={cn(
-              "ml-auto rounded-full px-1.5 text-xs tabular-nums",
-              full ? "bg-destructive/15 font-semibold text-destructive" : "text-muted-foreground",
-            )}
+            className={cn(AE_COUNT_PILL, full ? AE_COUNT_PILL_ALERT : AE_COUNT_PILL_QUIET)}
           >
             {count}/{limit}
           </span>
