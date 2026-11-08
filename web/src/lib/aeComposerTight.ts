@@ -16,6 +16,10 @@
 export const COMPOSER_TIGHT_MIC_CLASS =
   "group-data-[tight]/composer-actions:not-aria-pressed:not-aria-[busy=true]:hidden";
 
+/** Hides the speak-replies button in a tight row unless speaking is on. */
+export const COMPOSER_TIGHT_SPEAKER_CLASS =
+  "group-data-[tight]/composer-actions:not-aria-pressed:hidden";
+
 /** Wrapper (no layout of its own) that hides the host badge in a tight row while the host is online. */
 export const COMPOSER_TIGHT_HOST_WRAPPER_CLASS =
   "contents group-data-[tight]/composer-actions:has-[[data-host-status=online]]:hidden";

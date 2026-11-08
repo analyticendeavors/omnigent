@@ -231,10 +231,12 @@ import {
   useWorkspaceDirectory,
   type WorkspaceFile,
 } from "@/hooks/useWorkspaceChangedFiles";
+import { AeSpeakRepliesButton } from "@/components/AeSpeakRepliesButton";
 import { ComposerMicButton } from "@/components/ComposerMicButton";
 import {
   COMPOSER_TIGHT_HOST_WRAPPER_CLASS,
   COMPOSER_TIGHT_MIC_CLASS,
+  COMPOSER_TIGHT_SPEAKER_CLASS,
   COMPOSER_TIGHTER_WRAPPER_CLASS,
 } from "@/lib/aeComposerTight";
 import { ComposerAttachments } from "@/components/ComposerAttachments";
@@ -2447,6 +2449,7 @@ function ComposerImpl(
   // No server session behind a temp id — gate goal/workspace fetches on it so
   // the create window issues no `/v1/sessions/temp:*` requests.
   const composerSessionId = isTempConvId(conversationId) ? null : conversationId;
+  const speakEffort = useSessionEffort();
   const { session: composerSession } = useSession(composerSessionId);
   const composerBranch = useChatStore((s) => s.gitBranch);
   const claudePermissionMode = useChatStore((s) => s.claudePermissionMode);
@@ -3968,6 +3971,13 @@ function ComposerImpl(
                   openNonce={pickerOpenNonce}
                 />
               </div>
+              <AeSpeakRepliesButton
+                chatId={composerSessionId}
+                canSetEffort={showEffort && effortLevels.includes("low")}
+                currentEffort={speakEffort}
+                disabled={isReadOnly}
+                className={cn("size-8 md:size-7", COMPOSER_TIGHT_SPEAKER_CLASS)}
+              />
               <ComposerMicButton
                 className={cn("size-8 md:size-7", COMPOSER_TIGHT_MIC_CLASS)}
                 enableHotkey

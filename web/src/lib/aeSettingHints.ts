@@ -235,6 +235,26 @@ export const AE_SETTING_HINTS = {
     hint: "Reset manual order clears your saved order, so sessions list newest first. Undo shows for 8 seconds.",
     source: "tooltip",
   },
+  "voice.speak": {
+    label: "Speak replies",
+    hint: "Reads each reply in this chat aloud as it arrives. Code blocks, formatting and the TLDR recap are skipped. Off by default.",
+    source: "existing",
+  },
+  "voice.fast": {
+    label: "Fast answers",
+    hint: "While replies are spoken this chat answers at low effort, then goes back to its old effort when speaking turns off. On by default.",
+    source: "existing",
+  },
+  "voice.voice": {
+    label: "Voice",
+    hint: "Voices come from this browser; Edge on Windows has the natural ones. Remembered on this browser only. Default: the best match found.",
+    source: "existing",
+  },
+  "voice.rate": {
+    label: "Speed",
+    hint: "How fast replies are read. Normal is the default; Faster is 1.25 times.",
+    source: "existing",
+  },
 } as const satisfies Record<string, AeSettingHint>;
 
 export type AeSettingHintId = keyof typeof AE_SETTING_HINTS;

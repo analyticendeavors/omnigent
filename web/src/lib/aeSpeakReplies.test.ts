@@ -1,0 +1,192 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { type FakeSynth, installFakeSpeech, makeVoice, removeFakeSpeech } from "@/test/fakeSpeech";
+import {
+  clearFastAnswersState,
+  createSpeaker,
+  isSpeechSupported,
+  listVoices,
+  onVoicesChanged,
+  pickDefaultVoice,
+  rankVoices,
+  readFastAnswersState,
+  readFastEnabled,
+  readRate,
+  readSpeakReplies,
+  readVoiceURI,
+  voiceLabel,
+  writeFastAnswersState,
+  writeFastEnabled,
+  writeRate,
+  writeSpeakReplies,
+  writeVoiceURI,
+} from "./aeSpeakReplies";
+
+let synth: FakeSynth;
+
+beforeEach(() => {
+  window.localStorage.clear();
+  synth = installFakeSpeech();
+  vi.useFakeTimers();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  removeFakeSpeech();
+});
+
+const OPTS = { voiceURI: null, rate: 1 };
+
+describe("the speaker", () => {
+  it("queues one utterance per chunk, in order", () => {
+    const speaker = createSpeaker();
+    speaker.speak("First one. Second one.", { voiceURI: null, rate: 1.25 });
+    speaker.speak("x".repeat(150) + ". " + "y".repeat(150) + ".", OPTS);
+    vi.runAllTimers();
+    expect(synth.texts()[0]).toBe("First one. Second one.");
+    expect(synth.texts().length).toBe(3);
+    expect(synth.spoken[0].rate).toBe(1.25);
+  });
+
+  it("is speaking until the last utterance ends", () => {
+    const speaker = createSpeaker();
+    const seen: boolean[] = [];
+    speaker.subscribe(() => seen.push(speaker.speaking()));
+    speaker.speak("One. " + "z".repeat(230) + ".", OPTS);
+    expect(speaker.speaking()).toBe(true);
+    vi.runAllTimers();
+    synth.finishNext();
+    expect(speaker.speaking()).toBe(true);
+    synth.spoken.forEach((u) => u.onend?.());
+    expect(speaker.speaking()).toBe(false);
+    expect(seen).toEqual([true, false]);
+  });
+
+  it("stop cancels and drops utterances not yet queued", () => {
+    const speaker = createSpeaker();
+    speaker.speak("Hello there.", OPTS);
+    speaker.stop();
+    vi.runAllTimers();
+    expect(synth.cancelCount).toBe(1);
+    expect(synth.spoken).toEqual([]);
+    expect(speaker.speaking()).toBe(false);
+  });
+
+  it("uses the chosen voice by uri, else the default pick", () => {
+    synth.voices = [
+      makeVoice({ name: "Plain", lang: "en-US" }),
+      makeVoice({ name: "Microsoft Aria Online (Natural)", lang: "en-US", voiceURI: "aria" }),
+    ];
+    const speaker = createSpeaker();
+    speaker.speak("One.", { voiceURI: "Plain", rate: 1 });
+    speaker.speak("Two.", OPTS);
+    vi.runAllTimers();
+    expect((synth.spoken[0].voice as { name: string }).name).toBe("Plain");
+    expect((synth.spoken[1].voice as { name: string }).name).toContain("Aria");
+    expect(synth.spoken[1].lang).toBe("en-US");
+  });
+});
+
+describe("voices", () => {
+  it("ranks a Natural voice above a plain one of the same language", () => {
+    const plain = makeVoice({ name: "Plain", lang: "en-US", default: true });
+    const natural = makeVoice({ name: "Aria Online (Natural)", lang: "en-GB" });
+    expect(rankVoices([plain, natural], "en-US")[0]).toBe(natural);
+  });
+
+  it("ranks a same-language plain voice above a Natural one of another language", () => {
+    const plain = makeVoice({ name: "Plain", lang: "en-US" });
+    const natural = makeVoice({ name: "Denise Online (Natural)", lang: "fr-FR" });
+    expect(rankVoices([natural, plain], "en-US")[0]).toBe(plain);
+    expect(pickDefaultVoice([natural, plain], "en-US")).toBe(plain);
+    expect(pickDefaultVoice([], "en-US")).toBeNull();
+  });
+
+  it("orders Google, then Premium, then default, then name", () => {
+    const voices = [
+      makeVoice({ name: "Zed", lang: "en-US", default: true }),
+      makeVoice({ name: "Alice Premium", lang: "en-US" }),
+      makeVoice({ name: "Google US English", lang: "en-US" }),
+      makeVoice({ name: "Bob", lang: "en-US" }),
+    ];
+    expect(rankVoices(voices, "en-US").map((v) => v.name)).toEqual([
+      "Google US English",
+      "Alice Premium",
+      "Zed",
+      "Bob",
+    ]);
+  });
+
+  it("shortens labels", () => {
+    expect(voiceLabel({ name: "Microsoft Aria Online (Natural) - English (United States)" })).toBe(
+      "Aria (Natural)",
+    );
+    expect(voiceLabel({ name: "Google US English" })).toBe("US English");
+    expect(voiceLabel({ name: "Google" })).toBe("Google");
+    expect(voiceLabel({ name: "Samantha" })).toBe("Samantha");
+  });
+
+  it("lists voices and reports voiceschanged", () => {
+    synth.voices = [makeVoice({ name: "A", lang: "en-US" })];
+    expect(listVoices()).toHaveLength(1);
+    const cb = vi.fn();
+    const off = onVoicesChanged(cb);
+    synth.emitVoicesChanged();
+    off();
+    synth.emitVoicesChanged();
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("preferences", () => {
+  it("defaults and round trips", () => {
+    expect(readSpeakReplies("c1")).toBe(false);
+    writeSpeakReplies("c1", true);
+    expect(readSpeakReplies("c1")).toBe(true);
+    expect(readSpeakReplies("c2")).toBe(false);
+    writeSpeakReplies("c1", false);
+    expect(window.localStorage.length).toBe(0);
+
+    expect(readFastAnswersState("c1")).toBeNull();
+    writeFastAnswersState("c1", { previousEffort: "high" });
+    expect(readFastAnswersState("c1")).toEqual({ previousEffort: "high" });
+    writeFastAnswersState("c1", { previousEffort: null });
+    expect(readFastAnswersState("c1")).toEqual({ previousEffort: null });
+    clearFastAnswersState("c1");
+    expect(readFastAnswersState("c1")).toBeNull();
+
+    expect(readFastEnabled()).toBe(true);
+    writeFastEnabled(false);
+    expect(readFastEnabled()).toBe(false);
+    writeFastEnabled(true);
+    expect(readFastEnabled()).toBe(true);
+
+    expect(readVoiceURI()).toBeNull();
+    writeVoiceURI("v1");
+    expect(readVoiceURI()).toBe("v1");
+
+    expect(readRate()).toBe(1);
+    writeRate(1.25);
+    expect(readRate()).toBe(1.25);
+    writeRate(1);
+    expect(readRate()).toBe(1);
+  });
+
+  it("ignores a corrupt fast state", () => {
+    window.localStorage.setItem("omnigent:ae-speak-fast:c1", "{nope");
+    expect(readFastAnswersState("c1")).toBeNull();
+  });
+});
+
+describe("without the speech api", () => {
+  it("throws nothing and reports unsupported", () => {
+    removeFakeSpeech();
+    expect(isSpeechSupported()).toBe(false);
+    expect(listVoices()).toEqual([]);
+    const off = onVoicesChanged(() => {});
+    off();
+    const speaker = createSpeaker();
+    speaker.speak("Hello.", OPTS);
+    speaker.stop();
+    expect(speaker.speaking()).toBe(false);
+  });
+});
