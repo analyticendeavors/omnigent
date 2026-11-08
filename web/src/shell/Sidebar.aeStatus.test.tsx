@@ -370,7 +370,7 @@ describe("slots pill", () => {
       conv("old", { labels: { "ae.status": "working" }, archived: true }),
     ]);
     expect(screen.getByRole("link", { name: "Session Dashboard 2/3" })).toBeInTheDocument();
-    expect(screen.getByTestId("ae-slots-count")).not.toHaveClass("text-destructive");
+    expect(screen.getByTestId("ae-slots-count")).not.toHaveClass("bg-destructive");
   });
 
   it("turns red at three working sessions", () => {
@@ -382,7 +382,7 @@ describe("slots pill", () => {
     expect(screen.getByRole("link", { name: "Session Dashboard 3/3" })).toBeInTheDocument();
     const count = screen.getByTestId("ae-slots-count");
     expect(count).toHaveAttribute("data-full", "true");
-    expect(count).toHaveClass("text-destructive");
+    expect(count).toHaveClass("bg-destructive");
   });
 
   it("renders in the mobile drawer too, beside the row icons", () => {

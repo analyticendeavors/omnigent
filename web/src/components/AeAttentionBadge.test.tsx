@@ -45,9 +45,9 @@ describe("AeAttentionBadge", () => {
     expect(pill.textContent).toBe("17");
     expect(pill.dataset.kind).toBe("review");
     expect(pill.className).not.toContain("bg-destructive");
-    expect(pill.className).toContain("text-muted-foreground");
+    expect(pill.className).toContain("text-foreground/80");
     // The same size as the Session Dashboard's slots pill, with the text centred.
-    expect(pill.className).toContain("h-[19px]");
+    expect(pill.className).toContain("min-h-[19px]");
     expect(pill.className).toContain("text-xs");
     expect(pill.className).not.toContain("text-10");
   });
@@ -58,9 +58,10 @@ describe("AeAttentionBadge", () => {
     const pill = await screen.findByTestId("ae-attention-pill");
     expect(pill.textContent).toBe("6");
     expect(pill.dataset.kind).toBe("urgent");
-    // The slots pill's red when it is over the limit.
-    expect(pill.className).toContain("bg-destructive/15");
-    expect(pill.className).toContain("text-destructive");
+    // The slots pill's red at its limit: solid, with white text (AA on the selected row).
+    expect(pill.className).toContain("bg-destructive");
+    expect(pill.className).toContain("text-white");
+    expect(pill.className).toContain("dark:text-background");
     expect(pill.getAttribute("aria-label")).toBe("6 urgent, 17 to review");
     expect(pill.getAttribute("title")).toBe("6 urgent, 17 to review. Git 23.");
   });

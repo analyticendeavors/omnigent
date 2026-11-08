@@ -105,7 +105,7 @@ describe("AeSlotsPill", () => {
     const link = screen.getByRole("link", { name: "Session Dashboard 1/3" });
     expect(link).toHaveAttribute("href", AE_PARKING_LOT_PATH);
     expect(screen.getByTestId("ae-slots-count")).toHaveAttribute("data-full", "false");
-    expect(screen.getByTestId("ae-slots-count")).not.toHaveClass("text-destructive");
+    expect(screen.getByTestId("ae-slots-count")).not.toHaveClass("bg-destructive");
   });
 
   it("turns red at the limit and stays red past it", () => {
@@ -114,7 +114,7 @@ describe("AeSlotsPill", () => {
     renderPill(qc);
     expect(screen.getByRole("link", { name: "Session Dashboard 3/3" })).toBeInTheDocument();
     expect(screen.getByTestId("ae-slots-count")).toHaveAttribute("data-full", "true");
-    expect(screen.getByTestId("ae-slots-count")).toHaveClass("text-destructive");
+    expect(screen.getByTestId("ae-slots-count")).toHaveClass("bg-destructive");
 
     act(() => {
       qc.setQueryData(
