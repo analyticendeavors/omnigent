@@ -28,10 +28,10 @@ function replaceFences(markdown: string): string {
 
 function stripEmphasis(line: string): string {
   return line
-    .replace(/\*\*(?=\S)(.+?)(?<=\S)\*\*/g, "$1")
+    .replace(/(?<![\w*])\*\*(?=[^\s*])(.+?)(?<=[^\s*])\*\*(?![\w])/g, "$1")
     .replace(/(?<![\w])__(?=\S)(.+?)(?<=\S)__(?![\w])/g, "$1")
     .replace(/~~(?=\S)(.+?)(?<=\S)~~/g, "$1")
-    .replace(/\*(?=\S)([^*\n]+?)(?<=\S)\*/g, "$1")
+    .replace(/(?<![\w*])\*(?=[^\s*])([^*\n]+?)(?<=\S)\*(?![\w*])/g, "$1")
     .replace(/(?<![\w])_(?=\S)([^_\n]+?)(?<=\S)_(?![\w])/g, "$1");
 }
 
@@ -49,6 +49,7 @@ export function speechTextFromMarkdown(markdown: string): string {
     let line = raw.trim();
     if (line === "") continue;
     if (/^([-*_])(\s*\1){2,}$/.test(line)) continue;
+    if (/^\[[^\]]+\]:\s/.test(line)) continue;
     if (line.includes("|") && /^[\s|:-]+$/.test(line) && line.includes("-")) continue;
     line = line
       .replace(/^#{1,6}\s+/, "")
@@ -62,6 +63,8 @@ export function speechTextFromMarkdown(markdown: string): string {
         .map((cell) => cell.trim())
         .filter((cell) => cell !== "")
         .join(", ");
+    } else {
+      line = line.replace(/\s+\|\s+/g, ", ");
     }
     line = stripEmphasis(line.replace(/`([^`\n]*)`/g, "$1")).trim();
     if (line === "") continue;
@@ -139,10 +142,9 @@ export function completeSentences(markdown: string): { ready: string; rest: stri
     } else if ((ch === "." || ch === "!" || ch === "?") && bracket === 0) {
       let j = i + 1;
       while (j < text.length && SENTENCE_CLOSERS.includes(text[j])) j++;
-      const atEnd = j >= text.length;
       const before = text.slice(lineStart, i);
       const isListMarker = ch === "." && /^\s*\d+$/.test(before);
-      if ((atEnd || /\s/.test(text[j])) && !isListMarker) {
+      if (j < text.length && /\s/.test(text[j]) && !isListMarker) {
         boundary = j;
       }
     }
@@ -151,12 +153,27 @@ export function completeSentences(markdown: string): { ready: string; rest: stri
   return { ready: text.slice(0, boundary), rest: text.slice(boundary) };
 }
 
+/** Splits spoken text into trimmed sentences. */
+export function splitSentences(text: string): string[] {
+  return text
+    .split(/(?<=[.!?]["')\]]*)\s+/)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence !== "");
+}
+
+/** Sentence key for repeat detection: case, spacing, end marks and quotes ignored. */
+export function normalizeSentence(sentence: string): string {
+  return sentence
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/^["'\u201c\u2018\s]+|["'\u201d\u2019\s]+$/g, "")
+    .replace(/[.!?]+["'\u201d\u2019]*$/, "")
+    .trim();
+}
+
 /** Sentence-sized chunks, because Chrome stops an utterance past about 15 seconds. */
 export function splitForSpeech(text: string, maxLen = 220): string[] {
-  const sentences = text
-    .split(/(?<=[.!?]["')\]]*)\s+/)
-    .map((s) => s.trim())
-    .filter((s) => s !== "");
+  const sentences = splitSentences(text);
   const pieces: string[] = [];
   for (let sentence of sentences) {
     while (sentence.length > maxLen) {

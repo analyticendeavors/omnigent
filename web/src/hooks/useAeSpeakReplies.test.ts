@@ -30,6 +30,9 @@ function final(responseId: string, itemId: string, fullText: string, extra = {})
 function chunk(responseId: string, text: string, depth = 0): AnyBlock {
   return { type: "text_chunk", ctx: { ...ctx(responseId, null), depth }, text } as AnyBlock;
 }
+function send(n = 1) {
+  return { pendingUserMessages: Array.from({ length: n }, (_, i) => ({ tempId: `p${i}` })) };
+}
 function setStore(patch: Record<string, unknown>) {
   act(() => {
     useChatStore.setState(patch as never);
@@ -52,7 +55,12 @@ function mount(enabled = true, chatId: string | null = "c1") {
 beforeEach(() => {
   vi.useFakeTimers();
   synth = installFakeSpeech();
-  useChatStore.setState({ conversationId: "c1", blocks: [], status: "idle" } as never);
+  useChatStore.setState({
+    conversationId: "c1",
+    blocks: [],
+    status: "idle",
+    pendingUserMessages: [],
+  } as never);
 });
 
 afterEach(() => {
@@ -102,7 +110,7 @@ describe("useAeSpeakReplies", () => {
     setStore({
       blocks: [
         final("r0", "item-0", "Old reply."),
-        live("r1", "Half sentence. Still going. More."),
+        live("r1", "Half sentence. Still going. More. Next"),
       ],
     });
     flush();
@@ -127,13 +135,13 @@ describe("useAeSpeakReplies", () => {
     setStore({ blocks: [final("r1", "item-1", "Talking now.")] });
     flush();
     const cancels = synth.cancelCount;
-    setStore({ status: "streaming" });
+    setStore({ status: "streaming", ...send() });
     expect(synth.cancelCount).toBeGreaterThan(cancels);
   });
 
   it("says the working cue once after six seconds of silence", () => {
     mount();
-    setStore({ status: "streaming" });
+    setStore({ status: "streaming", ...send() });
     act(() => {
       vi.advanceTimersByTime(WORKING_CUE_DELAY_MS - 1);
     });
@@ -150,8 +158,8 @@ describe("useAeSpeakReplies", () => {
 
   it("skips the working cue when text arrives first", () => {
     mount();
-    setStore({ status: "streaming" });
-    setStore({ blocks: [live("r1", "Quick start.")] });
+    setStore({ status: "streaming", ...send() });
+    setStore({ blocks: [live("r1", "Quick start. ")] });
     act(() => {
       vi.advanceTimersByTime(WORKING_CUE_DELAY_MS + 10);
     });
@@ -188,5 +196,106 @@ describe("useAeSpeakReplies", () => {
     act(() => result.current.readLast());
     flush();
     expect(synth.texts()).toEqual(["Second reply."]);
+  });
+
+  it("speaks both messages of one response once each", () => {
+    mount();
+    setStore({ blocks: [live("r1", "First message. ")] });
+    flush();
+    setStore({ blocks: [final("r1", "m1", "First message.")] });
+    flush();
+    setStore({ blocks: [final("r1", "m1", "First message."), live("r1", "Second message. ")] });
+    flush();
+    setStore({
+      blocks: [final("r1", "m1", "First message."), final("r1", "m2", "Second message.")],
+    });
+    flush();
+    expect(synth.texts()).toEqual(["First message.", "Second message."]);
+  });
+
+  it("speaks an SDK run with two null-itemId finals once each", () => {
+    mount();
+    const f1 = final("r1", null as never, "Alpha. Beta.");
+    const f2 = final("r1", null as never, "Gamma. Delta.");
+    setStore({ blocks: [chunk("r1", "Alpha. Beta. ")] });
+    flush();
+    setStore({ blocks: [chunk("r1", "Alpha. Beta. "), f1] });
+    flush();
+    setStore({ blocks: [chunk("r1", "Alpha. Beta. "), f1, chunk("r1", "Gamma. Delta. ")] });
+    flush();
+    setStore({ blocks: [chunk("r1", "Alpha. Beta. "), f1, chunk("r1", "Gamma. Delta. "), f2] });
+    flush();
+    expect(synth.texts()).toEqual(["Alpha. Beta.", "Gamma. Delta."]);
+  });
+
+  it("does not repeat a final that differs from the preview in whitespace", () => {
+    mount();
+    setStore({ blocks: [live("r1", "One two.  Three four. ")] });
+    flush();
+    setStore({ blocks: [final("r1", "i1", "One two.   Three four.\n")] });
+    flush();
+    expect(synth.texts()).toEqual(["One two. Three four."]);
+  });
+
+  it("speaks only the sentence a final adds", () => {
+    mount();
+    setStore({ blocks: [live("r1", "One. Two. Thr")] });
+    flush();
+    setStore({ blocks: [final("r1", "i1", "One. Two. Three. Four.")] });
+    flush();
+    expect(synth.texts()).toEqual(["One. Two.", "Three. Four."]);
+  });
+
+  it("accepts a refetched final only for a response streamed live", () => {
+    mount();
+    setStore({ blocks: [live("r1", "Live part. ")] });
+    flush();
+    setStore({
+      blocks: [
+        final("r1", "i1", "Live part. And the rest.", { createdAtS: 50 }),
+        final("r9", "i9", "Unseen history.", { createdAtS: 51 }),
+      ],
+    });
+    flush();
+    expect(synth.texts()).toEqual(["Live part.", "And the rest."]);
+  });
+
+  it("leaves speech alone on a status flip with no new user message", () => {
+    mount();
+    setStore({ blocks: [live("r1", "One. Two")] });
+    flush();
+    const cancels = synth.cancelCount;
+    setStore({ status: "streaming" });
+    setStore({ status: "idle" });
+    setStore({ status: "streaming" });
+    expect(synth.cancelCount).toBe(cancels);
+    setStore({ blocks: [live("r1", "One. Two. Three. ")] });
+    flush();
+    expect(synth.texts()).toEqual(["One.", "Two. Three."]);
+  });
+
+  it("stops speech on a queued send while streaming", () => {
+    mount();
+    setStore({ status: "streaming", blocks: [live("r1", "One. Two")] });
+    flush();
+    const cancels = synth.cancelCount;
+    setStore(send(1));
+    expect(synth.cancelCount).toBeGreaterThan(cancels);
+    setStore(send(2));
+    expect(synth.cancelCount).toBeGreaterThan(cancels + 1);
+  });
+
+  it("does not treat a promoted pending message as a send", () => {
+    mount();
+    setStore({ status: "streaming", ...send(1) });
+    flush();
+    const cancels = synth.cancelCount;
+    const userBlock = {
+      type: "user_message",
+      ctx: ctx("u1", "u1"),
+      content: [],
+    } as unknown as AnyBlock;
+    setStore({ ...send(0), blocks: [userBlock] });
+    expect(synth.cancelCount).toBe(cancels);
   });
 });

@@ -166,6 +166,8 @@ export interface Speaker {
   stop: () => void;
   speaking: () => boolean;
   subscribe: (cb: () => void) => () => void;
+  /** Utterances queued and not yet ended; the speaker keeps them referenced. */
+  retained: () => number;
 }
 
 export function createSpeaker(): Speaker {
@@ -174,6 +176,8 @@ export function createSpeaker(): Speaker {
   let generation = 0;
   let pending = 0;
   let isSpeaking = false;
+  // Chrome collects an unreferenced utterance mid-speech and never fires its end.
+  const utterances = new Set<SpeechSynthesisUtterance>();
 
   const notify = () => listeners.forEach((cb) => cb());
   const setSpeaking = (next: boolean) => {
@@ -205,7 +209,9 @@ export function createSpeaker(): Speaker {
             utterance.lang = voice.lang;
           }
           utterance.rate = opts.rate;
+          utterances.add(utterance);
           const done = () => {
+            utterances.delete(utterance);
             if (gen !== generation) return;
             pending = Math.max(0, pending - 1);
             if (pending === 0) setSpeaking(false);
@@ -223,6 +229,7 @@ export function createSpeaker(): Speaker {
     stop() {
       generation++;
       pending = 0;
+      utterances.clear();
       if (isSpeechSupported()) {
         try {
           window.speechSynthesis.cancel();
@@ -233,6 +240,7 @@ export function createSpeaker(): Speaker {
       setSpeaking(false);
     },
     speaking: () => isSpeaking,
+    retained: () => utterances.size,
     subscribe(cb) {
       listeners.add(cb);
       return () => {

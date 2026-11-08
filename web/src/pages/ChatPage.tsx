@@ -3975,7 +3975,7 @@ function ComposerImpl(
                 chatId={composerSessionId}
                 canSetEffort={showEffort && effortLevels.includes("low")}
                 currentEffort={speakEffort}
-                disabled={isReadOnly}
+                readOnly={isReadOnly}
                 className={cn("size-8 md:size-7", COMPOSER_TIGHT_SPEAKER_CLASS)}
               />
               <ComposerMicButton

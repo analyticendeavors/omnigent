@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AE_SETTING_HINTS } from "@/lib/aeSettingHints";
@@ -9,8 +9,12 @@ import { AeSpeakRepliesButton } from "./AeSpeakRepliesButton";
 const setEffort = vi.fn(() => Promise.resolve());
 const originalSetEffort = useChatStore.getState().setEffort;
 
+function Button(props: Partial<React.ComponentProps<typeof AeSpeakRepliesButton>>) {
+  return <AeSpeakRepliesButton chatId="c1" canSetEffort currentEffort="high" {...props} />;
+}
+
 function renderButton(props: Partial<React.ComponentProps<typeof AeSpeakRepliesButton>> = {}) {
-  return render(<AeSpeakRepliesButton chatId="c1" canSetEffort currentEffort="high" {...props} />);
+  return render(<Button {...props} />);
 }
 
 async function openMenu() {
@@ -69,20 +73,110 @@ describe("AeSpeakRepliesButton", () => {
   });
 
   it("turns on, lowers the effort and remembers the old one, then restores it", async () => {
-    renderButton();
+    const view = renderButton();
     const user = await openMenu();
     await user.click(screen.getByTestId("ae-speak-toggle"));
     expect(window.localStorage.getItem("omnigent:ae-speak-replies:c1")).toBe("true");
-    expect(setEffort).toHaveBeenLastCalledWith("low");
-    expect(JSON.parse(window.localStorage.getItem("omnigent:ae-speak-fast:c1") ?? "null")).toEqual({
-      previousEffort: "high",
-    });
+    await waitFor(() => expect(setEffort).toHaveBeenLastCalledWith("low"));
+    await waitFor(() =>
+      expect(
+        JSON.parse(window.localStorage.getItem("omnigent:ae-speak-fast:c1") ?? "null"),
+      ).toEqual({
+        previousEffort: "high",
+      }),
+    );
     expect(screen.getByTestId("ae-speak-replies")).toHaveAttribute("aria-pressed", "true");
 
+    view.rerender(<Button currentEffort="low" />);
     await user.click(screen.getByTestId("ae-speak-toggle"));
-    expect(setEffort).toHaveBeenLastCalledWith("high");
+    await waitFor(() => expect(setEffort).toHaveBeenLastCalledWith("high"));
+    await waitFor(() =>
+      expect(window.localStorage.getItem("omnigent:ae-speak-fast:c1")).toBeNull(),
+    );
     expect(window.localStorage.getItem("omnigent:ae-speak-replies:c1")).toBeNull();
+  });
+
+  it("stores nothing when lowering the effort is rejected", async () => {
+    setEffort.mockRejectedValueOnce(new Error("no"));
+    renderButton();
+    const user = await openMenu();
+    await user.click(screen.getByTestId("ae-speak-toggle"));
+    await waitFor(() => expect(setEffort).toHaveBeenCalledWith("low"));
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 10);
+    });
     expect(window.localStorage.getItem("omnigent:ae-speak-fast:c1")).toBeNull();
+    expect(screen.getByTestId("ae-speak-replies")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("restores a null effort", async () => {
+    const view = renderButton({ currentEffort: null });
+    const user = await openMenu();
+    await user.click(screen.getByTestId("ae-speak-toggle"));
+    await waitFor(() =>
+      expect(window.localStorage.getItem("omnigent:ae-speak-fast:c1")).toBe(
+        '{"previousEffort":null}',
+      ),
+    );
+    view.rerender(<Button currentEffort="low" />);
+    await user.click(screen.getByTestId("ae-speak-toggle"));
+    await waitFor(() => expect(setEffort).toHaveBeenLastCalledWith(null));
+  });
+
+  it("leaves an effort the user changed by hand", async () => {
+    const view = renderButton();
+    const user = await openMenu();
+    await user.click(screen.getByTestId("ae-speak-toggle"));
+    await waitFor(() =>
+      expect(window.localStorage.getItem("omnigent:ae-speak-fast:c1")).not.toBeNull(),
+    );
+    setEffort.mockClear();
+    view.rerender(<Button currentEffort="high" />);
+    await user.click(screen.getByTestId("ae-speak-toggle"));
+    await waitFor(() =>
+      expect(window.localStorage.getItem("omnigent:ae-speak-fast:c1")).toBeNull(),
+    );
+    expect(setEffort).not.toHaveBeenCalled();
+  });
+
+  it("keeps the stored state when restoring is rejected", async () => {
+    const view = renderButton();
+    const user = await openMenu();
+    await user.click(screen.getByTestId("ae-speak-toggle"));
+    await waitFor(() =>
+      expect(window.localStorage.getItem("omnigent:ae-speak-fast:c1")).not.toBeNull(),
+    );
+    view.rerender(<Button currentEffort="low" />);
+    setEffort.mockRejectedValueOnce(new Error("no"));
+    await user.click(screen.getByTestId("ae-speak-toggle"));
+    await waitFor(() => expect(setEffort).toHaveBeenLastCalledWith("high"));
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 10);
+    });
+    expect(window.localStorage.getItem("omnigent:ae-speak-fast:c1")).not.toBeNull();
+  });
+
+  it("applies Fast answers once effort levels arrive", async () => {
+    window.localStorage.setItem("omnigent:ae-speak-replies:c1", "true");
+    const view = renderButton({ canSetEffort: false });
+    expect(setEffort).not.toHaveBeenCalled();
+    view.rerender(<Button canSetEffort />);
+    await waitFor(() => expect(setEffort).toHaveBeenCalledWith("low"));
+  });
+
+  it("hides Fast answers in a read-only chat but keeps the trigger enabled", async () => {
+    renderButton({ readOnly: true });
+    await openMenu();
+    expect(screen.queryByTestId("ae-speak-fast")).toBeNull();
+    expect(screen.getByTestId("ae-speak-replies")).not.toBeDisabled();
+    expect(setEffort).not.toHaveBeenCalled();
+  });
+
+  it("shows the voice that will speak when none is chosen", async () => {
+    renderButton();
+    const user = await openMenu();
+    expect(screen.getByTestId("ae-speak-voice-trigger")).toHaveTextContent("Aria (Natural)");
+    await user.keyboard("{Escape}");
   });
 
   it("leaves the effort alone when Fast answers is off", async () => {

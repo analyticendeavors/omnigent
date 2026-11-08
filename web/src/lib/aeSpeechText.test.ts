@@ -67,6 +67,21 @@ describe("speechTextFromMarkdown", () => {
   });
 });
 
+describe("speech text, review fixes", () => {
+  it("drops link reference definitions", () => {
+    expect(speechTextFromMarkdown("See [a][1].\n\n[1]: https://example.org/a")).toBe("See [a][1].");
+  });
+
+  it("reads spaced pipes as commas on any line", () => {
+    expect(speechTextFromMarkdown("Name | Value")).toBe("Name, Value.");
+  });
+
+  it("guards asterisks inside words and globs", () => {
+    expect(speechTextFromMarkdown("a*b*c and **/*.ts here")).toBe("a*b*c and **/*.ts here.");
+    expect(speechTextFromMarkdown("**bold** and *em*")).toBe("bold and em.");
+  });
+});
+
 describe("stripTldr", () => {
   it("cuts the recap", () => {
     expect(stripTldr("Body.\n\n**TLDR**\nDone.")).toBe("Body.");
@@ -100,6 +115,15 @@ describe("completeSentences", () => {
   it("never cuts inside an open link or url", () => {
     expect(completeSentences("Done. See [the sheet. here").ready).toBe("Done.");
     expect(completeSentences("Done. See [a](http://x.org/a. b").ready).toBe("Done.");
+  });
+
+  it("waits when an end mark is the last character", () => {
+    expect(completeSentences("costs 3.").ready).toBe("");
+    expect(completeSentences("v0.18.").ready).toBe("");
+    expect(completeSentences("costs 3.5 dollars. Next")).toEqual({
+      ready: "costs 3.5 dollars.",
+      rest: " Next",
+    });
   });
 
   it("does not cut inside a number or a list marker", () => {

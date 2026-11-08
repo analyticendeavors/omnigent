@@ -20,13 +20,19 @@ export interface FakeVoiceInit {
 }
 
 export class FakeSynth {
+  /** Set false to keep only texts and end callbacks, so the speaker alone holds utterances. */
+  retain = true;
   spoken: FakeUtterance[] = [];
+  spokenTexts: string[] = [];
+  ends: (() => void)[] = [];
   cancelCount = 0;
   voices: SpeechSynthesisVoice[] = [];
   private listeners = new Set<() => void>();
 
   speak = (u: FakeUtterance) => {
-    this.spoken.push(u);
+    this.spokenTexts.push(u.text);
+    if (u.onend) this.ends.push(u.onend);
+    if (this.retain) this.spoken.push(u);
   };
   cancel = () => {
     this.cancelCount++;
@@ -42,7 +48,7 @@ export class FakeSynth {
     this.listeners.forEach((cb) => cb());
   }
   texts() {
-    return this.spoken.map((u) => u.text);
+    return this.spokenTexts;
   }
   /** Finish the oldest queued utterance, as the engine does. */
   finishNext() {

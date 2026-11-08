@@ -4,7 +4,7 @@
 // the voice and speed choices, Read last reply and Stop speaking.
 
 import { RotateCcwIcon, SquareIcon, Volume2Icon, VolumeXIcon } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -27,6 +27,7 @@ import {
   isSpeechSupported,
   listVoices,
   onVoicesChanged,
+  pickDefaultVoice,
   RATE_FASTER,
   rankVoices,
   readFastAnswersState,
@@ -46,12 +47,15 @@ import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chatStore";
 
 const MAX_VOICES = 12;
-const HINT_CLASS = "block max-w-[20rem] text-xs font-normal text-muted-foreground";
+const HINT_CLASS =
+  "block max-w-[20rem] text-xs font-normal whitespace-normal break-words text-muted-foreground";
 
 export interface AeSpeakRepliesButtonProps {
   chatId: string | null;
   className?: string;
   disabled?: boolean;
+  /** A viewer can still listen and stop, but cannot change the chat's effort. */
+  readOnly?: boolean;
   canSetEffort: boolean;
   currentEffort: string | null;
 }
@@ -65,22 +69,20 @@ function Described({ label, hint }: { label: ReactNode; hint: string }) {
   );
 }
 
-function setChatEffort(level: string | null) {
-  void useChatStore
-    .getState()
-    .setEffort(level)
-    .catch(() => {});
+function setChatEffort(level: string | null): Promise<void> {
+  return useChatStore.getState().setEffort(level);
 }
 
 export function AeSpeakRepliesButton(props: AeSpeakRepliesButtonProps) {
   if (!isSpeechSupported() || props.chatId === null) return null;
-  return <SpeakRepliesControl {...props} chatId={props.chatId} />;
+  return <SpeakRepliesControl key={props.chatId} {...props} chatId={props.chatId} />;
 }
 
 function SpeakRepliesControl({
   chatId,
   className,
   disabled,
+  readOnly,
   canSetEffort,
   currentEffort,
 }: AeSpeakRepliesButtonProps & { chatId: string }) {
@@ -101,40 +103,68 @@ function SpeakRepliesControl({
 
   const { speaking, stop, readLast } = useAeSpeakReplies({ chatId, enabled: on, voiceURI, rate });
 
-  const applyFast = useCallback(() => {
-    if (!canSetEffort || readFastAnswersState(chatId)) return;
-    writeFastAnswersState(chatId, { previousEffort: currentEffort });
-    setChatEffort(FAST_EFFORT);
-  }, [canSetEffort, chatId, currentEffort]);
+  const fastAvailable = canSetEffort && !readOnly;
+  const wanted = useRef({ on, fastEnabled });
+  wanted.current = { on, fastEnabled };
+  const effortRef = useRef(currentEffort);
+  effortRef.current = currentEffort;
+  const busyRef = useRef(false);
 
-  const revertFast = useCallback(() => {
+  const applyFast = useCallback(async () => {
+    if (busyRef.current || readFastAnswersState(chatId)) return;
+    const previousEffort = effortRef.current;
+    busyRef.current = true;
+    try {
+      await setChatEffort(FAST_EFFORT);
+    } catch {
+      return;
+    } finally {
+      busyRef.current = false;
+    }
+    if (wanted.current.on && wanted.current.fastEnabled) {
+      writeFastAnswersState(chatId, { previousEffort });
+    } else {
+      // Turned off while the change was in flight: put the effort back.
+      await setChatEffort(previousEffort).catch(() => {});
+    }
+  }, [chatId]);
+
+  const revertFast = useCallback(async () => {
     const state = readFastAnswersState(chatId);
     if (!state) return;
-    setChatEffort(state.previousEffort);
+    // An effort the user changed by hand since stays as they left it.
+    if (effortRef.current === FAST_EFFORT) {
+      try {
+        await setChatEffort(state.previousEffort);
+      } catch {
+        return;
+      }
+    }
     clearFastAnswersState(chatId);
   }, [chatId]);
+
+  // Effort levels can arrive after the toggle, so apply whenever it is wanted and not yet applied.
+  useEffect(() => {
+    if (on && fastEnabled && fastAvailable && currentEffort !== FAST_EFFORT) void applyFast();
+  }, [on, fastEnabled, fastAvailable, currentEffort, applyFast]);
 
   const toggleSpeak = (next: boolean) => {
     writeSpeakReplies(chatId, next);
     setOn(next);
-    if (next) {
-      if (fastEnabled) applyFast();
-    } else {
+    if (!next) {
       stop();
-      revertFast();
+      void revertFast();
     }
   };
 
   const toggleFast = (next: boolean) => {
     writeFastEnabled(next);
     setFastEnabled(next);
-    if (!on) return;
-    if (next) applyFast();
-    else revertFast();
+    if (!next && on) void revertFast();
   };
 
   const ranked = rankVoices(voices).slice(0, MAX_VOICES);
-  const chosen = voices.find((v) => v.voiceURI === voiceURI);
+  const chosen = voices.find((v) => v.voiceURI === voiceURI) ?? pickDefaultVoice(voices);
   const Icon = on ? Volume2Icon : VolumeXIcon;
 
   return (
@@ -164,7 +194,7 @@ function SpeakRepliesControl({
         >
           <Described label="Speak replies" hint={aeHint("voice.speak")} />
         </DropdownMenuCheckboxItem>
-        {canSetEffort ? (
+        {fastAvailable ? (
           <DropdownMenuCheckboxItem
             checked={fastEnabled}
             onCheckedChange={toggleFast}
@@ -176,7 +206,10 @@ function SpeakRepliesControl({
           </DropdownMenuCheckboxItem>
         ) : null}
         <DropdownMenuSub>
-          <DropdownMenuSubTrigger data-testid="ae-speak-voice-trigger">
+          <DropdownMenuSubTrigger
+            className="whitespace-normal"
+            data-testid="ae-speak-voice-trigger"
+          >
             <span className="flex flex-col">
               <span className="flex items-center justify-between gap-3">
                 <span>Voice</span>
@@ -214,7 +247,7 @@ function SpeakRepliesControl({
             )}
           </DropdownMenuSubContent>
         </DropdownMenuSub>
-        <div className="px-2 py-1.5 text-sm">
+        <div className="px-2 py-1.5 text-sm whitespace-normal">
           <Described label="Speed" hint={aeHint("voice.rate")} />
         </div>
         <DropdownMenuRadioGroup

@@ -61,6 +61,25 @@ describe("the speaker", () => {
     expect(seen).toEqual([true, false]);
   });
 
+  it("keeps queued utterances referenced until they end", () => {
+    synth.retain = false;
+    const speaker = createSpeaker();
+    speaker.speak("One. " + "z".repeat(230) + ".", OPTS);
+    vi.runAllTimers();
+    const count = synth.ends.length;
+    expect(count).toBeGreaterThan(1);
+    expect(speaker.retained()).toBe(count);
+    synth.ends[0]();
+    expect(speaker.retained()).toBe(count - 1);
+    synth.ends.slice(1).forEach((end) => end());
+    expect(speaker.retained()).toBe(0);
+    speaker.speak("Again.", OPTS);
+    vi.runAllTimers();
+    expect(speaker.retained()).toBe(1);
+    speaker.stop();
+    expect(speaker.retained()).toBe(0);
+  });
+
   it("stop cancels and drops utterances not yet queued", () => {
     const speaker = createSpeaker();
     speaker.speak("Hello there.", OPTS);
