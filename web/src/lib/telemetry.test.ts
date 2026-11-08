@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { startBrowserTelemetry as StartFn } from "./telemetryOtel";
 
 // Mock the OpenTelemetry SDK so the test is deterministic and free of
 // zone.js / network side effects. `vi.hoisted` builds the spies before the
@@ -19,6 +20,22 @@ const m = vi.hoisted(() => {
     OTLPTraceExporter: vi.fn(),
     ZoneContextManager: vi.fn(),
     resourceFromAttributes: vi.fn(() => ({})),
+    otelModuleLoads: vi.fn(),
+    startFails: false,
+  };
+});
+
+// Counts how often the on-demand module is evaluated.
+vi.mock("./telemetryOtel", async () => {
+  m.otelModuleLoads();
+  const actual = await vi.importActual<{ startBrowserTelemetry: typeof StartFn }>(
+    "./telemetryOtel",
+  );
+  return {
+    startBrowserTelemetry: (endpoint: string, serviceName: string) => {
+      if (m.startFails) throw new Error("start boom");
+      actual.startBrowserTelemetry(endpoint, serviceName);
+    },
   };
 });
 
@@ -51,6 +68,7 @@ vi.mock("@opentelemetry/semantic-conventions", () => ({
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.clearAllMocks();
+  m.startFails = false;
   vi.resetModules();
 });
 
@@ -74,16 +92,45 @@ describe("initBrowserTelemetry", () => {
     expect(m.registerInstrumentations).not.toHaveBeenCalled();
   });
 
-  it("does not load the OpenTelemetry module when no endpoint is configured", async () => {
+  it("loads the OpenTelemetry module only when an endpoint is set", async () => {
     vi.stubEnv("VITE_OTEL_EXPORTER_OTLP_ENDPOINT", "");
+    const off = await import("./telemetry");
+    await off.initBrowserTelemetry();
+    await flushImports();
+    // zone.js loads with the SDK, so the module must stay unloaded.
+    expect(m.otelModuleLoads).not.toHaveBeenCalled();
+
+    vi.resetModules();
+    vi.stubEnv("VITE_OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318");
+    const on = await import("./telemetry");
+    await on.initBrowserTelemetry();
+    expect(m.otelModuleLoads).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolves only after instrumentation is registered", async () => {
+    vi.stubEnv("VITE_OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318");
     const { initBrowserTelemetry } = await import("./telemetry");
 
-    initBrowserTelemetry();
-    await flushImports();
+    await initBrowserTelemetry();
 
-    // zone.js loads with the SDK, so the module must stay unloaded.
-    expect(m.ZoneContextManager).not.toHaveBeenCalled();
-    expect(m.OTLPTraceExporter).not.toHaveBeenCalled();
+    expect(m.registerInstrumentations).toHaveBeenCalledTimes(1);
+  });
+
+  it("warns, resets and resolves when tracing fails to start", async () => {
+    vi.stubEnv("VITE_OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    m.startFails = true;
+    const { initBrowserTelemetry } = await import("./telemetry");
+
+    await expect(initBrowserTelemetry()).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain("failed to start");
+
+    // `initialized` was reset, so a later call tries again.
+    m.startFails = false;
+    await initBrowserTelemetry();
+    expect(m.registerInstrumentations).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
 
   it("registers a provider + fetch/XHR instrumentation when an endpoint is set", async () => {

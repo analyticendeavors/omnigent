@@ -18,10 +18,11 @@ let initialized = false;
  * Initialize browser tracing if a collector endpoint is configured.
  *
  * Idempotent and safe to call once at app startup. No-op when
- * `VITE_OTEL_EXPORTER_OTLP_ENDPOINT` is unset. The SDK loads on demand, so with
- * tracing on, requests made before the import resolves are not traced.
+ * `VITE_OTEL_EXPORTER_OTLP_ENDPOINT` is unset. The SDK loads on demand, so the
+ * promise resolves once instrumentation is registered; await it before the first
+ * request. It never rejects: a failed start warns and boot goes on untraced.
  */
-export function initBrowserTelemetry(): void {
+export async function initBrowserTelemetry(): Promise<void> {
   if (initialized) return;
 
   const endpoint = import.meta.env.VITE_OTEL_EXPORTER_OTLP_ENDPOINT?.trim();
@@ -29,5 +30,11 @@ export function initBrowserTelemetry(): void {
   initialized = true;
 
   const serviceName = import.meta.env.VITE_OTEL_SERVICE_NAME?.trim() || "omni-web";
-  void import("./telemetryOtel").then((mod) => mod.startBrowserTelemetry(endpoint, serviceName));
+  try {
+    const mod = await import("./telemetryOtel");
+    mod.startBrowserTelemetry(endpoint, serviceName);
+  } catch (error) {
+    initialized = false;
+    console.warn("Browser tracing failed to start; continuing without it.", error);
+  }
 }
