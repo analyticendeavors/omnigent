@@ -284,6 +284,10 @@ def _is_login_redirect_or_unauthorized(response: httpx.Response) -> bool:
     return "/oidc/" in location or "/.auth/" in location
 
 
+#: Seconds to wait before re-reading a transcript that said "no reply text".
+_REPLY_TEXT_RETRY_S = 0.3
+
+
 def _with_reply_text_flag(
     tool_name: object, tool_input: object, payload: dict[str, object]
 ) -> object:
@@ -292,7 +296,10 @@ def _with_reply_text_flag(
 
     The evaluation context and ``data`` are rebuilt server-side from only
     ``name`` and ``arguments``, so the flag rides on a copy of ``arguments``
-    (the hook's verdict never rewrites the tool's real input).
+    (the hook's verdict never rewrites the tool's real input). Any flag the
+    model supplied itself is dropped first, so only the transcript decides.
+    A "no text" answer is read once more after a short wait, in case the
+    transcript flush lands just after PreToolUse.
     """
     from omnigent.harnesses.claude_native.ae_reply_text import (
         FLAG_KEY,
@@ -300,13 +307,24 @@ def _with_reply_text_flag(
         reply_text_since_last_prompt,
     )
 
-    path = payload.get("transcript_path")
     if not (isinstance(tool_name, str) and tool_name in POPUP_TOOLS):
         return tool_input
-    if not isinstance(tool_input, dict) or not isinstance(path, str):
+    if not isinstance(tool_input, dict):
         return tool_input
-    flag = reply_text_since_last_prompt(path)
-    return tool_input if flag is None else {**tool_input, FLAG_KEY: flag}
+    clean = {k: v for k, v in tool_input.items() if k != FLAG_KEY}
+    path = payload.get("transcript_path")
+    if not isinstance(path, str):
+        return clean
+    raw_id = payload.get("tool_use_id")
+    use_id = raw_id if isinstance(raw_id, str) and raw_id else None
+    try:
+        flag = reply_text_since_last_prompt(path, use_id)
+        if flag is False:
+            time.sleep(_REPLY_TEXT_RETRY_S)
+            flag = reply_text_since_last_prompt(path, use_id)
+    except Exception:  # noqa: BLE001 (a broken guard must never block a pop-up)
+        return clean
+    return clean if flag is None else {**clean, FLAG_KEY: flag}
 
 
 def hook_payload_to_evaluation_request(
