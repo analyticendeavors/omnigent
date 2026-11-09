@@ -284,6 +284,31 @@ def _is_login_redirect_or_unauthorized(response: httpx.Response) -> bool:
     return "/oidc/" in location or "/.auth/" in location
 
 
+def _with_reply_text_flag(
+    tool_name: object, tool_input: object, payload: dict[str, object]
+) -> object:
+    """
+    Stamp whether reply text came before a pop-up tool call (AE patch).
+
+    The evaluation context and ``data`` are rebuilt server-side from only
+    ``name`` and ``arguments``, so the flag rides on a copy of ``arguments``
+    (the hook's verdict never rewrites the tool's real input).
+    """
+    from omnigent.harnesses.claude_native.ae_reply_text import (
+        FLAG_KEY,
+        POPUP_TOOLS,
+        reply_text_since_last_prompt,
+    )
+
+    path = payload.get("transcript_path")
+    if not (isinstance(tool_name, str) and tool_name in POPUP_TOOLS):
+        return tool_input
+    if not isinstance(tool_input, dict) or not isinstance(path, str):
+        return tool_input
+    flag = reply_text_since_last_prompt(path)
+    return tool_input if flag is None else {**tool_input, FLAG_KEY: flag}
+
+
 def hook_payload_to_evaluation_request(
     hook_event: str,
     payload: dict[str, object],
@@ -334,6 +359,7 @@ def hook_payload_to_evaluation_request(
         return None
     tool_input = payload.get("tool_input") or {}
     if hook_event == _PRE_TOOL_USE:
+        tool_input = _with_reply_text_flag(tool_name, tool_input, payload)
         return {
             "event": {
                 "type": "PHASE_TOOL_CALL",
