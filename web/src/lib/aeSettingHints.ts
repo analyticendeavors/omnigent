@@ -247,7 +247,7 @@ export const AE_SETTING_HINTS = {
   },
   "voice.voice": {
     label: "Voice",
-    hint: "Voices come from this browser; Edge on Windows has the natural ones. Remembered on this browser only. Default: the best match found.",
+    hint: "Natural voices come from the cloud when the server has them; the rest are this device's. Saved per device. Default: the first natural voice.",
     source: "existing",
   },
   "voice.rate": {

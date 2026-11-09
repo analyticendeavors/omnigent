@@ -1,7 +1,7 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AE_SETTING_HINTS } from "@/lib/aeSettingHints";
+import { resetCloudVoicesCache } from "@/lib/aeCloudVoice";
 import { useChatStore } from "@/store/chatStore";
 import { installFakeSpeech, makeVoice, removeFakeSpeech } from "@/test/fakeSpeech";
 import { AeSpeakRepliesButton } from "./AeSpeakRepliesButton";
@@ -23,7 +23,21 @@ async function openMenu() {
   return user;
 }
 
+const CLOUD = [
+  { id: "en-US-AvaMultilingualNeural", name: "Ava" },
+  { id: "en-US-AndrewMultilingualNeural", name: "Andrew" },
+];
+
+function serveCloudVoices(voices: { id: string; name: string }[]) {
+  resetCloudVoicesCache();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => Promise.resolve(new Response(JSON.stringify({ voices }), { status: 200 }))),
+  );
+}
+
 beforeEach(() => {
+  serveCloudVoices([]);
   window.localStorage.clear();
   setEffort.mockClear();
   useChatStore.setState({ conversationId: "c1", blocks: [], status: "idle", setEffort } as never);
@@ -40,6 +54,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   removeFakeSpeech();
   useChatStore.setState({ setEffort: originalSetEffort } as never);
 });
@@ -63,13 +78,35 @@ describe("AeSpeakRepliesButton", () => {
     expect(trigger).toHaveAttribute("title", "Speak replies: off");
   });
 
-  it("shows all four hints in the menu", async () => {
+  it("shows the four hint controls and no description lines", async () => {
     renderButton();
     await openMenu();
-    for (const id of ["voice.speak", "voice.fast", "voice.voice", "voice.rate"] as const) {
-      expect(AE_SETTING_HINTS[id].hint).not.toBe("");
-      expect(screen.getByText(AE_SETTING_HINTS[id].hint)).toBeInTheDocument();
+    for (const id of ["voice.speak", "voice.fast", "voice.voice", "voice.rate"]) {
+      expect(screen.getByTestId(`ae-hint-${id}`)).toBeInTheDocument();
     }
+    expect(screen.queryByText(/Reads each reply in this chat aloud/)).toBeNull();
+  });
+
+  it("shows an off row as an unchecked switch and turns on when the row is clicked", async () => {
+    renderButton();
+    const user = await openMenu();
+    const row = screen.getByTestId("ae-speak-toggle");
+    expect(within(row).getByRole("switch")).toHaveAttribute("aria-checked", "false");
+    await user.click(row);
+    expect(window.localStorage.getItem("omnigent:ae-speak-replies:c1")).toBe("true");
+    expect(within(screen.getByTestId("ae-speak-toggle")).getByRole("switch")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.getByTestId("ae-speak-fast")).toBeInTheDocument();
+  });
+
+  it("does not toggle the row when its hint is pressed", async () => {
+    renderButton();
+    const user = await openMenu();
+    await user.click(screen.getByTestId("ae-hint-voice.speak"));
+    expect(window.localStorage.getItem("omnigent:ae-speak-replies:c1")).toBeNull();
+    expect(screen.getByTestId("ae-speak-toggle")).toBeInTheDocument();
   });
 
   it("turns on, lowers the effort and remembers the old one, then restores it", async () => {
@@ -195,22 +232,64 @@ describe("AeSpeakRepliesButton", () => {
     expect(setEffort).not.toHaveBeenCalled();
   });
 
-  it("lists a Natural voice first and stores the pick", async () => {
+  it("lists This device voices only when the server has no cloud voices", async () => {
     renderButton();
     const user = await openMenu();
     await user.click(screen.getByTestId("ae-speak-voice-trigger"));
     const options = await screen.findAllByTestId("ae-speak-voice-option");
     expect(options[0]).toHaveTextContent("Aria (Natural)");
-    expect(options[0]).toHaveTextContent("best here");
+    expect(screen.getByText("This device")).toBeInTheDocument();
+    expect(screen.queryByText("Natural (cloud)")).toBeNull();
+    expect(screen.queryByText(/best here/)).toBeNull();
     options[0].focus();
     await user.keyboard("{Enter}");
-    expect(window.localStorage.getItem("omnigent:ae-speak-voice")).toBe("aria");
+    expect(window.localStorage.getItem("omnigent:ae-speak-voice")).toBe("device:aria");
+  });
+
+  it("lists cloud voices first, defaults to the first and stores a pick", async () => {
+    serveCloudVoices(CLOUD);
+    renderButton();
+    const user = await openMenu();
+    await waitFor(() =>
+      expect(screen.getByTestId("ae-speak-voice-trigger")).toHaveTextContent("Ava"),
+    );
+    await user.click(screen.getByTestId("ae-speak-voice-trigger"));
+    expect(await screen.findByText("Natural (cloud)")).toBeInTheDocument();
+    expect(screen.getByText("This device")).toBeInTheDocument();
+    const options = await screen.findAllByTestId("ae-speak-voice-option");
+    expect(options[0]).toHaveTextContent("Ava");
+    expect(options[1]).toHaveTextContent("Andrew");
+    options[1].focus();
+    await user.keyboard("{Enter}");
+    expect(window.localStorage.getItem("omnigent:ae-speak-voice")).toBe(
+      "cloud:en-US-AndrewMultilingualNeural",
+    );
+  });
+
+  it("reads a bare stored value from before as a device voice", async () => {
+    window.localStorage.setItem("omnigent:ae-speak-voice", "Plain");
+    renderButton();
+    await openMenu();
+    expect(screen.getByTestId("ae-speak-voice-trigger")).toHaveTextContent("Plain");
+  });
+
+  it("shows Speed as a sub-menu with Normal and Faster", async () => {
+    renderButton();
+    const user = await openMenu();
+    expect(screen.getByTestId("ae-speak-rate-trigger")).toHaveTextContent("Normal");
+    await user.click(screen.getByTestId("ae-speak-rate-trigger"));
+    expect(await screen.findByTestId("ae-speak-rate-normal")).toHaveTextContent("Normal");
+    const faster = screen.getByTestId("ae-speak-rate-faster");
+    expect(faster).toHaveTextContent("Faster");
+    expect(faster).toHaveTextContent("1.25x");
   });
 
   it("stores the faster speed", async () => {
     renderButton();
     const user = await openMenu();
-    await user.click(screen.getByTestId("ae-speak-rate-faster"));
+    await user.click(screen.getByTestId("ae-speak-rate-trigger"));
+    (await screen.findByTestId("ae-speak-rate-faster")).focus();
+    await user.keyboard("{Enter}");
     expect(window.localStorage.getItem("omnigent:ae-speak-rate")).toBe("1.25");
   });
 

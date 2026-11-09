@@ -12,13 +12,13 @@ import {
   readFastEnabled,
   readRate,
   readSpeakReplies,
-  readVoiceURI,
+  readVoiceChoice,
   voiceLabel,
   writeFastAnswersState,
   writeFastEnabled,
   writeRate,
   writeSpeakReplies,
-  writeVoiceURI,
+  writeVoiceChoice,
 } from "./aeSpeakReplies";
 
 let synth: FakeSynth;
@@ -179,9 +179,18 @@ describe("preferences", () => {
     writeFastEnabled(true);
     expect(readFastEnabled()).toBe(true);
 
-    expect(readVoiceURI()).toBeNull();
-    writeVoiceURI("v1");
-    expect(readVoiceURI()).toBe("v1");
+    expect(readVoiceChoice()).toBeNull();
+    writeVoiceChoice({ kind: "device", id: "v1" });
+    expect(readVoiceChoice()).toEqual({ kind: "device", id: "v1" });
+    writeVoiceChoice({ kind: "cloud", id: "en-US-AvaMultilingualNeural" });
+    expect(window.localStorage.getItem("omnigent:ae-speak-voice")).toBe(
+      "cloud:en-US-AvaMultilingualNeural",
+    );
+    expect(readVoiceChoice()).toEqual({ kind: "cloud", id: "en-US-AvaMultilingualNeural" });
+    window.localStorage.setItem("omnigent:ae-speak-voice", "Microsoft Aria");
+    expect(readVoiceChoice()).toEqual({ kind: "device", id: "Microsoft Aria" });
+    writeVoiceChoice(null);
+    expect(readVoiceChoice()).toBeNull();
 
     expect(readRate()).toBe(1);
     writeRate(1.25);

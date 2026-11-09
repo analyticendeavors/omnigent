@@ -1,0 +1,234 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createCloudSpeaker, fetchCloudVoices, resetCloudVoicesCache } from "./aeCloudVoice";
+import type { Speaker, SpeakOptions } from "./aeSpeakReplies";
+
+const OPTS: SpeakOptions = { voiceURI: null, rate: 1, cloudVoiceId: "en-US-AvaMultilingualNeural" };
+
+class FakeAudio {
+  static last: FakeAudio | null = null;
+  src = "";
+  onended: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  played: string[] = [];
+  pauses = 0;
+  constructor() {
+    FakeAudio.last = this;
+  }
+  play() {
+    this.played.push(this.src);
+    return Promise.resolve();
+  }
+  pause() {
+    this.pauses++;
+  }
+  removeAttribute(name: string) {
+    if (name === "src") this.src = "";
+  }
+  end() {
+    this.onended?.();
+  }
+}
+
+class FakeDevice implements Speaker {
+  texts: string[] = [];
+  stops = 0;
+  on = false;
+  listeners = new Set<() => void>();
+  speak = (text: string) => {
+    this.texts.push(text);
+    this.on = true;
+    this.listeners.forEach((cb) => cb());
+  };
+  stop = () => {
+    this.stops++;
+    this.on = false;
+    this.listeners.forEach((cb) => cb());
+  };
+  speaking = () => this.on;
+  retained = () => 0;
+  subscribe = (cb: () => void) => {
+    this.listeners.add(cb);
+    return () => this.listeners.delete(cb);
+  };
+  finish() {
+    this.on = false;
+    this.listeners.forEach((cb) => cb());
+  }
+}
+
+interface Pending {
+  text: string;
+  signal: AbortSignal | null | undefined;
+  resolve: (r: Response) => void;
+}
+
+let pending: Pending[];
+let fetchMock: ReturnType<typeof vi.fn>;
+let urls: string[];
+
+const mp3 = () =>
+  new Response(new Uint8Array([1, 2, 3]), {
+    status: 200,
+    headers: { "Content-Type": "audio/mpeg" },
+  });
+const tick = () =>
+  new Promise<void>((r) => {
+    setTimeout(r, 0);
+  });
+async function settle() {
+  await tick();
+  await tick();
+  await tick();
+  await tick();
+}
+
+beforeEach(() => {
+  pending = [];
+  urls = [];
+  FakeAudio.last = null;
+  resetCloudVoicesCache();
+  fetchMock = vi.fn((input: string, init?: RequestInit) => {
+    if (String(input).endsWith("/tts/voices")) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ voices: [{ id: "a", name: "Ava" }] }), { status: 200 }),
+      );
+    }
+    return new Promise<Response>((resolve, reject) => {
+      const body = JSON.parse(String(init?.body)) as { text: string };
+      pending.push({ text: body.text, signal: init?.signal, resolve });
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("x", "AbortError")));
+    });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  vi.stubGlobal("Audio", FakeAudio);
+  let n = 0;
+  vi.stubGlobal("URL", {
+    createObjectURL: () => {
+      const u = `blob:${n++}`;
+      urls.push(u);
+      return u;
+    },
+    revokeObjectURL: vi.fn(),
+  });
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("fetchCloudVoices", () => {
+  it("returns the voices once and caches them", async () => {
+    expect(await fetchCloudVoices()).toEqual([{ id: "a", name: "Ava" }]);
+    await fetchCloudVoices();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("is empty on a non-200 or a thrown fetch", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("no", { status: 503 }));
+    expect(await fetchCloudVoices()).toEqual([]);
+    resetCloudVoicesCache();
+    fetchMock.mockRejectedValueOnce(new Error("offline"));
+    expect(await fetchCloudVoices()).toEqual([]);
+  });
+});
+
+describe("createCloudSpeaker", () => {
+  // 220 char chunks: use long sentences so each is its own chunk.
+  const sentence = (c: string) => `${c.repeat(150)}.`;
+  const text = [sentence("a"), sentence("b"), sentence("c")].join(" ");
+
+  it("plays chunks in order, fetching the next while one plays, at most two in flight", async () => {
+    const speaker = createCloudSpeaker(new FakeDevice());
+    speaker.speak(text, OPTS);
+    expect(speaker.speaking()).toBe(true);
+    await settle();
+    expect(pending.map((p) => p.text[0])).toEqual(["a", "b"]);
+    pending[1].resolve(mp3());
+    await settle();
+    expect(FakeAudio.last?.played ?? []).toEqual([]);
+    pending[0].resolve(mp3());
+    await settle();
+    expect(FakeAudio.last?.played).toEqual(["blob:0"]);
+    expect(pending.map((p) => p.text[0])).toEqual(["a", "b"]);
+    FakeAudio.last?.end();
+    await settle();
+    expect(pending.map((p) => p.text[0])).toEqual(["a", "b", "c"]);
+    expect(FakeAudio.last?.played).toEqual(["blob:0", "blob:1"]);
+    pending[2].resolve(mp3());
+    FakeAudio.last?.end();
+    await settle();
+    expect(FakeAudio.last?.played).toEqual(["blob:0", "blob:1", "blob:2"]);
+    FakeAudio.last?.end();
+    await settle();
+    expect(speaker.speaking()).toBe(false);
+  });
+
+  it("sends the text, voice and rate as JSON", async () => {
+    const speaker = createCloudSpeaker(new FakeDevice());
+    speaker.speak("Hello there.", { ...OPTS, rate: 1.25 });
+    await settle();
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).endsWith("/v1/ae/tts"));
+    expect(JSON.parse(String(call?.[1].body))).toEqual({
+      text: "Hello there.",
+      voice: "en-US-AvaMultilingualNeural",
+      rate: 1.25,
+    });
+  });
+
+  it("stop aborts requests, pauses the audio and empties the queue", async () => {
+    const device = new FakeDevice();
+    const speaker = createCloudSpeaker(device);
+    speaker.speak(text, OPTS);
+    await settle();
+    pending[0].resolve(mp3());
+    await settle();
+    const calls = fetchMock.mock.calls.length;
+    speaker.stop();
+    await settle();
+    expect(pending[1].signal?.aborted).toBe(true);
+    expect(FakeAudio.last?.pauses).toBe(1);
+    expect(speaker.speaking()).toBe(false);
+    expect(fetchMock.mock.calls.length).toBe(calls);
+    expect(device.stops).toBe(1);
+  });
+
+  it("reads a failed chunk through the device speaker, in order", async () => {
+    const device = new FakeDevice();
+    const speaker = createCloudSpeaker(device);
+    speaker.speak(text, OPTS);
+    await settle();
+    pending[0].resolve(new Response("down", { status: 503 }));
+    pending[1].resolve(mp3());
+    await settle();
+    expect(device.texts).toEqual([sentence("a")]);
+    expect(FakeAudio.last?.played ?? []).toEqual([]);
+    device.finish();
+    await settle();
+    expect(FakeAudio.last?.played).toEqual(["blob:0"]);
+  });
+
+  it("falls back when the request throws", async () => {
+    const device = new FakeDevice();
+    const speaker = createCloudSpeaker(device);
+    fetchMock.mockImplementationOnce(() => Promise.reject(new Error("offline")));
+    speaker.speak("Hi there.", OPTS);
+    await settle();
+    expect(device.texts).toEqual(["Hi there."]);
+    device.finish();
+    await settle();
+    expect(speaker.speaking()).toBe(false);
+  });
+
+  it("notifies subscribers when speaking changes and ignores empty text", async () => {
+    const speaker = createCloudSpeaker(new FakeDevice());
+    const cb = vi.fn();
+    const off = speaker.subscribe(cb);
+    speaker.speak("   ", OPTS);
+    expect(cb).not.toHaveBeenCalled();
+    speaker.speak("Hi there.", OPTS);
+    expect(cb).toHaveBeenCalledTimes(1);
+    speaker.stop();
+    expect(cb).toHaveBeenCalledTimes(2);
+    off();
+  });
+});

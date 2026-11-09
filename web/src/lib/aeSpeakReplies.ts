@@ -75,12 +75,22 @@ export function writeFastEnabled(on: boolean): void {
   setItem(SPEAK_FAST_ENABLED_KEY, on ? null : "false");
 }
 
-export function readVoiceURI(): string | null {
-  return getItem(SPEAK_VOICE_KEY);
+export interface VoiceChoice {
+  kind: "cloud" | "device";
+  id: string;
 }
 
-export function writeVoiceURI(uri: string | null): void {
-  setItem(SPEAK_VOICE_KEY, uri);
+/** Stored as `cloud:<id>` or `device:<voiceURI>`; a bare value is a device URI from before. */
+export function readVoiceChoice(): VoiceChoice | null {
+  const raw = getItem(SPEAK_VOICE_KEY);
+  if (raw === null || raw === "") return null;
+  if (raw.startsWith("cloud:") && raw.length > 6) return { kind: "cloud", id: raw.slice(6) };
+  if (raw.startsWith("device:") && raw.length > 7) return { kind: "device", id: raw.slice(7) };
+  return { kind: "device", id: raw };
+}
+
+export function writeVoiceChoice(choice: VoiceChoice | null): void {
+  setItem(SPEAK_VOICE_KEY, choice === null ? null : `${choice.kind}:${choice.id}`);
 }
 
 export function readRate(): number {
@@ -159,6 +169,8 @@ export function voiceLabel(voice: Pick<SpeechSynthesisVoice, "name">): string {
 export interface SpeakOptions {
   voiceURI: string | null;
   rate: number;
+  /** A cloud voice id; only the cloud speaker reads it. */
+  cloudVoiceId?: string | null;
 }
 
 export interface Speaker {

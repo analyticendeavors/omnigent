@@ -44,10 +44,13 @@ function flush() {
   });
 }
 
-function mount(enabled = true, chatId: string | null = "c1") {
+function mount(
+  enabled = true,
+  chatId: string | null = "c1",
+  voice: { kind: "cloud" | "device"; id: string } | null = null,
+) {
   return renderHook(
-    (p: { enabled: boolean; chatId: string | null }) =>
-      useAeSpeakReplies({ ...p, voiceURI: null, rate: 1 }),
+    (p: { enabled: boolean; chatId: string | null }) => useAeSpeakReplies({ ...p, voice, rate: 1 }),
     { initialProps: { enabled, chatId } },
   );
 }
@@ -70,6 +73,24 @@ afterEach(() => {
 });
 
 describe("useAeSpeakReplies", () => {
+  it("sends a cloud voice's sentences to the server, not the device", () => {
+    const fetchMock = vi.fn(() => new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", fetchMock);
+    mount(true, "c1", { kind: "cloud", id: "en-US-AvaMultilingualNeural" });
+    setStore({ blocks: [final("r1", "item-1", "Whole reply.")] });
+    flush();
+    expect(synth.texts()).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toContain("/v1/ae/tts");
+    expect(JSON.parse(String(init.body))).toEqual({
+      text: "Whole reply.",
+      voice: "en-US-AvaMultilingualNeural",
+      rate: 1,
+    });
+    vi.unstubAllGlobals();
+  });
+
   it("speaks a growing live preview, then only the remainder on the final", () => {
     mount();
     setStore({ blocks: [live("r1", "One. Two")] });

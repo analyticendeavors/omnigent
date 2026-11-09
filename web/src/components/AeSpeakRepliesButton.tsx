@@ -4,13 +4,14 @@
 // the voice and speed choices, Read last reply and Stop speaking.
 
 import { RotateCcwIcon, SquareIcon, Volume2Icon, VolumeXIcon } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { AeHint } from "@/components/AeHint";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
@@ -19,8 +20,9 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Switch } from "@/components/ui/switch";
 import { useAeSpeakReplies } from "@/hooks/useAeSpeakReplies";
-import { AE_MENU_ROW_CLASS } from "@/lib/aeMenuRow";
+import { type CloudVoice, fetchCloudVoices } from "@/lib/aeCloudVoice";
 import {
   clearFastAnswersState,
   FAST_EFFORT,
@@ -34,21 +36,19 @@ import {
   readFastEnabled,
   readRate,
   readSpeakReplies,
-  readVoiceURI,
+  readVoiceChoice,
+  type VoiceChoice,
   voiceLabel,
   writeFastAnswersState,
   writeFastEnabled,
   writeRate,
   writeSpeakReplies,
-  writeVoiceURI,
+  writeVoiceChoice,
 } from "@/lib/aeSpeakReplies";
-import { aeHint } from "@/lib/aeSettingHints";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chatStore";
 
 const MAX_VOICES = 12;
-const HINT_CLASS =
-  "block max-w-[20rem] text-xs font-normal whitespace-normal break-words text-muted-foreground";
 
 export interface AeSpeakRepliesButtonProps {
   chatId: string | null;
@@ -60,12 +60,54 @@ export interface AeSpeakRepliesButtonProps {
   currentEffort: string | null;
 }
 
-function Described({ label, hint }: { label: ReactNode; hint: string }) {
+function choiceKey(choice: VoiceChoice | null): string {
+  return choice ? `${choice.kind}:${choice.id}` : "";
+}
+
+/** The "i" sits inside a menu row: pressing it must not toggle or close the row. */
+function RowHint({ id }: { id: "voice.speak" | "voice.fast" | "voice.voice" | "voice.rate" }) {
+  const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
   return (
-    <span className="flex flex-col">
-      <span>{label}</span>
-      <span className={HINT_CLASS}>{hint}</span>
+    <span className="flex shrink-0" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
+      <AeHint id={id} />
     </span>
+  );
+}
+
+function SwitchRow({
+  label,
+  checked,
+  onChange,
+  hint,
+  testId,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  hint: "voice.speak" | "voice.fast";
+  testId: string;
+}) {
+  return (
+    <DropdownMenuItem
+      role="menuitemcheckbox"
+      aria-checked={checked}
+      onSelect={(e) => {
+        e.preventDefault();
+        onChange(!checked);
+      }}
+      data-testid={testId}
+      className="min-h-8"
+    >
+      <span className="flex-1">{label}</span>
+      <Switch
+        size="sm"
+        checked={checked}
+        tabIndex={-1}
+        aria-label={label}
+        className="pointer-events-none"
+      />
+      <RowHint id={hint} />
+    </DropdownMenuItem>
   );
 }
 
@@ -88,7 +130,8 @@ function SpeakRepliesControl({
 }: AeSpeakRepliesButtonProps & { chatId: string }) {
   const [on, setOn] = useState(() => readSpeakReplies(chatId));
   const [fastEnabled, setFastEnabled] = useState(readFastEnabled);
-  const [voiceURI, setVoiceURI] = useState(readVoiceURI);
+  const [stored, setStored] = useState(readVoiceChoice);
+  const [cloudVoices, setCloudVoices] = useState<CloudVoice[]>([]);
   const [rate, setRate] = useState(readRate);
   const [voices, setVoices] = useState(listVoices);
 
@@ -96,12 +139,34 @@ function SpeakRepliesControl({
     setOn(readSpeakReplies(chatId));
   }, [chatId]);
   useEffect(() => {
+    let live = true;
+    void fetchCloudVoices().then((list) => {
+      if (live) setCloudVoices(list);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  useEffect(() => {
     const refresh = () => setVoices(listVoices());
     refresh();
     return onVoicesChanged(refresh);
   }, []);
 
-  const { speaking, stop, readLast } = useAeSpeakReplies({ chatId, enabled: on, voiceURI, rate });
+  // A stored cloud voice the server no longer offers, or none stored: first cloud voice, else the device's.
+  const deviceDefault = pickDefaultVoice(voices);
+  const voice: VoiceChoice | null =
+    stored?.kind === "device"
+      ? stored
+      : stored && cloudVoices.some((v) => v.id === stored.id)
+        ? stored
+        : cloudVoices[0]
+          ? { kind: "cloud", id: cloudVoices[0].id }
+          : deviceDefault
+            ? { kind: "device", id: deviceDefault.voiceURI }
+            : null;
+
+  const { speaking, stop, readLast } = useAeSpeakReplies({ chatId, enabled: on, voice, rate });
 
   const fastAvailable = canSetEffort && !readOnly;
   const wanted = useRef({ on, fastEnabled });
@@ -171,7 +236,12 @@ function SpeakRepliesControl({
   };
 
   const ranked = rankVoices(voices).slice(0, MAX_VOICES);
-  const chosen = voices.find((v) => v.voiceURI === voiceURI) ?? pickDefaultVoice(voices);
+  const chosenDevice =
+    voice?.kind === "device" ? voices.find((v) => v.voiceURI === voice.id) : null;
+  const chosenName =
+    (voice?.kind === "cloud"
+      ? cloudVoices.find((v) => v.id === voice.id)?.name
+      : chosenDevice && voiceLabel(chosenDevice)) ?? "Default";
   const Icon = on ? Volume2Icon : VolumeXIcon;
 
   return (
@@ -191,87 +261,97 @@ function SpeakRepliesControl({
           <Icon className={cn("size-4", on && speaking && "animate-pulse")} />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="max-h-[70vh] overflow-y-auto">
-        <DropdownMenuCheckboxItem
+      <DropdownMenuContent align="end" className="max-h-[70vh] w-68 overflow-y-auto">
+        <SwitchRow
+          label="Speak replies"
           checked={on}
-          onCheckedChange={toggleSpeak}
-          onSelect={(e) => e.preventDefault()}
-          className={AE_MENU_ROW_CLASS}
-          data-testid="ae-speak-toggle"
-        >
-          <Described label="Speak replies" hint={aeHint("voice.speak")} />
-        </DropdownMenuCheckboxItem>
+          onChange={toggleSpeak}
+          hint="voice.speak"
+          testId="ae-speak-toggle"
+        />
         {fastAvailable ? (
-          <DropdownMenuCheckboxItem
+          <SwitchRow
+            label="Fast answers"
             checked={fastEnabled}
-            onCheckedChange={toggleFast}
-            onSelect={(e) => e.preventDefault()}
-            className={AE_MENU_ROW_CLASS}
-            data-testid="ae-speak-fast"
-          >
-            <Described label="Fast answers" hint={aeHint("voice.fast")} />
-          </DropdownMenuCheckboxItem>
+            onChange={toggleFast}
+            hint="voice.fast"
+            testId="ae-speak-fast"
+          />
         ) : null}
         <DropdownMenuSub>
-          <DropdownMenuSubTrigger
-            className="whitespace-normal"
-            data-testid="ae-speak-voice-trigger"
-          >
-            <span className="flex flex-col">
-              <span className="flex items-center justify-between gap-3">
-                <span>Voice</span>
-                <span className="text-xs text-muted-foreground">
-                  {chosen ? voiceLabel(chosen) : "Default"}
-                </span>
-              </span>
-              <span className={HINT_CLASS}>{aeHint("voice.voice")}</span>
-            </span>
+          <DropdownMenuSubTrigger data-testid="ae-speak-voice-trigger">
+            <span>Voice</span>
+            <span className="ml-auto truncate text-xs text-muted-foreground">{chosenName}</span>
+            <RowHint id="voice.voice" />
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent className="max-h-[60vh] overflow-y-auto">
-            {ranked.length === 0 ? (
-              <DropdownMenuItem disabled>No voices in this browser</DropdownMenuItem>
-            ) : (
-              <DropdownMenuRadioGroup
-                value={voiceURI ?? ""}
-                onValueChange={(uri) => {
-                  writeVoiceURI(uri);
-                  setVoiceURI(uri);
-                }}
-              >
-                {ranked.map((voice, index) => (
+            <DropdownMenuRadioGroup
+              value={choiceKey(voice)}
+              onValueChange={(key) => {
+                const [kind, ...rest] = key.split(":");
+                const next = { kind: kind as VoiceChoice["kind"], id: rest.join(":") };
+                writeVoiceChoice(next);
+                setStored(next);
+              }}
+            >
+              {cloudVoices.length > 0 ? (
+                <>
+                  <DropdownMenuLabel>Natural (cloud)</DropdownMenuLabel>
+                  {cloudVoices.map((v) => (
+                    <DropdownMenuRadioItem
+                      key={v.id}
+                      value={`cloud:${v.id}`}
+                      data-testid="ae-speak-voice-option"
+                    >
+                      {v.name}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </>
+              ) : null}
+              <DropdownMenuLabel>This device</DropdownMenuLabel>
+              {ranked.length === 0 ? (
+                <DropdownMenuItem disabled>No voices on this device</DropdownMenuItem>
+              ) : (
+                ranked.map((v) => (
                   <DropdownMenuRadioItem
-                    key={voice.voiceURI}
-                    value={voice.voiceURI}
+                    key={v.voiceURI}
+                    value={`device:${v.voiceURI}`}
                     data-testid="ae-speak-voice-option"
                   >
-                    {voiceLabel(voice)}
-                    {index === 0 ? (
-                      <span className="ml-2 text-xs text-muted-foreground">best here</span>
-                    ) : null}
+                    {voiceLabel(v)}
                   </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            )}
+                ))
+              )}
+            </DropdownMenuRadioGroup>
           </DropdownMenuSubContent>
         </DropdownMenuSub>
-        <div className="px-2 py-1.5 text-sm whitespace-normal">
-          <Described label="Speed" hint={aeHint("voice.rate")} />
-        </div>
-        <DropdownMenuRadioGroup
-          value={String(rate)}
-          onValueChange={(v) => {
-            const next = Number(v);
-            writeRate(next);
-            setRate(next);
-          }}
-        >
-          <DropdownMenuRadioItem value="1" data-testid="ae-speak-rate-normal">
-            Normal
-          </DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value={String(RATE_FASTER)} data-testid="ae-speak-rate-faster">
-            Faster
-          </DropdownMenuRadioItem>
-        </DropdownMenuRadioGroup>
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger data-testid="ae-speak-rate-trigger">
+            <span>Speed</span>
+            <span className="ml-auto text-xs text-muted-foreground">
+              {rate === RATE_FASTER ? "Faster" : "Normal"}
+            </span>
+            <RowHint id="voice.rate" />
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent>
+            <DropdownMenuRadioGroup
+              value={String(rate)}
+              onValueChange={(v) => {
+                const next = Number(v);
+                writeRate(next);
+                setRate(next);
+              }}
+            >
+              <DropdownMenuRadioItem value="1" data-testid="ae-speak-rate-normal">
+                Normal
+              </DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value={String(RATE_FASTER)} data-testid="ae-speak-rate-faster">
+                Faster
+                <span className="ml-auto pl-3 text-xs text-muted-foreground">1.25x</span>
+              </DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={readLast} data-testid="ae-speak-read-last">
           <RotateCcwIcon className="size-4" />

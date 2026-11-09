@@ -2,9 +2,11 @@
 // depth-0 text is spoken: history, sub-agent text and interrupted partials are not.
 
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import { createCloudSpeaker } from "@/lib/aeCloudVoice";
 import {
   createSpeaker,
   type Speaker,
+  type VoiceChoice,
   WORKING_CUE_DELAY_MS,
   WORKING_CUE_TEXT,
 } from "@/lib/aeSpeakReplies";
@@ -19,10 +21,45 @@ import {
 import { type AnyBlock, LIVE_ITEM_PREFIX } from "@/lib/blocks";
 import { useChatStore } from "@/store/chatStore";
 
-let sharedSpeaker: Speaker | null = null;
+// The device speaker, and the cloud speaker that falls back to it for a sentence the server fails.
+let deviceSpeaker: Speaker | null = null;
+let cloudSpeaker: Speaker | null = null;
+function getDevice(): Speaker {
+  deviceSpeaker ??= createSpeaker();
+  return deviceSpeaker;
+}
+function getCloud(): Speaker {
+  cloudSpeaker ??= createCloudSpeaker(getDevice());
+  return cloudSpeaker;
+}
+
+/** One speaker face over both: `speak` goes to the voice's engine, `stop` to both. */
 function getSpeaker(): Speaker {
-  sharedSpeaker ??= createSpeaker();
-  return sharedSpeaker;
+  return {
+    speak: () => {},
+    stop: () => {
+      getCloud().stop();
+      getDevice().stop();
+    },
+    speaking: () => getCloud().speaking() || getDevice().speaking(),
+    retained: () => getDevice().retained(),
+    subscribe: (cb) => {
+      const a = getCloud().subscribe(cb);
+      const b = getDevice().subscribe(cb);
+      return () => {
+        a();
+        b();
+      };
+    },
+  };
+}
+
+function say(text: string, voice: VoiceChoice | null, rate: number): void {
+  if (voice?.kind === "cloud") {
+    getCloud().speak(text, { voiceURI: null, rate, cloudVoiceId: voice.id });
+  } else {
+    getDevice().speak(text, { voiceURI: voice?.id ?? null, rate });
+  }
 }
 
 const CODE_BLOCK_KEY = normalizeSentence(CODE_BLOCK_PHRASE);
@@ -84,17 +121,17 @@ function scanBlocks(blocks: readonly AnyBlock[]): Scan {
 export interface UseAeSpeakRepliesArgs {
   chatId: string | null;
   enabled: boolean;
-  voiceURI: string | null;
+  voice: VoiceChoice | null;
   rate: number;
 }
 
-export function useAeSpeakReplies({ chatId, enabled, voiceURI, rate }: UseAeSpeakRepliesArgs): {
+export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRepliesArgs): {
   speaking: boolean;
   stop: () => void;
   readLast: () => void;
 } {
-  const optsRef = useRef({ voiceURI, rate });
-  optsRef.current = { voiceURI, rate };
+  const optsRef = useRef({ voice, rate });
+  optsRef.current = { voice, rate };
 
   const speaking = useSyncExternalStore(
     (cb) => getSpeaker().subscribe(cb),
@@ -149,7 +186,7 @@ export function useAeSpeakReplies({ chatId, enabled, voiceURI, rate }: UseAeSpea
       if (fresh.length === 0) return;
       spokenThisTurn = true;
       clearCue();
-      speaker.speak(fresh.join(" "), optsRef.current);
+      say(fresh.join(" "), optsRef.current.voice, optsRef.current.rate);
     };
     // Existing finals are handled and in-flight sources start at their current length, so
     // nothing already on screen is read back. Only a live source seeds the spoken set, and
@@ -214,7 +251,7 @@ export function useAeSpeakReplies({ chatId, enabled, voiceURI, rate }: UseAeSpea
           cueTimer = null;
           if (!spokenThisTurn) {
             spokenThisTurn = true;
-            speaker.speak(WORKING_CUE_TEXT, optsRef.current);
+            say(WORKING_CUE_TEXT, optsRef.current.voice, optsRef.current.rate);
           }
         }, WORKING_CUE_DELAY_MS);
         prevStatus = state.status;
@@ -274,9 +311,8 @@ export function useAeSpeakReplies({ chatId, enabled, voiceURI, rate }: UseAeSpea
       if (b.ctx.itemId?.startsWith(LIVE_ITEM_PREFIX) || b.fullText.trim() === "") continue;
       const text = speechTextFromMarkdown(stripTldr(b.fullText));
       if (text === "") continue;
-      const speaker = getSpeaker();
-      speaker.stop();
-      speaker.speak(text, optsRef.current);
+      getSpeaker().stop();
+      say(text, optsRef.current.voice, optsRef.current.rate);
       return;
     }
   }, []);
