@@ -360,7 +360,7 @@ describe("AeSpeakRepliesButton", () => {
           addEventListener: () => {},
         },
       });
-    const LIST = [
+    const LIST: Partial<MediaDeviceInfo>[] = [
       { kind: "audioinput", deviceId: "mic1", label: "USB Mic" },
       { kind: "audiooutput", deviceId: "spk1", label: "Desk Speaker" },
     ];
@@ -480,7 +480,7 @@ describe("AeSpeakRepliesButton", () => {
   });
 
   describe("device ids hidden before permission", () => {
-    const HIDDEN = [
+    const HIDDEN: Partial<MediaDeviceInfo>[] = [
       { kind: "audioinput", deviceId: "", label: "" },
       { kind: "audiooutput", deviceId: "", label: "" },
     ];
