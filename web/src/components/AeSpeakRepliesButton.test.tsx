@@ -427,13 +427,78 @@ describe("AeSpeakRepliesButton", () => {
     const triggers = document.querySelectorAll("[data-slot=tooltip-trigger]");
     expect(triggers).toHaveLength(7);
     for (const el of triggers) {
-      const group = el.closest("span.flex-1");
+      const group = el.closest("span.items-center.gap-1\\.5");
       expect(group).not.toBeNull();
       expect(group?.textContent).toMatch(/Voice mode|Speak replies|Fast answers|Voice|Speed|Microphone|Speaker/);
     }
     const actions = screen.getByTestId("ae-speak-actions");
     expect(within(actions).getByTestId("ae-speak-read-last")).toBeInTheDocument();
     expect(within(actions).getByTestId("ae-speak-stop")).toHaveAttribute("data-disabled");
+  });
+
+  it("Read last reply speaks the last reply and Stop speaking cancels it", async () => {
+    const synth = installFakeSpeech();
+    synth.voices = [makeVoice({ name: "Plain", lang: "en-US", default: true })];
+    useChatStore.setState({
+      blocks: [
+        {
+          type: "text_done",
+          ctx: { agent: null, depth: 0, turn: 1, timestamp: 1, responseId: "r1", itemId: "i1" },
+          fullText: "The last reply.",
+          hasCodeBlocks: false,
+        },
+      ],
+    } as never);
+    renderButton();
+    const user = await openMenu();
+    expect(screen.getByTestId("ae-speak-stop")).toHaveAttribute("data-disabled");
+    await user.click(screen.getByTestId("ae-speak-read-last"));
+    await waitFor(() => expect(synth.texts()).toEqual(["The last reply."]));
+    const user2 = await openMenu();
+    await waitFor(() => expect(screen.getByTestId("ae-speak-stop")).not.toHaveAttribute("data-disabled"));
+    const cancels = synth.cancelCount;
+    await user2.click(screen.getByTestId("ae-speak-stop"));
+    expect(synth.cancelCount).toBeGreaterThan(cancels);
+  });
+
+  describe("device ids hidden before permission", () => {
+    const HIDDEN = [
+      { kind: "audioinput", deviceId: "", label: "" },
+      { kind: "audiooutput", deviceId: "", label: "" },
+    ];
+    beforeEach(() => {
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: { enumerateDevices: () => Promise.resolve(HIDDEN), addEventListener: () => {} },
+      });
+    });
+    afterEach(() => {
+      Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: undefined });
+    });
+
+    it("shows System default, a muted line and no device radios", async () => {
+      renderButton();
+      const user = await openMenu();
+      await user.click(screen.getByTestId("ae-speak-mic-trigger"));
+      expect(await screen.findByText("Use the mic once to list devices.")).toBeInTheDocument();
+      expect(screen.getAllByTestId("ae-speak-mic-option")).toHaveLength(1);
+      expect(screen.getByTestId("ae-speak-mic-trigger")).toHaveTextContent("System default");
+    });
+
+    it("reads a saved microphone as Saved device", async () => {
+      window.localStorage.setItem("omnigent:ae-mic-device", "mic1");
+      renderButton();
+      await openMenu();
+      expect(screen.getByTestId("ae-speak-mic-trigger")).toHaveTextContent("Saved device");
+    });
+
+    it("gives the value rows the shared shrink classes", async () => {
+      renderButton();
+      await openMenu();
+      const value = screen.getByTestId("ae-speak-mic-trigger").querySelector("[title]");
+      expect(value).toHaveClass("min-w-0", "flex-1", "truncate", "text-right");
+      expect(value).not.toHaveClass("max-w-28");
+    });
   });
 
   it("disables Stop speaking while idle", async () => {

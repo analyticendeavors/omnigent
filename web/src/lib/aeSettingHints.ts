@@ -262,12 +262,12 @@ export const AE_SETTING_HINTS = {
   },
   "voice.microphone": {
     label: "Microphone",
-    hint: "Which microphone dictation and the level meter use. Saved per device. Default: System default.",
+    hint: "Microphone for dictation and Voice mode. Saved on this device; a change applies the next time the mic starts. Default: System default.",
     source: "tooltip",
   },
   "voice.speaker": {
     label: "Speaker",
-    hint: "Where Natural (cloud) voices play. This device voices always use the system default. Saved per device. Default: System default.",
+    hint: "Where Natural (cloud) voices play. This device voices always use the system default. Saved on this device. Default: System default.",
     source: "tooltip",
   },
 } as const satisfies Record<string, AeSettingHint>;

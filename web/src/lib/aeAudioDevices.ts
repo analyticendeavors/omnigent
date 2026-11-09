@@ -11,12 +11,20 @@ export interface AudioDevice {
 export interface AudioDeviceList {
   inputs: AudioDevice[];
   outputs: AudioDevice[];
+  /** False while the browser hides device ids (no microphone permission yet). */
+  inputsKnown: boolean;
+  outputsKnown: boolean;
+}
+
+export interface SavedAudioDevices {
+  mic: string | null;
+  speaker: string | null;
 }
 
 export const MIC_KEY = "omnigent:ae-mic-device";
 export const SPEAKER_KEY = "omnigent:ae-speaker-device";
 
-const EMPTY: AudioDeviceList = { inputs: [], outputs: [] };
+const EMPTY: AudioDeviceList = { inputs: [], outputs: [], inputsKnown: false, outputsKnown: false };
 const PSEUDO = new Set(["default", "communications"]);
 
 function getItem(key: string): string | null {
@@ -68,7 +76,10 @@ export function speakerSelectionSupported(): boolean {
   );
 }
 
-/** Lists inputs and outputs; an empty label becomes "Microphone 2" / "Speaker 2" by position. */
+/**
+ * Lists inputs and outputs; an empty label becomes "Microphone 2" / "Speaker 2" by position.
+ * Entries with an empty id (listed before permission) are dropped and the kind is marked not known.
+ */
 export async function listAudioDevices(): Promise<AudioDeviceList> {
   if (!micDevicesSupported()) return EMPTY;
   let all: MediaDeviceInfo[];
@@ -77,16 +88,27 @@ export async function listAudioDevices(): Promise<AudioDeviceList> {
   } catch {
     return EMPTY;
   }
-  const pick = (kind: MediaDeviceKind, fallback: string): AudioDevice[] =>
-    all
-      .filter((d) => d.kind === kind && !PSEUDO.has(d.deviceId))
+  const pick = (kind: MediaDeviceKind, fallback: string) => {
+    const raw = all.filter((d) => d.kind === kind);
+    const devices = raw
+      .filter((d) => d.deviceId !== "" && !PSEUDO.has(d.deviceId))
       .map((d, i) => ({ id: d.deviceId, label: d.label || `${fallback} ${i + 1}` }));
-  return { inputs: pick("audioinput", "Microphone"), outputs: pick("audiooutput", "Speaker") };
+    return { devices, known: raw.every((d) => d.deviceId !== "") };
+  };
+  const inputs = pick("audioinput", "Microphone");
+  const outputs = pick("audiooutput", "Speaker");
+  return {
+    inputs: inputs.devices,
+    outputs: outputs.devices,
+    inputsKnown: inputs.known,
+    outputsKnown: outputs.known,
+  };
 }
 
 let cache: AudioDeviceList | null = null;
 let snapshot: AudioDeviceList = EMPTY;
 let version = 0;
+let refreshSeq = 0;
 const listeners = new Set<() => void>();
 let watched: MediaDevices | null = null;
 
@@ -95,24 +117,38 @@ function notify(): void {
   listeners.forEach((cb) => cb());
 }
 
+/** Re-lists the devices; a result that is not the newest request is dropped. */
 export async function refreshAudioDevices(): Promise<void> {
-  cache = await listAudioDevices();
-  snapshot = cache;
+  const seq = ++refreshSeq;
+  const list = await listAudioDevices();
+  if (seq !== refreshSeq) return;
+  cache = list;
+  snapshot = list;
   notify();
 }
 
-function watch(): void {
+function onDeviceChange(): void {
+  void refreshAudioDevices();
+}
+
+function attach(): void {
   if (!micDevicesSupported() || watched === navigator.mediaDevices) return;
   watched = navigator.mediaDevices;
-  watched.addEventListener?.("devicechange", () => void refreshAudioDevices());
+  watched.addEventListener?.("devicechange", onDeviceChange);
   void refreshAudioDevices();
+}
+
+function detach(): void {
+  watched?.removeEventListener?.("devicechange", onDeviceChange);
+  watched = null;
 }
 
 export function subscribeAudioDevices(cb: () => void): () => void {
   listeners.add(cb);
-  watch();
+  attach();
   return () => {
     listeners.delete(cb);
+    if (listeners.size === 0) detach();
   };
 }
 
@@ -124,43 +160,72 @@ export function useAudioDevices(): AudioDeviceList {
   );
 }
 
+let savedSnapshot: SavedAudioDevices = { mic: null, speaker: null };
+
+/** Stable between reads unless a saved id changed. */
+function getSavedSnapshot(): SavedAudioDevices {
+  const mic = readMicDevice();
+  const speaker = readSpeakerDevice();
+  if (mic !== savedSnapshot.mic || speaker !== savedSnapshot.speaker) savedSnapshot = { mic, speaker };
+  return savedSnapshot;
+}
+
+function subscribeSaved(cb: () => void): () => void {
+  listeners.add(cb);
+  return () => {
+    listeners.delete(cb);
+  };
+}
+
+/** The two saved ids, shared by every mounted control. */
+export function useSavedAudioDevices(): SavedAudioDevices {
+  return useSyncExternalStore(subscribeSaved, getSavedSnapshot, () => savedSnapshot);
+}
+
 /** Version counter, for tests. */
 export function audioDevicesVersion(): number {
   return version;
 }
 
-/** Saved id when it is in the list. Before the first listing the saved id is trusted (callers retry). */
-function present(saved: string | null, list: AudioDevice[] | undefined): string | null {
+/** Saved id when it is listed. Before a listing, or while the kind is not known, the saved id is trusted. */
+function present(saved: string | null, list: AudioDevice[] | undefined, known: boolean): string | null {
   if (!saved) return null;
-  if (!list) return saved;
+  if (!list || !known) return saved;
   return list.some((d) => d.id === saved) ? saved : null;
 }
 
+function ensureListed(): void {
+  if (cache === null && micDevicesSupported()) void refreshAudioDevices();
+}
+
 export function micConstraint(): { deviceId: { exact: string } } | undefined {
-  watch();
-  const id = present(readMicDevice(), cache?.inputs);
+  ensureListed();
+  const id = present(readMicDevice(), cache?.inputs, cache?.inputsKnown ?? false);
   return id ? { deviceId: { exact: id } } : undefined;
 }
 
 export function speakerSinkId(): string {
-  watch();
-  return present(readSpeakerDevice(), cache?.outputs) ?? "";
+  ensureListed();
+  return present(readSpeakerDevice(), cache?.outputs, cache?.outputsKnown ?? false) ?? "";
 }
 
 /**
  * getUserMedia with the saved microphone. A missing or over-constrained saved device
- * retries once on the system default.
+ * retries once on the system default. A stream means permission exists, so a list
+ * that hid its ids is read again.
  */
 export async function getMicStream(audio: MediaTrackConstraints | true): Promise<MediaStream> {
   const wanted = micConstraint();
   const base = audio === true ? {} : audio;
+  let stream: MediaStream;
   try {
-    return await navigator.mediaDevices.getUserMedia({ audio: { ...base, ...wanted } });
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { ...base, ...wanted } });
   } catch (err) {
     const name = (err as { name?: string } | null)?.name;
     if (wanted && (name === "OverconstrainedError" || name === "NotFoundError")) {
-      return navigator.mediaDevices.getUserMedia({ audio });
-    }
-    throw err;
+      stream = await navigator.mediaDevices.getUserMedia({ audio });
+    } else throw err;
   }
+  if (!cache?.inputsKnown) void refreshAudioDevices();
+  return stream;
 }

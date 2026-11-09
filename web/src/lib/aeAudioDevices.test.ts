@@ -1,3 +1,4 @@
+import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getMicStream,
@@ -6,6 +7,7 @@ import {
   readMicDevice,
   readSpeakerDevice,
   refreshAudioDevices,
+  useSavedAudioDevices,
   speakerSinkId,
   subscribeAudioDevices,
   writeMicDevice,
@@ -63,7 +65,7 @@ describe("listAudioDevices", () => {
 
   it("returns nothing without the api", async () => {
     Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: undefined });
-    expect(await listAudioDevices()).toEqual({ inputs: [], outputs: [] });
+    expect(await listAudioDevices()).toMatchObject({ inputs: [], outputs: [], inputsKnown: false });
   });
 });
 
@@ -134,5 +136,106 @@ describe("getMicStream", () => {
     getUserMedia.mockRejectedValueOnce(Object.assign(new Error("x"), { name: "NotAllowedError" }));
     await expect(getMicStream(true)).rejects.toThrow("x");
     expect(getUserMedia).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("before microphone permission", () => {
+  const hidden = [
+    dev("audioinput", "", ""),
+    dev("audiooutput", "", ""),
+  ];
+
+  it("drops empty ids, marks the kind not known and still trusts the saved id", async () => {
+    (navigator.mediaDevices.enumerateDevices as ReturnType<typeof vi.fn>).mockResolvedValue(hidden);
+    const list = await listAudioDevices();
+    expect(list.inputs).toEqual([]);
+    expect(list.inputsKnown).toBe(false);
+    expect(list.outputsKnown).toBe(false);
+    await refreshAudioDevices();
+    writeMicDevice("mic1");
+    expect(micConstraint()).toEqual({ deviceId: { exact: "mic1" } });
+  });
+
+  it("re-lists after a stream succeeds", async () => {
+    const enumerate = navigator.mediaDevices.enumerateDevices as ReturnType<typeof vi.fn>;
+    enumerate.mockResolvedValueOnce(hidden);
+    await refreshAudioDevices();
+    enumerate.mockResolvedValue(DEVICES);
+    await getMicStream(true);
+    await vi.waitFor(() => expect(speakerSinkId()).toBe(""));
+    await vi.waitFor(async () => expect((await listAudioDevices()).inputsKnown).toBe(true));
+    const cb = vi.fn();
+    const off = subscribeAudioDevices(cb);
+    await vi.waitFor(() => expect(cb).toHaveBeenCalled());
+    off();
+  });
+
+  it("retries once on the default when the saved device is unplugged and no listing exists yet", async () => {
+    window.localStorage.setItem("omnigent:ae-mic-device", "unplugged");
+    getUserMedia.mockRejectedValueOnce(Object.assign(new Error("x"), { name: "NotFoundError" }));
+    vi.resetModules();
+    const fresh = await import("./aeAudioDevices");
+    await expect(fresh.getMicStream({ channelCount: 1 })).resolves.toBeDefined();
+    expect(getUserMedia).toHaveBeenCalledTimes(2);
+    expect(getUserMedia).toHaveBeenLastCalledWith({ audio: { channelCount: 1 } });
+  });
+});
+
+describe("listener and ordering", () => {
+  it("removes devicechange with the last subscriber and attaches again for the next", async () => {
+    const add = vi.fn();
+    const remove = vi.fn();
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        enumerateDevices: () => Promise.resolve(DEVICES),
+        getUserMedia,
+        addEventListener: add,
+        removeEventListener: remove,
+      },
+    });
+    const off1 = subscribeAudioDevices(() => {});
+    const off2 = subscribeAudioDevices(() => {});
+    expect(add).toHaveBeenCalledTimes(1);
+    off1();
+    expect(remove).not.toHaveBeenCalled();
+    off2();
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(remove.mock.calls[0][1]).toBe(add.mock.calls[0][1]);
+    const off3 = subscribeAudioDevices(() => {});
+    expect(add).toHaveBeenCalledTimes(2);
+    off3();
+  });
+
+  it("drops an older refresh that resolves after a newer one", async () => {
+    let first!: (v: MediaDeviceInfo[]) => void;
+    const enumerate = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<MediaDeviceInfo[]>((r) => {
+          first = r;
+        }))
+      .mockImplementationOnce(() => Promise.resolve(DEVICES));
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { enumerateDevices: enumerate, getUserMedia, addEventListener: () => {} },
+    });
+    const older = refreshAudioDevices();
+    await refreshAudioDevices();
+    first([dev("audioinput", "old", "Old Mic")]);
+    await older;
+    writeMicDevice("old");
+    expect(micConstraint()).toBeUndefined();
+    writeMicDevice("mic1");
+    expect(micConstraint()).toEqual({ deviceId: { exact: "mic1" } });
+  });
+
+  it("keeps the saved ids snapshot stable between writes and follows a write", () => {
+    const { result, rerender } = renderHook(() => useSavedAudioDevices());
+    const first = result.current;
+    rerender();
+    expect(result.current).toBe(first);
+    act(() => writeMicDevice("mic1"));
+    expect(result.current).not.toBe(first);
+    expect(result.current.mic).toBe("mic1");
   });
 });

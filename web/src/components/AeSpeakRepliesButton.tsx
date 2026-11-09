@@ -24,10 +24,9 @@ import { Switch } from "@/components/ui/switch";
 import { useAeSpeakReplies } from "@/hooks/useAeSpeakReplies";
 import {
   micDevicesSupported,
-  readMicDevice,
-  readSpeakerDevice,
   speakerSelectionSupported,
   useAudioDevices,
+  useSavedAudioDevices,
   writeMicDevice,
   writeSpeakerDevice,
   type AudioDevice,
@@ -116,12 +115,17 @@ function RowHint({
 
 const SYSTEM_DEFAULT = "";
 
+/** Value rows: the label group keeps its size, the value takes the rest and truncates. */
+const ROW_LABEL_CLASS = "flex shrink-0 items-center gap-1.5";
+const ROW_VALUE_CLASS = "min-w-0 flex-1 truncate pl-2 text-right text-xs text-muted-foreground";
+
 /** A device row: current value on the row, radio items in the sub-menu. */
 function DeviceRow({
   label,
   hint,
   testId,
   devices,
+  known,
   saved,
   onChoose,
 }: {
@@ -129,21 +133,23 @@ function DeviceRow({
   hint: "voice.microphone" | "voice.speaker";
   testId: string;
   devices: AudioDevice[];
+  known: boolean;
   saved: string | null;
   onChoose: (id: string | null) => void;
 }) {
   // A saved device that is gone reads as System default; the saved value stays for its return.
   const current = devices.find((d) => d.id === saved);
   const value = current ? current.id : SYSTEM_DEFAULT;
-  const name = current ? current.label : "System default";
+  // Before the browser shares device ids a saved choice cannot be named.
+  const name = current ? current.label : !known && saved ? "Saved device" : "System default";
   return (
     <DropdownMenuSub>
       <DropdownMenuSubTrigger data-testid={`${testId}-trigger`}>
-        <span className="flex min-w-0 flex-1 items-center gap-1.5">
+        <span className={ROW_LABEL_CLASS}>
           {label}
           <RowHint id={hint} />
         </span>
-        <span className="max-w-28 truncate text-xs text-muted-foreground" title={name}>
+        <span className={ROW_VALUE_CLASS} title={name}>
           {name}
         </span>
       </DropdownMenuSubTrigger>
@@ -155,6 +161,11 @@ function DeviceRow({
           <DropdownMenuRadioItem value={SYSTEM_DEFAULT} data-testid={`${testId}-option`}>
             System default
           </DropdownMenuRadioItem>
+          {!known ? (
+            <div className="px-2 py-1.5 text-xs text-muted-foreground" data-testid={`${testId}-unknown`}>
+              Use the mic once to list devices.
+            </div>
+          ) : null}
           {devices.map((d) => (
             <DropdownMenuRadioItem key={d.id} value={d.id} data-testid={`${testId}-option`}>
               {d.label}
@@ -229,8 +240,7 @@ function SpeakRepliesControl({
   const [cloudVoices, setCloudVoices] = useState<CloudVoice[]>([]);
   const [rate, setRate] = useState(readRate);
   const [voices, setVoices] = useState(listVoices);
-  const [micId, setMicId] = useState(readMicDevice);
-  const [speakerId, setSpeakerId] = useState(readSpeakerDevice);
+  const savedDevices = useSavedAudioDevices();
   const audioDevices = useAudioDevices();
 
   useEffect(() => {
@@ -448,11 +458,11 @@ function SpeakRepliesControl({
         ) : null}
         <DropdownMenuSub>
           <DropdownMenuSubTrigger data-testid="ae-speak-voice-trigger">
-            <span className="flex min-w-0 flex-1 items-center gap-1.5">
+            <span className={ROW_LABEL_CLASS}>
               Voice
               <RowHint id="voice.voice" />
             </span>
-            <span className="max-w-28 truncate text-xs text-muted-foreground" title={chosenName}>
+            <span className={ROW_VALUE_CLASS} title={chosenName}>
               {chosenName}
             </span>
           </DropdownMenuSubTrigger>
@@ -500,11 +510,11 @@ function SpeakRepliesControl({
         </DropdownMenuSub>
         <DropdownMenuSub>
           <DropdownMenuSubTrigger data-testid="ae-speak-rate-trigger">
-            <span className="flex min-w-0 flex-1 items-center gap-1.5">
+            <span className={ROW_LABEL_CLASS}>
               Speed
               <RowHint id="voice.rate" />
             </span>
-            <span className="text-xs text-muted-foreground">
+            <span className={ROW_VALUE_CLASS}>
               {rate === RATE_FASTER ? "Faster" : "Normal"}
             </span>
           </DropdownMenuSubTrigger>
@@ -533,11 +543,9 @@ function SpeakRepliesControl({
             hint="voice.microphone"
             testId="ae-speak-mic"
             devices={audioDevices.inputs}
-            saved={micId}
-            onChoose={(id) => {
-              writeMicDevice(id);
-              setMicId(id);
-            }}
+            known={audioDevices.inputsKnown}
+            saved={savedDevices.mic}
+            onChoose={writeMicDevice}
           />
         ) : null}
         {speakerSelectionSupported() ? (
@@ -546,11 +554,9 @@ function SpeakRepliesControl({
             hint="voice.speaker"
             testId="ae-speak-speaker"
             devices={audioDevices.outputs}
-            saved={speakerId}
-            onChoose={(id) => {
-              writeSpeakerDevice(id);
-              setSpeakerId(id);
-            }}
+            known={audioDevices.outputsKnown}
+            saved={savedDevices.speaker}
+            onChoose={writeSpeakerDevice}
           />
         ) : null}
         <DropdownMenuSeparator />

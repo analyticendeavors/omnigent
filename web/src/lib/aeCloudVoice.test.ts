@@ -14,7 +14,14 @@ class FakeAudio {
   sinkId = "";
   sinks: string[] = [];
   static sinkFail = false;
+  static sinkGate: Promise<void> | null = null;
   setSinkId(id: string) {
+    if (FakeAudio.sinkGate) {
+      return FakeAudio.sinkGate.then(() => {
+        this.sinks.push(id);
+        this.sinkId = id;
+      });
+    }
     if (FakeAudio.sinkFail && id !== "") return Promise.reject(new Error("sink"));
     this.sinks.push(id);
     this.sinkId = id;
@@ -125,6 +132,7 @@ beforeEach(() => {
 
 afterEach(() => {
   window.localStorage.clear();
+  FakeAudio.sinkGate = null;
   vi.unstubAllGlobals();
 });
 
@@ -302,5 +310,43 @@ describe("createCloudSpeaker", () => {
     expect(FakeAudio.last?.sinkId).toBe("");
     expect(FakeAudio.last?.played.length).toBe(2);
     FakeAudio.sinkFail = false;
+  });
+
+  it("waits for a slow setSinkId before playing, then plays both sentences once in order", async () => {
+    window.localStorage.setItem("omnigent:ae-speaker-device", "spk1");
+    let open!: () => void;
+    FakeAudio.sinkGate = new Promise<void>((r) => {
+      open = r;
+    });
+    const speaker = createCloudSpeaker(new FakeDevice());
+    speaker.speak(`${sentence("a")} ${sentence("b")}`, OPTS);
+    await settle();
+    pending[0].resolve(mp3());
+    pending[1].resolve(mp3());
+    await settle();
+    expect(FakeAudio.last?.played ?? []).toEqual([]);
+    FakeAudio.sinkGate = null;
+    open();
+    await settle();
+    expect(FakeAudio.last?.played).toEqual(["blob:0"]);
+    FakeAudio.last?.end();
+    await settle();
+    expect(FakeAudio.last?.played).toEqual(["blob:0", "blob:1"]);
+  });
+
+  it("applies a speaker change between two sentences to the second only", async () => {
+    window.localStorage.setItem("omnigent:ae-speaker-device", "spk1");
+    const speaker = createCloudSpeaker(new FakeDevice());
+    speaker.speak(`${sentence("a")} ${sentence("b")}`, OPTS);
+    await settle();
+    pending[0].resolve(mp3());
+    pending[1].resolve(mp3());
+    await settle();
+    expect(FakeAudio.last?.sinks).toEqual(["spk1"]);
+    window.localStorage.setItem("omnigent:ae-speaker-device", "spk2");
+    FakeAudio.last?.end();
+    await settle();
+    expect(FakeAudio.last?.sinks).toEqual(["spk1", "spk2"]);
+    expect(FakeAudio.last?.played).toEqual(["blob:0", "blob:1"]);
   });
 });
