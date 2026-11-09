@@ -8,7 +8,8 @@ import { DictationBusyError, DictationSession } from "@/lib/dictation";
 import { isElectronShell } from "@/lib/nativeBridge";
 import { cn } from "@/lib/utils";
 import { Loader2Icon, MicIcon, SquareIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type MutableRefObject, useCallback, useEffect, useRef, useState } from "react";
+import type { AeMicController } from "@/lib/aeVoiceMode";
 
 // Local-only types; speech-input.tsx already augments Window globally.
 interface SpeechRecognitionLike {
@@ -90,6 +91,10 @@ export interface ComposerMicButtonProps {
   /** Fired when Esc ends dictation. The parent should restore the text it
    *  snapshotted in {@link onVoiceStart}, discarding what was dictated. */
   onVoiceDiscard?: () => void;
+  /** Voice mode: filled with start, stop and the listening state. */
+  controller?: MutableRefObject<AeMicController | null>;
+  /** Voice mode: called when listening starts or stops. */
+  onListeningChange?: (listening: boolean) => void;
 }
 
 /** getUserMedia permission failures, distinct from transport failures. */
@@ -106,6 +111,8 @@ export const ComposerMicButton = ({
   enableHotkey = false,
   onVoiceStart,
   onVoiceDiscard,
+  controller,
+  onListeningChange,
 }: ComposerMicButtonProps) => {
   // Web Speech is primary whenever the browser has the constructor
   // (Chrome/Safari, unchanged behavior); with no constructor at all
@@ -463,6 +470,28 @@ export const ComposerMicButton = ({
       transitionRef.current = false;
     }
   }, [isListening, Ctor, serverAvailable, toggleServer]);
+
+  // Voice mode drives the mic through this handle; the button keeps working alone.
+  const listeningRef = useRef(isListening);
+  listeningRef.current = isListening;
+  useEffect(() => {
+    if (!controller) return;
+    controller.current = {
+      start: () => {
+        if (!listeningRef.current) toggle();
+      },
+      stop: () => {
+        if (listeningRef.current) toggle();
+      },
+      isListening: () => listeningRef.current,
+    };
+    return () => {
+      controller.current = null;
+    };
+  }, [controller, toggle]);
+  useEffect(() => {
+    onListeningChange?.(isListening);
+  }, [isListening, onListeningChange]);
 
   // ⌘⌥V toggles dictation from anywhere — same as clicking the button. Enabled
   // whenever dictation could run (Web Speech OR the server path) and the

@@ -16,6 +16,7 @@
 // an AudioWorklet, and a WebSocket; the full loop runs in the Playwright
 // e2e test against the server's fake engine).
 
+import type { AeMicController } from "@/lib/aeVoiceMode";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { CapabilitiesContext } from "@/lib/CapabilitiesContext";
@@ -200,6 +201,28 @@ describe("ComposerMicButton", () => {
     // The recognizer's "start" event flips the pressed state.
     act(() => handlers.start?.({}));
     expect(button).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("exposes start, stop and the listening state to Voice mode", () => {
+    const controller = { current: null as AeMicController | null };
+    const onListeningChange = vi.fn();
+    render(
+      <ComposerMicButton
+        onTranscript={vi.fn()}
+        controller={controller}
+        onListeningChange={onListeningChange}
+      />,
+    );
+    expect(controller.current?.isListening()).toBe(false);
+    act(() => controller.current?.start());
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    act(() => handlers.start?.({}));
+    expect(controller.current?.isListening()).toBe(true);
+    expect(onListeningChange).toHaveBeenLastCalledWith(true);
+    act(() => controller.current?.start());
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    act(() => controller.current?.stop());
+    expect(stopSpy).toHaveBeenCalledTimes(1);
   });
 
   it("stops recognition on a second click once recording", () => {

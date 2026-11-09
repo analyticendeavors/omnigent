@@ -1,7 +1,8 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetCloudVoicesCache } from "@/lib/aeCloudVoice";
+import { getVoiceSnapshot, resetVoiceStore, setVoicePhase } from "@/lib/aeVoiceMode";
 import { useChatStore } from "@/store/chatStore";
 import { installFakeSpeech, makeVoice, removeFakeSpeech } from "@/test/fakeSpeech";
 import { AeSpeakRepliesButton } from "./AeSpeakRepliesButton";
@@ -19,7 +20,7 @@ function renderButton(props: Partial<React.ComponentProps<typeof AeSpeakRepliesB
 
 async function openMenu() {
   const user = userEvent.setup();
-  await user.click(screen.getByTestId("ae-speak-replies"));
+  await user.click(screen.getByTestId("ae-speak-replies-menu"));
   return user;
 }
 
@@ -39,6 +40,7 @@ function serveCloudVoices(voices: { id: string; name: string }[]) {
 beforeEach(() => {
   serveCloudVoices([]);
   window.localStorage.clear();
+  resetVoiceStore();
   setEffort.mockClear();
   useChatStore.setState({ conversationId: "c1", blocks: [], status: "idle", setEffort } as never);
   const synth = installFakeSpeech();
@@ -360,5 +362,53 @@ describe("AeSpeakRepliesButton", () => {
       setTimeout(resolve, 10);
     });
     expect(setEffort).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Voice mode on the speaker button", () => {
+  it("a tap turns Voice mode and Speak replies on, a second tap turns Voice mode off", async () => {
+    renderButton();
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("ae-speak-replies"));
+    expect(getVoiceSnapshot("c1").on).toBe(true);
+    expect(screen.getByTestId("ae-speak-replies")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("ae-voice-phase")).toHaveTextContent("Listening");
+    const post = vi
+      .mocked(fetch)
+      .mock.calls.find(([url]) => String(url).includes("/v1/ae/sessions/c1/voice"));
+    expect(post).toBeDefined();
+    await user.click(screen.getByTestId("ae-speak-replies"));
+    expect(getVoiceSnapshot("c1").on).toBe(false);
+    expect(screen.getByTestId("ae-voice-phase")).toBeEmptyDOMElement();
+  });
+
+  it("shows the phase word for each phase", async () => {
+    renderButton();
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("ae-speak-replies"));
+    act(() => setVoicePhase("c1", "thinking"));
+    expect(screen.getByTestId("ae-voice-phase")).toHaveTextContent("Working on it");
+    act(() => setVoicePhase("c1", "speaking"));
+    expect(screen.getByTestId("ae-voice-phase")).toHaveTextContent("Speaking, tap to stop");
+  });
+
+  it("the menu opens from the caret with the Voice mode row on top", async () => {
+    renderButton();
+    const user = await openMenu();
+    const items = screen.getAllByRole("menuitemcheckbox");
+    expect(items[0]).toHaveAttribute("data-testid", "ae-voice-mode-toggle");
+    await user.click(screen.getByTestId("ae-voice-mode-toggle"));
+    expect(getVoiceSnapshot("c1").on).toBe(true);
+    expect(screen.getByTestId("ae-speak-toggle")).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("turning Speak replies off turns Voice mode off too", async () => {
+    renderButton();
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("ae-speak-replies"));
+    await user.click(screen.getByTestId("ae-speak-replies-menu"));
+    await user.click(screen.getByTestId("ae-speak-toggle"));
+    expect(getVoiceSnapshot("c1").on).toBe(false);
+    expect(screen.getByTestId("ae-speak-replies")).toHaveAttribute("aria-pressed", "false");
   });
 });

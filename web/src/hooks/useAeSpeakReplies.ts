@@ -130,6 +130,8 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
   speaking: boolean;
   stop: () => void;
   readLast: () => void;
+  /** Speaks one line in the chosen voice (Voice mode reads question cards with it). */
+  speak: (text: string) => void;
 } {
   const optsRef = useRef({ voice, rate });
   optsRef.current = { voice, rate };
@@ -332,5 +334,10 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
     }
   }, []);
 
-  return { speaking, stop, readLast };
+  const speak = useCallback(
+    (text: string) => say(text, optsRef.current.voice, optsRef.current.rate),
+    [],
+  );
+
+  return { speaking, stop, readLast, speak };
 }

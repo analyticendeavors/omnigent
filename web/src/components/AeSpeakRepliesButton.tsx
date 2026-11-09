@@ -3,7 +3,7 @@
 // Composer button and menu for Speak replies: the per-chat toggle, Fast answers,
 // the voice and speed choices, Read last reply and Stop speaking.
 
-import { RotateCcwIcon, SquareIcon, Volume2Icon, VolumeXIcon } from "lucide-react";
+import { ChevronDownIcon, RotateCcwIcon, SquareIcon, Volume2Icon, VolumeXIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AeHint } from "@/components/AeHint";
 import { Button } from "@/components/ui/button";
@@ -46,10 +46,24 @@ import {
   writeSpeakReplies,
   writeVoiceChoice,
 } from "@/lib/aeSpeakReplies";
+import {
+  registerVoiceSpeaker,
+  setVoiceOn,
+  setVoiceSpeaking,
+  useVoiceSnapshot,
+  type VoicePhase,
+} from "@/lib/aeVoiceMode";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chatStore";
 
 const MAX_VOICES = 12;
+
+const PHASE_WORD: Record<VoicePhase, string> = {
+  off: "",
+  listening: "Listening",
+  thinking: "Working on it",
+  speaking: "Speaking, tap to stop",
+};
 
 export interface AeSpeakRepliesButtonProps {
   chatId: string | null;
@@ -66,7 +80,11 @@ function choiceKey(choice: VoiceChoice | null): string {
 }
 
 /** The "i" sits inside a menu row: pressing it must not toggle or close the row. */
-function RowHint({ id }: { id: "voice.speak" | "voice.fast" | "voice.voice" | "voice.rate" }) {
+function RowHint({
+  id,
+}: {
+  id: "voice.mode" | "voice.speak" | "voice.fast" | "voice.voice" | "voice.rate";
+}) {
   const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
   return (
     <span className="flex shrink-0" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
@@ -85,7 +103,7 @@ function SwitchRow({
   label: string;
   checked: boolean;
   onChange: (next: boolean) => void;
-  hint: "voice.speak" | "voice.fast";
+  hint: "voice.mode" | "voice.speak" | "voice.fast";
   testId: string;
 }) {
   return (
@@ -169,7 +187,15 @@ function SpeakRepliesControl({
             ? { kind: "device", id: deviceDefault.voiceURI }
             : null;
 
-  const { speaking, stop, readLast } = useAeSpeakReplies({ chatId, enabled: on, voice, rate });
+  const { speaking, stop, readLast, speak } = useAeSpeakReplies({
+    chatId,
+    enabled: on,
+    voice,
+    rate,
+  });
+  const voiceMode = useVoiceSnapshot(chatId);
+  useEffect(() => registerVoiceSpeaker(chatId, speak), [chatId, speak]);
+  useEffect(() => setVoiceSpeaking(chatId, speaking), [chatId, speaking]);
 
   const fastAvailable = canSetEffort && !readOnly;
   const wanted = useRef({ on, fastEnabled });
@@ -229,7 +255,22 @@ function SpeakRepliesControl({
     if (!next) {
       stop();
       void revertFast();
+      if (voiceMode.on) setVoiceOn(chatId, false);
     }
+  };
+
+  // Voice mode needs Speak replies, so turning it on turns that on too.
+  const toggleVoice = (next: boolean) => {
+    if (next && !on) toggleSpeak(true);
+    setVoiceOn(chatId, next);
+  };
+  useEffect(() => {
+    if (voiceMode.on && !on) toggleSpeak(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceMode.on]);
+  const tapSpeaker = () => {
+    if (voiceMode.on && speaking) stop();
+    else toggleVoice(!voiceMode.on);
   };
 
   const toggleFast = (next: boolean) => {
@@ -247,24 +288,65 @@ function SpeakRepliesControl({
       : chosenDevice && voiceLabel(chosenDevice)) ?? "Default";
   const Icon = on ? Volume2Icon : VolumeXIcon;
 
+  const phaseWord = PHASE_WORD[voiceMode.phase];
   return (
     <DropdownMenu>
+      <span className="sr-only" aria-live="polite" data-testid="ae-voice-phase">
+        {phaseWord}
+      </span>
+      {phaseWord ? (
+        <span
+          aria-hidden
+          className={cn(
+            "mr-1 hidden text-xs sm:inline",
+            voiceMode.phase === "thinking" ? "text-amber-500" : "text-teal-500",
+          )}
+        >
+          {phaseWord}
+        </span>
+      ) : null}
+      <Button
+        type="button"
+        size="icon"
+        variant="ghost"
+        className={cn(
+          className,
+          on && "bg-muted/60 text-foreground",
+          voiceMode.phase === "listening" && "animate-pulse text-teal-500 ring-2 ring-teal-500/60",
+          voiceMode.phase === "thinking" && "text-amber-500 ring-2 ring-amber-500/60",
+        )}
+        aria-label="Speak replies"
+        aria-pressed={on}
+        title={`Speak replies: ${on ? "on" : "off"}${voiceMode.on ? ". Voice mode on" : ""}`}
+        data-testid="ae-speak-replies"
+        data-voice-phase={voiceMode.phase}
+        disabled={disabled}
+        onClick={tapSpeaker}
+      >
+        <Icon className={cn("size-4", on && speaking && "animate-pulse")} />
+      </Button>
       <DropdownMenuTrigger asChild>
         <Button
           type="button"
           size="icon"
           variant="ghost"
-          className={cn(className, on && "bg-muted/60 text-foreground")}
-          aria-label="Speak replies"
-          aria-pressed={on}
-          title={`Speak replies: ${on ? "on" : "off"}`}
-          data-testid="ae-speak-replies"
+          className="-ml-1 h-7 w-4 text-muted-foreground"
+          aria-label="Speak replies menu"
+          data-testid="ae-speak-replies-menu"
           disabled={disabled}
         >
-          <Icon className={cn("size-4", on && speaking && "animate-pulse")} />
+          <ChevronDownIcon className="size-4" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="max-h-[70vh] w-68 overflow-y-auto">
+        <SwitchRow
+          label="Voice mode"
+          checked={voiceMode.on}
+          onChange={toggleVoice}
+          hint="voice.mode"
+          testId="ae-voice-mode-toggle"
+        />
+        <DropdownMenuSeparator />
         <SwitchRow
           label="Speak replies"
           checked={on}

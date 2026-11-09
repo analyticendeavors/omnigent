@@ -235,6 +235,11 @@ export const AE_SETTING_HINTS = {
     hint: "Reset manual order clears your saved order, so sessions list newest first. Undo shows for 8 seconds.",
     source: "tooltip",
   },
+  "voice.mode": {
+    label: "Voice mode",
+    hint: "Hands-free: the mic listens, a pause sends, replies are spoken, a tap stops a reply. Off by default; per chat.",
+    source: "existing",
+  },
   "voice.speak": {
     label: "Speak replies",
     hint: "Reads each reply in this chat aloud as it arrives. Code blocks, formatting and the TLDR recap are skipped. Off by default.",

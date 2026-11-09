@@ -233,6 +233,8 @@ import {
 } from "@/hooks/useWorkspaceChangedFiles";
 import { AeSpeakRepliesButton } from "@/components/AeSpeakRepliesButton";
 import { ComposerMicButton } from "@/components/ComposerMicButton";
+import { useAeVoiceMode } from "@/hooks/useAeVoiceMode";
+import type { AeMicController } from "@/lib/aeVoiceMode";
 import {
   COMPOSER_TIGHT_HOST_WRAPPER_CLASS,
   COMPOSER_TIGHT_MIC_CLASS,
@@ -3545,6 +3547,15 @@ function ComposerImpl(
     dictation.noteFocus();
   };
 
+  const micController = useRef<AeMicController | null>(null);
+  const voice = useAeVoiceMode({
+    chatId: composerSessionId,
+    controller: micController,
+    status,
+    value,
+    submit,
+  });
+
   return (
     <form
       onSubmit={handleSubmit}
@@ -3981,7 +3992,13 @@ function ComposerImpl(
               <ComposerMicButton
                 className={cn("size-8 md:size-7", COMPOSER_TIGHT_MIC_CLASS)}
                 enableHotkey
-                disabled={disabled || isReadOnly || hasPendingElicitation || composerLockedByBtw}
+                controller={micController}
+                disabled={
+                  disabled ||
+                  isReadOnly ||
+                  (hasPendingElicitation && !voice.on) ||
+                  composerLockedByBtw
+                }
                 onVoiceStart={() => {
                   voiceSnapshotRef.current = value;
                 }}
@@ -3989,6 +4006,7 @@ function ComposerImpl(
                   setValue(voiceSnapshotRef.current);
                 }}
                 onTranscript={(text) => {
+                  if (voice.onFinal(text)) return;
                   dictation.appendFinal(text);
                   dirtyRef.current = true;
                   // Dictation is a user-driven edit — exit prompt-recall mode
@@ -3997,6 +4015,7 @@ function ComposerImpl(
                   if (commandError !== null) setCommandError(null);
                 }}
                 onInterim={(text) => {
+                  if (voice.onPartial(text)) return;
                   dictation.replaceInterim(text);
                   dirtyRef.current = true;
                   resetCursor();
