@@ -29,15 +29,16 @@ export function AeMoveAllChatsDialog() {
   const keepRef = useRef<HTMLButtonElement>(null);
   const moveAll = () => {
     if (!request) return;
-    const { account, hostId } = request;
+    const { account, label, hostId } = request;
     dismissAeMoveAll();
     moveAllAeClaudeChats(account, hostId).then(
       (answer) => {
-        for (const id of [...answer.moved, ...answer.pending.map((p) => p.id)]) {
+        const touched = [...answer.pending, ...(answer.queued ?? [])].map((p) => p.id);
+        for (const id of [...answer.moved, ...touched]) {
           aeRefreshChatAccount(queryClient, id);
           aeRefreshChatAccountSoon(queryClient, id);
         }
-        showToast(aeMoveAllSummary(answer));
+        showToast(aeMoveAllSummary(answer, label));
       },
       (failure: unknown) =>
         showToast(failure instanceof Error ? failure.message : "Could not move the open chats."),

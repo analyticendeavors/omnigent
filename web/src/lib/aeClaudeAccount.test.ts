@@ -61,6 +61,24 @@ describe("aeMoveAllSummary", () => {
     );
     expect(aeMoveAllSummary({ moved: ["a", "b"], skipped: [], pending: [] })).toBe("Moved 2 chats");
   });
+
+  it("counts chats with no terminal running apart from the moved ones", () => {
+    const row = { title: "T", reason: "starts at its next message" };
+    expect(
+      aeMoveAllSummary(
+        {
+          moved: ["a"],
+          skipped: [],
+          pending: [],
+          queued: [
+            { id: "b", ...row },
+            { id: "c", ...row },
+          ],
+        },
+        "Backup",
+      ),
+    ).toBe("Moved 1 chat; 2 chats not running start on Backup at their next message");
+  });
 });
 
 describe("aeOtherClaudeAccounts", () => {
@@ -91,6 +109,22 @@ describe("aeSwitchSummary", () => {
 
   it("is the plain line when the children were not asked for", () => {
     expect(aeSwitchSummary("Backup", own)).toBe("This chat now runs on Backup.");
+  });
+
+  it("names the children that start on the login at their next message", () => {
+    expect(
+      aeSwitchSummary("Backup", {
+        ...own,
+        children: {
+          moved: [{ id: "c", title: "C" }],
+          skipped: [],
+          pending: [],
+          queued: [{ id: "d", title: "D", reason: "starts at its next message" }],
+        },
+      }),
+    ).toBe(
+      "This chat now runs on Backup; 1 child chat moved; 1 child chat starts on Backup at its next message",
+    );
   });
 
   it("says the chat starts on the login next time when no terminal was running", () => {
