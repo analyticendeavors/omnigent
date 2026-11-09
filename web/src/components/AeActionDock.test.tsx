@@ -656,7 +656,9 @@ function renderLimitDock({
   noModelMenu = false,
   onSwitchModel = vi.fn(),
   openForkDialog = vi.fn(),
+  labels = {},
 }: {
+  labels?: Record<string, string>;
   harness?: string;
   canFork?: boolean;
   disabledReason?: string;
@@ -666,7 +668,7 @@ function renderLimitDock({
 } = {}) {
   useChatStore.setState({ conversationId: "s1", blocks: [], sessionHarness: harness });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  qc.setQueryData(["session", "s1"], { id: "s1", hostId: "h1", labels: {} });
+  qc.setQueryData(["session", "s1"], { id: "s1", hostId: "h1", labels });
   render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={["/c/s1"]}>
@@ -765,6 +767,21 @@ describe("AeActionDock usage gate", () => {
       ),
     );
     expect(screen.getByTestId("ask").textContent).toBe("");
+  });
+
+  it("offers the login other than the one the chat runs on, not other than a stored pick", async () => {
+    // Move all stored the default on a chat that was not running; its terminal is still on Personal.
+    serveLimits(() => limitsAnswer(95));
+    renderLimitDock({
+      labels: { "omnigent.claude_native.account": "", "ae.claude_account": "personal" },
+    });
+    fireEvent.click(await screen.findByTestId("ae-dock-limit-account"));
+    await waitFor(() =>
+      expect(authenticatedFetch).toHaveBeenCalledWith(
+        "/v1/ae/sessions/s1/claude-account",
+        expect.objectContaining({ body: JSON.stringify({ account: "" }) }),
+      ),
+    );
   });
 
   it("a switch that went through re-reads this chat's Usage on the follow-up schedule", async () => {

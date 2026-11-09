@@ -9,11 +9,13 @@ import { dismissAeMoveAll } from "@/lib/aeMoveAllChats";
 import { dismissAeSwitchFamily, useAeSwitchFamilyRequest } from "@/lib/aeSwitchFamily";
 
 vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
+vi.mock("@/components/ui/toast", () => ({ showToast: vi.fn() }));
 const familyRows = vi.hoisted(() => ({ rows: [] as unknown[] }));
 vi.mock("@/lib/aeFamilyRead", () => ({
   aeReadFamilySessions: () => Promise.resolve(familyRows.rows),
   aeFamilyOf: () => [],
 }));
+import { showToast } from "@/components/ui/toast";
 import { authenticatedFetch } from "@/lib/identity";
 
 const mutate = vi.fn();
@@ -58,6 +60,7 @@ function renderMenu(turnBusy = false, sessionId = "s1") {
 beforeEach(() => {
   mutate.mockReset();
   vi.mocked(authenticatedFetch).mockReset();
+  vi.mocked(showToast).mockReset();
   dismissAeMoveAll();
   dismissAeSwitchFamily();
   familyRows.rows = [];
@@ -88,13 +91,59 @@ describe("Account submenu inside a chat", () => {
     expect(screen.getByTestId("composer-claude-account-value")).toHaveTextContent("AE Backup");
   });
 
-  it("the server label outranks the live label", () => {
+  it("ticks the login the chat runs on, not a pick stored while it was not running", () => {
     labels = { "omnigent.claude_native.account": "", "ae.claude_account": "AE Backup" };
     renderMenu();
-    expect(screen.getByTestId("composer-claude-account-chat-default")).toHaveAttribute(
+    expect(screen.getByTestId("composer-claude-account-chat-AE Backup")).toHaveAttribute(
       "aria-checked",
       "true",
     );
+    expect(screen.getByTestId("composer-claude-account-chat-default")).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+  });
+
+  it("picking the running login puts it back when another login is stored", async () => {
+    labels = { "omnigent.claude_native.account": "", "ae.claude_account": "AE Backup" };
+    vi.mocked(authenticatedFetch).mockImplementation(() =>
+      json({ account: "AE Backup", relaunched: false }),
+    );
+    renderMenu();
+    fireEvent.click(screen.getByTestId("composer-claude-account-chat-AE Backup"));
+    await waitFor(() =>
+      expect(authenticatedFetch).toHaveBeenCalledWith(
+        "/v1/ae/sessions/s1/claude-account",
+        expect.objectContaining({ body: JSON.stringify({ account: "AE Backup" }) }),
+      ),
+    );
+  });
+
+  it("sends nothing for the login the chat already runs on and has stored", () => {
+    labels = { "omnigent.claude_native.account": "AE Backup", "ae.claude_account": "AE Backup" };
+    renderMenu();
+    fireEvent.click(screen.getByTestId("composer-claude-account-chat-AE Backup"));
+    expect(authenticatedFetch).not.toHaveBeenCalled();
+  });
+
+  it("says where a chat with no running terminal starts next", async () => {
+    vi.mocked(authenticatedFetch).mockImplementation(() =>
+      json({ account: "", relaunched: false, queued: true }),
+    );
+    renderMenu();
+    fireEvent.click(screen.getByTestId("composer-claude-account-chat-default"));
+    await waitFor(() =>
+      expect(showToast).toHaveBeenCalledWith("This chat starts on AE Default at its next message."),
+    );
+  });
+
+  it("adds no toast when the chat restarted on the login", async () => {
+    vi.mocked(authenticatedFetch).mockImplementation(() => json({ account: "", relaunched: true }));
+    renderMenu();
+    fireEvent.click(screen.getByTestId("composer-claude-account-chat-default"));
+    await waitFor(() => expect(authenticatedFetch).toHaveBeenCalled());
+    await act(async () => {});
+    expect(showToast).not.toHaveBeenCalled();
   });
 
   it("picking a login calls the PUT, then re-reads the chat and its Usage", async () => {

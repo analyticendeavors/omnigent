@@ -11,6 +11,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
+import { showToast } from "@/components/ui/toast";
 import { useAeSwitchClaudeAccount } from "@/hooks/useAeSwitchClaudeAccount";
 import type { DetectedCredential } from "@/hooks/useHosts";
 import { useSession } from "@/hooks/useSession";
@@ -20,6 +21,8 @@ import {
   AE_THIS_CHAT_HEADING,
   AE_THIS_CHAT_HINT,
   aeChatAccount,
+  aeChatAccountSettled,
+  aeSwitchSummary,
 } from "@/lib/aeClaudeAccount";
 import { AE_MENU_NOTE_CLASS } from "@/lib/aeMenuRow";
 import { aeSwitchOrAsk } from "@/lib/aeSwitchFamily";
@@ -96,11 +99,20 @@ export function AeThisChatAccounts({
               className={cn(RADIO_ROW_CLASS, "flex items-center gap-2")}
               onSelect={(event) => {
                 event.preventDefault();
-                if (accountId === current) return;
+                if (aeChatAccountSettled(session?.labels, accountId)) return;
                 aeSwitchOrAsk(
                   queryClient,
                   { sessionId, account: accountId, label: row.source },
-                  () => change.mutate({ account: accountId }),
+                  () =>
+                    change.mutate(
+                      { account: accountId },
+                      {
+                        // The tick stays on the running login, so say where the chat starts next.
+                        onSuccess: (answer) => {
+                          if (answer.queued) showToast(aeSwitchSummary(row.source, answer));
+                        },
+                      },
+                    ),
                 );
               }}
               data-testid={`composer-claude-account-chat-${accountId || "default"}`}

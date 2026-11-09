@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AE_ACCOUNT_FOLLOW_UP_DELAYS_MS,
   aeChatAccount,
+  aeChatAccountSettled,
   aeMoveAllSummary,
   aeRefreshChatAccountSoon,
   aeSwitchSummary,
@@ -11,13 +12,36 @@ import { aeOtherClaudeAccounts } from "./aeLimitGate";
 import { askAeMoveAll, dismissAeMoveAll } from "./aeMoveAllChats";
 
 describe("aeChatAccount", () => {
-  it("prefers the stored pick over the last launch, and treats an empty pick as the default", () => {
+  it("prefers the last launch over a stored pick, as the server does", () => {
     expect(aeChatAccount({ "ae.claude_account": "B" })).toBe("B");
+    // A pick stored while the chat was not running is not its login until it starts.
     expect(aeChatAccount({ "omnigent.claude_native.account": "", "ae.claude_account": "B" })).toBe(
+      "B",
+    );
+    expect(aeChatAccount({ "ae.claude_account": "", "omnigent.claude_native.account": "B" })).toBe(
       "",
     );
+    expect(aeChatAccount({ "omnigent.claude_native.account": "" })).toBe("");
     expect(aeChatAccount({})).toBeUndefined();
     expect(aeChatAccount(null)).toBeUndefined();
+  });
+});
+
+describe("aeChatAccountSettled", () => {
+  it("is true only when the chat runs on the login and has no other one stored", () => {
+    expect(aeChatAccountSettled({ "ae.claude_account": "B" }, "B")).toBe(true);
+    expect(
+      aeChatAccountSettled(
+        { "omnigent.claude_native.account": "B", "ae.claude_account": "B" },
+        "B",
+      ),
+    ).toBe(true);
+    // Running on B with the default stored: picking B again puts B back as the stored login.
+    expect(
+      aeChatAccountSettled({ "omnigent.claude_native.account": "", "ae.claude_account": "B" }, "B"),
+    ).toBe(false);
+    expect(aeChatAccountSettled({ "ae.claude_account": "B" }, "")).toBe(false);
+    expect(aeChatAccountSettled({}, "")).toBe(false);
   });
 });
 
@@ -67,6 +91,12 @@ describe("aeSwitchSummary", () => {
 
   it("is the plain line when the children were not asked for", () => {
     expect(aeSwitchSummary("Backup", own)).toBe("This chat now runs on Backup.");
+  });
+
+  it("says the chat starts on the login next time when no terminal was running", () => {
+    expect(aeSwitchSummary("Backup", { account: "B", relaunched: false, queued: true })).toBe(
+      "This chat starts on Backup at its next message.",
+    );
   });
 
   it("counts moved children and names each skipped or slow one", () => {
