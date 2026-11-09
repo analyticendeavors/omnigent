@@ -25,6 +25,7 @@ import { useAeSpeakReplies } from "@/hooks/useAeSpeakReplies";
 import {
   micDevicesSupported,
   speakerSelectionSupported,
+  shortDeviceName,
   useAudioDevices,
   useSavedAudioDevices,
   writeMicDevice,
@@ -139,7 +140,8 @@ function DeviceRow({
 }) {
   // A saved device that is gone reads as System default; the saved value stays for its return.
   const current = devices.find((d) => d.id === saved);
-  const value = current ? current.id : SYSTEM_DEFAULT;
+  // Before ids are known the saved id ticks no radio; System default clears it.
+  const value = current ? current.id : !known && saved ? saved : SYSTEM_DEFAULT;
   // Before the browser shares device ids a saved choice cannot be named.
   const name = current ? current.label : !known && saved ? "Saved device" : "System default";
   return (
@@ -150,7 +152,7 @@ function DeviceRow({
           <RowHint id={hint} />
         </span>
         <span className={ROW_VALUE_CLASS} title={name}>
-          {name}
+          {current ? shortDeviceName(name) : name}
         </span>
       </DropdownMenuSubTrigger>
       <DropdownMenuSubContent className="max-h-[60vh] overflow-y-auto">

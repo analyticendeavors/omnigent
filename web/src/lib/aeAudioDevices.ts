@@ -52,7 +52,7 @@ export function readMicDevice(): string | null {
 
 export function writeMicDevice(id: string | null): void {
   setItem(MIC_KEY, id || null);
-  notify();
+  notifySaved();
 }
 
 export function readSpeakerDevice(): string | null {
@@ -61,7 +61,7 @@ export function readSpeakerDevice(): string | null {
 
 export function writeSpeakerDevice(id: string | null): void {
   setItem(SPEAKER_KEY, id || null);
-  notify();
+  notifySaved();
 }
 
 export function micDevicesSupported(): boolean {
@@ -112,9 +112,24 @@ let refreshSeq = 0;
 const listeners = new Set<() => void>();
 let watched: MediaDevices | null = null;
 
+const savedListeners = new Set<() => void>();
+
 function notify(): void {
   version++;
   listeners.forEach((cb) => cb());
+}
+
+/** A saved id changed: device subscribers and saved-choice subscribers both hear it. */
+function notifySaved(): void {
+  notify();
+  savedListeners.forEach((cb) => cb());
+}
+
+/** "Microphone (Logitech BRIO)" reads as "Logitech BRIO"; other labels are unchanged. */
+export function shortDeviceName(label: string): string {
+  const m = /^[^(]+\((.*)\)\s*$/.exec(label);
+  const inner = m?.[1].trim();
+  return inner || label;
 }
 
 /** Re-lists the devices; a result that is not the newest request is dropped. */
@@ -171,9 +186,9 @@ function getSavedSnapshot(): SavedAudioDevices {
 }
 
 function subscribeSaved(cb: () => void): () => void {
-  listeners.add(cb);
+  savedListeners.add(cb);
   return () => {
-    listeners.delete(cb);
+    savedListeners.delete(cb);
   };
 }
 
@@ -194,8 +209,14 @@ function present(saved: string | null, list: AudioDevice[] | undefined, known: b
   return list.some((d) => d.id === saved) ? saved : null;
 }
 
+let firstListing: Promise<void> | null = null;
+
+/** Starts the first listing once; further calls wait for it to settle. */
 function ensureListed(): void {
-  if (cache === null && micDevicesSupported()) void refreshAudioDevices();
+  if (cache !== null || firstListing || !micDevicesSupported()) return;
+  firstListing = refreshAudioDevices().finally(() => {
+    firstListing = null;
+  });
 }
 
 export function micConstraint(): { deviceId: { exact: string } } | undefined {

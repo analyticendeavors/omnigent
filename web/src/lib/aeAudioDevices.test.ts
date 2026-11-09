@@ -7,6 +7,7 @@ import {
   readMicDevice,
   readSpeakerDevice,
   refreshAudioDevices,
+  shortDeviceName,
   useSavedAudioDevices,
   speakerSinkId,
   subscribeAudioDevices,
@@ -158,16 +159,17 @@ describe("before microphone permission", () => {
 
   it("re-lists after a stream succeeds", async () => {
     const enumerate = navigator.mediaDevices.enumerateDevices as ReturnType<typeof vi.fn>;
-    enumerate.mockResolvedValueOnce(hidden);
+    enumerate.mockResolvedValue(hidden);
     await refreshAudioDevices();
+    writeMicDevice("absent");
+    // Kind not known: the saved id is trusted.
+    expect(micConstraint()).toEqual({ deviceId: { exact: "absent" } });
+    const before = enumerate.mock.calls.length;
     enumerate.mockResolvedValue(DEVICES);
     await getMicStream(true);
-    await vi.waitFor(() => expect(speakerSinkId()).toBe(""));
-    await vi.waitFor(async () => expect((await listAudioDevices()).inputsKnown).toBe(true));
-    const cb = vi.fn();
-    const off = subscribeAudioDevices(cb);
-    await vi.waitFor(() => expect(cb).toHaveBeenCalled());
-    off();
+    await vi.waitFor(() => expect(enumerate.mock.calls.length).toBeGreaterThan(before));
+    // Only a refreshed, known list can say the saved id is gone.
+    await vi.waitFor(() => expect(micConstraint()).toBeUndefined());
   });
 
   it("retries once on the default when the saved device is unplugged and no listing exists yet", async () => {
@@ -237,5 +239,53 @@ describe("listener and ordering", () => {
     act(() => writeMicDevice("mic1"));
     expect(result.current).not.toBe(first);
     expect(result.current.mic).toBe("mic1");
+  });
+});
+
+describe("shortDeviceName", () => {
+  it.each([
+    ["Microphone (Logitech BRIO 4K Stream Edition)", "Logitech BRIO 4K Stream Edition"],
+    ["Headset (Jabra Evolve2 75)", "Jabra Evolve2 75"],
+    ["Speakers (Realtek(R) Audio)", "Realtek(R) Audio"],
+    ["MacBook Pro Microphone", "MacBook Pro Microphone"],
+    ["Microphone 2", "Microphone 2"],
+  ])("%s", (label, short) => {
+    expect(shortDeviceName(label)).toBe(short);
+  });
+});
+
+describe("store listeners and first listing", () => {
+  it("a saved-choice subscriber alone attaches no devicechange listener", () => {
+    const add = vi.fn();
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { enumerateDevices: () => Promise.resolve(DEVICES), getUserMedia, addEventListener: add },
+    });
+    const { unmount } = renderHook(() => useSavedAudioDevices());
+    expect(add).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it("three calls before the first listing resolves enumerate once", async () => {
+    vi.resetModules();
+    const fresh = await import("./aeAudioDevices");
+    let resolve!: (v: MediaDeviceInfo[]) => void;
+    const enumerate = vi.fn(
+      () =>
+        new Promise<MediaDeviceInfo[]>((r) => {
+          resolve = r;
+        }),
+    );
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { enumerateDevices: enumerate, getUserMedia, addEventListener: () => {} },
+    });
+    fresh.micConstraint();
+    fresh.micConstraint();
+    fresh.speakerSinkId();
+    expect(enumerate).toHaveBeenCalledTimes(1);
+    resolve(DEVICES);
+    await vi.waitFor(() => expect(fresh.micConstraint()).toBeUndefined());
+    expect(enumerate).toHaveBeenCalledTimes(1);
   });
 });

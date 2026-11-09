@@ -384,6 +384,24 @@ describe("AeSpeakRepliesButton", () => {
       expect(window.localStorage.getItem("omnigent:ae-mic-device")).toBe("mic1");
     });
 
+    it("shows the device model on the row and the full label in the title and sub-menu", async () => {
+      mediaDevices([
+        { kind: "audioinput", deviceId: "mic1", label: "Microphone (Logitech BRIO 4K Stream Edition)" },
+      ]);
+      window.localStorage.setItem("omnigent:ae-mic-device", "mic1");
+      renderButton();
+      const user = await openMenu();
+      const value = await waitFor(() => {
+        const el = screen.getByTestId("ae-speak-mic-trigger").querySelector("[title]");
+        expect(el).toHaveTextContent("Logitech BRIO 4K Stream Edition");
+        return el as HTMLElement;
+      });
+      expect(value).toHaveAttribute("title", "Microphone (Logitech BRIO 4K Stream Edition)");
+      await user.click(screen.getByTestId("ae-speak-mic-trigger"));
+      const options = await screen.findAllByTestId("ae-speak-mic-option");
+      expect(options[1]).toHaveTextContent("Microphone (Logitech BRIO 4K Stream Edition)");
+    });
+
     it("saves a speaker pick", async () => {
       mediaDevices(LIST);
       (HTMLMediaElement.prototype as { setSinkId?: unknown }).setSinkId = setSinkId;
@@ -490,6 +508,20 @@ describe("AeSpeakRepliesButton", () => {
       renderButton();
       await openMenu();
       expect(screen.getByTestId("ae-speak-mic-trigger")).toHaveTextContent("Saved device");
+    });
+
+    it("ticks no radio for a saved device and clears it with System default", async () => {
+      window.localStorage.setItem("omnigent:ae-mic-device", "mic1");
+      renderButton();
+      const user = await openMenu();
+      await user.click(screen.getByTestId("ae-speak-mic-trigger"));
+      const options = await screen.findAllByTestId("ae-speak-mic-option");
+      expect(options[0]).toHaveAttribute("aria-checked", "false");
+      options[0].focus();
+      await user.keyboard("{Enter}");
+      expect(window.localStorage.getItem("omnigent:ae-mic-device")).toBeNull();
+      await openMenu();
+      expect(await screen.findByTestId("ae-speak-mic-trigger")).toHaveTextContent("System default");
     });
 
     it("gives the value rows the shared shrink classes", async () => {
