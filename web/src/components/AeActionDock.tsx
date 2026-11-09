@@ -76,6 +76,7 @@ import { AeCompactButton } from "@/components/aeRail/AeCompactButton";
 import { AE_ADMIN_CENTER_PATH } from "@/lib/aePrDeploy";
 import type { AeReceiptTone } from "@/lib/aePrReceipt";
 import { aeCiText } from "@/lib/aePrs";
+import { aeSwitchSummary } from "@/lib/aeClaudeAccount";
 import { aeSwitchOrAsk } from "@/lib/aeSwitchFamily";
 import { AeTablerSvg } from "@/lib/aeTablerIcon";
 import type { AeTablerIconNode } from "@/lib/aeTablerIconData";
@@ -699,7 +700,7 @@ function Dock({ sessionId, onSwitchModel }: { sessionId?: string; onSwitchModel?
         switchAccount.mutate(
           { account },
           {
-            onSuccess: () => showToast(`This chat now runs on ${label}.`),
+            onSuccess: (answer) => showToast(aeSwitchSummary(label, answer)),
             onError: (failure) => showToast(failure.message),
           },
         ),

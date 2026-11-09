@@ -44,6 +44,8 @@ export interface AeSwitchAnswer {
   /** False when no runner is bound (the next launch uses the login) or the restart is unconfirmed. */
   relaunched: boolean;
   pending?: boolean;
+  /** The chat has no running terminal: the login is stored and the chat starts on it next time. */
+  queued?: boolean;
   /** Present only when the switch asked for the children too. */
   children?: AeChildrenAnswer;
 }
@@ -103,12 +105,24 @@ export function aeRefreshChatAccountSoon(
   return cancel;
 }
 
-/** The login a chat is on: the stored pick, else the last launch's, else unknown (`undefined`). */
+/**
+ * The login a chat is on: the last launch's, else the stored pick, else unknown (`undefined`).
+ * Same order as the server: a pick stored while the chat was not running is not its login yet.
+ */
 export function aeChatAccount(
   labels: Record<string, string> | null | undefined,
 ): string | undefined {
   const held = labels ?? {};
-  return held[AE_SERVER_ACCOUNT_LABEL] ?? held[AE_LIVE_ACCOUNT_LABEL];
+  return held[AE_LIVE_ACCOUNT_LABEL] ?? held[AE_SERVER_ACCOUNT_LABEL];
+}
+
+/** Whether the chat both runs on `account` and has it stored, so a switch to it changes nothing. */
+export function aeChatAccountSettled(
+  labels: Record<string, string> | null | undefined,
+  account: string,
+): boolean {
+  const stored = (labels ?? {})[AE_SERVER_ACCOUNT_LABEL];
+  return aeChatAccount(labels) === account && (stored === undefined || stored === account);
 }
 
 export async function putAeClaudeAccount(
@@ -168,7 +182,9 @@ const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ?
  * Reviewer is mid-reply". Without a `children` answer it is the plain one-chat line.
  */
 export function aeSwitchSummary(label: string, answer: AeSwitchAnswer): string {
-  const own = `This chat now runs on ${label}`;
+  const own = answer.queued
+    ? `This chat starts on ${label} at its next message`
+    : `This chat now runs on ${label}`;
   const kids = answer.children;
   if (!kids) return `${own}.`;
   if (kids.error) return `${own}; its child chats were not switched`;
