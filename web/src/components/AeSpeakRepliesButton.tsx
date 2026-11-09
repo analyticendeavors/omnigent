@@ -3,7 +3,7 @@
 // Composer button and menu for Speak replies: the per-chat toggle, Fast answers,
 // the voice and speed choices, Read last reply and Stop speaking.
 
-import { ChevronDownIcon, RotateCcwIcon, SquareIcon, Volume2Icon, VolumeXIcon } from "lucide-react";
+import { ChevronDownIcon, Volume2Icon, VolumeXIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AeHint } from "@/components/AeHint";
 import { Button } from "@/components/ui/button";
@@ -139,11 +139,13 @@ function DeviceRow({
   return (
     <DropdownMenuSub>
       <DropdownMenuSubTrigger data-testid={`${testId}-trigger`}>
-        <span>{label}</span>
-        <span className="ml-auto max-w-[28ch] truncate text-xs text-muted-foreground" title={name}>
+        <span className="flex min-w-0 flex-1 items-center gap-1.5">
+          {label}
+          <RowHint id={hint} />
+        </span>
+        <span className="max-w-28 truncate text-xs text-muted-foreground" title={name}>
           {name}
         </span>
-        <RowHint id={hint} />
       </DropdownMenuSubTrigger>
       <DropdownMenuSubContent className="max-h-[60vh] overflow-y-auto">
         <DropdownMenuRadioGroup
@@ -188,7 +190,10 @@ function SwitchRow({
       data-testid={testId}
       className="min-h-8"
     >
-      <span className="flex-1">{label}</span>
+      <span className="flex min-w-0 flex-1 items-center gap-1.5">
+        {label}
+        <RowHint id={hint} />
+      </span>
       <Switch
         size="sm"
         checked={checked}
@@ -196,7 +201,6 @@ function SwitchRow({
         aria-label={label}
         className="pointer-events-none"
       />
-      <RowHint id={hint} />
     </DropdownMenuItem>
   );
 }
@@ -417,7 +421,7 @@ function SpeakRepliesControl({
           <ChevronDownIcon className="size-4" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="max-h-[70vh] w-68 overflow-y-auto">
+      <DropdownMenuContent align="end" className="max-h-[70vh] w-61 overflow-y-auto">
         <SwitchRow
           label="Voice mode"
           checked={voiceMode.on}
@@ -444,9 +448,13 @@ function SpeakRepliesControl({
         ) : null}
         <DropdownMenuSub>
           <DropdownMenuSubTrigger data-testid="ae-speak-voice-trigger">
-            <span>Voice</span>
-            <span className="ml-auto truncate text-xs text-muted-foreground">{chosenName}</span>
-            <RowHint id="voice.voice" />
+            <span className="flex min-w-0 flex-1 items-center gap-1.5">
+              Voice
+              <RowHint id="voice.voice" />
+            </span>
+            <span className="max-w-28 truncate text-xs text-muted-foreground" title={chosenName}>
+              {chosenName}
+            </span>
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent className="max-h-[60vh] overflow-y-auto">
             <DropdownMenuRadioGroup
@@ -492,11 +500,13 @@ function SpeakRepliesControl({
         </DropdownMenuSub>
         <DropdownMenuSub>
           <DropdownMenuSubTrigger data-testid="ae-speak-rate-trigger">
-            <span>Speed</span>
-            <span className="ml-auto text-xs text-muted-foreground">
+            <span className="flex min-w-0 flex-1 items-center gap-1.5">
+              Speed
+              <RowHint id="voice.rate" />
+            </span>
+            <span className="text-xs text-muted-foreground">
               {rate === RATE_FASTER ? "Faster" : "Normal"}
             </span>
-            <RowHint id="voice.rate" />
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent>
             <DropdownMenuRadioGroup
@@ -544,14 +554,23 @@ function SpeakRepliesControl({
           />
         ) : null}
         <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={readLast} data-testid="ae-speak-read-last">
-          <RotateCcwIcon className="size-4" />
-          Read last reply
-        </DropdownMenuItem>
-        <DropdownMenuItem disabled={!speaking} onSelect={stop} data-testid="ae-speak-stop">
-          <SquareIcon className="size-4" />
-          Stop speaking
-        </DropdownMenuItem>
+        <div className="flex gap-1.5 px-1 pb-1 pt-0.5" data-testid="ae-speak-actions">
+          <DropdownMenuItem
+            onSelect={readLast}
+            data-testid="ae-speak-read-last"
+            className="min-h-8 flex-1 justify-center rounded-md border border-border/60 text-[13px]"
+          >
+            Read last reply
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={!speaking}
+            onSelect={stop}
+            data-testid="ae-speak-stop"
+            className="min-h-8 flex-1 justify-center rounded-md border border-border/60 text-[13px]"
+          >
+            Stop speaking
+          </DropdownMenuItem>
+        </div>
       </DropdownMenuContent>
     </DropdownMenu>
   );

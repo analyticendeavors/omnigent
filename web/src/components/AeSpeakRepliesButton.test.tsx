@@ -61,7 +61,20 @@ afterEach(() => {
   useChatStore.setState({ setEffort: originalSetEffort } as never);
 });
 
+function mediaDevicesForLayout() {
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true,
+    value: { enumerateDevices: () => Promise.resolve([]), addEventListener: () => {} },
+  });
+  (HTMLMediaElement.prototype as { setSinkId?: unknown }).setSinkId = vi.fn();
+}
+
 describe("AeSpeakRepliesButton", () => {
+  afterEach(() => {
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: undefined });
+    delete (HTMLMediaElement.prototype as { setSinkId?: unknown }).setSinkId;
+  });
+
   it("renders nothing without the speech api", () => {
     removeFakeSpeech();
     const { container } = renderButton();
@@ -405,6 +418,22 @@ describe("AeSpeakRepliesButton", () => {
       await openMenu();
       expect(screen.getByTestId("ae-speak-mic-trigger")).toHaveTextContent("System default");
     });
+  });
+
+  it("puts the hint beside the label on all seven rows and the actions side by side", async () => {
+    mediaDevicesForLayout();
+    renderButton();
+    await openMenu();
+    const triggers = document.querySelectorAll("[data-slot=tooltip-trigger]");
+    expect(triggers).toHaveLength(7);
+    for (const el of triggers) {
+      const group = el.closest("span.flex-1");
+      expect(group).not.toBeNull();
+      expect(group?.textContent).toMatch(/Voice mode|Speak replies|Fast answers|Voice|Speed|Microphone|Speaker/);
+    }
+    const actions = screen.getByTestId("ae-speak-actions");
+    expect(within(actions).getByTestId("ae-speak-read-last")).toBeInTheDocument();
+    expect(within(actions).getByTestId("ae-speak-stop")).toHaveAttribute("data-disabled");
   });
 
   it("disables Stop speaking while idle", async () => {
