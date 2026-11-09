@@ -13,7 +13,7 @@ import {
 } from "@/lib/aeVoiceMode";
 import { useChatStore } from "@/store/chatStore";
 import { installFakeSpeech, removeFakeSpeech, type FakeSynth } from "@/test/fakeSpeech";
-import { useAeVoiceMode } from "./useAeVoiceMode";
+import { MIC_START_NET_MS, useAeVoiceMode } from "./useAeVoiceMode";
 
 const CARD = {
   type: "elicitation",
@@ -455,16 +455,44 @@ describe("useAeVoiceMode", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("treats a start that stays silent for 5 s as failed, retries once, then gives up", () => {
+  it("treats a start that stays silent past the net as failed, retries once, then gives up", () => {
     autoConnect = false;
     mount();
     expect(controller.current.start).toHaveBeenCalledTimes(1);
-    act(() => void vi.advanceTimersByTime(5000));
+    act(() => void vi.advanceTimersByTime(MIC_START_NET_MS));
     expect(getVoiceSnapshot("c1").phase).not.toBe("listening");
     act(() => void vi.advanceTimersByTime(1000));
     expect(controller.current.start).toHaveBeenCalledTimes(2);
-    act(() => void vi.advanceTimersByTime(5000));
+    act(() => void vi.advanceTimersByTime(MIC_START_NET_MS));
     expect(getVoiceSnapshot("c1").phase).toBe("unavailable");
+  });
+
+  it("a slow but healthy first start is not a failure and keeps saying Starting the mic", () => {
+    autoConnect = false;
+    const { result } = mount();
+    act(() => void vi.advanceTimersByTime(40_000));
+    expect(getVoiceSnapshot("c1").phase).toBe("starting");
+    expect(controller.current.start).toHaveBeenCalledTimes(1);
+    expect(controller.current.stop).not.toHaveBeenCalled();
+    act(() => void result.current.onListening(true));
+    expect(getVoiceSnapshot("c1").phase).toBe("listening");
+    act(() => void vi.advanceTimersByTime(MIC_START_NET_MS));
+    expect(getVoiceSnapshot("c1").phase).toBe("listening");
+  });
+
+  it("keeps both picks of a multi-pick sentence that ends in a done phrase", () => {
+    const three = {
+      ...CARD,
+      askUserQuestion: {
+        questions: [{ ...CARD.askUserQuestion.questions[0], multiSelect: true }],
+      },
+    };
+    useChatStore.setState({ blocks: [three] } as never);
+    const { result } = mount();
+    act(() => void result.current.onFinal("one and three, I'm done"));
+    expect(submitApproval).toHaveBeenCalledWith("e1", "accept", {
+      "How should it deploy?": ["Force it", "Hold it"],
+    });
   });
 
   it("makes the start again when the mic is wanted before its own stop has finished", () => {

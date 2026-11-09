@@ -26,8 +26,11 @@ import { useChatStore } from "@/store/chatStore";
 const SEND_WAIT_MS = 5000;
 /** One retry of a mic start that failed. */
 const MIC_RETRY_MS = 1000;
-/** A start that has neither succeeded nor failed by now counts as failed. */
-const MIC_START_NET_MS = 5000;
+/**
+ * Backstop for a start that produced no report at all. Long on purpose: the first server
+ * take cold-loads the speech model, which can take about 40 s, and that is not a failure.
+ */
+export const MIC_START_NET_MS = 60_000;
 const LABEL_KEY = "ae.voice";
 
 export interface UseAeVoiceModeArgs {
@@ -374,8 +377,11 @@ export function useAeVoiceMode({
         const { done, rest, raw } = splitDone(text);
         // The whole remainder first ("merge it done" for a "Merge it" option); filler is
         // trimmed only when nothing matched.
-        let hits = matchSpokenOptions(raw, names).map((i) => names[i]);
-        if (hits.length === 0) hits = matchSpokenOptions(rest, names).map((i) => names[i]);
+        // Both are tried and the one with more picks wins, the whole remainder on a tie:
+        // "one and three, I'm done" keeps both picks, "merge it done" keeps "Merge it".
+        const fromRaw = matchSpokenOptions(raw, names).map((i) => names[i]);
+        const fromRest = matchSpokenOptions(rest, names).map((i) => names[i]);
+        const hits = fromRest.length > fromRaw.length ? fromRest : fromRaw;
         if (hits.length === 0 && rest.trim() !== "" && mayCustom) {
           state.custom = `${state.custom} ${rest}`.trim();
         }

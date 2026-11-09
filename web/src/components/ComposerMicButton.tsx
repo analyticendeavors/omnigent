@@ -488,6 +488,8 @@ export const ComposerMicButton = ({
     const recognition = recognitionRef.current;
     if (!recognition) return false;
     transitionRef.current = true;
+    // The Web Speech path has no server start to consume the controller's flag.
+    controllerStartRef.current = false;
     try {
       if (isListening) recognition.stop();
       else recognition.start();
@@ -527,7 +529,8 @@ export const ComposerMicButton = ({
         } else if (requestedRef.current) {
           // Still connecting: cancel the start, or drop the stream the moment it connects.
           requestedRef.current = false;
-          withdrawRef.current = true;
+          // Only a server start still connecting needs the flag; nothing clears it otherwise.
+          if (serverBusyRef.current) withdrawRef.current = true;
           try {
             recognitionRef.current?.stop();
           } catch {
