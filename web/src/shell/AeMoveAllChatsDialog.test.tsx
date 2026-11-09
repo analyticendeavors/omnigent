@@ -49,6 +49,26 @@ describe("AeMoveAllChatsDialog", () => {
     expect(authenticatedFetch).not.toHaveBeenCalled();
   });
 
+  it("counts chats with no terminal running apart and re-reads them", async () => {
+    vi.mocked(authenticatedFetch).mockImplementation(() =>
+      json({
+        moved: ["a"],
+        skipped: [],
+        pending: [],
+        queued: [{ id: "q", title: "Idle chat", reason: "starts at its next message" }],
+      }),
+    );
+    ask();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    fireEvent.click(await screen.findByTestId("ae-move-all-confirm"));
+    await waitFor(() =>
+      expect(showToast).toHaveBeenCalledWith(
+        "Moved 1 chat; 1 chat not running starts on AE Backup at its next message",
+      ),
+    );
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["session", "q"] });
+  });
+
   it("Move all chats posts the login and reports one line", async () => {
     vi.mocked(authenticatedFetch).mockImplementation(() =>
       json({
