@@ -260,6 +260,16 @@ export const AE_SETTING_HINTS = {
     hint: "How fast replies are read. Normal is the default; Faster is 1.25 times.",
     source: "existing",
   },
+  "voice.microphone": {
+    label: "Microphone",
+    hint: "Which microphone dictation and the level meter use. Saved per device. Default: System default.",
+    source: "tooltip",
+  },
+  "voice.speaker": {
+    label: "Speaker",
+    hint: "Where Natural (cloud) voices play. This device voices always use the system default. Saved per device. Default: System default.",
+    source: "tooltip",
+  },
 } as const satisfies Record<string, AeSettingHint>;
 
 export type AeSettingHintId = keyof typeof AE_SETTING_HINTS;

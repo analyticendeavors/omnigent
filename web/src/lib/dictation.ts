@@ -14,6 +14,7 @@
 // Vite dev proxy keep working. Identity rides the ingress/dev proxy on the
 // handshake, as with those sockets.
 
+import { getMicStream } from "@/lib/aeAudioDevices";
 import { getOmnigentHostConfig, resolveWebSocketUrl } from "@/lib/host";
 import { modalHostId } from "@/lib/sessionHost";
 
@@ -245,8 +246,10 @@ export class DictationSession {
    * ({@link DictationBusyError}), or the engine never comes up.
    */
   static async start(events: DictationSessionEvents): Promise<DictationSession> {
-    const mediaStream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+    const mediaStream = await getMicStream({
+      channelCount: 1,
+      echoCancellation: true,
+      noiseSuppression: true,
     });
 
     let ws: WebSocket | null = null;

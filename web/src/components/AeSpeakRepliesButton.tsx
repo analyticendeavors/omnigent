@@ -22,6 +22,16 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
 import { useAeSpeakReplies } from "@/hooks/useAeSpeakReplies";
+import {
+  micDevicesSupported,
+  readMicDevice,
+  readSpeakerDevice,
+  speakerSelectionSupported,
+  useAudioDevices,
+  writeMicDevice,
+  writeSpeakerDevice,
+  type AudioDevice,
+} from "@/lib/aeAudioDevices";
 import { type CloudVoice, fetchCloudVoices } from "@/lib/aeCloudVoice";
 import {
   clearFastAnswersState,
@@ -87,13 +97,70 @@ function choiceKey(choice: VoiceChoice | null): string {
 function RowHint({
   id,
 }: {
-  id: "voice.mode" | "voice.speak" | "voice.fast" | "voice.voice" | "voice.rate";
+  id:
+    | "voice.mode"
+    | "voice.speak"
+    | "voice.fast"
+    | "voice.voice"
+    | "voice.rate"
+    | "voice.microphone"
+    | "voice.speaker";
 }) {
   const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
   return (
     <span className="flex shrink-0" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
       <AeHint id={id} />
     </span>
+  );
+}
+
+const SYSTEM_DEFAULT = "";
+
+/** A device row: current value on the row, radio items in the sub-menu. */
+function DeviceRow({
+  label,
+  hint,
+  testId,
+  devices,
+  saved,
+  onChoose,
+}: {
+  label: string;
+  hint: "voice.microphone" | "voice.speaker";
+  testId: string;
+  devices: AudioDevice[];
+  saved: string | null;
+  onChoose: (id: string | null) => void;
+}) {
+  // A saved device that is gone reads as System default; the saved value stays for its return.
+  const current = devices.find((d) => d.id === saved);
+  const value = current ? current.id : SYSTEM_DEFAULT;
+  const name = current ? current.label : "System default";
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger data-testid={`${testId}-trigger`}>
+        <span>{label}</span>
+        <span className="ml-auto max-w-[28ch] truncate text-xs text-muted-foreground" title={name}>
+          {name}
+        </span>
+        <RowHint id={hint} />
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent className="max-h-[60vh] overflow-y-auto">
+        <DropdownMenuRadioGroup
+          value={value}
+          onValueChange={(v) => onChoose(v === SYSTEM_DEFAULT ? null : v)}
+        >
+          <DropdownMenuRadioItem value={SYSTEM_DEFAULT} data-testid={`${testId}-option`}>
+            System default
+          </DropdownMenuRadioItem>
+          {devices.map((d) => (
+            <DropdownMenuRadioItem key={d.id} value={d.id} data-testid={`${testId}-option`}>
+              {d.label}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
   );
 }
 
@@ -158,6 +225,9 @@ function SpeakRepliesControl({
   const [cloudVoices, setCloudVoices] = useState<CloudVoice[]>([]);
   const [rate, setRate] = useState(readRate);
   const [voices, setVoices] = useState(listVoices);
+  const [micId, setMicId] = useState(readMicDevice);
+  const [speakerId, setSpeakerId] = useState(readSpeakerDevice);
+  const audioDevices = useAudioDevices();
 
   useEffect(() => {
     setOn(readSpeakReplies(chatId));
@@ -447,6 +517,32 @@ function SpeakRepliesControl({
             </DropdownMenuRadioGroup>
           </DropdownMenuSubContent>
         </DropdownMenuSub>
+        {micDevicesSupported() ? (
+          <DeviceRow
+            label="Microphone"
+            hint="voice.microphone"
+            testId="ae-speak-mic"
+            devices={audioDevices.inputs}
+            saved={micId}
+            onChoose={(id) => {
+              writeMicDevice(id);
+              setMicId(id);
+            }}
+          />
+        ) : null}
+        {speakerSelectionSupported() ? (
+          <DeviceRow
+            label="Speaker"
+            hint="voice.speaker"
+            testId="ae-speak-speaker"
+            devices={audioDevices.outputs}
+            saved={speakerId}
+            onChoose={(id) => {
+              writeSpeakerDevice(id);
+              setSpeakerId(id);
+            }}
+          />
+        ) : null}
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={readLast} data-testid="ae-speak-read-last">
           <RotateCcwIcon className="size-4" />

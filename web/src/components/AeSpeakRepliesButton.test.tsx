@@ -337,6 +337,76 @@ describe("AeSpeakRepliesButton", () => {
     expect(window.localStorage.getItem("omnigent:ae-speak-rate")).toBe("1.25");
   });
 
+  describe("Microphone and Speaker rows", () => {
+    const setSinkId = vi.fn();
+    const mediaDevices = (list: Partial<MediaDeviceInfo>[]) =>
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: {
+          enumerateDevices: () => Promise.resolve(list),
+          addEventListener: () => {},
+        },
+      });
+    const LIST = [
+      { kind: "audioinput", deviceId: "mic1", label: "USB Mic" },
+      { kind: "audiooutput", deviceId: "spk1", label: "Desk Speaker" },
+    ];
+    afterEach(() => {
+      Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: undefined });
+      delete (HTMLMediaElement.prototype as { setSinkId?: unknown }).setSinkId;
+    });
+
+    it("renders both rows under Speed and saves a pick", async () => {
+      mediaDevices(LIST);
+      (HTMLMediaElement.prototype as { setSinkId?: unknown }).setSinkId = setSinkId;
+      renderButton();
+      const user = await openMenu();
+      expect(screen.getByTestId("ae-speak-mic-trigger")).toHaveTextContent("System default");
+      expect(screen.getByTestId("ae-speak-speaker-trigger")).toHaveTextContent("System default");
+      await user.click(screen.getByTestId("ae-speak-mic-trigger"));
+      const options = await screen.findAllByTestId("ae-speak-mic-option");
+      expect(options.map((o) => o.textContent)).toEqual(["System default", "USB Mic"]);
+      options[1].focus();
+      await user.keyboard("{Enter}");
+      expect(window.localStorage.getItem("omnigent:ae-mic-device")).toBe("mic1");
+    });
+
+    it("saves a speaker pick", async () => {
+      mediaDevices(LIST);
+      (HTMLMediaElement.prototype as { setSinkId?: unknown }).setSinkId = setSinkId;
+      renderButton();
+      const user = await openMenu();
+      await user.click(screen.getByTestId("ae-speak-speaker-trigger"));
+      const options = await screen.findAllByTestId("ae-speak-speaker-option");
+      options[1].focus();
+      await user.keyboard("{Enter}");
+      expect(window.localStorage.getItem("omnigent:ae-speaker-device")).toBe("spk1");
+    });
+
+    it("hides both rows without enumerateDevices, and Speaker without setSinkId", async () => {
+      renderButton();
+      await openMenu();
+      expect(screen.queryByTestId("ae-speak-mic-trigger")).toBeNull();
+      expect(screen.queryByTestId("ae-speak-speaker-trigger")).toBeNull();
+    });
+
+    it("hides Speaker alone when setSinkId is missing", async () => {
+      mediaDevices(LIST);
+      renderButton();
+      await openMenu();
+      expect(screen.getByTestId("ae-speak-mic-trigger")).toBeInTheDocument();
+      expect(screen.queryByTestId("ae-speak-speaker-trigger")).toBeNull();
+    });
+
+    it("shows a gone saved device as System default", async () => {
+      window.localStorage.setItem("omnigent:ae-mic-device", "gone");
+      mediaDevices(LIST);
+      renderButton();
+      await openMenu();
+      expect(screen.getByTestId("ae-speak-mic-trigger")).toHaveTextContent("System default");
+    });
+  });
+
   it("disables Stop speaking while idle", async () => {
     renderButton();
     await openMenu();

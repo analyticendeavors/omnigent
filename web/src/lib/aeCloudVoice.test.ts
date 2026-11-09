@@ -11,6 +11,15 @@ class FakeAudio {
   onerror: (() => void) | null = null;
   played: string[] = [];
   pauses = 0;
+  sinkId = "";
+  sinks: string[] = [];
+  static sinkFail = false;
+  setSinkId(id: string) {
+    if (FakeAudio.sinkFail && id !== "") return Promise.reject(new Error("sink"));
+    this.sinks.push(id);
+    this.sinkId = id;
+    return Promise.resolve();
+  }
   constructor() {
     FakeAudio.last = this;
   }
@@ -115,6 +124,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  window.localStorage.clear();
   vi.unstubAllGlobals();
 });
 
@@ -270,5 +280,27 @@ describe("createCloudSpeaker", () => {
     FakeAudio.last?.end();
     await settle();
     expect(speaker.speaking()).toBe(false);
+  });
+
+  it("routes to the saved speaker before play and falls back to the default on a sink failure", async () => {
+    window.localStorage.setItem("omnigent:ae-speaker-device", "spk1");
+    const speaker = createCloudSpeaker(new FakeDevice());
+    speaker.speak(sentence("a"), OPTS);
+    await settle();
+    pending[0].resolve(mp3());
+    await settle();
+    expect(FakeAudio.last?.sinks).toEqual(["spk1"]);
+    expect(FakeAudio.last?.played).toEqual(["blob:0"]);
+    FakeAudio.last?.end();
+    await settle();
+    FakeAudio.sinkFail = true;
+    window.localStorage.setItem("omnigent:ae-speaker-device", "spk2");
+    speaker.speak(sentence("b"), OPTS);
+    await settle();
+    pending[pending.length - 1].resolve(mp3());
+    await settle();
+    expect(FakeAudio.last?.sinkId).toBe("");
+    expect(FakeAudio.last?.played.length).toBe(2);
+    FakeAudio.sinkFail = false;
   });
 });

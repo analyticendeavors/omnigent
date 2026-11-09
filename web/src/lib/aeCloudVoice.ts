@@ -4,6 +4,7 @@
 
 import type { Speaker, SpeakOptions } from "./aeSpeakReplies";
 import { splitForSpeech } from "./aeSpeechText";
+import { speakerSinkId } from "./aeAudioDevices";
 import { withBasePath } from "./basePath";
 import { authenticatedFetch } from "./identity";
 
@@ -94,6 +95,22 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
     }
   };
 
+  // Route to the saved speaker; a sink failure falls back to the default and never drops a sentence.
+  const applySink = async (el: HTMLAudioElement): Promise<void> => {
+    if (typeof el.setSinkId !== "function") return;
+    const want = speakerSinkId();
+    if (want === el.sinkId) return;
+    try {
+      await el.setSinkId(want);
+    } catch {
+      try {
+        await el.setSinkId("");
+      } catch {
+        // Keep playing on whatever sink the element has.
+      }
+    }
+  };
+
   let playToken = 0;
   const play = (blob: Blob): Promise<boolean> => {
     audio ??= new Audio();
@@ -118,11 +135,14 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
       el.onended = () => finish(true);
       el.onerror = () => finish(false);
       el.src = url;
-      try {
-        void Promise.resolve(el.play()).catch(() => finish(false));
-      } catch {
-        finish(false);
-      }
+      void applySink(el).then(() => {
+        if (settled) return;
+        try {
+          void Promise.resolve(el.play()).catch(() => finish(false));
+        } catch {
+          finish(false);
+        }
+      });
     });
   };
 
