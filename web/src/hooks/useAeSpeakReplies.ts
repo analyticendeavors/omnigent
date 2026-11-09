@@ -26,6 +26,7 @@ function getSpeaker(): Speaker {
 }
 
 const CODE_BLOCK_KEY = normalizeSentence(CODE_BLOCK_PHRASE);
+const MESSAGE_START = "^";
 
 interface FinalText {
   key: string;
@@ -107,6 +108,9 @@ export function useAeSpeakReplies({ chatId, enabled, voiceURI, rate }: UseAeSpea
     const handled = new Set<string>();
     const knownResponses = new Set<string>();
     const offsets = new Map<string, number>();
+    const trails = new Map<string, { last: string }>();
+    // Responses still streaming when the user sent: their late finals are old-turn text.
+    const staleResponses = new Set<string>();
     // Sentences already spoken this turn, so a final never repeats its preview.
     const spoken = new Set<string>();
     let cueTimer: ReturnType<typeof setTimeout> | null = null;
@@ -114,36 +118,47 @@ export function useAeSpeakReplies({ chatId, enabled, voiceURI, rate }: UseAeSpea
     let synced = false;
     let prevStatus: "idle" | "streaming" = "idle";
     let prevPending = 0;
+    let prevIds: string[] = [];
     let prevUserBlocks = 0;
 
     const clearCue = () => {
       if (cueTimer !== null) clearTimeout(cueTimer);
       cueTimer = null;
     };
-    const speakNew = (markdown: string) => {
-      // A reply joined mid-sentence leaves the sentence's end mark at the start.
+    // `trail.last` is the key of the sentence before the next one in the same message,
+    // so a code block phrase is keyed by its place in the message, not by its text.
+    const sentenceKeys = (markdown: string, start: string) => {
+      let last = start;
       const text = speechTextFromMarkdown(markdown.replace(/^[.!?\s]+/, ""));
+      return splitSentences(text).flatMap((sentence) => {
+        const norm = normalizeSentence(sentence);
+        if (norm === "") return [];
+        const key = norm === CODE_BLOCK_KEY ? `code@${last}` : norm;
+        last = key;
+        return [{ sentence, key }];
+      });
+    };
+    const speakNew = (markdown: string, trail: { last: string }) => {
       const fresh: string[] = [];
-      for (const sentence of splitSentences(text)) {
-        const key = normalizeSentence(sentence);
-        if (key === "") continue;
-        if (key === CODE_BLOCK_KEY) {
-          fresh.push(sentence);
-        } else if (!spoken.has(key)) {
-          spoken.add(key);
-          fresh.push(sentence);
-        }
+      for (const { sentence, key } of sentenceKeys(markdown, trail.last)) {
+        trail.last = key;
+        if (spoken.has(key)) continue;
+        spoken.add(key);
+        fresh.push(sentence);
       }
       if (fresh.length === 0) return;
       spokenThisTurn = true;
       clearCue();
       speaker.speak(fresh.join(" "), optsRef.current);
     };
-    // Everything already on screen counts as handled so it is never read back.
-    const snapshot = (blocks: readonly AnyBlock[]) => {
+    // Existing finals are handled and in-flight sources start at their current length, so
+    // nothing already on screen is read back. Only a live source seeds the spoken set, and
+    // only when tracking starts or reconnects: a send must not carry the old turn over.
+    const snapshot = (blocks: readonly AnyBlock[], seedLive: boolean) => {
       handled.clear();
       knownResponses.clear();
       offsets.clear();
+      trails.clear();
       spoken.clear();
       for (const b of blocks) if (b.ctx.itemId) handled.add(b.ctx.itemId);
       const scan = scanBlocks(blocks);
@@ -152,14 +167,13 @@ export function useAeSpeakReplies({ chatId, enabled, voiceURI, rate }: UseAeSpea
         knownResponses.add(source.responseId);
         offsets.set(key, source.raw.length);
         const { ready } = completeSentences(stripTldr(source.raw));
-        for (const sentence of splitSentences(speechTextFromMarkdown(ready))) {
-          spoken.add(normalizeSentence(sentence));
+        const trail = { last: MESSAGE_START };
+        for (const { key: k } of sentenceKeys(ready, trail.last)) {
+          trail.last = k;
+          if (seedLive) spoken.add(k);
         }
-      }
-      for (const f of scan.finals) {
-        for (const sentence of splitSentences(speechTextFromMarkdown(stripTldr(f.fullText)))) {
-          spoken.add(normalizeSentence(sentence));
-        }
+        trails.set(key, trail);
+        if (!seedLive) staleResponses.add(source.responseId);
       }
     };
 
@@ -174,18 +188,26 @@ export function useAeSpeakReplies({ chatId, enabled, voiceURI, rate }: UseAeSpea
         synced = true;
         prevStatus = state.status;
         prevPending = pending;
+        prevIds = state.pendingUserMessages.map((m) => m.tempId);
         prevUserBlocks = scan.userBlocks;
-        snapshot(state.blocks);
+        staleResponses.clear();
+        snapshot(state.blocks, true);
         return;
       }
       // A promoted pending message shrinks the queue as its bubble appears; that is not a send.
+      // A real send adds one entry and keeps the others; a rebuilt queue is not a send.
+      const ids = state.pendingUserMessages.map((m) => m.tempId);
+      const grew = pending > prevPending;
+      const rebuilt =
+        grew && (pending - prevPending > 1 || prevIds.some((id) => !ids.includes(id)));
       const sent =
-        pending > prevPending || (scan.userBlocks > prevUserBlocks && pending >= prevPending);
+        (grew && !rebuilt) || (scan.userBlocks > prevUserBlocks && pending >= prevPending);
+      prevIds = ids;
       prevPending = pending;
       prevUserBlocks = scan.userBlocks;
       if (sent) {
         speaker.stop();
-        snapshot(state.blocks);
+        snapshot(state.blocks, false);
         spokenThisTurn = false;
         clearCue();
         cueTimer = setTimeout(() => {
@@ -201,6 +223,8 @@ export function useAeSpeakReplies({ chatId, enabled, voiceURI, rate }: UseAeSpea
       if (state.status === "idle" && prevStatus === "streaming") clearCue();
       prevStatus = state.status;
 
+      for (const key of [...offsets.keys()]) if (!scan.sources.has(key)) offsets.delete(key);
+      for (const key of [...trails.keys()]) if (!scan.sources.has(key)) trails.delete(key);
       for (const [key, source] of scan.sources) {
         knownResponses.add(source.responseId);
         const offset = offsets.get(key) ?? 0;
@@ -208,14 +232,20 @@ export function useAeSpeakReplies({ chatId, enabled, voiceURI, rate }: UseAeSpea
         const { ready } = completeSentences(stripped.slice(offset));
         if (ready === "") continue;
         offsets.set(key, offset + ready.length);
-        speakNew(ready);
+        let trail = trails.get(key);
+        if (!trail) {
+          trail = { last: MESSAGE_START };
+          trails.set(key, trail);
+        }
+        speakNew(ready, trail);
       }
       for (const f of scan.finals) {
         if (handled.has(f.key)) continue;
         // A final from a refetch counts only when part of it was streamed live here.
         if (f.fromHistory && !knownResponses.has(f.responseId)) continue;
         handled.add(f.key);
-        speakNew(stripTldr(f.fullText));
+        if (staleResponses.has(f.responseId)) continue;
+        speakNew(stripTldr(f.fullText), { last: MESSAGE_START });
       }
     };
 
@@ -228,6 +258,8 @@ export function useAeSpeakReplies({ chatId, enabled, voiceURI, rate }: UseAeSpea
       handled.clear();
       knownResponses.clear();
       offsets.clear();
+      trails.clear();
+      staleResponses.clear();
       spoken.clear();
     };
   }, [enabled, chatId]);

@@ -109,6 +109,13 @@ function SpeakRepliesControl({
   const effortRef = useRef(currentEffort);
   effortRef.current = currentEffort;
   const busyRef = useRef(false);
+  const availableRef = useRef(fastAvailable);
+  availableRef.current = fastAvailable;
+  // The effort belongs to the chat on screen: never write it after the view moved on.
+  const mayTouchEffort = useCallback(
+    () => availableRef.current && useChatStore.getState().conversationId === chatId,
+    [chatId],
+  );
 
   const applyFast = useCallback(async () => {
     if (busyRef.current || readFastAnswersState(chatId)) return;
@@ -125,13 +132,13 @@ function SpeakRepliesControl({
       writeFastAnswersState(chatId, { previousEffort });
     } else {
       // Turned off while the change was in flight: put the effort back.
-      await setChatEffort(previousEffort).catch(() => {});
+      if (mayTouchEffort()) await setChatEffort(previousEffort).catch(() => {});
     }
-  }, [chatId]);
+  }, [chatId, mayTouchEffort]);
 
   const revertFast = useCallback(async () => {
     const state = readFastAnswersState(chatId);
-    if (!state) return;
+    if (!state || !mayTouchEffort()) return;
     // An effort the user changed by hand since stays as they left it.
     if (effortRef.current === FAST_EFFORT) {
       try {
@@ -141,7 +148,7 @@ function SpeakRepliesControl({
       }
     }
     clearFastAnswersState(chatId);
-  }, [chatId]);
+  }, [chatId, mayTouchEffort]);
 
   // Effort levels can arrive after the toggle, so apply whenever it is wanted and not yet applied.
   useEffect(() => {

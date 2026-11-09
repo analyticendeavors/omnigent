@@ -298,4 +298,84 @@ describe("useAeSpeakReplies", () => {
     setStore({ ...send(0), blocks: [userBlock] });
     expect(synth.cancelCount).toBe(cancels);
   });
+
+  it("speaks a code block phrase once when a streamed message is finalized", () => {
+    mount();
+    const text = "Run this:\n\n```ps\nInvoke\n```\n";
+    setStore({ blocks: [live("r1", text)] });
+    flush();
+    setStore({ blocks: [final("r1", "m1", "Run this:\n\n```ps\nInvoke\n```")] });
+    flush();
+    expect(
+      synth
+        .texts()
+        .join(" ")
+        .match(/Code block skipped/g),
+    ).toHaveLength(1);
+  });
+
+  it("speaks a second code block after a different sentence", () => {
+    mount();
+    setStore({
+      blocks: [final("r1", "m1", "One.\n\n```a\nx\n```\n\nTwo.\n\n```b\ny\n```")],
+    });
+    flush();
+    expect(
+      synth
+        .texts()
+        .join(" ")
+        .match(/Code block skipped/g),
+    ).toHaveLength(2);
+  });
+
+  it("speaks a code block in a second message of the same turn", () => {
+    mount();
+    const m1 = final("r1", "m1", "Alpha.\n\n```a\nx\n```");
+    const m2 = final("r1", "m2", "Beta.\n\n```b\ny\n```");
+    setStore({ blocks: [m1] });
+    flush();
+    setStore({ blocks: [m1, m2] });
+    flush();
+    expect(
+      synth
+        .texts()
+        .join(" ")
+        .match(/Code block skipped/g),
+    ).toHaveLength(2);
+  });
+
+  it("speaks two turns whose replies are both Done.", () => {
+    mount();
+    setStore({ status: "streaming", ...send(1) });
+    setStore({ blocks: [final("r1", "m1", "Done.")] });
+    flush();
+    setStore({ ...send(2) });
+    setStore({ blocks: [final("r1", "m1", "Done."), final("r2", "m2", "Done.")] });
+    flush();
+    expect(synth.texts()).toEqual(["Done.", "Done."]);
+  });
+
+  it("speaks a reply that repeats a sentence from history", () => {
+    setStore({ blocks: [final("h", "h1", "Done.", { createdAtS: 5 })] });
+    mount();
+    setStore({
+      blocks: [final("h", "h1", "Done.", { createdAtS: 5 }), final("r1", "m1", "Done.")],
+    });
+    flush();
+    expect(synth.texts()).toEqual(["Done."]);
+  });
+
+  it("does not count a rebuilt pending queue as a send, but a later send is", () => {
+    mount();
+    setStore({ status: "streaming", blocks: [live("r1", "One. Two")] });
+    flush();
+    const cancels = synth.cancelCount;
+    setStore(send(3));
+    expect(synth.cancelCount).toBe(cancels);
+    setStore({ conversationId: "c2" });
+    setStore({ conversationId: "c1", ...send(5) });
+    expect(synth.cancelCount).toBe(cancels);
+    setStore(send(6));
+    expect(synth.cancelCount).toBeGreaterThan(cancels);
+  });
 });

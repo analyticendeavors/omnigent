@@ -219,4 +219,25 @@ describe("AeSpeakRepliesButton", () => {
     await openMenu();
     expect(screen.getByTestId("ae-speak-stop")).toHaveAttribute("data-disabled");
   });
+
+  it("skips the restore when the chat switched during the await", async () => {
+    let release: () => void = () => {};
+    setEffort.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    renderButton();
+    const user = await openMenu();
+    await user.click(screen.getByTestId("ae-speak-toggle"));
+    await waitFor(() => expect(setEffort).toHaveBeenCalledWith("low"));
+    await user.click(screen.getByTestId("ae-speak-toggle"));
+    useChatStore.setState({ conversationId: "c2" } as never);
+    release();
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 10);
+    });
+    expect(setEffort).toHaveBeenCalledTimes(1);
+  });
 });
