@@ -35,6 +35,8 @@ export interface AeChildrenAnswer {
   moved: AeChildOutcome[];
   skipped: AeChildOutcome[];
   pending: AeChildOutcome[];
+  /** No terminal was running: the login is stored and the child starts on it next time. */
+  queued?: AeChildOutcome[];
   /** Set when the cascade itself failed after the chat switched; no child was attempted. */
   error?: string;
 }
@@ -55,6 +57,8 @@ export interface AeMoveAllAnswer {
   skipped: { id: string; title: string; reason: string }[];
   /** Still switching when the server answered; they finish on their own. */
   pending: { id: string; title: string; reason: string }[];
+  /** No terminal was running: the login is stored and each starts on it next time. */
+  queued?: { id: string; title: string; reason: string }[];
 }
 
 /** Re-read a chat's labels and its Usage numbers after its login changed. */
@@ -157,10 +161,12 @@ export async function moveAllAeClaudeChats(
 }
 
 /** One line for the result, e.g. "Moved 4 chats; 1 skipped: Fix CI is mid-reply". */
-export function aeMoveAllSummary(answer: AeMoveAllAnswer): string {
+export function aeMoveAllSummary(answer: AeMoveAllAnswer, label?: string): string {
   const count = answer.moved.length;
   const moved = `Moved ${count} ${count === 1 ? "chat" : "chats"}`;
   const parts: string[] = [];
+  const queued = answer.queued?.length ?? 0;
+  if (queued > 0) parts.push(`${plural(queued, "chat")} not running ${startsNext(queued, label)}`);
   if (answer.pending.length > 0) {
     parts.push(
       `${answer.pending.length} still switching: ${answer.pending.map((s) => s.title).join(", ")}`,
@@ -176,6 +182,9 @@ export function aeMoveAllSummary(answer: AeMoveAllAnswer): string {
 }
 
 const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+/** "starts on X at its next message", for chats whose login was stored with no terminal running. */
+const startsNext = (count: number, label: string | undefined) =>
+  `${count === 1 ? "starts" : "start"} on ${label ?? "it"} at ${count === 1 ? "its" : "their"} next message`;
 
 /**
  * The toast after a switch: "This chat now runs on X; 2 child chats moved; 1 skipped:
@@ -190,6 +199,8 @@ export function aeSwitchSummary(label: string, answer: AeSwitchAnswer): string {
   if (kids.error) return `${own}; its child chats were not switched`;
   const parts = [own];
   if (kids.moved.length > 0) parts.push(`${plural(kids.moved.length, "child chat")} moved`);
+  const queued = kids.queued?.length ?? 0;
+  if (queued > 0) parts.push(`${plural(queued, "child chat")} ${startsNext(queued, label)}`);
   if (kids.pending.length > 0) {
     parts.push(
       `${kids.pending.length} still switching: ${kids.pending.map((c) => c.title).join(", ")}`,
@@ -206,5 +217,8 @@ export function aeSwitchSummary(label: string, answer: AeSwitchAnswer): string {
 
 /** The chats a switch touched besides the one asked about, to re-read their logins. */
 export function aeSwitchedChildIds(answer: AeSwitchAnswer): string[] {
-  return [...(answer.children?.moved ?? []), ...(answer.children?.pending ?? [])].map((c) => c.id);
+  const kids = answer.children;
+  return [...(kids?.moved ?? []), ...(kids?.pending ?? []), ...(kids?.queued ?? [])].map(
+    (c) => c.id,
+  );
 }
