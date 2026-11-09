@@ -4928,8 +4928,7 @@ function SessionHarnessPicker({
                     ) : (
                       (effortWord(effort) ?? effort)
                     ),
-                  checked:
-                    !routingOn && effort === (selectedEffort ?? effortResolved?.level ?? null),
+                  checked: !routingOn && effort === (selectedEffort ?? effortResolved?.level ?? null),
                   disabled: routingOn || picksBusy || pendingModelChange !== null,
                   onSelect: () => void apply(() => useChatStore.getState().setEffort(effort)),
                   testId: `composer-agent-effort-${effort}`,

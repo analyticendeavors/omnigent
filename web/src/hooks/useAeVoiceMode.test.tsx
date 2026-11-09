@@ -454,4 +454,55 @@ describe("useAeVoiceMode", () => {
     mount({ labels: { "ae.voice": "on" } });
     expect(fetch).not.toHaveBeenCalled();
   });
+
+  it("treats a start that stays silent for 5 s as failed, retries once, then gives up", () => {
+    autoConnect = false;
+    mount();
+    expect(controller.current.start).toHaveBeenCalledTimes(1);
+    act(() => void vi.advanceTimersByTime(5000));
+    expect(getVoiceSnapshot("c1").phase).not.toBe("listening");
+    act(() => void vi.advanceTimersByTime(1000));
+    expect(controller.current.start).toHaveBeenCalledTimes(2);
+    act(() => void vi.advanceTimersByTime(5000));
+    expect(getVoiceSnapshot("c1").phase).toBe("unavailable");
+  });
+
+  it("makes the start again when the mic is wanted before its own stop has finished", () => {
+    const { result, rerender } = mount();
+    act(() => void result.current.onListening(true));
+    // The stop takes a moment: the mic stays "listening" until it reports back.
+    controller.current.stop.mockImplementation(() => {});
+    rerender({ chatId: "c1", value: "", status: "streaming", canSend: true, submit });
+    rerender({ chatId: "c1", value: "", status: "idle", canSend: true, submit });
+    act(() => void vi.advanceTimersByTime(RESUME_MS));
+    expect(controller.current.start).toHaveBeenCalledTimes(1);
+    controller.current.start.mockClear();
+    act(() => {
+      listening = false;
+      result.current.onListening(false);
+    });
+    expect(controller.current.start).toHaveBeenCalledTimes(1);
+    expect(getVoiceSnapshot("c1").phase).not.toBe("paused");
+  });
+
+  it("picks an option whose label ends in a filler word on a multi-select card", () => {
+    const labelled = {
+      ...CARD,
+      askUserQuestion: {
+        questions: [
+          {
+            question: "What now?",
+            multiSelect: true,
+            options: [{ label: "Merge it" }, { label: "Hold" }],
+          },
+        ],
+      },
+    };
+    useChatStore.setState({ blocks: [labelled] } as never);
+    const { result } = mount();
+    act(() => void result.current.onFinal("merge it done"));
+    expect(submitApproval).toHaveBeenCalledWith("e1", "accept", {
+      "What now?": ["Merge it"],
+    });
+  });
 });

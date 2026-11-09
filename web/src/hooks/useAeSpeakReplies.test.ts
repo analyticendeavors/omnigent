@@ -477,4 +477,25 @@ describe("useAeSpeakReplies after a tap on the speaker", () => {
     flush();
     expect(synth.texts()).toEqual(["One.", "Next one."]);
   });
+
+  it("a tap during sentence one of a three-sentence streaming reply silences sentences two and three", () => {
+    mount();
+    setStore({ blocks: [live("r1", "First sentence. Sec")] });
+    flush();
+    expect(synth.texts()).toEqual(["First sentence."]);
+    act(() => setVoiceBarged("c1", true));
+    setStore({ blocks: [live("r1", "First sentence. Second sentence. Third sentence. Fo")] });
+    flush();
+    setStore({
+      blocks: [final("r1", "item-1", "First sentence. Second sentence. Third sentence.")],
+    });
+    flush();
+    expect(synth.texts()).toEqual(["First sentence."]);
+    setStore(send(1));
+    flush();
+    expect(getVoiceSnapshot("c1").barged).toBe(false);
+    setStore({ blocks: [live("r2", "Fresh reply. More")] });
+    flush();
+    expect(synth.texts()).toEqual(["First sentence.", "Fresh reply."]);
+  });
 });

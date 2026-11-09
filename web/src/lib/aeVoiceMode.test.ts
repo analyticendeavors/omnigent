@@ -76,19 +76,27 @@ describe("matchSpokenOptions and done", () => {
     expect(isDoneWord("done")).toBe(true);
     expect(isDoneWord("Okay, that's all")).toBe(true);
     expect(isDoneWord("one")).toBe(false);
-    expect(splitDone("one and three done")).toEqual({ done: true, rest: "one and three" });
-    expect(splitDone("two")).toEqual({ done: false, rest: "two" });
+    expect(splitDone("one and three done")).toMatchObject({ done: true, rest: "one and three" });
+    expect(splitDone("two")).toMatchObject({ done: false, rest: "two" });
   });
 
   it.each(["ok done", "all done", "I'm done", "okay, that's all", "right, that's it"])(
     "leaves no words behind %s",
     (said) => {
-      expect(splitDone(said)).toEqual({ done: true, rest: "" });
+      expect(splitDone(said)).toMatchObject({ done: true, rest: "" });
     },
   );
 
+  it("hands back the remainder untrimmed too, so a label ending in a filler word survives", () => {
+    expect(splitDone("merge it done")).toMatchObject({ rest: "merge", raw: "merge it" });
+    expect(matchSpokenOptions("merge it", ["Merge it", "Hold"])).toEqual([0]);
+  });
+
   it("keeps the picks that come before the closing words", () => {
-    expect(splitDone("one and three, ok I'm done")).toEqual({ done: true, rest: "one and three" });
+    expect(splitDone("one and three, ok I'm done")).toMatchObject({
+      done: true,
+      rest: "one and three",
+    });
   });
 });
 

@@ -26,6 +26,8 @@ import { useChatStore } from "@/store/chatStore";
 const SEND_WAIT_MS = 5000;
 /** One retry of a mic start that failed. */
 const MIC_RETRY_MS = 1000;
+/** A start that has neither succeeded nor failed by now counts as failed. */
+const MIC_START_NET_MS = 5000;
 const LABEL_KEY = "ae.voice";
 
 export interface UseAeVoiceModeArgs {
@@ -90,6 +92,8 @@ export function useAeVoiceMode({
   const sendTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const graceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const netTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onListeningRef = useRef<(listening: boolean) => void>(() => {});
   const card = useRef<CardState | null>(null);
   // The mic's own report of a start in flight, our stop, and failures so far this cycle.
   const startPending = useRef(false);
@@ -139,8 +143,10 @@ export function useAeVoiceMode({
       clearGrace();
       if (sendTimer.current !== null) clearTimeout(sendTimer.current);
       if (retryTimer.current !== null) clearTimeout(retryTimer.current);
+      if (netTimer.current !== null) clearTimeout(netTimer.current);
       sendTimer.current = null;
       retryTimer.current = null;
+      netTimer.current = null;
       card.current = null;
       startPending.current = false;
       stopAsked.current = false;
@@ -182,13 +188,26 @@ export function useAeVoiceMode({
     return () => clearTimeout(t);
   }, [muted]);
 
+  const clearNet = useCallback(() => {
+    if (netTimer.current !== null) clearTimeout(netTimer.current);
+    netTimer.current = null;
+  }, []);
+
   const startMic = useCallback(() => {
     const mic = controller.current;
     if (!mic || mic.isListening()) return;
     startPending.current = true;
     stopAsked.current = false;
+    clearNet();
+    // If the mic never answers, call it a failed start so the retry path runs.
+    netTimer.current = setTimeout(() => {
+      netTimer.current = null;
+      if (!startPending.current) return;
+      controller.current?.stop();
+      onListeningRef.current(false);
+    }, MIC_START_NET_MS);
     mic.start();
-  }, [controller]);
+  }, [controller, clearNet]);
 
   const wasOn = useRef(on);
   useEffect(() => {
@@ -222,14 +241,16 @@ export function useAeVoiceMode({
       startPending.current = false;
       if (retryTimer.current !== null) clearTimeout(retryTimer.current);
       retryTimer.current = null;
+      clearNet();
       // A start still connecting is withdrawn too, not only a live stream.
       mic.stop();
     }
-  }, [on, wantListen, chatId, controller, clearGrace, startMic]);
+  }, [on, wantListen, chatId, controller, clearGrace, clearNet, startMic]);
 
   const onListening = useCallback(
     (listening: boolean) => {
       if (listening) {
+        clearNet();
         startPending.current = false;
         failures.current = 0;
         setMicFailed(false);
@@ -238,6 +259,7 @@ export function useAeVoiceMode({
         return;
       }
       setMicListening(false);
+      clearNet();
       if (startPending.current) {
         // The start never reached listening: try once more, then say so.
         startPending.current = false;
@@ -250,14 +272,21 @@ export function useAeVoiceMode({
         } else {
           setMicFailed(true);
         }
-      } else if (!stopAsked.current && latest.current.wantListen) {
+      } else if (stopAsked.current) {
+        // Our own stop finished. If the mic is wanted again by now (stop and start inside
+        // a second), the start that was turned away is made again.
+        stopAsked.current = false;
+        if (latest.current.wantListen) startMic();
+        return;
+      } else if (latest.current.wantListen) {
         // Stopped from outside (the mic button, the hotkey): leave it stopped.
         setMicStopped(true);
       }
       stopAsked.current = false;
     },
-    [startMic],
+    [startMic, clearNet],
   );
+  onListeningRef.current = onListening;
 
   useEffect(() => {
     if (!chatId) return;
@@ -342,8 +371,11 @@ export function useAeVoiceMode({
           if (!state.picked.includes(names[whole])) state.picked.push(names[whole]);
           return;
         }
-        const { done, rest } = splitDone(text);
-        const hits = matchSpokenOptions(rest, names).map((i) => names[i]);
+        const { done, rest, raw } = splitDone(text);
+        // The whole remainder first ("merge it done" for a "Merge it" option); filler is
+        // trimmed only when nothing matched.
+        let hits = matchSpokenOptions(raw, names).map((i) => names[i]);
+        if (hits.length === 0) hits = matchSpokenOptions(rest, names).map((i) => names[i]);
         if (hits.length === 0 && rest.trim() !== "" && mayCustom) {
           state.custom = `${state.custom} ${rest}`.trim();
         }

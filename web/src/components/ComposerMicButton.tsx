@@ -145,6 +145,8 @@ export const ComposerMicButton = ({
   // Voice mode: a start asked for but not yet listening, and a stop that arrived meanwhile.
   const requestedRef = useRef(false);
   const withdrawRef = useRef(false);
+  // Set by the controller's start so the server start knows the withdraw flag is its own.
+  const controllerStartRef = useRef(false);
   const onListeningChangeRef = useRef(onListeningChange);
   onListeningChangeRef.current = onListeningChange;
   // Synced refs so the mount-time listeners call the latest callbacks.
@@ -392,6 +394,10 @@ export const ComposerMicButton = ({
     try {
       // Snapshot point: let the parent record the text so Esc can revert to it.
       discardingRef.current = false;
+      // A manual click or the shortcut owns this start: a withdraw left over from an
+      // earlier Voice mode start must not cancel it.
+      if (!controllerStartRef.current) withdrawRef.current = false;
+      controllerStartRef.current = false;
       interimRef.current = "";
       setConnecting(true);
       onVoiceStartRef.current?.();
@@ -453,16 +459,19 @@ export const ComposerMicButton = ({
     // Reached only by the start path (the stop branch returns earlier), so this
     // clears the handshake spinner on both success and failure.
     setConnecting(false);
+    withdrawRef.current = false;
     serverBusyRef.current = false;
   }, [reportError]);
   toggleServerRef.current = toggleServer;
 
-  const toggle = useCallback(() => {
+  // Returns whether anything began: false when a guard turned the call away.
+  const toggle = useCallback((): boolean => {
     // An active (or starting) server take is owned by the server path,
     // whichever mode started it.
     if (sessionRef.current || serverBusyRef.current) {
+      const busy = serverBusyRef.current;
       void toggleServer();
-      return;
+      return !busy;
     }
     // In Electron the SpeechRecognition constructor exists but has no backend,
     // so a Web Speech take always fails with "network" and only THEN falls back
@@ -470,13 +479,14 @@ export const ComposerMicButton = ({
     // When the server can serve, go straight to it and skip the doomed attempt.
     // (Real browsers keep Web Speech primary; it genuinely works there.)
     if (!Ctor || (serverAvailable && isElectronShell())) {
-      if (serverAvailable) void toggleServer();
-      return;
+      if (!serverAvailable) return false;
+      void toggleServer();
+      return true;
     }
     // Guard against rapid clicks landing before start/end event fires.
-    if (transitionRef.current) return;
+    if (transitionRef.current) return false;
     const recognition = recognitionRef.current;
-    if (!recognition) return;
+    if (!recognition) return false;
     transitionRef.current = true;
     try {
       if (isListening) recognition.stop();
@@ -485,7 +495,9 @@ export const ComposerMicButton = ({
       // InvalidStateError from a double-call — drop the guard so the
       // user can try again, and let the next event reconcile state.
       transitionRef.current = false;
+      return false;
     }
+    return true;
   }, [isListening, Ctor, serverAvailable, toggleServer]);
 
   // Voice mode drives the mic through this handle; the button keeps working alone.
@@ -497,8 +509,16 @@ export const ComposerMicButton = ({
       start: () => {
         if (listeningRef.current || requestedRef.current) return;
         requestedRef.current = true;
-        withdrawRef.current = false;
-        toggle();
+        controllerStartRef.current = true;
+        if (toggle()) {
+          // A new start replaces any earlier withdrawn one.
+          withdrawRef.current = false;
+        } else {
+          // Nothing began (a start still connecting, a guard): say so, so Voice mode retries.
+          requestedRef.current = false;
+          controllerStartRef.current = false;
+          onListeningChangeRef.current?.(false);
+        }
       },
       stop: () => {
         if (listeningRef.current) {

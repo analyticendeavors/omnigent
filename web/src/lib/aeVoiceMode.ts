@@ -366,19 +366,20 @@ const DONE_FILLER = new Set([
 ]);
 
 /** The transcript without a closing "done" and the filler around it, and whether it had one. */
-export function splitDone(transcript: string): { done: boolean; rest: string } {
+export function splitDone(transcript: string): { done: boolean; rest: string; raw: string } {
   const said = words(transcript);
   for (const phrase of DONE_PHRASES) {
     const p = phrase.split(" ");
     const end = said.length - p.length;
     if (end >= 0 && p.every((w, i) => said[end + i] === w)) {
+      const raw = said.slice(0, end).join(" ");
       const rest = said.slice(0, end);
       while (rest.length > 0 && DONE_FILLER.has(rest[rest.length - 1])) rest.pop();
       while (rest.length > 0 && DONE_FILLER.has(rest[0])) rest.shift();
-      return { done: true, rest: rest.join(" ") };
+      return { done: true, rest: rest.join(" "), raw };
     }
   }
-  return { done: false, rest: transcript };
+  return { done: false, rest: transcript, raw: transcript };
 }
 
 /** True when the transcript ends the picking on a multi-select card. */

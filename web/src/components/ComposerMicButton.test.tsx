@@ -548,6 +548,60 @@ describe("ComposerMicButton (server dictation)", () => {
     expect(sessionStartMock).toHaveBeenCalledTimes(2);
   });
 
+  it("a start turned away by a take still finishing is reported, and the next start works", async () => {
+    let resolveStart!: (s: SessionStub) => void;
+    sessionStartMock = vi.fn((events: DictationSessionEvents) => {
+      sessionEvents = events;
+      return new Promise<SessionStub>((resolve) => {
+        resolveStart = resolve;
+      });
+    });
+    const controller = { current: null as AeMicController | null };
+    const onListeningChange = vi.fn();
+    renderServerMode({ controller, onListeningChange });
+    await act(async () => controller.current?.start());
+    act(() => controller.current?.stop());
+    // The first take is still connecting, so this start is turned away and reported.
+    act(() => controller.current?.start());
+    expect(onListeningChange).toHaveBeenCalledWith(false);
+    expect(sessionStartMock).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      resolveStart({ stop: sessionStopMock, cancel: sessionCancelMock });
+    });
+    expect(sessionCancelMock).toHaveBeenCalledTimes(1);
+    sessionStartMock = vi.fn(async (events: DictationSessionEvents) => {
+      sessionEvents = events;
+      return { stop: sessionStopMock, cancel: sessionCancelMock };
+    });
+    await act(async () => controller.current?.start());
+    expect(controller.current?.isListening()).toBe(true);
+  });
+
+  it("a withdraw left by a start that then failed does not cancel the next manual click", async () => {
+    let rejectStart!: (e: unknown) => void;
+    sessionStartMock = vi.fn(
+      () =>
+        new Promise<SessionStub>((_resolve, reject) => {
+          rejectStart = reject;
+        }),
+    );
+    const controller = { current: null as AeMicController | null };
+    renderServerMode({ controller });
+    await act(async () => controller.current?.start());
+    act(() => controller.current?.stop());
+    await act(async () => rejectStart(new Error("down")));
+    sessionStartMock = vi.fn(async (events: DictationSessionEvents) => {
+      sessionEvents = events;
+      return { stop: sessionStopMock, cancel: sessionCancelMock };
+    });
+    await clickMic();
+    expect(sessionCancelMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Voice dictation" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
   it("tells Voice mode when the mic is stopped from the button", async () => {
     const controller = { current: null as AeMicController | null };
     const onListeningChange = vi.fn();
