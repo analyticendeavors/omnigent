@@ -372,7 +372,7 @@ describe("Voice mode on the speaker button", () => {
     await user.click(screen.getByTestId("ae-speak-replies"));
     expect(getVoiceSnapshot("c1").on).toBe(true);
     expect(screen.getByTestId("ae-speak-replies")).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByTestId("ae-voice-phase")).toHaveTextContent("Listening");
+    expect(screen.getByTestId("ae-voice-phase")).toHaveTextContent("Starting the mic");
     const post = vi
       .mocked(fetch)
       .mock.calls.find(([url]) => String(url).includes("/v1/ae/sessions/c1/voice"));
@@ -390,6 +390,33 @@ describe("Voice mode on the speaker button", () => {
     expect(screen.getByTestId("ae-voice-phase")).toHaveTextContent("Working on it");
     act(() => setVoicePhase("c1", "speaking"));
     expect(screen.getByTestId("ae-voice-phase")).toHaveTextContent("Speaking, tap to stop");
+  });
+
+  it("shows the words for the mic phases", async () => {
+    renderButton();
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("ae-speak-replies"));
+    for (const [phase, word] of [
+      ["listening", "Listening"],
+      ["paused", "Mic stopped"],
+      ["unavailable", "Mic unavailable"],
+    ] as const) {
+      act(() => setVoicePhase("c1", phase));
+      expect(screen.getByTestId("ae-voice-phase")).toHaveTextContent(word);
+    }
+  });
+
+  it("a tap while speaking stops the reply, keeps Voice mode on and silences the rest of the turn", async () => {
+    const synth = installFakeSpeech();
+    renderButton();
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("ae-speak-replies"));
+    act(() => getVoiceSnapshot("c1").speak?.("A sentence."));
+    await waitFor(() => expect(getVoiceSnapshot("c1").speaking).toBe(true));
+    const cancels = synth.cancelCount;
+    await user.click(screen.getByTestId("ae-speak-replies"));
+    expect(synth.cancelCount).toBeGreaterThan(cancels);
+    expect(getVoiceSnapshot("c1")).toMatchObject({ on: true, barged: true });
   });
 
   it("the menu opens from the caret with the Voice mode row on top", async () => {

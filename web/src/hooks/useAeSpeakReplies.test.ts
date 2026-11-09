@@ -1,6 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WORKING_CUE_DELAY_MS, WORKING_CUE_TEXT } from "@/lib/aeSpeakReplies";
+import { getVoiceSnapshot, resetVoiceStore, setVoiceBarged } from "@/lib/aeVoiceMode";
 import { type AnyBlock, LIVE_ITEM_PREFIX } from "@/lib/blocks";
 import { useChatStore } from "@/store/chatStore";
 import { type FakeSynth, installFakeSpeech, removeFakeSpeech } from "@/test/fakeSpeech";
@@ -452,5 +453,28 @@ describe("useAeSpeakReplies", () => {
     expect(synth.cancelCount).toBe(cancels);
     setStore(send(6));
     expect(synth.cancelCount).toBeGreaterThan(cancels);
+  });
+});
+
+describe("useAeSpeakReplies after a tap on the speaker", () => {
+  beforeEach(() => resetVoiceStore());
+
+  it("speaks nothing more of the reply, and speaks again after the next send", () => {
+    mount();
+    setStore({ blocks: [live("r1", "One. Two")] });
+    flush();
+    expect(synth.texts()).toEqual(["One."]);
+    act(() => setVoiceBarged("c1", true));
+    setStore({ blocks: [live("r1", "One. Two. Three. Fo")] });
+    flush();
+    setStore({ blocks: [final("r1", "item-1", "One. Two. Three. Four.")] });
+    flush();
+    expect(synth.texts()).toEqual(["One."]);
+    setStore(send(1));
+    flush();
+    expect(getVoiceSnapshot("c1").barged).toBe(false);
+    setStore({ blocks: [live("r2", "Next one. More")] });
+    flush();
+    expect(synth.texts()).toEqual(["One.", "Next one."]);
   });
 });

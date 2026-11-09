@@ -18,6 +18,7 @@ import {
   splitSentences,
   stripTldr,
 } from "@/lib/aeSpeechText";
+import { getVoiceSnapshot, setVoiceBarged } from "@/lib/aeVoiceMode";
 import { type AnyBlock, LIVE_ITEM_PREFIX } from "@/lib/blocks";
 import { useChatStore } from "@/store/chatStore";
 
@@ -198,6 +199,8 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
         fresh.push(sentence);
       }
       if (fresh.length === 0) return;
+      // A tap on the speaker silenced this turn: the sentences count as read, none is spoken.
+      if (getVoiceSnapshot(chatId).barged) return;
       spokenThisTurn = true;
       clearCue();
       say(fresh.join(" "), lockFor(responseId), optsRef.current.rate);
@@ -258,6 +261,7 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
       prevPending = pending;
       prevUserBlocks = scan.userBlocks;
       if (sent) {
+        setVoiceBarged(chatId, false);
         speaker.stop();
         snapshot(state.blocks, false);
         spokenThisTurn = false;

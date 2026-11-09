@@ -21,7 +21,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { CapabilitiesContext } from "@/lib/CapabilitiesContext";
 import type { ServerInfo } from "@/lib/capabilities";
-import type { DictationSessionEvents } from "@/lib/dictation";
+import { DictationBusyError as BusyError, type DictationSessionEvents } from "@/lib/dictation";
 import { ComposerMicButton } from "./ComposerMicButton";
 
 // Controllable DictationSession stand-in for the server-mode tests. The
@@ -496,6 +496,66 @@ describe("ComposerMicButton (server dictation)", () => {
       message,
     );
     expect(showToastMock).toHaveBeenCalledWith(message);
+  });
+
+  it("a stop while the start is still connecting never leaves a listening stream", async () => {
+    let resolveStart!: (s: SessionStub) => void;
+    sessionStartMock = vi.fn((events: DictationSessionEvents) => {
+      sessionEvents = events;
+      return new Promise<SessionStub>((resolve) => {
+        resolveStart = resolve;
+      });
+    });
+    const controller = { current: null as AeMicController | null };
+    const onListeningChange = vi.fn();
+    renderServerMode({ controller, onListeningChange });
+    await act(async () => controller.current?.start());
+    await act(async () => controller.current?.start());
+    expect(sessionStartMock).toHaveBeenCalledTimes(1);
+    act(() => controller.current?.stop());
+    await act(async () => {
+      resolveStart({ stop: sessionStopMock, cancel: sessionCancelMock });
+    });
+    expect(sessionCancelMock).toHaveBeenCalledTimes(1);
+    expect(controller.current?.isListening()).toBe(false);
+    expect(screen.getByRole("button", { name: "Voice dictation" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(onListeningChange).not.toHaveBeenCalledWith(true);
+    // A later start works as normal.
+    sessionStartMock = vi.fn(async (events: DictationSessionEvents) => {
+      sessionEvents = events;
+      return { stop: sessionStopMock, cancel: sessionCancelMock };
+    });
+    await act(async () => controller.current?.start());
+    expect(controller.current?.isListening()).toBe(true);
+    expect(onListeningChange).toHaveBeenLastCalledWith(true);
+  });
+
+  it("tells Voice mode when a start fails, including the server's stream limit", async () => {
+    sessionStartMock = vi.fn(async () => {
+      throw new BusyError();
+    });
+    const controller = { current: null as AeMicController | null };
+    const onListeningChange = vi.fn();
+    renderServerMode({ controller, onListeningChange });
+    await act(async () => controller.current?.start());
+    expect(onListeningChange).toHaveBeenCalledWith(false);
+    expect(controller.current?.isListening()).toBe(false);
+    // The request flag is released: a second start is allowed.
+    await act(async () => controller.current?.start());
+    expect(sessionStartMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("tells Voice mode when the mic is stopped from the button", async () => {
+    const controller = { current: null as AeMicController | null };
+    const onListeningChange = vi.fn();
+    renderServerMode({ controller, onListeningChange });
+    await clickMic();
+    expect(onListeningChange).toHaveBeenLastCalledWith(true);
+    await clickMic();
+    expect(onListeningChange).toHaveBeenLastCalledWith(false);
   });
 
   it("a mid-take transport error resets state and surfaces the failure", async () => {

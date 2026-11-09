@@ -48,6 +48,7 @@ import {
 } from "@/lib/aeSpeakReplies";
 import {
   registerVoiceSpeaker,
+  setVoiceBarged,
   setVoiceOn,
   setVoiceSpeaking,
   useVoiceSnapshot,
@@ -60,7 +61,10 @@ const MAX_VOICES = 12;
 
 const PHASE_WORD: Record<VoicePhase, string> = {
   off: "",
+  starting: "Starting the mic",
   listening: "Listening",
+  paused: "Mic stopped",
+  unavailable: "Mic unavailable",
   thinking: "Working on it",
   speaking: "Speaking, tap to stop",
 };
@@ -269,8 +273,11 @@ function SpeakRepliesControl({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voiceMode.on]);
   const tapSpeaker = () => {
-    if (voiceMode.on && speaking) stop();
-    else toggleVoice(!voiceMode.on);
+    if (voiceMode.on && speaking) {
+      // A barge-in: stop now and stay quiet for the rest of this turn.
+      setVoiceBarged(chatId, true);
+      stop();
+    } else toggleVoice(!voiceMode.on);
   };
 
   const toggleFast = (next: boolean) => {
@@ -299,7 +306,9 @@ function SpeakRepliesControl({
           aria-hidden
           className={cn(
             "mr-1 hidden text-xs sm:inline",
-            voiceMode.phase === "thinking" ? "text-amber-500" : "text-teal-500",
+            voiceMode.phase === "thinking" || voiceMode.phase === "unavailable"
+              ? "text-amber-500"
+              : "text-teal-500",
           )}
         >
           {phaseWord}

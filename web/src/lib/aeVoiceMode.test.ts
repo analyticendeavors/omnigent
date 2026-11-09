@@ -1,13 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  customAllowed,
   getVoiceSnapshot,
   isDoneWord,
   matchSpokenOption,
   matchSpokenOptions,
   questionSpeech,
   readVoiceMode,
+  POST_RETRY_MS,
   resetVoiceStore,
   setVoiceOn,
+  syncVoiceLabel,
   splitDone,
 } from "./aeVoiceMode";
 
@@ -38,6 +41,22 @@ describe("matchSpokenOption", () => {
     expect(matchSpokenOption("force it", LABELS)).toBe(0);
   });
 
+  it("takes a number only from a short answer made of number words", () => {
+    expect(matchSpokenOption("no one has access yet", LABELS)).toBeNull();
+    expect(matchSpokenOption("first check the logs", LABELS)).toBeNull();
+    expect(matchSpokenOption("none", LABELS)).toBeNull();
+    expect(matchSpokenOption("one", LABELS)).toBe(0);
+    expect(matchSpokenOption("I'll take the second one please", LABELS)).toBe(1);
+  });
+
+  it("does not pick a label that was said after a negation", () => {
+    expect(matchSpokenOption("don't merge yet", ["Merge", "Hold"])).toBeNull();
+    expect(matchSpokenOption("not now", ["Now", "Later"])).toBeNull();
+    expect(matchSpokenOption("never hold it", ["Hold it", "Go"])).toBeNull();
+    expect(matchSpokenOption("no", ["Yes", "No"])).toBe(1);
+    expect(matchSpokenOption("merge it", ["Merge", "Hold"])).toBe(0);
+  });
+
   it("returns null for no match, an unclear one or a number out of range", () => {
     expect(matchSpokenOption("what about next week", LABELS)).toBeNull();
     expect(matchSpokenOption("do it", LABELS)).toBeNull();
@@ -59,6 +78,17 @@ describe("matchSpokenOptions and done", () => {
     expect(isDoneWord("one")).toBe(false);
     expect(splitDone("one and three done")).toEqual({ done: true, rest: "one and three" });
     expect(splitDone("two")).toEqual({ done: false, rest: "two" });
+  });
+
+  it.each(["ok done", "all done", "I'm done", "okay, that's all", "right, that's it"])(
+    "leaves no words behind %s",
+    (said) => {
+      expect(splitDone(said)).toEqual({ done: true, rest: "" });
+    },
+  );
+
+  it("keeps the picks that come before the closing words", () => {
+    expect(splitDone("one and three, ok I'm done")).toEqual({ done: true, rest: "one and three" });
   });
 });
 
@@ -84,7 +114,7 @@ describe("the per-chat switch", () => {
   it("is off by default, remembered per chat, and tells the server", () => {
     expect(getVoiceSnapshot("c1").on).toBe(false);
     setVoiceOn("c1", true);
-    expect(getVoiceSnapshot("c1")).toMatchObject({ on: true, phase: "listening" });
+    expect(getVoiceSnapshot("c1")).toMatchObject({ on: true, phase: "starting" });
     expect(readVoiceMode("c1")).toBe(true);
     expect(readVoiceMode("c2")).toBe(false);
     const call = vi.mocked(fetch).mock.calls[0];
@@ -93,5 +123,63 @@ describe("the per-chat switch", () => {
     setVoiceOn("c1", false);
     expect(readVoiceMode("c1")).toBe(false);
     expect(getVoiceSnapshot("c1").phase).toBe("off");
+  });
+});
+
+describe("custom answers", () => {
+  it("are allowed unless the question says isOther is false", () => {
+    expect(customAllowed({})).toBe(true);
+    expect(customAllowed({ isOther: true })).toBe(true);
+    expect(customAllowed({ isOther: false })).toBe(false);
+  });
+});
+
+describe("keeping the server label in step", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    window.localStorage.clear();
+    resetVoiceStore();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("posts the local switch when the label disagrees, and does nothing when it agrees", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+    syncVoiceLabel("c1", true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const init = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1];
+    expect(JSON.parse(String(init.body))).toEqual({ on: false });
+    fetchMock.mockClear();
+    syncVoiceLabel("c1", false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("retries a failed write once after two seconds", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    setVoiceOn("c1", true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(POST_RETRY_MS);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives up after the one retry", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response("no", { status: 500 })));
+    vi.stubGlobal("fetch", fetchMock);
+    setVoiceOn("c1", true);
+    await vi.advanceTimersByTimeAsync(POST_RETRY_MS + 10);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

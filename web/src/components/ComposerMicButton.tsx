@@ -142,6 +142,11 @@ export const ComposerMicButton = ({
   onTranscriptRef.current = onTranscript;
   const onInterimRef = useRef(onInterim);
   onInterimRef.current = onInterim;
+  // Voice mode: a start asked for but not yet listening, and a stop that arrived meanwhile.
+  const requestedRef = useRef(false);
+  const withdrawRef = useRef(false);
+  const onListeningChangeRef = useRef(onListeningChange);
+  onListeningChangeRef.current = onListeningChange;
   // Synced refs so the mount-time listeners call the latest callbacks.
   const onVoiceStartRef = useRef(onVoiceStart);
   onVoiceStartRef.current = onVoiceStart;
@@ -213,6 +218,8 @@ export const ComposerMicButton = ({
     const handleError = (event: Event) => {
       if (serverTakeOwnsState()) return;
       transitionRef.current = false;
+      requestedRef.current = false;
+      onListeningChangeRef.current?.(false);
       const err = (event as SpeechRecognitionErrorEventLike).error;
       // "network" means the recognizer's cloud backend refused us —
       // always the case in Electron/plain Chromium, occasionally a
@@ -418,12 +425,22 @@ export const ComposerMicButton = ({
           }
           reportError("Voice input failed. Please try again.");
           setIsListening(false);
+          requestedRef.current = false;
         },
       });
-      sessionRef.current = next;
-      setError(null);
-      setIsListening(true);
+      if (withdrawRef.current) {
+        // Voice mode stopped the mic while it was still connecting: drop the stream at once.
+        withdrawRef.current = false;
+        next.cancel();
+        setIsListening(false);
+      } else {
+        sessionRef.current = next;
+        setError(null);
+        setIsListening(true);
+      }
     } catch (startError) {
+      requestedRef.current = false;
+      onListeningChangeRef.current?.(false);
       reportError(
         startError instanceof DictationBusyError
           ? "Voice input is busy. Please try again shortly."
@@ -478,10 +495,25 @@ export const ComposerMicButton = ({
     if (!controller) return;
     controller.current = {
       start: () => {
-        if (!listeningRef.current) toggle();
+        if (listeningRef.current || requestedRef.current) return;
+        requestedRef.current = true;
+        withdrawRef.current = false;
+        toggle();
       },
       stop: () => {
-        if (listeningRef.current) toggle();
+        if (listeningRef.current) {
+          requestedRef.current = false;
+          toggle();
+        } else if (requestedRef.current) {
+          // Still connecting: cancel the start, or drop the stream the moment it connects.
+          requestedRef.current = false;
+          withdrawRef.current = true;
+          try {
+            recognitionRef.current?.stop();
+          } catch {
+            // Not started yet; nothing to stop.
+          }
+        }
       },
       isListening: () => listeningRef.current,
     };
@@ -489,9 +521,13 @@ export const ComposerMicButton = ({
       controller.current = null;
     };
   }, [controller, toggle]);
+  const prevListening = useRef(isListening);
   useEffect(() => {
-    onListeningChange?.(isListening);
-  }, [isListening, onListeningChange]);
+    if (isListening) requestedRef.current = false;
+    if (prevListening.current === isListening) return;
+    prevListening.current = isListening;
+    onListeningChangeRef.current?.(isListening);
+  }, [isListening]);
 
   // ⌘⌥V toggles dictation from anywhere — same as clicking the button. Enabled
   // whenever dictation could run (Web Speech OR the server path) and the

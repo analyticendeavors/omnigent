@@ -3554,6 +3554,13 @@ function ComposerImpl(
     status,
     value,
     submit,
+    canSend: !(
+      composerLockedByBtw ||
+      disabled ||
+      sendDisabledReason !== null ||
+      hasPendingElicitation
+    ),
+    labels: composerSession?.labels,
   });
 
   return (
@@ -3993,10 +4000,11 @@ function ComposerImpl(
                 className={cn("size-8 md:size-7", COMPOSER_TIGHT_MIC_CLASS)}
                 enableHotkey
                 controller={micController}
+                onListeningChange={voice.onListening}
                 disabled={
                   disabled ||
                   isReadOnly ||
-                  (hasPendingElicitation && !voice.on) ||
+                  (hasPendingElicitation && !voice.cardActive) ||
                   composerLockedByBtw
                 }
                 onVoiceStart={() => {
@@ -4920,7 +4928,8 @@ function SessionHarnessPicker({
                     ) : (
                       (effortWord(effort) ?? effort)
                     ),
-                  checked: !routingOn && effort === (selectedEffort ?? effortResolved?.level ?? null),
+                  checked:
+                    !routingOn && effort === (selectedEffort ?? effortResolved?.level ?? null),
                   disabled: routingOn || picksBusy || pendingModelChange !== null,
                   onSelect: () => void apply(() => useChatStore.getState().setEffort(effort)),
                   testId: `composer-agent-effort-${effort}`,

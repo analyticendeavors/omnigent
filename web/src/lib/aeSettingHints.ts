@@ -238,7 +238,7 @@ export const AE_SETTING_HINTS = {
   "voice.mode": {
     label: "Voice mode",
     hint: "Hands-free: the mic listens, a pause sends, replies are spoken, a tap stops a reply. Off by default; per chat.",
-    source: "existing",
+    source: "tooltip",
   },
   "voice.speak": {
     label: "Speak replies",

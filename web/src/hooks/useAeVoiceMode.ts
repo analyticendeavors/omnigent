@@ -5,6 +5,7 @@
 import { type MutableRefObject, useCallback, useEffect, useRef, useState } from "react";
 import {
   type AeMicController,
+  customAllowed,
   GRACE_MS,
   isPendingElicitation,
   matchSpokenOption,
@@ -15,13 +16,17 @@ import {
   RESUME_MS,
   setVoicePhase,
   splitDone,
-  type VoicePhase,
+  syncVoiceLabel,
   useVoiceSnapshot,
+  type VoicePhase,
 } from "@/lib/aeVoiceMode";
 import { useChatStore } from "@/store/chatStore";
 
-/** If the chat never starts streaming after a send, stop waiting for it. */
+/** If the chat never shows a turn after a send, stop waiting for it. */
 const SEND_WAIT_MS = 5000;
+/** One retry of a mic start that failed. */
+const MIC_RETRY_MS = 1000;
+const LABEL_KEY = "ae.voice";
 
 export interface UseAeVoiceModeArgs {
   chatId: string | null;
@@ -31,15 +36,23 @@ export interface UseAeVoiceModeArgs {
   value: string;
   /** Sends the draft exactly as the Send button does. */
   submit: () => void;
+  /** False while the composer would refuse a send (locked, disabled, a card pending). */
+  canSend: boolean;
+  /** The session's labels once loaded; the server's `ae.voice` is compared with the switch. */
+  labels?: Record<string, string> | null;
 }
 
 export interface AeVoiceMode {
   on: boolean;
   phase: VoicePhase;
+  /** A question card Voice mode is answering; the mic stays live for it. */
+  cardActive: boolean;
   /** A final sentence arrived; true when Voice mode used it (the draft should not take it). */
   onFinal: (text: string) => boolean;
-  /** A partial arrived; true when Voice mode is answering a card and the draft should not take it. */
+  /** A partial arrived; true when Voice mode used it (the draft should not take it). */
   onPartial: (text: string) => boolean;
+  /** The mic reports it started or stopped listening (or failed to start). */
+  onListening: (listening: boolean) => void;
 }
 
 interface CardState {
@@ -56,34 +69,61 @@ export function useAeVoiceMode({
   status,
   value,
   submit,
+  canSend,
+  labels,
 }: UseAeVoiceModeArgs): AeVoiceMode {
   const voice = useVoiceSnapshot(chatId);
-  const { on, speaking } = voice;
+  const { on, speaking, barged } = voice;
   const block = useChatStore((s) =>
     s.blocks.find((b) => isPendingElicitation(b, s.conversationId)),
   );
+  const sessionRunning = useChatStore((s) => s.sessionStatus === "running");
+  const queued = useChatStore((s) => s.pendingUserMessages.length > 0);
   const questions = on ? questionsOf(block?.type === "elicitation" ? block : undefined) : null;
   const cardActive = questions !== null;
 
   const [awaiting, setAwaiting] = useState(false);
   const [ready, setReady] = useState(true);
-  const sawStreaming = useRef(false);
+  const [micListening, setMicListening] = useState(false);
+  const [micFailed, setMicFailed] = useState(false);
+  const [micStopped, setMicStopped] = useState(false);
   const sendTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const graceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const card = useRef<CardState | null>(null);
+  // The mic's own report of a start in flight, our stop, and failures so far this cycle.
+  const startPending = useRef(false);
+  const stopAsked = useRef(false);
+  const failures = useRef(0);
 
-  const waiting = !cardActive && (awaiting || status === "streaming");
+  // A turn is under way once the chat streams, the session runs, or the message is queued.
+  const busy = status === "streaming" || sessionRunning || queued;
+  const waiting = !cardActive && !barged && (awaiting || busy);
   const muted = on && (speaking || waiting);
-  const wantListen = on && !muted && ready;
+  const quiet = muted || !ready;
+  const wantListen = on && !quiet;
 
-  const latest = useRef({ value, submit, muted, questions, speak: voice.speak, block });
+  const latest = useRef({
+    value,
+    submit,
+    canSend,
+    muted,
+    quiet,
+    wantListen,
+    micListening,
+    questions,
+    speak: voice.speak,
+  });
   latest.current = {
     value,
     submit,
+    canSend,
     muted,
+    quiet,
+    wantListen,
+    micListening,
     questions,
     speak: voice.speak,
-    block: block?.type === "elicitation" ? block : undefined,
   };
   const readyRef = useRef(ready);
   readyRef.current = ready;
@@ -93,22 +133,43 @@ export function useAeVoiceMode({
     graceTimer.current = null;
   }, []);
 
-  // A send is in flight until the chat has streamed and gone idle again.
-  useEffect(() => {
-    if (!awaiting) return;
-    if (status === "streaming") sawStreaming.current = true;
-    else if (sawStreaming.current) {
-      setAwaiting(false);
-      sawStreaming.current = false;
-    }
-  }, [awaiting, status]);
+  // Another chat: nothing started for the old one may fire for the new one.
   useEffect(
     () => () => {
-      if (sendTimer.current !== null) clearTimeout(sendTimer.current);
       clearGrace();
+      if (sendTimer.current !== null) clearTimeout(sendTimer.current);
+      if (retryTimer.current !== null) clearTimeout(retryTimer.current);
+      sendTimer.current = null;
+      retryTimer.current = null;
+      card.current = null;
+      startPending.current = false;
+      stopAsked.current = false;
+      failures.current = 0;
+      setAwaiting(false);
+      setMicFailed(false);
+      setMicStopped(false);
     },
-    [clearGrace],
+    [chatId, clearGrace],
   );
+
+  // Make the server's label agree with this browser's switch, once per chat.
+  const labelValue = labels ? labels[LABEL_KEY] : undefined;
+  const labelKnown = labels !== undefined && labels !== null;
+  useEffect(() => {
+    if (chatId && labelKnown) syncVoiceLabel(chatId, labelValue === "on");
+    // Once per chat: later label refreshes follow the switch, they do not lead it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatId, labelKnown]);
+
+  // A send hands over to the chat's own status the moment a turn shows; it lets go by
+  // itself only when no turn ever showed (the send did not happen).
+  useEffect(() => {
+    if (awaiting && busy) {
+      setAwaiting(false);
+      if (sendTimer.current !== null) clearTimeout(sendTimer.current);
+      sendTimer.current = null;
+    }
+  }, [awaiting, busy]);
 
   // The mic comes back RESUME_MS after the chat goes quiet.
   useEffect(() => {
@@ -121,21 +182,82 @@ export function useAeVoiceMode({
     return () => clearTimeout(t);
   }, [muted]);
 
+  const startMic = useCallback(() => {
+    const mic = controller.current;
+    if (!mic || mic.isListening()) return;
+    startPending.current = true;
+    stopAsked.current = false;
+    mic.start();
+  }, [controller]);
+
   const wasOn = useRef(on);
   useEffect(() => {
     const mic = controller.current;
     if (!on) {
       clearGrace();
       // Turning the switch off hands the mic back, quiet.
-      if (wasOn.current && mic?.isListening()) mic.stop();
+      if (wasOn.current && mic) {
+        stopAsked.current = mic.isListening() || startPending.current;
+        startPending.current = false;
+        mic.stop();
+      }
       wasOn.current = false;
+      failures.current = 0;
+      setMicFailed(false);
+      setMicStopped(false);
       return;
     }
     wasOn.current = true;
     if (!mic) return;
-    if (wantListen && !mic.isListening()) mic.start();
-    else if (!wantListen && mic.isListening()) mic.stop();
-  }, [on, wantListen, controller, clearGrace]);
+    if (wantListen) {
+      // A new listening cycle: an earlier failure or hand-stop is forgotten.
+      setMicStopped(false);
+      if (!mic.isListening() && !startPending.current) {
+        failures.current = 0;
+        setMicFailed(false);
+        startMic();
+      }
+    } else {
+      stopAsked.current = mic.isListening() || startPending.current;
+      startPending.current = false;
+      if (retryTimer.current !== null) clearTimeout(retryTimer.current);
+      retryTimer.current = null;
+      // A start still connecting is withdrawn too, not only a live stream.
+      mic.stop();
+    }
+  }, [on, wantListen, chatId, controller, clearGrace, startMic]);
+
+  const onListening = useCallback(
+    (listening: boolean) => {
+      if (listening) {
+        startPending.current = false;
+        failures.current = 0;
+        setMicFailed(false);
+        setMicStopped(false);
+        setMicListening(true);
+        return;
+      }
+      setMicListening(false);
+      if (startPending.current) {
+        // The start never reached listening: try once more, then say so.
+        startPending.current = false;
+        failures.current += 1;
+        if (failures.current === 1) {
+          retryTimer.current = setTimeout(() => {
+            retryTimer.current = null;
+            if (latest.current.wantListen && !latest.current.micListening) startMic();
+          }, MIC_RETRY_MS);
+        } else {
+          setMicFailed(true);
+        }
+      } else if (!stopAsked.current && latest.current.wantListen) {
+        // Stopped from outside (the mic button, the hotkey): leave it stopped.
+        setMicStopped(true);
+      }
+      stopAsked.current = false;
+    },
+    [startMic],
+  );
 
   useEffect(() => {
     if (!chatId) return;
@@ -145,18 +267,26 @@ export function useAeVoiceMode({
         ? "speaking"
         : waiting
           ? "thinking"
-          : "listening";
+          : micListening
+            ? "listening"
+            : micFailed
+              ? "unavailable"
+              : micStopped
+                ? "paused"
+                : "starting";
     setVoicePhase(chatId, phase);
-  }, [chatId, on, speaking, waiting]);
+  }, [chatId, on, speaking, waiting, micListening, micFailed, micStopped]);
 
   const send = useCallback(() => {
+    const now = latest.current;
+    if (!now.canSend) return;
     setAwaiting(true);
-    sawStreaming.current = false;
     if (sendTimer.current !== null) clearTimeout(sendTimer.current);
     sendTimer.current = setTimeout(() => {
-      if (!sawStreaming.current) setAwaiting(false);
+      sendTimer.current = null;
+      setAwaiting(false);
     }, SEND_WAIT_MS);
-    latest.current.submit();
+    now.submit();
   }, []);
 
   // A new question card: read it aloud, one question at a time.
@@ -203,24 +333,35 @@ export function useAeVoiceMode({
       const qs = latest.current.questions;
       const q = qs?.[state.index];
       if (!q) return;
-      const labels = q.options.map((o) => o.label);
+      const names = q.options.map((o) => o.label);
+      const mayCustom = customAllowed(q);
       if (q.multiSelect) {
+        // An option literally called "Done" is a pick, not the end of picking.
+        const whole = matchSpokenOption(text, names);
+        if (whole !== null && splitDone(names[whole]).done) {
+          if (!state.picked.includes(names[whole])) state.picked.push(names[whole]);
+          return;
+        }
         const { done, rest } = splitDone(text);
-        const hits = matchSpokenOptions(rest, labels).map((i) => labels[i]);
-        if (hits.length === 0 && rest.trim() !== "")
+        const hits = matchSpokenOptions(rest, names).map((i) => names[i]);
+        if (hits.length === 0 && rest.trim() !== "" && mayCustom) {
           state.custom = `${state.custom} ${rest}`.trim();
+        }
         for (const h of hits) if (!state.picked.includes(h)) state.picked.push(h);
         if (done && (state.picked.length > 0 || state.custom !== "")) {
           answerCard(state, state.custom ? [...state.picked, state.custom] : [...state.picked]);
         }
         return;
       }
-      const index = matchSpokenOption(text, labels);
+      const index = matchSpokenOption(text, names);
       if (index !== null) {
         state.custom = "";
-        answerCard(state, labels[index]);
+        clearGrace();
+        answerCard(state, names[index]);
         return;
       }
+      // A card that takes no words of the person's own keeps listening for an option.
+      if (!mayCustom) return;
       // No option matched: after the grace the words go in as the card's own answer.
       state.custom = `${state.custom} ${text}`.trim();
       clearGrace();
@@ -235,17 +376,22 @@ export function useAeVoiceMode({
   const onFinal = useCallback(
     (text: string): boolean => {
       if (!on) return false;
+      const now = latest.current;
       const state = card.current;
-      if (state && latest.current.questions) {
-        if (!latest.current.muted) onCardFinal(state, text);
+      if (state && now.questions) {
+        if (!now.quiet) onCardFinal(state, text);
         return true;
       }
-      if (latest.current.muted) return false;
+      // Sound heard while the chat is busy or the voice is talking never reaches the draft.
+      if (now.quiet) {
+        clearGrace();
+        return true;
+      }
       clearGrace();
       graceTimer.current = setTimeout(() => {
         graceTimer.current = null;
-        const now = latest.current;
-        if (now.muted || now.value.trim() === "") return;
+        const current = latest.current;
+        if (current.quiet || current.value.trim() === "") return;
         send();
       }, GRACE_MS);
       return false;
@@ -256,10 +402,11 @@ export function useAeVoiceMode({
   const onPartial = useCallback(
     (_text: string): boolean => {
       clearGrace();
-      return on && card.current !== null && latest.current.questions !== null;
+      if (!on) return false;
+      return latest.current.quiet || (card.current !== null && latest.current.questions !== null);
     },
     [on, clearGrace],
   );
 
-  return { on, phase: voice.phase, onFinal, onPartial };
+  return { on, phase: voice.phase, cardActive, onFinal, onPartial, onListening };
 }

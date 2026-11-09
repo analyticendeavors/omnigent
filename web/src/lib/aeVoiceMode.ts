@@ -17,7 +17,8 @@ export const GRACE_MS = 600;
 /** Gap after the last spoken sentence before the mic comes back. */
 export const RESUME_MS = 300;
 
-export type VoicePhase = "off" | "listening" | "thinking" | "speaking";
+export type VoicePhase =
+  "off" | "starting" | "listening" | "paused" | "unavailable" | "thinking" | "speaking";
 
 /** What the composer mic exposes so Voice mode can start and stop it. */
 export interface AeMicController {
@@ -33,6 +34,8 @@ export interface VoiceSnapshot {
   speaking: boolean;
   /** Speaks one line through the chat's voice (registered by the speaker button). */
   speak: ((text: string) => void) | null;
+  /** The person tapped to stop a reply: nothing more is spoken until the next send. */
+  barged: boolean;
 }
 
 const KEY = "omnigent:ae-voice-mode:";
@@ -66,14 +69,14 @@ export function writeVoiceMode(chatId: string, on: boolean): void {
 
 const states = new Map<string, VoiceSnapshot>();
 const listeners = new Set<() => void>();
-const OFF: VoiceSnapshot = { on: false, phase: "off", speaking: false, speak: null };
+const OFF: VoiceSnapshot = { on: false, phase: "off", speaking: false, speak: null, barged: false };
 
 export function getVoiceSnapshot(chatId: string | null): VoiceSnapshot {
   if (chatId === null) return OFF;
   let state = states.get(chatId);
   if (!state) {
     const on = readVoiceMode(chatId);
-    state = { ...OFF, on, phase: on ? "listening" : "off" };
+    state = { ...OFF, on, phase: on ? "starting" : "off" };
     states.set(chatId, state);
   }
   return state;
@@ -106,27 +109,54 @@ export function resetVoiceStore(): void {
   listeners.forEach((cb) => cb());
 }
 
+/** Wait before the one retry of a label write that failed. */
+export const POST_RETRY_MS = 2000;
+
+async function postOnce(chatId: string, on: boolean): Promise<boolean> {
+  try {
+    const response = await authenticatedFetch(
+      withBasePath(`/v1/ae/sessions/${encodeURIComponent(chatId)}/voice`),
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ on }),
+      },
+    );
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 /** Tell the server, which adds the spoken-style line to each message while it is on. */
 export async function postVoiceLabel(chatId: string, on: boolean): Promise<void> {
-  try {
-    await authenticatedFetch(withBasePath(`/v1/ae/sessions/${encodeURIComponent(chatId)}/voice`), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ on }),
-    });
-  } catch {
-    // The switch still works without the style line.
-  }
+  if (await postOnce(chatId, on)) return;
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, POST_RETRY_MS);
+  });
+  // The switch may have moved on while waiting: write what it says now.
+  await postOnce(chatId, getVoiceSnapshot(chatId).on);
+}
+
+/** Once per chat, make the server's label agree with this browser's switch. */
+export function syncVoiceLabel(chatId: string, labelOn: boolean): void {
+  if (getVoiceSnapshot(chatId).on !== labelOn)
+    void postVoiceLabel(chatId, getVoiceSnapshot(chatId).on);
 }
 
 export function setVoiceOn(chatId: string, on: boolean): void {
   writeVoiceMode(chatId, on);
-  patch(chatId, { on, phase: on ? "listening" : "off" });
+  patch(chatId, { on, phase: on ? "starting" : "off", barged: false });
   void postVoiceLabel(chatId, on);
 }
 
 export function setVoicePhase(chatId: string, phase: VoicePhase): void {
   patch(chatId, { phase });
+}
+
+/** A tap on the speaker while it talks: stop, and stay quiet until the next send. */
+export function setVoiceBarged(chatId: string, barged: boolean): void {
+  patch(chatId, { barged });
 }
 
 export function setVoiceSpeaking(chatId: string, speaking: boolean): void {
@@ -223,32 +253,51 @@ function words(text: string): string[] {
     .filter(Boolean);
 }
 
-function hasPhrase(haystack: string[], needle: string[]): boolean {
-  if (needle.length === 0 || needle.length > haystack.length) return false;
-  for (let i = 0; i + needle.length <= haystack.length; i++) {
-    if (needle.every((w, j) => haystack[i + j] === w)) return true;
-  }
-  return false;
+const NEGATORS = new Set(["not", "dont", "no", "never", "cant", "wont"]);
+
+function isNumberToken(t: string, count: number): boolean {
+  const n = ORDINAL_WORDS[t] ?? (/^\d+$/.test(t) ? Number(t) : NUMBER_WORDS[t]);
+  return n !== undefined && n >= 1 && n <= count;
 }
 
 function numberIn(tokens: string[], count: number): number | null {
+  // Only a short utterance made of nothing but number words counts: "no one has access yet"
+  // and "first check the logs" are sentences, not picks. "none" is not a number.
+  const content = tokens.filter((t) => !STOP_WORDS.has(t));
+  if (content.length === 0 || content.length > 4) return null;
+  if (!content.every((t) => isNumberToken(t, count))) return null;
   // "the second one" holds both an ordinal and a bare number word: the ordinal wins.
-  for (const t of tokens) {
+  for (const t of content) {
     const n = ORDINAL_WORDS[t];
-    if (n !== undefined && n <= count) return n - 1;
+    if (n !== undefined) return n - 1;
   }
-  for (const t of tokens) {
+  for (const t of content) {
     const n = /^\d+$/.test(t) ? Number(t) : NUMBER_WORDS[t];
-    if (n !== undefined && n >= 1 && n <= count) return n - 1;
+    if (n !== undefined) return n - 1;
   }
   return null;
+}
+
+/** Whether the word at *at* has "not", "don't", "no" or "never" within the two words before it. */
+function negatedAt(tokens: string[], at: number): boolean {
+  return tokens.slice(Math.max(0, at - 2), at).some((t) => NEGATORS.has(t));
+}
+
+/** Where the label's words sit in the utterance, or -1; a negated place does not count. */
+function phraseAt(haystack: string[], needle: string[]): number {
+  if (needle.length === 0) return -1;
+  for (let i = 0; i + needle.length <= haystack.length; i++) {
+    if (needle.every((w, j) => haystack[i + j] === w) && !negatedAt(haystack, i)) return i;
+  }
+  return -1;
 }
 
 /**
  * The index of the option a spoken answer names, or null. Order: a label said
  * whole, then a number or ordinal ("two", "2", "the first one", "option two"),
  * then a label whose every word was said, then a short answer made only of one
- * label's words ("force it" for "Force it when the image lands").
+ * label's words ("force it" for "Force it when the image lands"). A label said
+ * after "not", "don't", "no" or "never" is not a pick.
  */
 export function matchSpokenOption(transcript: string, labels: readonly string[]): number | null {
   const said = words(transcript);
@@ -257,7 +306,7 @@ export function matchSpokenOption(transcript: string, labels: readonly string[])
 
   let whole = -1;
   parts.forEach((p, i) => {
-    if (hasPhrase(said, p) && (whole < 0 || p.length > parts[whole].length)) whole = i;
+    if (phraseAt(said, p) >= 0 && (whole < 0 || p.length > parts[whole].length)) whole = i;
   });
   if (whole >= 0) return whole;
 
@@ -265,7 +314,11 @@ export function matchSpokenOption(transcript: string, labels: readonly string[])
   if (numbered !== null) return numbered;
 
   const all = parts.flatMap((p, i) =>
-    p.length > 0 && p.every((w) => said.includes(w)) ? [i] : [],
+    p.length > 0 &&
+    p.every((w) => said.includes(w)) &&
+    !p.some((w) => negatedAt(said, said.indexOf(w)))
+      ? [i]
+      : [],
   );
   if (all.length > 0) {
     const longest = Math.max(...all.map((i) => parts[i].length));
@@ -274,7 +327,7 @@ export function matchSpokenOption(transcript: string, labels: readonly string[])
   }
 
   const content = said.filter((w) => !STOP_WORDS.has(w));
-  if (content.length === 0 || said.length > 4) return null;
+  if (content.length === 0 || said.length > 4 || said.some((w) => NEGATORS.has(w))) return null;
   const subset = parts.flatMap((p, i) => (content.every((w) => p.includes(w)) ? [i] : []));
   return subset.length === 1 ? subset[0] : null;
 }
@@ -290,24 +343,39 @@ export function matchSpokenOptions(transcript: string, labels: readonly string[]
 }
 
 const DONE_PHRASES = [
-  "done",
   "thats all",
   "that is all",
   "thats it",
   "that is it",
+  "all done",
   "finished",
   "submit",
-  "all done",
-];
+  "done",
+].sort((a, b) => b.split(" ").length - a.split(" ").length);
+const DONE_FILLER = new Set([
+  "ok",
+  "okay",
+  "im",
+  "all",
+  "thats",
+  "it",
+  "so",
+  "and",
+  "well",
+  "right",
+]);
 
-/** The transcript without a closing "done", and whether it had one. */
+/** The transcript without a closing "done" and the filler around it, and whether it had one. */
 export function splitDone(transcript: string): { done: boolean; rest: string } {
   const said = words(transcript);
   for (const phrase of DONE_PHRASES) {
     const p = phrase.split(" ");
     const end = said.length - p.length;
     if (end >= 0 && p.every((w, i) => said[end + i] === w)) {
-      return { done: true, rest: said.slice(0, end).join(" ") };
+      const rest = said.slice(0, end);
+      while (rest.length > 0 && DONE_FILLER.has(rest[rest.length - 1])) rest.pop();
+      while (rest.length > 0 && DONE_FILLER.has(rest[0])) rest.shift();
+      return { done: true, rest: rest.join(" ") };
     }
   }
   return { done: false, rest: transcript };
@@ -340,6 +408,11 @@ export function isPendingElicitation(
     b.status === "pending" &&
     (b.targetSessionId == null || b.targetSessionId === conversationId)
   );
+}
+
+/** A card with `isOther` set to false takes no words of the person's own. */
+export function customAllowed(q: { isOther?: boolean }): boolean {
+  return q.isOther !== false;
 }
 
 /** The key a card's answers use: the question's id, else its text. */
