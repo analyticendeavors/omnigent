@@ -14,9 +14,10 @@ class FakeAudio {
   constructor() {
     FakeAudio.last = this;
   }
+  static plays: Promise<void>[] = [];
   play() {
     this.played.push(this.src);
-    return Promise.resolve();
+    return FakeAudio.plays.shift() ?? Promise.resolve();
   }
   pause() {
     this.pauses++;
@@ -86,6 +87,7 @@ beforeEach(() => {
   pending = [];
   urls = [];
   FakeAudio.last = null;
+  FakeAudio.plays = [];
   resetCloudVoicesCache();
   fetchMock = vi.fn((input: string, init?: RequestInit) => {
     if (String(input).endsWith("/tts/voices")) {
@@ -129,6 +131,20 @@ describe("fetchCloudVoices", () => {
     resetCloudVoicesCache();
     fetchMock.mockRejectedValueOnce(new Error("offline"));
     expect(await fetchCloudVoices()).toEqual([]);
+  });
+});
+
+describe("fetchCloudVoices retry", () => {
+  it("does not cache a 503: the next call fetches again", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("no", { status: 503 }));
+    expect(await fetchCloudVoices()).toEqual([]);
+    expect(await fetchCloudVoices()).toEqual([{ id: "a", name: "Ava" }]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps one request in flight", async () => {
+    await Promise.all([fetchCloudVoices(), fetchCloudVoices()]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -230,5 +246,29 @@ describe("createCloudSpeaker", () => {
     speaker.stop();
     expect(cb).toHaveBeenCalledTimes(2);
     off();
+  });
+  it("a stopped playback's late play() rejection leaves the next playback alone", async () => {
+    const speaker = createCloudSpeaker(new FakeDevice());
+    let rejectOld: (e: Error) => void = () => {};
+    FakeAudio.plays.push(
+      new Promise<void>((_, reject) => {
+        rejectOld = reject;
+      }),
+    );
+    speaker.speak("First.", OPTS);
+    await settle();
+    pending[0].resolve(mp3());
+    await settle();
+    speaker.stop();
+    speaker.speak("Second.", OPTS);
+    await settle();
+    pending[1].resolve(mp3());
+    await settle();
+    expect(FakeAudio.last?.played.length).toBe(2);
+    rejectOld(new Error("interrupted"));
+    await settle();
+    FakeAudio.last?.end();
+    await settle();
+    expect(speaker.speaking()).toBe(false);
   });
 });

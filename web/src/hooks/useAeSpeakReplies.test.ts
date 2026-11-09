@@ -72,6 +72,60 @@ afterEach(() => {
   useChatStore.setState({ conversationId: null, blocks: [], status: "idle" } as never);
 });
 
+type Choice = { kind: "cloud" | "device"; id: string } | null;
+const CLOUD_CHOICE: Choice = { kind: "cloud", id: "en-US-AvaMultilingualNeural" };
+
+// A request that stays open until stop() aborts it, as the real fetch does.
+const hangingFetch = () =>
+  vi.fn(
+    (_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("x", "AbortError")));
+      }),
+  );
+
+describe("useAeSpeakReplies engine choice", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("sends a device choice to the device speaker, not the server", () => {
+    const fetchMock = hangingFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    mount(true, "c1", { kind: "device", id: "v1" });
+    setStore({ blocks: [final("r1", "item-1", "Whole reply.")] });
+    flush();
+    expect(synth.texts()).toEqual(["Whole reply."]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the cloud list arriving", null, CLOUD_CHOICE],
+    ["a menu pick", { kind: "device", id: "v1" } as Choice, CLOUD_CHOICE],
+  ])("keeps the first engine for a response when %s changes the voice", (_n, first, next) => {
+    const fetchMock = hangingFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    const hook = renderHook(
+      (p: { voice: Choice }) => useAeSpeakReplies({ chatId: "c1", enabled: true, rate: 1, ...p }),
+      { initialProps: { voice: first } },
+    );
+    setStore({ blocks: [live("r1", "One. Two")] });
+    flush();
+    expect(synth.texts()).toEqual(["One."]);
+    hook.rerender({ voice: next });
+    setStore({ blocks: [final("r1", "item-1", "One. Two. Three.")] });
+    flush();
+    expect(synth.texts()).toEqual(["One.", "Two. Three."]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    setStore({
+      blocks: [final("r1", "item-1", "One. Two. Three."), final("r2", "item-2", "Next.")],
+    });
+    flush();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(synth.texts()).toEqual(["One.", "Two. Three."]);
+  });
+});
+
 describe("useAeSpeakReplies", () => {
   it("sends a cloud voice's sentences to the server, not the device", () => {
     const fetchMock = vi.fn(() => new Promise<Response>(() => {}));

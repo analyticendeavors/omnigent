@@ -89,6 +89,12 @@ export function readVoiceChoice(): VoiceChoice | null {
   return { kind: "device", id: raw };
 }
 
+/** True when the stored value predates the `cloud:` and `device:` prefixes. */
+export function isLegacyVoiceChoice(): boolean {
+  const raw = getItem(SPEAK_VOICE_KEY);
+  return !!raw && !/^(cloud|device):./.test(raw);
+}
+
 export function writeVoiceChoice(choice: VoiceChoice | null): void {
   setItem(SPEAK_VOICE_KEY, choice === null ? null : `${choice.kind}:${choice.id}`);
 }

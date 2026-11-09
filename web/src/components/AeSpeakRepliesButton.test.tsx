@@ -266,6 +266,48 @@ describe("AeSpeakRepliesButton", () => {
     );
   });
 
+  it("treats a bare stored value as no choice once the server has cloud voices", async () => {
+    window.localStorage.setItem("omnigent:ae-speak-voice", "Plain");
+    serveCloudVoices(CLOUD);
+    renderButton();
+    await openMenu();
+    await waitFor(() =>
+      expect(screen.getByTestId("ae-speak-voice-trigger")).toHaveTextContent("Ava"),
+    );
+  });
+
+  it("keeps an explicit device choice when the server has cloud voices", async () => {
+    window.localStorage.setItem("omnigent:ae-speak-voice", "device:Plain");
+    serveCloudVoices(CLOUD);
+    renderButton();
+    await openMenu();
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByTestId("ae-speak-voice-trigger")).toHaveTextContent("Plain"),
+    );
+  });
+
+  it("adds the cloud voices to an open Voice sub-menu when the list arrives late", async () => {
+    resetCloudVoicesCache();
+    let answer: (r: Response) => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            answer = resolve;
+          }),
+      ),
+    );
+    renderButton();
+    const user = await openMenu();
+    await user.click(screen.getByTestId("ae-speak-voice-trigger"));
+    expect(screen.queryByText("Natural (cloud)")).toBeNull();
+    answer(new Response(JSON.stringify({ voices: CLOUD }), { status: 200 }));
+    expect(await screen.findByText("Natural (cloud)")).toBeInTheDocument();
+    expect(screen.getAllByTestId("ae-speak-voice-option")[0]).toHaveTextContent("Ava");
+  });
+
   it("reads a bare stored value from before as a device voice", async () => {
     window.localStorage.setItem("omnigent:ae-speak-voice", "Plain");
     renderButton();

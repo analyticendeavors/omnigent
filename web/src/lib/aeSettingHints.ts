@@ -247,7 +247,7 @@ export const AE_SETTING_HINTS = {
   },
   "voice.voice": {
     label: "Voice",
-    hint: "Natural voices come from the cloud when the server has them; the rest are this device's. Saved per device. Default: the first natural voice.",
+    hint: "Natural voices come from the server when it has them; others are this device's. Saved per device. Default: first natural voice, else best.",
     source: "existing",
   },
   "voice.rate": {

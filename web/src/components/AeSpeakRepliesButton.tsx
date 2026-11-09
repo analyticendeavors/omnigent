@@ -36,6 +36,7 @@ import {
   readFastEnabled,
   readRate,
   readSpeakReplies,
+  isLegacyVoiceChoice,
   readVoiceChoice,
   type VoiceChoice,
   voiceLabel,
@@ -131,6 +132,7 @@ function SpeakRepliesControl({
   const [on, setOn] = useState(() => readSpeakReplies(chatId));
   const [fastEnabled, setFastEnabled] = useState(readFastEnabled);
   const [stored, setStored] = useState(readVoiceChoice);
+  const [legacy, setLegacy] = useState(isLegacyVoiceChoice);
   const [cloudVoices, setCloudVoices] = useState<CloudVoice[]>([]);
   const [rate, setRate] = useState(readRate);
   const [voices, setVoices] = useState(listVoices);
@@ -155,11 +157,12 @@ function SpeakRepliesControl({
 
   // A stored cloud voice the server no longer offers, or none stored: first cloud voice, else the device's.
   const deviceDefault = pickDefaultVoice(voices);
+  // A bare value from before the prefixes is no choice once the server has cloud voices.
   const voice: VoiceChoice | null =
-    stored?.kind === "device"
-      ? stored
-      : stored && cloudVoices.some((v) => v.id === stored.id)
-        ? stored
+    stored?.kind === "device" && !(legacy && cloudVoices.length > 0)
+      ? { kind: "device", id: stored.id }
+      : stored?.kind === "cloud" && cloudVoices.some((v) => v.id === stored.id)
+        ? { kind: "cloud", id: stored.id }
         : cloudVoices[0]
           ? { kind: "cloud", id: cloudVoices[0].id }
           : deviceDefault
@@ -291,6 +294,7 @@ function SpeakRepliesControl({
                 const [kind, ...rest] = key.split(":");
                 const next = { kind: kind as VoiceChoice["kind"], id: rest.join(":") };
                 writeVoiceChoice(next);
+                setLegacy(false);
                 setStored(next);
               }}
             >

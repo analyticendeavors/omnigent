@@ -64,6 +64,7 @@ function say(text: string, voice: VoiceChoice | null, rate: number): void {
 
 const CODE_BLOCK_KEY = normalizeSentence(CODE_BLOCK_PHRASE);
 const MESSAGE_START = "^";
+const CUE_LOCK = "\0cue";
 
 interface FinalText {
   key: string;
@@ -175,7 +176,18 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
         return [{ sentence, key }];
       });
     };
-    const speakNew = (markdown: string, trail: { last: string }) => {
+    // One engine per response: its first spoken sentence locks the voice for the rest of it
+    // (and its final), so a late cloud list or a menu pick never overlaps the two queues.
+    const locks = new Map<string, VoiceChoice | null>();
+    const lockFor = (responseId: string): VoiceChoice | null => {
+      if (!locks.has(responseId)) {
+        const cue = locks.get(CUE_LOCK);
+        const first = [...locks.keys()].every((k) => k === CUE_LOCK);
+        locks.set(responseId, first && cue !== undefined ? cue : optsRef.current.voice);
+      }
+      return locks.get(responseId) ?? null;
+    };
+    const speakNew = (markdown: string, trail: { last: string }, responseId: string) => {
       const fresh: string[] = [];
       for (const { sentence, key } of sentenceKeys(markdown, trail.last)) {
         trail.last = key;
@@ -186,7 +198,7 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
       if (fresh.length === 0) return;
       spokenThisTurn = true;
       clearCue();
-      say(fresh.join(" "), optsRef.current.voice, optsRef.current.rate);
+      say(fresh.join(" "), lockFor(responseId), optsRef.current.rate);
     };
     // Existing finals are handled and in-flight sources start at their current length, so
     // nothing already on screen is read back. Only a live source seeds the spoken set, and
@@ -197,6 +209,7 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
       offsets.clear();
       trails.clear();
       spoken.clear();
+      locks.clear();
       for (const b of blocks) if (b.ctx.itemId) handled.add(b.ctx.itemId);
       const scan = scanBlocks(blocks);
       for (const f of scan.finals) handled.add(f.key);
@@ -251,7 +264,8 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
           cueTimer = null;
           if (!spokenThisTurn) {
             spokenThisTurn = true;
-            say(WORKING_CUE_TEXT, optsRef.current.voice, optsRef.current.rate);
+            if (!locks.has(CUE_LOCK)) locks.set(CUE_LOCK, optsRef.current.voice);
+            say(WORKING_CUE_TEXT, locks.get(CUE_LOCK) ?? null, optsRef.current.rate);
           }
         }, WORKING_CUE_DELAY_MS);
         prevStatus = state.status;
@@ -274,7 +288,7 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
           trail = { last: MESSAGE_START };
           trails.set(key, trail);
         }
-        speakNew(ready, trail);
+        speakNew(ready, trail, source.responseId);
       }
       for (const f of scan.finals) {
         if (handled.has(f.key)) continue;
@@ -282,7 +296,7 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
         if (f.fromHistory && !knownResponses.has(f.responseId)) continue;
         handled.add(f.key);
         if (staleResponses.has(f.responseId)) continue;
-        speakNew(stripTldr(f.fullText), { last: MESSAGE_START });
+        speakNew(stripTldr(f.fullText), { last: MESSAGE_START }, f.responseId);
       }
     };
 
@@ -298,6 +312,7 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
       trails.clear();
       staleResponses.clear();
       spoken.clear();
+      locks.clear();
     };
   }, [enabled, chatId]);
 

@@ -14,25 +14,33 @@ export interface CloudVoice {
 
 const LOOKAHEAD = 2;
 
-let voicesCache: Promise<CloudVoice[]> | null = null;
+// Only a successful list is kept; a failure is retried by the next call, one request at a time.
+let voicesCache: CloudVoice[] | null = null;
+let voicesInflight: Promise<CloudVoice[]> | null = null;
 
 export function resetCloudVoicesCache(): void {
   voicesCache = null;
+  voicesInflight = null;
 }
 
 /** The server's natural voices; empty when it offers none or cannot be reached. */
 export function fetchCloudVoices(): Promise<CloudVoice[]> {
-  voicesCache ??= (async () => {
+  if (voicesCache) return Promise.resolve(voicesCache);
+  voicesInflight ??= (async () => {
     try {
       const response = await authenticatedFetch(withBasePath("/v1/ae/tts/voices"));
       if (response.status !== 200) return [];
       const body = (await response.json()) as { voices?: CloudVoice[] };
-      return Array.isArray(body.voices) ? body.voices : [];
+      const list = Array.isArray(body.voices) ? body.voices : [];
+      voicesCache = list;
+      return list;
     } catch {
       return [];
+    } finally {
+      voicesInflight = null;
     }
   })();
-  return voicesCache;
+  return voicesInflight;
 }
 
 interface Item {
@@ -86,15 +94,23 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
     }
   };
 
+  let playToken = 0;
   const play = (blob: Blob): Promise<boolean> => {
     audio ??= new Audio();
     const el = audio;
     const url = URL.createObjectURL(blob);
+    const token = ++playToken;
     return new Promise<boolean>((resolve) => {
+      // A late call from a stopped playback must not touch the next one's handlers.
+      let settled = false;
       const finish = (ok: boolean) => {
-        el.onended = null;
-        el.onerror = null;
-        release = null;
+        if (settled) return;
+        settled = true;
+        if (token === playToken) {
+          el.onended = null;
+          el.onerror = null;
+          release = null;
+        }
         URL.revokeObjectURL(url);
         resolve(ok);
       };
