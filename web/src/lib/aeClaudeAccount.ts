@@ -157,7 +157,12 @@ export async function moveAllAeClaudeChats(
   });
   if (!res.ok) throw await apiErrorFromResponse(res);
   const body = (await res.json()) as Partial<AeMoveAllAnswer> | null;
-  return { moved: body?.moved ?? [], skipped: body?.skipped ?? [], pending: body?.pending ?? [] };
+  return {
+    moved: body?.moved ?? [],
+    skipped: body?.skipped ?? [],
+    pending: body?.pending ?? [],
+    queued: body?.queued ?? [],
+  };
 }
 
 /** One line for the result, e.g. "Moved 4 chats; 1 skipped: Fix CI is mid-reply". */
