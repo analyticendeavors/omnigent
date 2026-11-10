@@ -2,8 +2,9 @@
 // 2026-10-19). A subscription catalog lists only each family's newest model, so the
 // older ids it still serves come from AE_CLAUDE_KNOWN_MODELS, each checked to answer.
 // 2026-11-10: a known id newer than the catalog's newest row of its family now takes that row's place (Fable 5.2).
+// 2026-11-10: ids the box's new-model watch saw answer on the plan join the known list at run time.
 
-import { useMemo } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 import type { NativeModelOption } from "@/lib/types";
 
 /** Full Claude ids a Claude subscription serves, newest first within each family. */
@@ -35,9 +36,9 @@ export interface AeClaudeVersion {
 // never read as a version. Matches ids ("claude-opus-4-8"), alias ids
 // ("opus-4-10") and labels ("Sonnet 4.6").
 const CLAUDE_VERSION =
-  /(?:^|[-_.])(fable|opus|sonnet|haiku)[-_ ](\d{1,2})(?:[-_.](\d{1,2}))?(?=$|[-_[\s])/i;
+  /(?:^|[-_.])(fable|opus|sonnet|haiku|mythos)[-_ ](\d{1,2})(?:[-_.](\d{1,2}))?(?=$|[-_[\s])/i;
 
-const BARE_CLAUDE_LABEL = /^(fable|opus|sonnet|haiku)(?:[\s_-]\d+(?:[.\-_]\d+)?)?$/i;
+const BARE_CLAUDE_LABEL = /^(fable|opus|sonnet|haiku|mythos)(?:[\s_-]\d+(?:[.\-_]\d+)?)?$/i;
 
 /** The family and version in a Claude id or label, or null when it has none. */
 export function aeClaudeVersion(value: string): AeClaudeVersion | null {
@@ -77,6 +78,71 @@ function newestByFamily<T>(rows: readonly T[], versionOf: (row: T) => AeClaudeVe
     if (!current || compareVersions(version, current) > 0) newest.set(version.family, version);
   }
   return newest;
+}
+
+// Ids the box's new-model watch saw answer on the plan (GET /v1/ae/model-watch), kept outside React
+// so the pure merge below reads them and the pickers' memos rerun when they arrive.
+const WATCHED_ID = /^claude-(?:fable|opus|sonnet|haiku|mythos)-\d{1,2}(?:-\d{1,2})?$/;
+let watched: readonly string[] = [];
+let knownCache: { source: readonly string[]; list: readonly string[] } | null = null;
+const watchListeners = new Set<() => void>();
+
+/** Replaces the watched ids; anything that is not a bare Claude id is dropped. A same set is a no-op. */
+export function aeSetWatchedModels(ids: readonly unknown[]): void {
+  const next = [
+    ...new Set(ids.filter((id): id is string => typeof id === "string" && WATCHED_ID.test(id))),
+  ].sort();
+  if (next.length === watched.length && next.every((id, index) => id === watched[index])) return;
+  watched = next;
+  knownCache = null;
+  for (const listener of watchListeners) listener();
+}
+
+/** The ids the watch holds right now (a new array only when they change). */
+export function aeWatchedModels(): readonly string[] {
+  return watched;
+}
+
+function subscribeWatched(listener: () => void): () => void {
+  watchListeners.add(listener);
+  return () => {
+    watchListeners.delete(listener);
+  };
+}
+
+/** Rerenders the caller when the watched ids change; returns them. */
+export function useAeWatchedModels(): readonly string[] {
+  return useSyncExternalStore(subscribeWatched, aeWatchedModels, aeWatchedModels);
+}
+
+/**
+ * The static known ids plus the watched ones, newest first within each family, families in the
+ * order they first appear. With nothing watched this is `AE_CLAUDE_KNOWN_MODELS` unchanged.
+ */
+export function aeKnownModels(): readonly string[] {
+  if (knownCache?.source === watched) return knownCache.list;
+  const ids = [...new Set([...AE_CLAUDE_KNOWN_MODELS, ...watched])];
+  const order: string[] = [];
+  for (const id of ids) {
+    const family = aeClaudeVersion(id)?.family;
+    if (family && !order.includes(family)) order.push(family);
+  }
+  const rank = (id: string) => {
+    const family = aeClaudeVersion(id)?.family;
+    return family ? order.indexOf(family) : order.length;
+  };
+  const list = ids
+    .map((id, index) => ({ id, index, version: aeClaudeVersion(id) }))
+    .sort(
+      (a, b) =>
+        rank(a.id) - rank(b.id) ||
+        (b.version?.major ?? 0) - (a.version?.major ?? 0) ||
+        (b.version?.minor ?? 0) - (a.version?.minor ?? 0) ||
+        a.index - b.index,
+    )
+    .map((entry) => entry.id);
+  knownCache = { source: watched, list };
+  return list;
 }
 
 const CONTEXT_SUFFIX = /\[1m\]$/i;
@@ -135,7 +201,7 @@ export function aeMergeKnownClaudeModels(
   catalog: NativeModelOption[],
   extraKnown: readonly string[] = [],
 ): NativeModelOption[] {
-  const known = [...new Set([...extraKnown, ...AE_CLAUDE_KNOWN_MODELS])];
+  const known = [...new Set([...extraKnown, ...aeKnownModels()])];
   const rows = promoteKnown(catalog, known);
   const subscriptionRows = rows.filter(isSubscription);
   const newest = newestByFamily(subscriptionRows, rowVersion);
@@ -169,8 +235,11 @@ export function aeMergeKnownClaudeModels(
 }
 
 /** {@link aeMergeKnownClaudeModels} with the built-in known list. */
-export function aeWithClaudeVersions(rows: NativeModelOption[]): NativeModelOption[] {
-  return aeMergeKnownClaudeModels(rows);
+export function aeWithClaudeVersions(
+  rows: NativeModelOption[],
+  extraKnown: readonly string[] = [],
+): NativeModelOption[] {
+  return aeMergeKnownClaudeModels(rows, extraKnown);
 }
 
 /** {@link aeWithClaudeVersions} for a picker, memoized; `rows` unchanged when not Claude. */
@@ -178,7 +247,11 @@ export function useAeClaudeVersions<T extends NativeModelOption[] | undefined>(
   rows: T,
   claude: boolean,
 ): T {
-  return useMemo(() => (claude && rows ? (aeWithClaudeVersions(rows) as T) : rows), [rows, claude]);
+  const watchedIds = useAeWatchedModels();
+  return useMemo(
+    () => (claude && rows ? (aeWithClaudeVersions(rows, watchedIds) as T) : rows),
+    [rows, claude, watchedIds],
+  );
 }
 
 /**

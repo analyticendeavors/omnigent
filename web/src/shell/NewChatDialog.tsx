@@ -43,7 +43,7 @@ import { AeCompactSessionChoices } from "@/components/composer/AeCompactSessionC
 import { aeWithPreviousModels } from "@/components/composer/AePreviousModelsSub";
 import { buildFusionSections } from "@/components/composer/fusionSections";
 import { compactModelTriggerLabel, normalizeEffortLabel } from "@/lib/composerModelLabel";
-import { aeSplitPrevious, aeWithClaudeVersions } from "@/lib/aeClaudeModels";
+import { aeSplitPrevious, aeWithClaudeVersions, useAeWatchedModels } from "@/lib/aeClaudeModels";
 import { AE_MENU_NOTE_CLASS, AE_MENU_WIDTH_CLASS } from "@/lib/aeMenuRow";
 import { aeModelRowForDigit } from "@/lib/aeModelShortcut";
 import { AeClaudeAccountSubmenu } from "./AeClaudeAccountSubmenu";
@@ -3252,6 +3252,7 @@ export function NewChatLandingScreen() {
       sandboxModels.data,
     ],
   );
+  const watchedClaudeIds = useAeWatchedModels();
   const claudeModelOptions = useMemo(
     () =>
       sandboxSelected
@@ -3259,7 +3260,7 @@ export function NewChatLandingScreen() {
           (sandboxCatalogPending || sandboxCatalogError
             ? []
             : CLAUDE_NATIVE_MODELS.map((model) => ({ id: model.id, displayName: model.id }))))
-        : aeWithClaudeVersions(availableClaudeModels ?? []).map((option) => ({
+        : aeWithClaudeVersions(availableClaudeModels ?? [], watchedClaudeIds).map((option) => ({
             id: option.id,
             model: option.model,
             displayName: nativeModelLabel(option),
@@ -3274,6 +3275,7 @@ export function NewChatLandingScreen() {
       sandboxCatalog,
       sandboxCatalogPending,
       sandboxCatalogError,
+      watchedClaudeIds,
     ],
   );
   const codexModelOptions = useMemo(

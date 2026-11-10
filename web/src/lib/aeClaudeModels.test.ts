@@ -1,11 +1,13 @@
 // Tests for Claude version labels and older models (omnigent-ae, 2026-10-19).
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { NativeModelOption } from "@/lib/types";
 import {
   AE_CLAUDE_KNOWN_MODELS,
   aeClaudeVersion,
   aeClaudeVersionLabel,
+  aeKnownModels,
+  aeSetWatchedModels,
   aeSplitPrevious,
   aeMergeKnownClaudeModels,
   aeWithClaudeVersions,
@@ -253,5 +255,51 @@ describe("promotion of a newer known model", () => {
       "Fable 5.3 (1M context)",
     );
     expect(rows.some((row) => row.id === "claude-fable-5-2")).toBe(true);
+  });
+});
+
+describe("the watched known list", () => {
+  afterEach(() => aeSetWatchedModels([]));
+
+  it("is the static list, unchanged, when nothing is watched", () => {
+    expect(aeKnownModels()).toEqual(AE_CLAUDE_KNOWN_MODELS);
+  });
+
+  it("adds valid ids, sorted by family then newest version, and drops the rest", () => {
+    aeSetWatchedModels([
+      "claude-fable-5-3",
+      "claude-mythos-5-2",
+      "claude-opus-5-5[1m]",
+      "gpt-5",
+      "claude-opus-4-20250514",
+      7,
+    ]);
+    const known = aeKnownModels();
+    expect(known.indexOf("claude-fable-5-3")).toBeLessThan(known.indexOf("claude-fable-5-2"));
+    expect(known).toContain("claude-mythos-5-2");
+    expect(known.some((id) => id.includes("[1m]") || id.includes("2025") || id === "gpt-5")).toBe(
+      false,
+    );
+    expect(known.indexOf("claude-opus-5-5")).toBeLessThan(known.indexOf("claude-sonnet-5-5"));
+  });
+
+  it("keeps one array until the ids change", () => {
+    aeSetWatchedModels(["claude-fable-5-3"]);
+    const first = aeKnownModels();
+    aeSetWatchedModels(["claude-fable-5-3"]);
+    expect(aeKnownModels()).toBe(first);
+  });
+
+  it("reads Mythos ids as a family", () => {
+    expect(aeClaudeVersionLabel("claude-mythos-5-2")).toBe("Mythos 5.2");
+    expect(aeClaudeVersion("claude-mythos-5")?.family).toBe("mythos");
+  });
+
+  it("promotes a watched id over the catalog's newest row", () => {
+    aeSetWatchedModels(["claude-fable-5-3"]);
+    const rows = aeWithClaudeVersions(CATALOG);
+    expect(rows.find((row) => row.id === "claude-fable-5-3[1m]")?.displayName).toBe(
+      "Fable 5.3 (1M context)",
+    );
   });
 });

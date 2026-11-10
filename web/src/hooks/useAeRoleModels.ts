@@ -3,7 +3,7 @@
 
 import { useMemo } from "react";
 import { useHostModelOptions, useHosts } from "@/hooks/useHosts";
-import { aeWithClaudeVersions } from "@/lib/aeClaudeModels";
+import { aeWithClaudeVersions, useAeWatchedModels } from "@/lib/aeClaudeModels";
 import { aeModelLabel } from "@/lib/aeRoles";
 
 /** The Claude catalog the role table offers. */
@@ -27,10 +27,11 @@ export function useAeRoleModels(): {
   const host =
     online.find((h) => h.configured_harnesses?.[CLAUDE_HARNESS] === true) ?? online[0] ?? null;
   const catalog = useHostModelOptions(host?.host_id ?? null, CLAUDE_HARNESS, true, { poll: false });
+  const watchedIds = useAeWatchedModels();
   return useMemo(() => {
     const seen = new Set<string>();
     const models: AeRoleModelChoice[] = [];
-    for (const row of aeWithClaudeVersions(catalog.data ?? [])) {
+    for (const row of aeWithClaudeVersions(catalog.data ?? [], watchedIds)) {
       const value = (row.model ?? row.id).replace(/\[[^\]]*\]$/, "");
       if (seen.has(value)) continue;
       seen.add(value);
@@ -44,5 +45,5 @@ export function useAeRoleModels(): {
           ? "The model list is unavailable right now; the models already in this preset still save."
           : null;
     return { models, ids: models.map((m) => m.value), note };
-  }, [catalog.data, catalog.isError, host, hostsLoaded]);
+  }, [catalog.data, catalog.isError, host, hostsLoaded, watchedIds]);
 }
