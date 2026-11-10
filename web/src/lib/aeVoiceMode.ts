@@ -168,6 +168,8 @@ export function setVoiceOn(chatId: string, on: boolean): void {
   writeVoiceMode(chatId, on);
   patch(chatId, { on, phase: on ? "starting" : "off", barged: false });
   void postVoiceLabel(chatId, on);
+  // End clears a refused reply and the queue through the speakers' stop().
+  if (!on) stopVoice(chatId);
 }
 
 export function setVoicePhase(chatId: string, phase: VoicePhase): void {

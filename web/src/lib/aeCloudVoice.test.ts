@@ -397,6 +397,23 @@ describe("cloud playback refused by the browser", () => {
     expect(speaker.speaking()).toBe(false);
   });
 
+  it("a late refusal after stop does not mark blocked again", async () => {
+    const device = new FakeDevice();
+    const speaker = createCloudSpeaker(device);
+    speaker.speak(sentence("a"), OPTS);
+    await settle();
+    let reject: (e: unknown) => void = () => {};
+    FakeAudio.plays.push(new Promise<void>((_, r) => {
+      reject = r;
+    }));
+    pending[0].resolve(mp3());
+    await settle();
+    speaker.stop();
+    reject(Object.assign(new Error("x"), { name: "NotAllowedError" }));
+    await settle();
+    expect(isPlaybackBlocked()).toBe(false);
+  });
+
   it("another play error still falls back to the device", async () => {
     const device = new FakeDevice();
     const speaker = createCloudSpeaker(device);

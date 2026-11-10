@@ -3828,6 +3828,7 @@ function ComposerImpl(
                     resumePlayback();
                   }}
                   onKeyboard={voiceSheet ? voiceTyping.startTyping : undefined}
+                  onRestartMic={() => micController.current?.start()}
                 />
               ) : null}
               {/* Slash-command suggestions — floats above the composer box */}

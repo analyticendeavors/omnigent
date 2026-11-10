@@ -5428,6 +5428,8 @@ export function NewChatLandingScreen() {
     // and form-submit paths that call this directly can't create a session with
     // a blank message, host, agent, or workspace.
     if (!canSubmit) return;
+    // Read the arm flag now: the landing unmounts (and clears it) when the temp chat opens.
+    const voiceRequested = takeVoiceArm();
     // A create is actually happening: report it for pointer clicks (via the
     // form submit) and Enter-key sends alike. After the guard so guarded no-ops
     // don't emit, matching the disabled Start button.
@@ -5657,7 +5659,7 @@ export function NewChatLandingScreen() {
           metadata as Parameters<typeof createBundledSession>[1],
         );
         data = { id: bundled.id };
-        if (takeVoiceArm()) setVoiceOn(data.id, true);
+        if (voiceRequested) setVoiceOn(data.id, true);
         // Register create_session for the custom-agent (bundled) path too —
         // otherwise both sandbox and computer bundled creates emit nothing. Split
         // by the picked host; interactionTelemetry completes/settles the span.
@@ -5861,7 +5863,7 @@ export function NewChatLandingScreen() {
           return;
         }
         data = { id: created.id };
-        if (takeVoiceArm()) setVoiceOn(data.id, true);
+        if (voiceRequested) setVoiceOn(data.id, true);
         // Register create_session (created → first AI activity), split by host.
         // New Chat is the only create path that can produce a managed sandbox;
         // interactionTelemetry completes/settles the span once the session runs.
@@ -6683,6 +6685,7 @@ export function NewChatLandingScreen() {
                         onEnd={voiceStart.disarm}
                         onStop={() => {}}
                         onResume={() => {}}
+                        onRestartMic={voiceStart.restart}
                       />
                     ) : null}
                     {/* Skill suggestions — floats above the composer box. */}

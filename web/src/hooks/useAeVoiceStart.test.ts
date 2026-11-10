@@ -96,3 +96,24 @@ describe("useAeVoiceStart", () => {
     expect(takeVoiceArm()).toBe(false);
   });
 });
+
+describe("useAeVoiceStart with a mic that is already listening", () => {
+  it("toggle reports listening at once, since start fires no event", () => {
+    const { result, mic } = setup();
+    mic.isListening = () => true;
+    act(() => result.current.toggle());
+    expect(result.current.phase).toBe("listening");
+  });
+
+  it("restart starts the mic again and reports listening when it already is", () => {
+    const { result, mic } = setup();
+    act(() => result.current.toggle());
+    act(() => result.current.onListening(false));
+    expect(result.current.phase).toBe("unavailable");
+    act(() => result.current.restart());
+    expect(mic.start).toHaveBeenCalledTimes(2);
+    mic.isListening = () => true;
+    act(() => result.current.restart());
+    expect(result.current.phase).toBe("listening");
+  });
+});

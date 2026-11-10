@@ -227,6 +227,18 @@ describe("caption, blocked and stop", () => {
   });
 });
 
+describe("turning Voice off", () => {
+  it("calls the registered stop; turning on does not", () => {
+    const stop = vi.fn();
+    const off = registerVoiceStop("c1", stop);
+    setVoiceOn("c1", true);
+    expect(stop).not.toHaveBeenCalled();
+    setVoiceOn("c1", false);
+    expect(stop).toHaveBeenCalledTimes(1);
+    off();
+  });
+});
+
 describe("arming the next chat", () => {
   afterEach(() => disarmVoiceForNextChat());
 

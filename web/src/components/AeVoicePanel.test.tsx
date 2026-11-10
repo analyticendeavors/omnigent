@@ -149,4 +149,16 @@ describe("AeVoicePanel", () => {
     expect(AE_VOICE_RING.blocked).toBe("border-red-500");
     expect(AE_VOICE_RING.paused).toBe("border-border");
   });
+
+  for (const layout of ["bar", "sheet"] as const) {
+    it.each(["paused", "unavailable"] as const)(
+      `${layout}: a tap while %s restarts the mic`,
+      async (phase) => {
+        const onRestartMic = vi.fn();
+        panel({ layout, phase, onRestartMic });
+        await userEvent.click(screen.getByRole("button", { name: "Listen again" }));
+        expect(onRestartMic).toHaveBeenCalledTimes(1);
+      },
+    );
+  }
 });

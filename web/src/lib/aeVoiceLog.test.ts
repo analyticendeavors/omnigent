@@ -60,4 +60,12 @@ describe("voice log", () => {
     act(() => requestVoiceLogInsert());
     expect(setValue).toHaveBeenLastCalledWith(expect.stringMatching(/^draft\n\nVoice log /));
   });
+
+  it("puts the log before a draft that is a slash command", () => {
+    logVoice("voice on");
+    const setValue = vi.fn();
+    renderHook(() => useVoiceLogInsert("  /review the diff", setValue));
+    act(() => requestVoiceLogInsert());
+    expect(setValue).toHaveBeenLastCalledWith(expect.stringMatching(/^Voice log [\s\S]*\n\n {2}\/review the diff$/));
+  });
 });

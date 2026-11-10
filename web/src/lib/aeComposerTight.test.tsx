@@ -116,7 +116,7 @@ describe("the Voice sheet variant", () => {
     render(
       <div className="group/composer-card" {...(sheet ? { "data-ae-voice-sheet": "" } : {})}>
         <div aria-label="Input" className={VOICE_SHEET_HIDE} />
-        <div aria-label="Actions" className={`flex ${VOICE_SHEET_HIDE}`} />
+        <div aria-label="Actions" className="flex" />
       </div>,
     );
     const shown = (name: string) =>
@@ -124,8 +124,8 @@ describe("the Voice sheet variant", () => {
     return { input: shown("Input"), actions: shown("Actions") };
   }
 
-  it("hides the input and the actions when the card carries data-ae-voice-sheet", () => {
-    expect(card(true)).toEqual({ input: false, actions: false });
+  it("hides the input but keeps the actions when the card carries data-ae-voice-sheet", () => {
+    expect(card(true)).toEqual({ input: false, actions: true });
   });
 
   it("shows them otherwise", () => {

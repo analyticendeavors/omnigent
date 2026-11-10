@@ -59,7 +59,10 @@ export function useVoiceLogInsert(value: string, setValue: (next: string) => voi
       const text = (e as CustomEvent<{ text: string }>).detail?.text;
       if (!text) return;
       const current = valueRef.current;
-      setRef.current(current ? `${current}\n\n${text}` : text);
+      // A slash command takes what follows as arguments, so the log goes before it.
+      if (!current) setRef.current(text);
+      else if (current.trimStart().startsWith("/")) setRef.current(`${text}\n\n${current}`);
+      else setRef.current(`${current}\n\n${text}`);
     };
     window.addEventListener(INSERT_EVENT, onInsert);
     return () => window.removeEventListener(INSERT_EVENT, onInsert);

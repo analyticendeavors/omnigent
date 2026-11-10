@@ -9,7 +9,7 @@ import {
 } from "./ChatComposer";
 
 describe("ChatComposer Voice sheet hooks", () => {
-  it("names its card as a group and lets the sheet hide the input and the actions", () => {
+  it("names its card as a group and lets the sheet hide the input and keeps the actions", () => {
     const { container } = render(
       <ChatComposer
         keyboard={{ submitWithModEnter: false, preventsKeyboardSubmit: false }}
@@ -23,7 +23,7 @@ describe("ChatComposer Voice sheet hooks", () => {
     expect(card.className).toContain("group/composer-card");
     const hide = "group-data-[ae-voice-sheet]/composer-card:hidden";
     expect(card.querySelector(".composer-input-text")?.className).toContain(hide);
-    expect(screen.getByTestId("actions").className).toContain(hide);
+    expect(screen.getByTestId("actions").className).not.toContain(hide);
   });
 });
 

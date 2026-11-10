@@ -182,6 +182,8 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
       logVoice("play start");
       // A refused play() is not a failure: the item stays current until a tap plays it again.
       const refuse = (e: unknown): boolean => {
+        // A late rejection after stop() must not mark blocked again with a dead resume.
+        if (settled) return true;
         const name = (e as { name?: string } | null)?.name;
         if (name !== "NotAllowedError") {
           logVoice("play error", String(name));

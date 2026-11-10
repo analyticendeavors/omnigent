@@ -522,4 +522,12 @@ describe("the voice snapshot mirrors", () => {
     act(() => clearPlaybackBlocked());
     expect(getVoiceSnapshot("c1").blocked).toBe(false);
   });
+
+  it("a chat switch leaves the new chat's snapshot unblocked", () => {
+    const { rerender } = mount(true);
+    act(() => markPlaybackBlocked(() => {}));
+    expect(getVoiceSnapshot("c1").blocked).toBe(true);
+    act(() => rerender({ enabled: true, chatId: "c2" }));
+    expect(getVoiceSnapshot("c2").blocked).toBe(false);
+  });
 });

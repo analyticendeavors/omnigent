@@ -521,7 +521,7 @@ export const ComposerActionRow = forwardRef<HTMLDivElement, ComponentPropsWithou
       <div
         ref={ref}
         className={cn(
-          "group/composer-actions @container/composer-actions relative flex min-w-0 flex-nowrap items-center justify-between gap-2 data-[snug]:gap-0 pt-1 pb-2 group-data-[ae-voice-sheet]/composer-card:hidden",
+          "group/composer-actions @container/composer-actions relative flex min-w-0 flex-nowrap items-center justify-between gap-2 data-[snug]:gap-0 pt-1 pb-2",
           COMPOSER_CONTENT_INSET_CLASS,
           className,
         )}

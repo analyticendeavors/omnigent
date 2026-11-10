@@ -26,6 +26,8 @@ export interface AeVoiceStart {
   armed: boolean;
   phase: VoicePhase;
   toggle: () => void;
+  /** Listen again after the mic paused or was unavailable. */
+  restart: () => void;
   onListening: (listening: boolean) => void;
   onFinal: (text: string) => void;
   disarm: () => void;
@@ -64,6 +66,24 @@ export function useAeVoiceStart({
     release();
   }, [release]);
 
+  const onListening = useCallback(
+    (listening: boolean) => {
+      if (!armed) return;
+      if (listening) {
+        everListened.current = true;
+        setPhase("listening");
+      } else setPhase(everListened.current ? "paused" : "unavailable");
+    },
+    [armed],
+  );
+
+  // start() returns early on a mic that is already listening, so no event follows.
+  const reportIfListening = useCallback(() => {
+    if (!controller.current?.isListening()) return;
+    everListened.current = true;
+    setPhase("listening");
+  }, [controller]);
+
   const toggle = useCallback(() => {
     if (armed) {
       disarm();
@@ -76,18 +96,14 @@ export function useAeVoiceStart({
     setArmed(true);
     setPhase("starting");
     controller.current?.start();
-  }, [armed, controller, disarm]);
+    // A mic that was already listening fires no event; report it.
+    reportIfListening();
+  }, [armed, controller, disarm, reportIfListening]);
 
-  const onListening = useCallback(
-    (listening: boolean) => {
-      if (!armed) return;
-      if (listening) {
-        everListened.current = true;
-        setPhase("listening");
-      } else setPhase(everListened.current ? "paused" : "unavailable");
-    },
-    [armed],
-  );
+  const restart = useCallback(() => {
+    controller.current?.start();
+    reportIfListening();
+  }, [controller, reportIfListening]);
 
   const onFinal = useCallback(
     (_text: string) => {
@@ -114,5 +130,5 @@ export function useAeVoiceStart({
     [],
   );
 
-  return { armed, phase, toggle, onListening, onFinal, disarm };
+  return { armed, phase, toggle, restart, onListening, onFinal, disarm };
 }

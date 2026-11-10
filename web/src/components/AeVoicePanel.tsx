@@ -30,6 +30,8 @@ export interface AeVoicePanelProps {
   onResume: () => void;
   /** Sheet only: show the text box for one message. */
   onKeyboard?: () => void;
+  /** Start the mic again when it is paused or unavailable; runs inside the tap. */
+  onRestartMic?: () => void;
   className?: string;
 }
 
@@ -166,6 +168,7 @@ export function AeVoicePanel({
   onStop,
   onResume,
   onKeyboard,
+  onRestartMic,
   className,
 }: AeVoicePanelProps) {
   const level = useMicLevel();
@@ -173,9 +176,23 @@ export function AeVoicePanel({
   if (key === "off") return null;
   const tone = TONE[key];
   const { label, sub } = words(key, heard, caption, micDetail);
-  const action = key === "speaking" ? onStop : key === "blocked" ? onResume : undefined;
+  const restartable = key === "paused" || key === "unavailable";
+  const action =
+    key === "speaking"
+      ? onStop
+      : key === "blocked"
+        ? onResume
+        : restartable
+          ? onRestartMic
+          : undefined;
   const actionLabel =
-    key === "speaking" ? "Stop speaking" : key === "blocked" ? "Play the reply" : label;
+    key === "speaking"
+      ? "Stop speaking"
+      : key === "blocked"
+        ? "Play the reply"
+        : restartable
+          ? "Listen again"
+          : label;
   const endButton = (
     <Button type="button" variant="outline" size="sm" aria-label="End voice mode" onClick={onEnd}>
       End
