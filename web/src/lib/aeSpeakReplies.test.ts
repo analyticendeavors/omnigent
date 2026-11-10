@@ -7,7 +7,10 @@ import {
   listVoices,
   onVoicesChanged,
   pickDefaultVoice,
+  primeVoicePlayback,
   rankVoices,
+  registerCloudPrimer,
+  setCaptionHandler,
   readFastAnswersState,
   readFastEnabled,
   readRate,
@@ -20,6 +23,7 @@ import {
   writeSpeakReplies,
   writeVoiceChoice,
 } from "./aeSpeakReplies";
+import { clearPlaybackBlocked, isPlaybackBlocked, resumePlayback } from "./aeVoicePlayback";
 
 let synth: FakeSynth;
 
@@ -215,6 +219,104 @@ describe("without the speech api", () => {
     const speaker = createSpeaker();
     speaker.speak("Hello.", OPTS);
     speaker.stop();
+    expect(speaker.speaking()).toBe(false);
+  });
+});
+
+describe("priming playback", () => {
+  afterEach(() => registerCloudPrimer(null));
+
+  it("primes the cloud speaker and speaks a silent utterance on the device", () => {
+    const cloud = vi.fn();
+    registerCloudPrimer(cloud);
+    primeVoicePlayback();
+    expect(cloud).toHaveBeenCalledTimes(1);
+    expect(synth.spokenTexts).toEqual([" "]);
+    expect((synth.spoken[0] as unknown as { volume: number }).volume).toBe(0);
+  });
+
+  it("leaves a speaking device alone", () => {
+    synth.speaking = true;
+    primeVoicePlayback();
+    expect(synth.spokenTexts).toEqual([]);
+  });
+
+  it("never throws, with no speech api or a throwing primer", () => {
+    registerCloudPrimer(() => {
+      throw new Error("x");
+    });
+    removeFakeSpeech();
+    expect(() => primeVoicePlayback()).not.toThrow();
+  });
+});
+
+describe("the speaker's captions and refused playback", () => {
+  afterEach(() => {
+    setCaptionHandler(null);
+    clearPlaybackBlocked();
+  });
+
+  it("captions each sentence as it starts and clears when the queue empties", () => {
+    const captions: string[] = [];
+    setCaptionHandler((t) => captions.push(t));
+    const speaker = createSpeaker();
+    speaker.speak("One. " + "z".repeat(230) + ".", OPTS);
+    vi.runAllTimers();
+    synth.spoken[0].onstart?.();
+    expect(captions).toEqual(["One. "].map(() => synth.spokenTexts[0]));
+    synth.spoken.forEach((u) => u.onend?.());
+    expect(captions[captions.length - 1]).toBe("");
+  });
+
+  it("a not-allowed error marks playback blocked and keeps speaking() true", () => {
+    const speaker = createSpeaker();
+    speaker.speak("Hello there.", OPTS);
+    vi.runAllTimers();
+    synth.spoken[0].onerror?.({ error: "not-allowed" });
+    expect(isPlaybackBlocked()).toBe(true);
+    expect(speaker.speaking()).toBe(true);
+  });
+
+  it("resume speaks the same item again and clears blocked once it starts", () => {
+    const speaker = createSpeaker();
+    speaker.speak("Hello there.", OPTS);
+    vi.runAllTimers();
+    synth.spoken[0].onerror?.({ error: "not-allowed" });
+    resumePlayback();
+    expect(synth.spokenTexts).toEqual(["Hello there.", "Hello there."]);
+    expect(isPlaybackBlocked()).toBe(true);
+    synth.spoken[1].onstart?.();
+    expect(isPlaybackBlocked()).toBe(false);
+    synth.spoken[1].onend?.();
+    expect(speaker.speaking()).toBe(false);
+  });
+
+  it("every refused chunk is spoken again, in order", () => {
+    const speaker = createSpeaker();
+    speaker.speak("One. " + "z".repeat(230) + ".", OPTS);
+    vi.runAllTimers();
+    const first = synth.spokenTexts.length;
+    synth.spoken.forEach((u) => u.onerror?.({ error: "not-allowed" }));
+    resumePlayback();
+    expect(synth.spokenTexts.slice(first)).toEqual(synth.spokenTexts.slice(0, first));
+  });
+
+  it("stop clears blocked", () => {
+    const speaker = createSpeaker();
+    speaker.speak("Hello there.", OPTS);
+    vi.runAllTimers();
+    synth.spoken[0].onerror?.({ error: "not-allowed" });
+    speaker.stop();
+    expect(isPlaybackBlocked()).toBe(false);
+    expect(speaker.speaking()).toBe(false);
+  });
+
+  it("any other error ends the item as before", () => {
+    const speaker = createSpeaker();
+    speaker.speak("Hello there.", OPTS);
+    vi.runAllTimers();
+    synth.spoken[0].onerror?.({ error: "synthesis-failed" });
+    expect(isPlaybackBlocked()).toBe(false);
     expect(speaker.speaking()).toBe(false);
   });
 });

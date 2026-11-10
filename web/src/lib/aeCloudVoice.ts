@@ -2,9 +2,10 @@
 // one server-made mp3 per sentence in order. A sentence the server cannot make is
 // read by the device speaker instead, so an outage still speaks.
 
-import type { Speaker, SpeakOptions } from "./aeSpeakReplies";
+import { emitCaption, type Speaker, type SpeakOptions } from "./aeSpeakReplies";
 import { splitForSpeech } from "./aeSpeechText";
 import { speakerSinkId } from "./aeAudioDevices";
+import { clearPlaybackBlocked, markPlaybackBlocked } from "./aeVoicePlayback";
 import { withBasePath } from "./basePath";
 import { authenticatedFetch } from "./identity";
 
@@ -14,6 +15,36 @@ export interface CloudVoice {
 }
 
 const LOOKAHEAD = 2;
+
+/** A 44-byte WAV header and 8 silent 8-bit samples; playing it in a tap unlocks the audio element. */
+function silentWavUri(): string {
+  const samples = 8;
+  const bytes = new Uint8Array(44 + samples);
+  const view = new DataView(bytes.buffer);
+  const tag = (at: number, text: string) => {
+    for (let i = 0; i < text.length; i++) bytes[at + i] = text.charCodeAt(i);
+  };
+  tag(0, "RIFF");
+  view.setUint32(4, 36 + samples, true);
+  tag(8, "WAVE");
+  tag(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, 8000, true);
+  view.setUint32(28, 8000, true);
+  view.setUint16(32, 1, true);
+  view.setUint16(34, 8, true);
+  tag(36, "data");
+  view.setUint32(40, samples, true);
+  bytes.fill(128, 44);
+  let binary = "";
+  bytes.forEach((b) => {
+    binary += String.fromCharCode(b);
+  });
+  return `data:audio/wav;base64,${btoa(binary)}`;
+}
+const SILENT_WAV = silentWavUri();
 
 // Only a successful list is kept; a failure is retried by the next call, one request at a time.
 let voicesCache: CloudVoice[] | null = null;
@@ -135,12 +166,24 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
       el.onended = () => finish(true);
       el.onerror = () => finish(false);
       el.src = url;
+      // A refused play() is not a failure: the item stays current until a tap plays it again.
+      const refuse = (e: unknown): boolean => {
+        if ((e as { name?: string } | null)?.name !== "NotAllowedError") return false;
+        markPlaybackBlocked(() => {
+          void Promise.resolve(el.play())
+            .then(clearPlaybackBlocked)
+            .catch(() => {});
+        });
+        return true;
+      };
       void applySink(el).then(() => {
         if (settled) return;
         try {
-          void Promise.resolve(el.play()).catch(() => finish(false));
-        } catch {
-          finish(false);
+          void Promise.resolve(el.play()).catch((e: unknown) => {
+            if (!refuse(e)) finish(false);
+          });
+        } catch (e) {
+          if (!refuse(e)) finish(false);
         }
       });
     });
@@ -169,11 +212,13 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
     if (!item) {
       running = false;
       setSpeaking(false);
+      emitCaption("");
       return;
     }
     pump();
     const blob = await item.result;
     if (gen !== generation) return;
+    if (blob !== null) emitCaption(item.text);
     const played = blob !== null && (await play(blob));
     if (gen !== generation) return;
     if (!played) {
@@ -206,12 +251,32 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
       running = false;
       release?.();
       release = null;
+      clearPlaybackBlocked();
+      emitCaption("");
       if (audio) {
         audio.pause();
         audio.removeAttribute("src");
       }
       fallback.stop();
       setSpeaking(false);
+    },
+    // Plays a silent clip inside a tap so later replies may play without one.
+    prime() {
+      // A sentence is queued or refused: its own play() is the unlock, and the element holds it.
+      if (isSpeaking) return;
+      try {
+        audio ??= new Audio();
+        const el = audio;
+        el.src = SILENT_WAV;
+        void Promise.resolve(el.play())
+          .then(() => {
+            // A real sentence may have taken the element over since the tap.
+            if (el.src === SILENT_WAV) el.pause();
+          })
+          .catch(() => {});
+      } catch {
+        // Priming is best effort.
+      }
     },
     speaking: () => isSpeaking,
     retained: () => fallback.retained(),

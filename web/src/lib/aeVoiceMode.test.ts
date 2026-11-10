@@ -8,8 +8,12 @@ import {
   questionSpeech,
   readVoiceMode,
   POST_RETRY_MS,
+  registerVoiceStop,
   resetVoiceStore,
+  setVoiceBlocked,
+  setVoiceCaption,
   setVoiceOn,
+  stopVoice,
   syncVoiceLabel,
   splitDone,
 } from "./aeVoiceMode";
@@ -189,5 +193,33 @@ describe("keeping the server label in step", () => {
     await vi.advanceTimersByTimeAsync(POST_RETRY_MS + 10);
     await vi.advanceTimersByTimeAsync(10_000);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("caption, blocked and stop", () => {
+  beforeEach(() => resetVoiceStore());
+
+  it("start empty and unblocked, and change through their setters", () => {
+    expect(getVoiceSnapshot("c1").caption).toBe("");
+    expect(getVoiceSnapshot("c1").blocked).toBe(false);
+    setVoiceCaption("c1", "Hello there.");
+    setVoiceBlocked("c1", true);
+    expect(getVoiceSnapshot("c1").caption).toBe("Hello there.");
+    expect(getVoiceSnapshot("c1").blocked).toBe(true);
+    expect(getVoiceSnapshot("c2").caption).toBe("");
+  });
+
+  it("stopVoice calls the registered stop for that chat only", () => {
+    const stop = vi.fn();
+    const other = vi.fn();
+    const off = registerVoiceStop("c1", stop);
+    registerVoiceStop("c2", other);
+    stopVoice("c1");
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(other).not.toHaveBeenCalled();
+    off();
+    stopVoice("c1");
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(() => stopVoice("nobody")).not.toThrow();
   });
 });

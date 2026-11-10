@@ -8,6 +8,25 @@ import {
   COMPOSER_LABELS_MIN_GAP_PX,
 } from "./ChatComposer";
 
+describe("ChatComposer Voice sheet hooks", () => {
+  it("names its card as a group and lets the sheet hide the input and the actions", () => {
+    const { container } = render(
+      <ChatComposer
+        keyboard={{ submitWithModEnter: false, preventsKeyboardSubmit: false }}
+        input={{ "aria-label": "Draft", value: "", onChange: () => {} }}
+        actions={{ leading: null, trailing: null, testId: "actions" }}
+        data-ae-voice-sheet=""
+      />,
+    );
+    const card = container.querySelector("[data-composer-card]") as HTMLElement;
+    expect(card).toHaveAttribute("data-ae-voice-sheet", "");
+    expect(card.className).toContain("group/composer-card");
+    const hide = "group-data-[ae-voice-sheet]/composer-card:hidden";
+    expect(card.querySelector(".composer-input-text")?.className).toContain(hide);
+    expect(screen.getByTestId("actions").className).toContain(hide);
+  });
+});
+
 describe("ChatComposer", () => {
   function renderEditor(initial: string, submitWithModEnter = false) {
     const onKeyDown = vi.fn();

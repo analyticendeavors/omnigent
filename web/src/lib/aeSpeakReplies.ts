@@ -3,6 +3,7 @@
 // the speech API or storage is missing.
 
 import { splitForSpeech } from "./aeSpeechText";
+import { clearPlaybackBlocked, markPlaybackBlocked } from "./aeVoicePlayback";
 
 export const WORKING_CUE_TEXT = "Working on it.";
 export const WORKING_CUE_DELAY_MS = 6000;
@@ -179,9 +180,55 @@ export interface SpeakOptions {
   cloudVoiceId?: string | null;
 }
 
+// The sentence being spoken, for the Voice panel. The chat's hook registers the receiver.
+let captionHandler: ((text: string) => void) | null = null;
+
+export function setCaptionHandler(handler: ((text: string) => void) | null): void {
+  captionHandler = handler;
+}
+
+export function emitCaption(text: string): void {
+  try {
+    captionHandler?.(text);
+  } catch {
+    // A caption failure must not stop the voice.
+  }
+}
+
+// The cloud speaker's prime, registered by the hook module that owns the cloud speaker.
+let cloudPrimer: (() => void) | null = null;
+
+export function registerCloudPrimer(primer: (() => void) | null): void {
+  cloudPrimer = primer;
+}
+
+/**
+ * Unlocks audio for later replies. Call only inside a click or pointer handler:
+ * iOS refuses playback that no tap started. Never throws.
+ */
+export function primeVoicePlayback(): void {
+  try {
+    cloudPrimer?.();
+  } catch {
+    // Priming is best effort.
+  }
+  try {
+    if (!isSpeechSupported()) return;
+    const synth = window.speechSynthesis;
+    if (synth.speaking) return;
+    const utterance = new window.SpeechSynthesisUtterance(" ");
+    utterance.volume = 0;
+    synth.speak(utterance);
+  } catch {
+    // Priming is best effort.
+  }
+}
+
 export interface Speaker {
   speak: (text: string, opts: SpeakOptions) => void;
   stop: () => void;
+  /** Unlocks playback inside a tap (the cloud speaker's audio element). */
+  prime?: () => void;
   speaking: () => boolean;
   subscribe: (cb: () => void) => () => void;
   /** Utterances queued and not yet ended; the speaker keeps them referenced. */
@@ -197,11 +244,63 @@ export function createSpeaker(): Speaker {
   // Chrome collects an unreferenced utterance mid-speech and never fires its end.
   const utterances = new Set<SpeechSynthesisUtterance>();
 
+  // Chunks the browser refused ("not-allowed"), spoken again by the tap that resumes.
+  let refused: { chunk: string; opts: SpeakOptions }[] = [];
+
   const notify = () => listeners.forEach((cb) => cb());
   const setSpeaking = (next: boolean) => {
     if (isSpeaking === next) return;
     isSpeaking = next;
     notify();
+  };
+
+  const speakChunk = (chunk: string, opts: SpeakOptions, gen: number, resumed: boolean) => {
+    const synth = window.speechSynthesis;
+    const voices = listVoices();
+    const voice =
+      (opts.voiceURI ? voices.find((v) => v.voiceURI === opts.voiceURI) : undefined) ??
+      pickDefaultVoice(voices);
+    const utterance = new window.SpeechSynthesisUtterance(chunk);
+    if (voice) {
+      utterance.voice = voice;
+      utterance.lang = voice.lang;
+    }
+    utterance.rate = opts.rate;
+    utterances.add(utterance);
+    const done = () => {
+      utterances.delete(utterance);
+      if (gen !== generation) return;
+      pending = Math.max(0, pending - 1);
+      if (pending === 0) {
+        setSpeaking(false);
+        emitCaption("");
+      }
+    };
+    utterance.onstart = () => {
+      if (gen !== generation) return;
+      if (resumed) clearPlaybackBlocked();
+      emitCaption(chunk);
+    };
+    utterance.onend = done;
+    utterance.onerror = (e) => {
+      if (e.error === "not-allowed" && gen === generation) {
+        // Keep the item current: speaking() stays true until a tap plays it or stop() runs.
+        utterances.delete(utterance);
+        refused.push({ chunk, opts });
+        markPlaybackBlocked(() => {
+          const again = refused;
+          refused = [];
+          for (const r of again) speakChunk(r.chunk, r.opts, gen, true);
+        });
+        return;
+      }
+      done();
+    };
+    try {
+      synth.speak(utterance);
+    } catch {
+      done();
+    }
   };
 
   return {
@@ -210,43 +309,20 @@ export function createSpeaker(): Speaker {
       const chunks = splitForSpeech(text);
       if (chunks.length === 0) return;
       const gen = generation;
-      const synth = window.speechSynthesis;
-      const voices = listVoices();
-      const voice =
-        (opts.voiceURI ? voices.find((v) => v.voiceURI === opts.voiceURI) : undefined) ??
-        pickDefaultVoice(voices);
       pending += chunks.length;
       setSpeaking(true);
       // Chrome drops a speak() issued in the same tick as cancel().
       setTimeout(() => {
         if (gen !== generation) return;
-        for (const chunk of chunks) {
-          const utterance = new window.SpeechSynthesisUtterance(chunk);
-          if (voice) {
-            utterance.voice = voice;
-            utterance.lang = voice.lang;
-          }
-          utterance.rate = opts.rate;
-          utterances.add(utterance);
-          const done = () => {
-            utterances.delete(utterance);
-            if (gen !== generation) return;
-            pending = Math.max(0, pending - 1);
-            if (pending === 0) setSpeaking(false);
-          };
-          utterance.onend = done;
-          utterance.onerror = done;
-          try {
-            synth.speak(utterance);
-          } catch {
-            done();
-          }
-        }
+        for (const chunk of chunks) speakChunk(chunk, opts, gen, false);
       }, 0);
     },
     stop() {
       generation++;
       pending = 0;
+      refused = [];
+      clearPlaybackBlocked();
+      emitCaption("");
       utterances.clear();
       if (isSpeechSupported()) {
         try {

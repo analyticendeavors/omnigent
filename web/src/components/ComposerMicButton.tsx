@@ -5,6 +5,7 @@ import { showToast } from "@/components/ui/toast";
 import { useVoiceDictationHotkey } from "@/hooks/useVoiceDictationHotkey";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { getMicStream } from "@/lib/aeAudioDevices";
+import { publishMicLevel, resetMicLevel } from "@/lib/aeMicLevel";
 import { DictationBusyError, DictationSession } from "@/lib/dictation";
 import { isElectronShell } from "@/lib/nativeBridge";
 import { cn } from "@/lib/utils";
@@ -340,16 +341,19 @@ export const ComposerMicButton = ({
 
       const tick = () => {
         analyser.getByteFrequencyData(data);
+        let total = 0;
         for (let i = 0; i < BAR_BINS.length; i += 1) {
           const [lo, hi] = BAR_BINS[i];
           let sum = 0;
           for (let j = lo; j < hi; j += 1) sum += data[j];
           const avg = sum / (hi - lo) / 255;
+          total += avg;
           // 1.6× headroom for quiet speech; clamp at 1 to fit the button.
           const scale = Math.max(BAR_BASELINE, Math.min(1, avg * 1.6));
           const el = bars[i];
           if (el) el.style.transform = `scaleY(${scale})`;
         }
+        publishMicLevel((total / BAR_BINS.length) * 1.6);
         rafId = requestAnimationFrame(tick);
       };
       rafId = requestAnimationFrame(tick);
@@ -359,6 +363,7 @@ export const ComposerMicButton = ({
 
     return () => {
       cancelled = true;
+      resetMicLevel();
       if (rafId !== null) cancelAnimationFrame(rafId);
       if (stream) {
         for (const track of stream.getTracks()) track.stop();

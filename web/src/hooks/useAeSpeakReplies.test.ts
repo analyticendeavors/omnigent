@@ -1,7 +1,8 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { WORKING_CUE_DELAY_MS, WORKING_CUE_TEXT } from "@/lib/aeSpeakReplies";
+import { emitCaption, WORKING_CUE_DELAY_MS, WORKING_CUE_TEXT } from "@/lib/aeSpeakReplies";
 import { getVoiceSnapshot, resetVoiceStore, setVoiceBarged } from "@/lib/aeVoiceMode";
+import { clearPlaybackBlocked, markPlaybackBlocked } from "@/lib/aeVoicePlayback";
 import { type AnyBlock, LIVE_ITEM_PREFIX } from "@/lib/blocks";
 import { useChatStore } from "@/store/chatStore";
 import { type FakeSynth, installFakeSpeech, removeFakeSpeech } from "@/test/fakeSpeech";
@@ -497,5 +498,28 @@ describe("useAeSpeakReplies after a tap on the speaker", () => {
     setStore({ blocks: [live("r2", "Fresh reply. More")] });
     flush();
     expect(synth.texts()).toEqual(["First sentence.", "Fresh reply."]);
+  });
+});
+
+describe("the voice snapshot mirrors", () => {
+  beforeEach(() => resetVoiceStore());
+  afterEach(() => clearPlaybackBlocked());
+
+  it("the spoken sentence while mounted, cleared on unmount", () => {
+    const { unmount } = mount(false);
+    act(() => emitCaption("Hello there."));
+    expect(getVoiceSnapshot("c1").caption).toBe("Hello there.");
+    unmount();
+    expect(getVoiceSnapshot("c1").caption).toBe("");
+    act(() => emitCaption("Ignored."));
+    expect(getVoiceSnapshot("c1").caption).toBe("");
+  });
+
+  it("refused playback", () => {
+    mount(false);
+    act(() => markPlaybackBlocked(() => {}));
+    expect(getVoiceSnapshot("c1").blocked).toBe(true);
+    act(() => clearPlaybackBlocked());
+    expect(getVoiceSnapshot("c1").blocked).toBe(false);
   });
 });

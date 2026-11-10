@@ -5,6 +5,8 @@ import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { createCloudSpeaker } from "@/lib/aeCloudVoice";
 import {
   createSpeaker,
+  registerCloudPrimer,
+  setCaptionHandler,
   type Speaker,
   type VoiceChoice,
   WORKING_CUE_DELAY_MS,
@@ -18,7 +20,13 @@ import {
   splitSentences,
   stripTldr,
 } from "@/lib/aeSpeechText";
-import { getVoiceSnapshot, setVoiceBarged } from "@/lib/aeVoiceMode";
+import {
+  getVoiceSnapshot,
+  setVoiceBarged,
+  setVoiceBlocked,
+  setVoiceCaption,
+} from "@/lib/aeVoiceMode";
+import { usePlaybackBlocked } from "@/lib/aeVoicePlayback";
 import { type AnyBlock, LIVE_ITEM_PREFIX } from "@/lib/blocks";
 import { useChatStore } from "@/store/chatStore";
 
@@ -33,6 +41,9 @@ function getCloud(): Speaker {
   cloudSpeaker ??= createCloudSpeaker(getDevice());
   return cloudSpeaker;
 }
+
+// primeVoicePlayback (lib/aeSpeakReplies.ts) reaches the cloud speaker through this.
+registerCloudPrimer(() => getCloud().prime?.());
 
 /** One speaker face over both: `speak` goes to the voice's engine, `stop` to both. */
 function getSpeaker(): Speaker {
@@ -142,6 +153,20 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
     () => getSpeaker().speaking(),
     () => false,
   );
+
+  // The Voice panel reads the refused-playback flag and the spoken sentence from the chat's snapshot.
+  const blocked = usePlaybackBlocked();
+  useEffect(() => {
+    if (chatId) setVoiceBlocked(chatId, blocked);
+  }, [chatId, blocked]);
+  useEffect(() => {
+    if (!chatId) return;
+    setCaptionHandler((text) => setVoiceCaption(chatId, text));
+    return () => {
+      setCaptionHandler(null);
+      setVoiceCaption(chatId, "");
+    };
+  }, [chatId]);
 
   useEffect(() => {
     if (!enabled || !chatId) return;

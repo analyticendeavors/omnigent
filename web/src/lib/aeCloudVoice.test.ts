@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCloudSpeaker, fetchCloudVoices, resetCloudVoicesCache } from "./aeCloudVoice";
-import type { Speaker, SpeakOptions } from "./aeSpeakReplies";
+import { setCaptionHandler, type Speaker, type SpeakOptions } from "./aeSpeakReplies";
+import { clearPlaybackBlocked, isPlaybackBlocked, resumePlayback } from "./aeVoicePlayback";
 
 const OPTS: SpeakOptions = { voiceURI: null, rate: 1, cloudVoiceId: "en-US-AvaMultilingualNeural" };
 
@@ -348,5 +349,90 @@ describe("createCloudSpeaker", () => {
     await settle();
     expect(FakeAudio.last?.sinks).toEqual(["spk1", "spk2"]);
     expect(FakeAudio.last?.played).toEqual(["blob:0", "blob:1"]);
+  });
+});
+
+describe("cloud playback refused by the browser", () => {
+  const sentence = (c: string) => `${c.repeat(150)}.`;
+
+  afterEach(() => {
+    setCaptionHandler(null);
+    clearPlaybackBlocked();
+  });
+
+  async function playRefused() {
+    const device = new FakeDevice();
+    const speaker = createCloudSpeaker(device);
+    speaker.speak(sentence("a"), OPTS);
+    await settle();
+    FakeAudio.plays.push(Promise.reject(Object.assign(new Error("x"), { name: "NotAllowedError" })));
+    pending[0].resolve(mp3());
+    await settle();
+    return { speaker, device };
+  }
+
+  it("marks blocked, keeps the item current and does not fall back to the device", async () => {
+    const { speaker, device } = await playRefused();
+    expect(isPlaybackBlocked()).toBe(true);
+    expect(speaker.speaking()).toBe(true);
+    expect(device.texts).toEqual([]);
+  });
+
+  it("resume plays again inside the tap, clears blocked, and the end finishes the item", async () => {
+    const { speaker } = await playRefused();
+    const el = FakeAudio.last as FakeAudio;
+    resumePlayback();
+    await settle();
+    expect(el.played.length).toBe(2);
+    expect(isPlaybackBlocked()).toBe(false);
+    el.end();
+    await settle();
+    expect(speaker.speaking()).toBe(false);
+  });
+
+  it("stop clears blocked", async () => {
+    const { speaker } = await playRefused();
+    speaker.stop();
+    expect(isPlaybackBlocked()).toBe(false);
+    expect(speaker.speaking()).toBe(false);
+  });
+
+  it("another play error still falls back to the device", async () => {
+    const device = new FakeDevice();
+    const speaker = createCloudSpeaker(device);
+    speaker.speak(sentence("a"), OPTS);
+    await settle();
+    FakeAudio.plays.push(Promise.reject(new Error("decode")));
+    pending[0].resolve(mp3());
+    await settle();
+    expect(isPlaybackBlocked()).toBe(false);
+    expect(device.texts.length).toBe(1);
+  });
+
+  it("captions the sentence that plays and clears at the end", async () => {
+    const captions: string[] = [];
+    setCaptionHandler((t) => captions.push(t));
+    const speaker = createCloudSpeaker(new FakeDevice());
+    speaker.speak(sentence("a"), OPTS);
+    await settle();
+    pending[0].resolve(mp3());
+    await settle();
+    expect(captions).toEqual([sentence("a")]);
+    FakeAudio.last?.end();
+    await settle();
+    expect(captions).toEqual([sentence("a"), ""]);
+  });
+
+  it("prime plays a silent wav, then pauses; it leaves a queued sentence alone", async () => {
+    const speaker = createCloudSpeaker(new FakeDevice());
+    speaker.prime?.();
+    await settle();
+    const el = FakeAudio.last as FakeAudio;
+    expect(el.played[0]).toMatch(/^data:audio\/wav;base64,UklGR/);
+    expect(el.pauses).toBe(1);
+    speaker.speak(sentence("a"), OPTS);
+    const src = el.src;
+    speaker.prime?.();
+    expect(el.src).toBe(src);
   });
 });

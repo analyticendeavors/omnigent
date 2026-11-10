@@ -3,7 +3,7 @@
 // every control even with its text labels collapsed, and the Send or Interrupt
 // button poked past the composer's border. When the icons alone still overflow
 // the row's real gap, `useCollapsedComposerLabels` sets `data-tight` on the row
-// and these classes hide the two secondary controls; if that is not enough
+// and these classes hide the secondary controls (the mic and the host badge); if that is not enough
 // (a control that must stay visible is still there) it sets `data-tighter` and
 // the roles preset control goes too, so the primary button always stays inside.
 //
@@ -16,9 +16,8 @@
 export const COMPOSER_TIGHT_MIC_CLASS =
   "group-data-[tight]/composer-actions:not-aria-pressed:not-aria-[busy=true]:hidden";
 
-/** Hides the speak-replies button in a tight row unless speaking is on. */
-export const COMPOSER_TIGHT_SPEAKER_CLASS =
-  "group-data-[tight]/composer-actions:not-aria-pressed:hidden";
+/** The Voice button is a primary control and never hides in a tight row. */
+export const COMPOSER_TIGHT_SPEAKER_CLASS = "";
 
 /** Wrapper (no layout of its own) that hides the host badge in a tight row while the host is online. */
 export const COMPOSER_TIGHT_HOST_WRAPPER_CLASS =

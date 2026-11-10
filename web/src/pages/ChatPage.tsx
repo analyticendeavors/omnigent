@@ -235,7 +235,17 @@ import { AeSpeakRepliesButton } from "@/components/AeSpeakRepliesButton";
 import { ComposerMicButton } from "@/components/ComposerMicButton";
 import { useAeVoiceMode } from "@/hooks/useAeVoiceMode";
 import { useAeVoiceSnips } from "@/hooks/useAeVoiceSnips";
-import type { AeMicController } from "@/lib/aeVoiceMode";
+import { AE_VOICE_RING, AeVoicePanel, voicePhaseKey } from "@/components/AeVoicePanel";
+import { useAeVoiceTyping } from "@/hooks/useAeVoiceTyping";
+import {
+  type AeMicController,
+  setVoiceBarged,
+  setVoiceOn,
+  stopVoice,
+  useVoiceSnapshot,
+} from "@/lib/aeVoiceMode";
+import { resumePlayback } from "@/lib/aeVoicePlayback";
+import { primeVoicePlayback } from "@/lib/aeSpeakReplies";
 import {
   COMPOSER_TIGHT_HOST_WRAPPER_CLASS,
   COMPOSER_TIGHT_MIC_CLASS,
@@ -3565,6 +3575,12 @@ function ComposerImpl(
     ),
     labels: composerSession?.labels,
   });
+  const voiceSnap = useVoiceSnapshot(composerSessionId);
+  const voiceTyping = useAeVoiceTyping(voice.on, status !== "idle");
+  const voiceCoarse = useIsCoarsePointer();
+  const voiceMobile = useIsMobileViewport();
+  const voiceSheet = voice.on && voiceCoarse && voiceMobile && !voiceTyping.typing;
+  const voiceKey = voicePhaseKey(voice.phase, voiceSnap.blocked);
   const snips = useAeVoiceSnips({
     chatId: composerSessionId,
     voiceOn: voice.on,
@@ -3711,7 +3727,9 @@ function ComposerImpl(
           "mx-auto",
           COMPOSER_COLUMN_WIDTH,
           isDragActive && "ring-2 ring-ring ring-inset",
+          voice.on && AE_VOICE_RING[voiceKey],
         )}
+        data-ae-voice-sheet={voiceSheet ? "" : undefined}
         input={{
           ref: bindTailTextarea,
           value: draft.text,
@@ -3791,6 +3809,25 @@ function ComposerImpl(
             ) : undefined,
           beforeInput: (
             <>
+              {voice.on && composerSessionId ? (
+                <AeVoicePanel
+                  layout={voiceSheet ? "sheet" : "bar"}
+                  phase={voice.phase}
+                  blocked={voiceSnap.blocked}
+                  heard={value}
+                  caption={voiceSnap.caption}
+                  onEnd={() => setVoiceOn(composerSessionId, false)}
+                  onStop={() => {
+                    setVoiceBarged(composerSessionId, true);
+                    stopVoice(composerSessionId);
+                  }}
+                  onResume={() => {
+                    primeVoicePlayback();
+                    resumePlayback();
+                  }}
+                  onKeyboard={voiceSheet ? voiceTyping.startTyping : undefined}
+                />
+              ) : null}
               {/* Slash-command suggestions — floats above the composer box */}
               {slashCompletion.open && (
                 <SlashCommandMenu

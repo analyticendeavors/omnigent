@@ -6,8 +6,12 @@ import { ComposerHostTrigger } from "@/components/composer/ComposerControls";
 import {
   COMPOSER_TIGHT_HOST_WRAPPER_CLASS,
   COMPOSER_TIGHT_MIC_CLASS,
+  COMPOSER_TIGHT_SPEAKER_CLASS,
   COMPOSER_TIGHTER_WRAPPER_CLASS,
 } from "./aeComposerTight";
+
+// The Voice sheet hides the composer's input and action row through the card's group.
+const VOICE_SHEET_HIDE = "group-data-[ae-voice-sheet]/composer-card:hidden";
 
 // The three class strings are compiled by Tailwind itself and injected, so the
 // assertions read the real computed display of each control, not the class names.
@@ -19,6 +23,7 @@ beforeAll(async () => {
     ...COMPOSER_TIGHT_MIC_CLASS.split(" "),
     ...COMPOSER_TIGHT_HOST_WRAPPER_CLASS.split(" "),
     ...COMPOSER_TIGHTER_WRAPPER_CLASS.split(" "),
+    VOICE_SHEET_HIDE,
   ]);
   style.textContent = new TextDecoder().decode(
     transform({
@@ -97,5 +102,33 @@ describe("tight composer action row", () => {
     cleanup();
     renderRow({ tight: true, tighter: true, host: "online" });
     expect(getComputedStyle(screen.getByLabelText("Roles preset").parentElement as HTMLElement).display).toBe("none");
+  });
+});
+
+describe("the Voice button in a tight row", () => {
+  it("never hides", () => {
+    expect(COMPOSER_TIGHT_SPEAKER_CLASS).toBe("");
+  });
+});
+
+describe("the Voice sheet variant", () => {
+  function card(sheet: boolean) {
+    render(
+      <div className="group/composer-card" {...(sheet ? { "data-ae-voice-sheet": "" } : {})}>
+        <div aria-label="Input" className={VOICE_SHEET_HIDE} />
+        <div aria-label="Actions" className={`flex ${VOICE_SHEET_HIDE}`} />
+      </div>,
+    );
+    const shown = (name: string) =>
+      getComputedStyle(screen.getByLabelText(name)).display !== "none";
+    return { input: shown("Input"), actions: shown("Actions") };
+  }
+
+  it("hides the input and the actions when the card carries data-ae-voice-sheet", () => {
+    expect(card(true)).toEqual({ input: false, actions: false });
+  });
+
+  it("shows them otherwise", () => {
+    expect(card(false)).toEqual({ input: true, actions: true });
   });
 });

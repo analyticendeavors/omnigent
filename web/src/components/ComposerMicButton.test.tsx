@@ -22,6 +22,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vite
 import { CapabilitiesContext } from "@/lib/CapabilitiesContext";
 import type { ServerInfo } from "@/lib/capabilities";
 import { DictationBusyError as BusyError, type DictationSessionEvents } from "@/lib/dictation";
+import { getMicLevel, resetMicLevel } from "@/lib/aeMicLevel";
 import { ComposerMicButton } from "./ComposerMicButton";
 
 // Controllable DictationSession stand-in for the server-mode tests. The
@@ -201,6 +202,56 @@ describe("ComposerMicButton", () => {
     // The recognizer's "start" event flips the pressed state.
     act(() => handlers.start?.({}));
     expect(button).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("publishes the mic level while listening and resets it when the mic stops", async () => {
+    resetMicLevel();
+    const track = { stop: vi.fn() };
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [track] }),
+        enumerateDevices: vi.fn().mockResolvedValue([]),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      },
+    });
+    class FakeAnalyser {
+      fftSize = 0;
+      smoothingTimeConstant = 0;
+      frequencyBinCount = 32;
+      getByteFrequencyData(data: Uint8Array) {
+        data.fill(128);
+      }
+    }
+    class FakeAudioContext {
+      state = "running";
+      createMediaStreamSource() {
+        return { connect: vi.fn() };
+      }
+      createAnalyser() {
+        return new FakeAnalyser();
+      }
+      close = vi.fn();
+    }
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+    let frame: (() => void) | null = null;
+    vi.stubGlobal("requestAnimationFrame", (cb: () => void) => {
+      frame = cb;
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    render(<ComposerMicButton onTranscript={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Voice dictation" }));
+    await act(async () => {
+      handlers.start?.({});
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    act(() => frame?.());
+    expect(getMicLevel()).toBeGreaterThan(0.5);
+    act(() => handlers.end?.({}));
+    expect(getMicLevel()).toBe(0);
   });
 
   it("exposes start, stop and the listening state to Voice mode", () => {

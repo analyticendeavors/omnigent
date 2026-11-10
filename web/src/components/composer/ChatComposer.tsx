@@ -126,14 +126,17 @@ export const ChatComposer = forwardRef<HTMLDivElement, ChatComposerProps>(functi
       ref={ref}
       data-composer-card
       className={cn(
-        "composer-reference-surface relative flex w-full flex-col rounded-2xl border transition-shadow duration-150 has-[textarea:focus]:shadow-[var(--composer-shadow-focus)] md:min-h-[105px]",
+        "group/composer-card composer-reference-surface relative flex w-full flex-col rounded-2xl border transition-shadow duration-150 has-[textarea:focus]:shadow-[var(--composer-shadow-focus)] md:min-h-[105px]",
         className,
       )}
       {...props}
     >
       {slots?.beforeInput}
       <ComposerInputArea
-        className={slots?.inputPrefix ? "max-h-[320px] overflow-y-auto" : undefined}
+        className={cn(
+          slots?.inputPrefix && "max-h-[320px] overflow-y-auto",
+          "group-data-[ae-voice-sheet]/composer-card:hidden",
+        )}
       >
         {slots?.inputPrefix}
         {slots?.inputBackdrop}
@@ -518,7 +521,7 @@ export const ComposerActionRow = forwardRef<HTMLDivElement, ComponentPropsWithou
       <div
         ref={ref}
         className={cn(
-          "group/composer-actions @container/composer-actions relative flex min-w-0 flex-nowrap items-center justify-between gap-2 data-[snug]:gap-0 pt-1 pb-2",
+          "group/composer-actions @container/composer-actions relative flex min-w-0 flex-nowrap items-center justify-between gap-2 data-[snug]:gap-0 pt-1 pb-2 group-data-[ae-voice-sheet]/composer-card:hidden",
           COMPOSER_CONTENT_INSET_CLASS,
           className,
         )}

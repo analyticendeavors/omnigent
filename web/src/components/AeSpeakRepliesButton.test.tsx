@@ -2,7 +2,13 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetCloudVoicesCache } from "@/lib/aeCloudVoice";
-import { getVoiceSnapshot, resetVoiceStore, setVoicePhase } from "@/lib/aeVoiceMode";
+import {
+  getVoiceSnapshot,
+  resetVoiceStore,
+  setVoiceBlocked,
+  setVoicePhase,
+  stopVoice,
+} from "@/lib/aeVoiceMode";
 import { resetSnipsStore } from "@/lib/aeVoiceSnips";
 import { useChatStore } from "@/store/chatStore";
 import { installFakeSpeech, makeVoice, removeFakeSpeech } from "@/test/fakeSpeech";
@@ -385,7 +391,7 @@ describe("AeSpeakRepliesButton", () => {
     it("gives the menu caret a real 44 px box on coarse pointers", async () => {
       renderButton();
       const trigger = screen.getByTestId("ae-speak-replies-menu");
-      for (const cls of ["pointer-coarse:h-11", "pointer-coarse:w-11", "pointer-coarse:ml-0"]) {
+      for (const cls of ["pointer-coarse:h-11", "pointer-coarse:w-9", "pointer-coarse:ml-0"]) {
         expect(trigger.className).toContain(cls);
       }
       expect(trigger.className).not.toContain("before:");
@@ -598,6 +604,42 @@ describe("Voice mode on the speaker button", () => {
     await user.click(screen.getByTestId("ae-speak-replies"));
     expect(getVoiceSnapshot("c1").on).toBe(false);
     expect(screen.getByTestId("ae-voice-phase")).toBeEmptyDOMElement();
+  });
+
+  it("primes playback inside the tap that turns Voice mode on, not the one that turns it off", async () => {
+    const synth = installFakeSpeech();
+    renderButton();
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("ae-speak-replies"));
+    expect(synth.spokenTexts).toEqual([" "]);
+    expect((synth.spoken[0] as unknown as { volume: number }).volume).toBe(0);
+    await user.click(screen.getByTestId("ae-speak-replies"));
+    expect(synth.spokenTexts).toEqual([" "]);
+  });
+
+  it("registers its stop for the voice panel", async () => {
+    const synth = installFakeSpeech();
+    renderButton();
+    const before = synth.cancelCount;
+    act(() => stopVoice("c1"));
+    expect(synth.cancelCount).toBeGreaterThan(before);
+  });
+
+  it("shows the phase only in the live region, not as a word beside the button", async () => {
+    const { container } = renderButton();
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("ae-speak-replies"));
+    act(() => setVoicePhase("c1", "listening"));
+    expect(container.querySelector("span.sm\\:inline")).toBeNull();
+    expect(screen.getByTestId("ae-voice-phase")).toHaveClass("sr-only");
+  });
+
+  it("reads a refused reply in the live region", async () => {
+    renderButton();
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("ae-speak-replies"));
+    act(() => setVoiceBlocked("c1", true));
+    expect(screen.getByTestId("ae-voice-phase")).toHaveTextContent("Tap to hear the reply");
   });
 
   it("shows the phase word for each phase", async () => {

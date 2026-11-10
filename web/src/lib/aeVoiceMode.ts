@@ -36,6 +36,10 @@ export interface VoiceSnapshot {
   speak: ((text: string) => void) | null;
   /** The person tapped to stop a reply: nothing more is spoken until the next send. */
   barged: boolean;
+  /** The sentence being spoken right now; "" when nothing is. */
+  caption: string;
+  /** The browser refused to play the reply; a tap plays it. */
+  blocked: boolean;
 }
 
 const KEY = "omnigent:ae-voice-mode:";
@@ -69,7 +73,15 @@ export function writeVoiceMode(chatId: string, on: boolean): void {
 
 const states = new Map<string, VoiceSnapshot>();
 const listeners = new Set<() => void>();
-const OFF: VoiceSnapshot = { on: false, phase: "off", speaking: false, speak: null, barged: false };
+const OFF: VoiceSnapshot = {
+  on: false,
+  phase: "off",
+  speaking: false,
+  speak: null,
+  barged: false,
+  caption: "",
+  blocked: false,
+};
 
 export function getVoiceSnapshot(chatId: string | null): VoiceSnapshot {
   if (chatId === null) return OFF;
@@ -161,6 +173,30 @@ export function setVoiceBarged(chatId: string, barged: boolean): void {
 
 export function setVoiceSpeaking(chatId: string, speaking: boolean): void {
   patch(chatId, { speaking });
+}
+
+export function setVoiceCaption(chatId: string, caption: string): void {
+  patch(chatId, { caption });
+}
+
+export function setVoiceBlocked(chatId: string, blocked: boolean): void {
+  patch(chatId, { blocked });
+}
+
+// Each chat's stop function, registered by its speaker button; kept out of the snapshot.
+const stops = new Map<string, () => void>();
+
+export function registerVoiceStop(chatId: string | null, stop: () => void): () => void {
+  if (chatId === null) return () => {};
+  stops.set(chatId, stop);
+  return () => {
+    if (stops.get(chatId) === stop) stops.delete(chatId);
+  };
+}
+
+/** Stops the chat's reply through its registered speaker; nothing when none is registered. */
+export function stopVoice(chatId: string): void {
+  stops.get(chatId)?.();
 }
 
 export function registerVoiceSpeaker(chatId: string, speak: (text: string) => void): () => void {

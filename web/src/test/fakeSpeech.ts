@@ -4,8 +4,10 @@ export class FakeUtterance {
   voice: unknown = null;
   lang = "";
   rate = 1;
+  volume = 1;
+  onstart: (() => void) | null = null;
   onend: (() => void) | null = null;
-  onerror: (() => void) | null = null;
+  onerror: ((e: { error: string }) => void) | null = null;
   text: string;
   constructor(text: string) {
     this.text = text;
@@ -26,6 +28,7 @@ export class FakeSynth {
   spokenTexts: string[] = [];
   ends: (() => void)[] = [];
   cancelCount = 0;
+  speaking = false;
   voices: SpeechSynthesisVoice[] = [];
   private listeners = new Set<() => void>();
 

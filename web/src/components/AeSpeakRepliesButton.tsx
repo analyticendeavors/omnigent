@@ -38,6 +38,7 @@ import {
   FAST_EFFORT,
   isSpeechSupported,
   listVoices,
+  primeVoicePlayback,
   onVoicesChanged,
   pickDefaultVoice,
   RATE_FASTER,
@@ -58,6 +59,7 @@ import {
 } from "@/lib/aeSpeakReplies";
 import {
   registerVoiceSpeaker,
+  registerVoiceStop,
   setVoiceBarged,
   setVoiceOn,
   setVoiceSpeaking,
@@ -290,6 +292,7 @@ function SpeakRepliesControl({
   });
   const voiceMode = useVoiceSnapshot(chatId);
   useEffect(() => registerVoiceSpeaker(chatId, speak), [chatId, speak]);
+  useEffect(() => registerVoiceStop(chatId, stop), [chatId, stop]);
   useEffect(() => setVoiceSpeaking(chatId, speaking), [chatId, speaking]);
 
   const fastAvailable = canSetEffort && !readOnly;
@@ -356,6 +359,8 @@ function SpeakRepliesControl({
 
   // Voice mode needs Speak replies, so turning it on turns that on too.
   const toggleVoice = (next: boolean) => {
+    // Inside the tap: iOS refuses later playback unless a tap started audio.
+    if (next) primeVoicePlayback();
     if (next && !on) toggleSpeak(true);
     setVoiceOn(chatId, next);
   };
@@ -386,25 +391,13 @@ function SpeakRepliesControl({
       : chosenDevice && voiceLabel(chosenDevice)) ?? "Default";
   const Icon = on ? Volume2Icon : VolumeXIcon;
 
-  const phaseWord = PHASE_WORD[voiceMode.phase];
+  const phaseWord =
+    voiceMode.on && voiceMode.blocked ? "Tap to hear the reply" : PHASE_WORD[voiceMode.phase];
   return (
     <DropdownMenu>
       <span className="sr-only" aria-live="polite" data-testid="ae-voice-phase">
         {phaseWord}
       </span>
-      {phaseWord ? (
-        <span
-          aria-hidden
-          className={cn(
-            "mr-1 hidden text-xs sm:inline",
-            voiceMode.phase === "thinking" || voiceMode.phase === "unavailable"
-              ? "text-amber-500"
-              : "text-teal-500",
-          )}
-        >
-          {phaseWord}
-        </span>
-      ) : null}
       <Button
         type="button"
         size="icon"
@@ -430,7 +423,7 @@ function SpeakRepliesControl({
           type="button"
           size="icon"
           variant="ghost"
-          className="-ml-1 h-7 w-4 text-muted-foreground pointer-coarse:ml-0 pointer-coarse:h-11 pointer-coarse:w-11"
+          className="-ml-1 h-7 w-4 text-muted-foreground pointer-coarse:ml-0 pointer-coarse:h-11 pointer-coarse:w-9"
           aria-label="Speak replies menu"
           data-testid="ae-speak-replies-menu"
           disabled={disabled}
