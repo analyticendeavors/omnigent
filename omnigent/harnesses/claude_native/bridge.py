@@ -6935,7 +6935,15 @@ def _tool_relay_handler_factory(
                 )
                 self._respond_hook_output(fail_ask_hook_output(hook_event, last_error))
                 return
-            hook_output = evaluation_response_to_hook_output(hook_event, verdict)
+            hook_output = evaluation_response_to_hook_output(
+                hook_event,
+                verdict,
+                prompt=(
+                    payload["prompt"]
+                    if hook_event == "UserPromptSubmit" and isinstance(payload.get("prompt"), str)
+                    else None
+                ),
+            )
             hook_specific = (hook_output or {}).get("hookSpecificOutput")
             decision = (
                 hook_specific.get("permissionDecision")

@@ -1251,6 +1251,39 @@ class TestBlockedPromptRecord:
         assert events[0]["omnigent_policy_blocked"] is True
 
 
+class TestPromptSuffixContext:
+    """A policy-appended prompt suffix reaches Devin as additionalContext."""
+
+    def test_prompt_suffix_becomes_additional_context(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import httpx
+
+        from omnigent.harnesses.devin_native import hook as devin_hook
+
+        body = {"result": "POLICY_ACTION_ALLOW", "data": {"user_content": "hi\n\nBe brief."}}
+        monkeypatch.setattr(
+            devin_hook,
+            "post_evaluate_with_retry",
+            lambda *a, **k: (
+                httpx.Response(200, json=body, request=httpx.Request("POST", "http://x")),
+                None,
+            ),
+        )
+        out = devin_hook._evaluate_policy(
+            "UserPromptSubmit",
+            {"hook_event_name": "UserPromptSubmit", "prompt": "hi"},
+            server_url="http://127.0.0.1:1",
+            session_id="conv_abc",
+        )
+        assert out == {
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": "Be brief.",
+            }
+        }
+
+
 class TestSessionEndRuleTeardown:
     """SessionEnd removes this session's agent rule so it doesn't outlive it."""
 

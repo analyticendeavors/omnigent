@@ -158,7 +158,15 @@ def _evaluate_policy(
         return fail_closed_hook_output(hook_event, "server returned a non-JSON body")
     if not isinstance(body, dict):
         return fail_closed_hook_output(hook_event, "server returned a non-object body")
-    return evaluation_response_to_hook_output(hook_event, body)
+    return evaluation_response_to_hook_output(
+        hook_event,
+        body,
+        prompt=(
+            payload["prompt"]
+            if hook_event == "UserPromptSubmit" and isinstance(payload.get("prompt"), str)
+            else None
+        ),
+    )
 
 
 def _devin_output_for_policy_verdict(

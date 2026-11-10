@@ -149,6 +149,41 @@ def test_evaluate_policy_fails_closed_when_unreachable(
     )
 
 
+def test_evaluate_policy_prompt_suffix_becomes_additional_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A policy that appends to the prompt reaches kimi as additionalContext."""
+    bridge_dir = _governed_bridge(tmp_path)
+    _feed_stdin(monkeypatch, {"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+    monkeypatch.setattr(
+        kimi_native_hook,
+        "post_evaluate_with_retry",
+        lambda *a, **k: (
+            httpx.Response(
+                200,
+                json={
+                    "result": "POLICY_ACTION_ALLOW",
+                    "data": {"user_content": "hi\n\nBe brief."},
+                },
+                request=httpx.Request("POST", "http://x"),
+            ),
+            None,
+        ),
+    )
+
+    exit_code = kimi_native_hook.main(["evaluate-policy", "--bridge-dir", str(bridge_dir)])
+
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": "Be brief.",
+        }
+    }
+
+
 def _capture_injection(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Patch ``inject_approval_keystroke`` to record the option keys it gets."""
     keys: list[str] = []

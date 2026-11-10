@@ -12032,6 +12032,49 @@ async def test_hook_evaluate_endpoint_allows(
 
 
 @pytest.mark.asyncio
+async def test_hook_evaluate_endpoint_passes_prompt_for_spoken_style_suffix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A policy that appends text to a prompt reaches Claude as additionalContext."""
+    prompt = "hello there"
+    suffix = "Speak plainly."
+    payload = {"hook_event_name": "UserPromptSubmit", "prompt": prompt}
+    client = _ScriptedPolicyClient(
+        {"result": "POLICY_ACTION_ALLOW", "data": {"user_content": f"{prompt}\n\n{suffix}"}}
+    )
+    relay, bridge_dir = _hook_relay(tmp_path, monkeypatch, client)
+    try:
+        body = await asyncio.to_thread(
+            _relay_request_raw, bridge_dir, "/hook/claude/evaluate-policy", payload
+        )
+        assert json.loads(body) == {
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": suffix,
+            }
+        }
+    finally:
+        relay.close()
+
+
+@pytest.mark.asyncio
+async def test_hook_evaluate_endpoint_bare_allow_on_prompt_is_no_opinion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bare ALLOW for a UserPromptSubmit still answers empty."""
+    payload = {"hook_event_name": "UserPromptSubmit", "prompt": "hello there"}
+    client = _ScriptedPolicyClient({"result": "POLICY_ACTION_ALLOW"})
+    relay, bridge_dir = _hook_relay(tmp_path, monkeypatch, client)
+    try:
+        body = await asyncio.to_thread(
+            _relay_request_raw, bridge_dir, "/hook/claude/evaluate-policy", payload
+        )
+        assert body == ""
+    finally:
+        relay.close()
+
+
+@pytest.mark.asyncio
 async def test_hook_evaluate_endpoint_returns_deny_hook_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
