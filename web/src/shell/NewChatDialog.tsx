@@ -337,6 +337,10 @@ import { BrandLogo } from "@/components/BrandLogo";
 import { PoweredByOmnigent } from "@/components/PoweredByOmnigent";
 import { SkillPills } from "@/components/SkillPills";
 import { ComposerMicButton } from "@/components/ComposerMicButton";
+import { AeVoicePanel } from "@/components/AeVoicePanel";
+import { AeVoiceStartButton } from "@/components/AeVoiceStartButton";
+import { useAeVoiceStart } from "@/hooks/useAeVoiceStart";
+import { type AeMicController, setVoiceOn, takeVoiceArm } from "@/lib/aeVoiceMode";
 import type { CostControlMode } from "@/components/CostRoutingControl";
 import {
   composerSendShortcutKeys,
@@ -5077,6 +5081,15 @@ export function NewChatLandingScreen() {
     (sandboxSelected ? sandboxRepoValid : selectedHost?.status === "online" && workspaceValid) &&
     !creating;
 
+  // Voice button: the first spoken sentence starts the chat as the Start button does.
+  const newChatMic = useRef<AeMicController | null>(null);
+  const voiceStart = useAeVoiceStart({
+    controller: newChatMic,
+    value: message,
+    canSubmit,
+    submit: () => void handleCreate(),
+  });
+
   // Why submit is disabled, surfaced as the button's tooltip. Checked in the
   // order a user fills the form — location first, then message — so the
   // tooltip always names the next missing input. Null when nothing is
@@ -5644,6 +5657,7 @@ export function NewChatLandingScreen() {
           metadata as Parameters<typeof createBundledSession>[1],
         );
         data = { id: bundled.id };
+        if (takeVoiceArm()) setVoiceOn(data.id, true);
         // Register create_session for the custom-agent (bundled) path too —
         // otherwise both sandbox and computer bundled creates emit nothing. Split
         // by the picked host; interactionTelemetry completes/settles the span.
@@ -5847,6 +5861,7 @@ export function NewChatLandingScreen() {
           return;
         }
         data = { id: created.id };
+        if (takeVoiceArm()) setVoiceOn(data.id, true);
         // Register create_session (created → first AI activity), split by host.
         // New Chat is the only create path that can produce a managed sandbox;
         // interactionTelemetry completes/settles the span once the session runs.
@@ -6658,6 +6673,18 @@ export function NewChatLandingScreen() {
               slots={{
                 beforeInput: (
                   <>
+                    {voiceStart.armed ? (
+                      <AeVoicePanel
+                        layout={isCoarsePointer && isMobileViewport ? "sheet" : "bar"}
+                        phase={voiceStart.phase}
+                        blocked={false}
+                        heard={message}
+                        caption=""
+                        onEnd={voiceStart.disarm}
+                        onStop={() => {}}
+                        onResume={() => {}}
+                      />
+                    ) : null}
                     {/* Skill suggestions — floats above the composer box. */}
                     {slashCompletion.open && (
                       <SlashCommandMenu
@@ -7048,15 +7075,26 @@ export function NewChatLandingScreen() {
                         triggerClassName="text-[13px] leading-5"
                       />
                     </div>
+                    <AeVoiceStartButton
+                      armed={voiceStart.armed}
+                      onToggle={voiceStart.toggle}
+                      disabled={creating}
+                      className="size-8 md:size-7"
+                    />
                     <ComposerMicButton
                       className="size-8 md:size-7"
                       enableHotkey
+                      controller={newChatMic}
+                      onListeningChange={voiceStart.onListening}
                       disabled={creating}
                       onVoiceStart={() => {
                         voiceSnapshotRef.current = message;
                       }}
                       onVoiceDiscard={() => setMessage(voiceSnapshotRef.current)}
-                      onTranscript={dictation.appendFinal}
+                      onTranscript={(t) => {
+                        dictation.appendFinal(t);
+                        voiceStart.onFinal(t);
+                      }}
                       onInterim={dictation.replaceInterim}
                     />
                     <TooltipProvider>

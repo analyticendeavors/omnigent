@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  armVoiceForNextChat,
   customAllowed,
+  disarmVoiceForNextChat,
   getVoiceSnapshot,
   isDoneWord,
   matchSpokenOption,
@@ -16,6 +18,7 @@ import {
   stopVoice,
   syncVoiceLabel,
   splitDone,
+  takeVoiceArm,
 } from "./aeVoiceMode";
 
 const LABELS = ["Force it when the image lands", "Let the timer do it", "Hold it"];
@@ -221,5 +224,22 @@ describe("caption, blocked and stop", () => {
     stopVoice("c1");
     expect(stop).toHaveBeenCalledTimes(1);
     expect(() => stopVoice("nobody")).not.toThrow();
+  });
+});
+
+describe("arming the next chat", () => {
+  afterEach(() => disarmVoiceForNextChat());
+
+  it("takeVoiceArm is false until armed, true once, then false again", () => {
+    expect(takeVoiceArm()).toBe(false);
+    armVoiceForNextChat();
+    expect(takeVoiceArm()).toBe(true);
+    expect(takeVoiceArm()).toBe(false);
+  });
+
+  it("disarm clears the flag", () => {
+    armVoiceForNextChat();
+    disarmVoiceForNextChat();
+    expect(takeVoiceArm()).toBe(false);
   });
 });

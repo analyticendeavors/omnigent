@@ -183,6 +183,25 @@ export function setVoiceBlocked(chatId: string, blocked: boolean): void {
   patch(chatId, { blocked });
 }
 
+// New-chat page: the Voice button arms this flag, and the chat the page creates next
+// opens with Voice mode on. Module state, because the chat does not exist yet.
+let voiceArmed = false;
+
+export function armVoiceForNextChat(): void {
+  voiceArmed = true;
+}
+
+export function disarmVoiceForNextChat(): void {
+  voiceArmed = false;
+}
+
+/** True once when the flag was armed; clears it. */
+export function takeVoiceArm(): boolean {
+  const was = voiceArmed;
+  voiceArmed = false;
+  return was;
+}
+
 // Each chat's stop function, registered by its speaker button; kept out of the snapshot.
 const stops = new Map<string, () => void>();
 

@@ -270,6 +270,11 @@ export const AE_SETTING_HINTS = {
     hint: "Microphone for dictation and Voice mode. Saved on this device; a change applies the next time the mic starts. Default: System default.",
     source: "tooltip",
   },
+  "voice.start": {
+    label: "Voice mode",
+    hint: "Tap to talk: the mic listens, your first sentence starts the chat, and the chat opens with Voice mode on so the reply is spoken.",
+    source: "tooltip",
+  },
   "voice.speaker": {
     label: "Speaker",
     hint: "Where Natural (cloud) voices play. This device voices always use the system default. Saved on this device. Default: System default.",
