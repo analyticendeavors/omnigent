@@ -32,7 +32,9 @@ export function useAeModelWatch(): void {
     queryFn: fetchServedIds,
     staleTime: STALE_MS,
     retry: false,
-    refetchOnWindowFocus: false,
+    // An app left open still learns of a new model: hourly, and on focus once the data is stale.
+    refetchInterval: STALE_MS,
+    refetchOnWindowFocus: true,
   });
   const ids = query.data;
   useEffect(() => {

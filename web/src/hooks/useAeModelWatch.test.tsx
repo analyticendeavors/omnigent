@@ -71,6 +71,17 @@ describe("useAeModelWatch", () => {
     expect(aeWatchedModels()).toEqual([]);
   });
 
+  it("rereads hourly and on focus, so an open app learns of a new model", async () => {
+    mocks.fetch.mockResolvedValue(json({ served_ids: [] }));
+    renderHook(() => useAeModelWatch(), { wrapper });
+    await waitFor(() => expect(mocks.fetch).toHaveBeenCalled());
+    const options = client.getQueryCache().find({ queryKey: ["ae", "model-watch"] })?.observers[0]
+      ?.options;
+    expect(options?.refetchInterval).toBe(60 * 60 * 1000);
+    expect(options?.refetchOnWindowFocus).toBe(true);
+    expect(options?.staleTime).toBe(60 * 60 * 1000);
+  });
+
   it("does not throw when the read itself rejects", async () => {
     mocks.fetch.mockRejectedValue(new Error("offline"));
     const { result } = renderHook(() => useAeModelWatch(), { wrapper });

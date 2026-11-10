@@ -303,3 +303,33 @@ describe("the watched known list", () => {
     );
   });
 });
+
+describe("a watched family the catalog does not list", () => {
+  afterEach(() => aeSetWatchedModels([]));
+  const SUB = { kind: "subscription", label: "Subscription", name: "claude" };
+  const FABLE_ONLY: NativeModelOption[] = [
+    { id: "claude-fable-5-2[1m]", model: "claude-fable-5-2", displayName: "Fable", source: SUB },
+  ];
+
+  it("adds one subscription row for a watched Mythos id", () => {
+    aeSetWatchedModels(["claude-mythos-5-2"]);
+    const row = aeWithClaudeVersions(FABLE_ONLY).find((r) => r.id === "claude-mythos-5-2");
+    expect(row).toEqual({
+      id: "claude-mythos-5-2",
+      model: "claude-mythos-5-2",
+      displayName: "Mythos 5.2",
+      source: SUB,
+    });
+  });
+
+  it("adds nothing from the static list alone", () => {
+    const rows = aeWithClaudeVersions(FABLE_ONLY);
+    expect(rows.some((r) => r.id.includes("opus") || r.id.includes("mythos"))).toBe(false);
+  });
+
+  it("adds nothing when the catalog has no subscription row", () => {
+    aeSetWatchedModels(["claude-mythos-5-2"]);
+    const other: NativeModelOption[] = [{ id: "x", model: "x", displayName: "X" }];
+    expect(aeWithClaudeVersions(other)).toBe(other);
+  });
+});

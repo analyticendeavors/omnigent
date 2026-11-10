@@ -231,7 +231,21 @@ export function aeMergeKnownClaudeModels(
     )?.source;
     older.push({ id, model: id, displayName: aeClaudeVersionLabel(id) ?? id, source });
   }
-  return [...relabeled, ...older];
+  // A watched id (the box saw it answer) whose family the catalog does not list at all would never
+  // show; it gets one subscription row of its own. The static list never adds a family.
+  const fresh = new Map<string, { version: AeClaudeVersion; id: string }>();
+  for (const id of new Set([...extraKnown, ...watched])) {
+    const version = WATCHED_ID.test(id) ? aeClaudeVersion(id) : null;
+    if (!version || newest.has(version.family)) continue;
+    const held = fresh.get(version.family);
+    if (!held || compareVersions(version, held.version) > 0)
+      fresh.set(version.family, { version, id });
+  }
+  const source = subscriptionRows[0]?.source;
+  const added: NativeModelOption[] = [...fresh.values()]
+    .filter(({ id }) => !rows.some((row) => row.id === id))
+    .map(({ id }) => ({ id, model: id, displayName: aeClaudeVersionLabel(id) ?? id, source }));
+  return [...relabeled, ...older, ...added];
 }
 
 /** {@link aeMergeKnownClaudeModels} with the built-in known list. */
