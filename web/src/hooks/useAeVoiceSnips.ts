@@ -27,7 +27,14 @@ export interface UseAeVoiceSnipsArgs {
   canSend: boolean;
 }
 
-export function useAeVoiceSnips(args: UseAeVoiceSnipsArgs): { active: boolean; pending: boolean } {
+export interface AeVoiceSnips {
+  active: boolean;
+  pending: boolean;
+  /** Wire to the attachments hook's onAccepted: fires only for files the user just added. */
+  onAccepted: (accepted: File[]) => void;
+}
+
+export function useAeVoiceSnips(args: UseAeVoiceSnipsArgs): AeVoiceSnips {
   const { chatId, voiceOn, phase, cardActive, files, value, canSend } = args;
   const snips = useSendSnips();
   const active = voiceOn && snips;
@@ -43,23 +50,66 @@ export function useAeVoiceSnips(args: UseAeVoiceSnipsArgs): { active: boolean; p
 
   const clock = useRef<ReturnType<typeof setTimeout> | null>(null);
   const submitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The clock fired but the phase, a card or canSend said wait.
   const held = useRef(false);
-  const noteSet = useRef(false);
-  const prevFiles = useRef(files);
+  // The hook itself wrote "Note this." and owes a submit; typed text never arms.
+  const noteArmed = useRef(false);
+  // The armed submit found canSend, the phase or a card in the way.
+  const submitHeld = useRef(false);
 
   const stopClock = () => {
     if (clock.current !== null) clearTimeout(clock.current);
     clock.current = null;
   };
 
+  const stopSubmit = () => {
+    if (submitTimer.current !== null) clearTimeout(submitTimer.current);
+    submitTimer.current = null;
+  };
+
   const cancel = () => {
     stopClock();
+    stopSubmit();
     held.current = false;
-    noteSet.current = false;
+    submitHeld.current = false;
+    // Only a draft this hook wrote while armed is ever cleared.
+    if (noteArmed.current && latest.current.value === SNIP_NOTE) latest.current.setValue("");
+    noteArmed.current = false;
     setPending(false);
   };
 
-  // Send the note when every condition holds; otherwise hold for the next re-check.
+  // Submit the armed note when every condition holds; otherwise hold for the next re-check.
+  const trySubmit = () => {
+    if (!noteArmed.current) return;
+    const l = latest.current;
+    if (!activeRef.current || imageCountRef.current === 0) {
+      cancel();
+      return;
+    }
+    if (l.value !== SNIP_NOTE) {
+      // The draft was changed by someone else: leave it alone.
+      noteArmed.current = false;
+      submitHeld.current = false;
+      return;
+    }
+    if (l.phase !== "listening" || l.cardActive || !l.canSend) {
+      submitHeld.current = true;
+      return;
+    }
+    submitHeld.current = false;
+    noteArmed.current = false;
+    l.submit();
+  };
+
+  const scheduleSubmit = () => {
+    stopSubmit();
+    submitTimer.current = setTimeout(() => {
+      submitTimer.current = null;
+      trySubmit();
+    }, 0);
+  };
+
+  // Write the note when every condition holds; otherwise hold for the next re-check.
   const attempt = () => {
     const l = latest.current;
     if (!activeRef.current || imageCountRef.current === 0 || l.value.trim() !== "") {
@@ -72,7 +122,7 @@ export function useAeVoiceSnips(args: UseAeVoiceSnipsArgs): { active: boolean; p
     }
     held.current = false;
     setPending(false);
-    noteSet.current = true;
+    noteArmed.current = true;
     l.setValue(SNIP_NOTE);
   };
 
@@ -91,16 +141,13 @@ export function useAeVoiceSnips(args: UseAeVoiceSnipsArgs): { active: boolean; p
     }, SNIP_WAIT_MS);
   };
 
-  // A new picture: say "Got it." once and (re)start the clock.
-  useEffect(() => {
-    const prev = prevFiles.current;
-    prevFiles.current = files;
-    if (!activeRef.current || files === prev) return;
-    if (countImageFiles(files) <= countImageFiles(prev)) return;
+  // The user just attached a picture: say "Got it." once and (re)start the clock.
+  const onAccepted = (accepted: File[]) => {
+    if (!activeRef.current || countImageFiles(accepted) === 0) return;
     const id = latest.current.chatId;
     if (id) getVoiceSnapshot(id).speak?.(SNIP_ACK);
     startClock();
-  }, [files]);
+  };
 
   // Either switch off, or no picture left: nothing to send.
   useEffect(() => {
@@ -111,26 +158,19 @@ export function useAeVoiceSnips(args: UseAeVoiceSnipsArgs): { active: boolean; p
   useEffect(
     () => () => {
       cancel();
-      if (submitTimer.current !== null) clearTimeout(submitTimer.current);
-      submitTimer.current = null;
     },
     [chatId],
   );
 
-  // Held because the phase was not listening: send as soon as it is.
+  // Held because the phase was not listening, a card was open or sending was refused.
   useEffect(() => {
     if (held.current) attempt();
+    if (submitHeld.current) scheduleSubmit();
   }, [phase, cardActive, canSend, value]);
 
-  // Submit on the tick after the render that carries the note.
+  // Submit on the tick after the render that carries the note the hook wrote.
   useEffect(() => {
-    if (!noteSet.current || value !== SNIP_NOTE) return;
-    noteSet.current = false;
-    submitTimer.current = setTimeout(() => {
-      submitTimer.current = null;
-      const l = latest.current;
-      if (l.value === SNIP_NOTE && l.canSend) l.submit();
-    }, 0);
+    if (noteArmed.current && value === SNIP_NOTE) scheduleSubmit();
   }, [value]);
 
   // A picture pasted anywhere outside the composer's own fields.
@@ -147,5 +187,5 @@ export function useAeVoiceSnips(args: UseAeVoiceSnipsArgs): { active: boolean; p
     return () => window.removeEventListener("paste", onPaste);
   }, [active]);
 
-  return { active, pending };
+  return { active, pending, onAccepted };
 }

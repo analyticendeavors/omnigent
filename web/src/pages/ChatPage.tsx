@@ -2584,6 +2584,7 @@ function ComposerImpl(
   // Attachments — same hook as the landing composer; the live composer's
   // own side effects (dirty tracking, desktop refocus) stay in the
   // callbacks so the hook never learns about sessions or focus.
+  const snipsAcceptedRef = useRef<((files: File[]) => void) | null>(null);
   const {
     files,
     attachmentError,
@@ -2595,7 +2596,8 @@ function ComposerImpl(
     clearError,
     clear: clearAttachments,
   } = useComposerAttachments({
-    onAccepted: () => {
+    onAccepted: (accepted) => {
+      snipsAcceptedRef.current?.(accepted);
       dirtyRef.current = true;
       // Return focus to the composer so the user can keep typing right
       // after attaching (the file picker / paperclip button steals it).
@@ -3563,7 +3565,7 @@ function ComposerImpl(
     ),
     labels: composerSession?.labels,
   });
-  useAeVoiceSnips({
+  const snips = useAeVoiceSnips({
     chatId: composerSessionId,
     voiceOn: voice.on,
     phase: voice.phase,
@@ -3580,6 +3582,7 @@ function ComposerImpl(
       hasPendingElicitation
     ),
   });
+  snipsAcceptedRef.current = snips.onAccepted;
 
   return (
     <form
