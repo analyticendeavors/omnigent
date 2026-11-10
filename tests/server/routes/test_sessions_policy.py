@@ -547,6 +547,51 @@ async def test_input_allow_verdict():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        ({"user_content": "hello tell me about canada\n\nSpeak plainly."}, "Speak plainly."),
+        ("hello tell me about canada\n\nSpeak plainly.", "Speak plainly."),
+        ({"user_content": "something else entirely"}, None),
+        (None, None),
+    ],
+)
+async def test_input_allow_keeps_only_an_appended_rewrite(data: Any, expected: str | None):
+    """ALLOW with an appended rewrite stores the suffix for the hook; else nothing."""
+    from omnigent.runtime import pending_inputs
+
+    pending_inputs.reset_for_tests()
+    conv_store = _FakeConversationStore()
+    agent_store = _FakeAgentStore(agent=_make_agent())
+    conv = conv_store.get_conversation("sess_1")
+    body = _make_user_message_body()
+    loaded = LoadedAgent(spec=_make_spec_with_guardrails(), workdir="/tmp/fake")
+    allow_result = PolicyResult(action=PolicyAction.ALLOW, data=data)
+
+    async def _eval(_ctx: Any) -> PolicyResult:
+        return allow_result
+
+    try:
+        with (
+            patch(_CACHE_PATCH) as mock_cache,
+            patch(_ENGINE_PATCH) as mock_build,
+        ):
+            mock_cache.return_value.load.return_value = loaded
+            mock_engine = mock_build.return_value
+            mock_engine.evaluate = _eval
+            mock_engine.apply_label_writes = lambda x: None
+
+            result = await _evaluate_input_policy(
+                _FakeRequest(), "sess_1", conv, body, conv_store, agent_store, None
+            )
+
+        assert result is None
+        assert pending_inputs.take_request_context("sess_1") == expected
+    finally:
+        pending_inputs.reset_for_tests()
+
+
+@pytest.mark.asyncio
 async def test_input_deny_verdict():
     """INPUT policy evaluation returns deny when the engine DENYs."""
     conv_store = _FakeConversationStore()

@@ -9406,6 +9406,27 @@ async def _evaluate_tool_call_policy(
     }
 
 
+def _keep_appended_request_text(session_id: str, user_text: str, data: object) -> None:
+    """
+    Remember text a request-phase policy appended to a message, for the native hook.
+
+    A native session's hook re-evaluates the prompt and the hook route answers a
+    web prompt with a bare ALLOW; this slot lets it hand the appended part back.
+    A rewrite that does not start with the original text is ignored.
+
+    :param session_id: Session id, e.g. ``"conv_abc123"``.
+    :param user_text: The message text the policy saw.
+    :param data: The policy's replacement payload (``result.data``), e.g.
+        ``{"user_content": "hi\\n\\nbe brief"}``.
+    """
+    rewritten = data.get("user_content") if isinstance(data, dict) else data
+    if not isinstance(rewritten, str) or not user_text or not rewritten.startswith(user_text):
+        return
+    suffix = rewritten[len(user_text) :].strip()
+    if suffix:
+        pending_inputs.set_request_context(session_id, suffix)
+
+
 async def _evaluate_input_policy(
     request: Request,
     session_id: str,
@@ -9516,6 +9537,7 @@ async def _evaluate_input_policy(
     if result.action == PolicyAction.ALLOW:
         if result.set_labels:
             await asyncio.to_thread(engine.apply_label_writes, result.set_labels)
+        _keep_appended_request_text(session_id, user_text, result.data)
         return None
 
     if result.action == PolicyAction.DENY:

@@ -382,11 +382,13 @@ describe("AeSpeakRepliesButton", () => {
       delete (HTMLMediaElement.prototype as { setSinkId?: unknown }).setSinkId;
     });
 
-    it("gives the menu caret a 44 px hit area on coarse pointers", async () => {
+    it("gives the menu caret a real 44 px box on coarse pointers", async () => {
       renderButton();
       const trigger = screen.getByTestId("ae-speak-replies-menu");
-      expect(trigger.className).toContain("pointer-coarse:before:-inset-x-3.5");
-      expect(trigger.className).toContain("pointer-coarse:before:-inset-y-2");
+      for (const cls of ["pointer-coarse:h-11", "pointer-coarse:w-11", "pointer-coarse:ml-0"]) {
+        expect(trigger.className).toContain(cls);
+      }
+      expect(trigger.className).not.toContain("before:");
     });
 
     it("renders both rows under Speed and saves a pick", async () => {

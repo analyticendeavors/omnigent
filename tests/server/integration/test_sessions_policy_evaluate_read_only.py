@@ -491,3 +491,56 @@ async def test_request_phase_gate_runs_when_the_only_queued_web_prompt_was_inter
     # The gate was entered at the REQUEST phase and its decline applied.
     assert held.get("phase") == Phase.REQUEST
     assert resp.json()["result"] == "POLICY_ACTION_DENY"
+
+
+async def test_request_phase_dedup_returns_the_text_the_ingest_gate_appended(
+    auth_client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """
+    With a web prompt in flight and a kept request context, the answer is the
+    rewritten prompt, so the native hook can pass the appended part on.
+    """
+    from omnigent.runtime import pending_inputs
+
+    agent = await create_test_agent(auth_client, user=OWNER)
+    session_id = await _create_session_as(auth_client, OWNER, agent["id"])
+    pending_inputs.record(session_id, [{"type": "input_text", "text": "hello"}])
+    pending_inputs.set_request_context(session_id, "Speak plainly.")
+    try:
+        resp = await auth_client.post(
+            f"/v1/sessions/{session_id}/policies/evaluate",
+            json=_request_request("hello"),
+            headers={"X-Forwarded-Email": OWNER},
+        )
+    finally:
+        pending_inputs.reset_for_tests()
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {
+        "result": "POLICY_ACTION_ALLOW",
+        "data": {"user_content": "hello\n\nSpeak plainly."},
+    }
+
+
+async def test_request_phase_dedup_without_request_context_is_a_bare_allow(
+    auth_client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """With no kept request context the dedup answer carries no ``data``."""
+    from omnigent.runtime import pending_inputs
+
+    agent = await create_test_agent(auth_client, user=OWNER)
+    session_id = await _create_session_as(auth_client, OWNER, agent["id"])
+    pending_inputs.record(session_id, [{"type": "input_text", "text": "hello"}])
+    try:
+        resp = await auth_client.post(
+            f"/v1/sessions/{session_id}/policies/evaluate",
+            json=_request_request("hello"),
+            headers={"X-Forwarded-Email": OWNER},
+        )
+    finally:
+        pending_inputs.reset_for_tests()
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"result": "POLICY_ACTION_ALLOW"}

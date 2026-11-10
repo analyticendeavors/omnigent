@@ -749,6 +749,42 @@ def resolve_matching_text(
         )
 
 
+# One request-context slot per conversation: the text a request-phase policy appended
+# to a web-composer message, kept for the native hook's dedup answer (see routes_hooks).
+_REQUEST_CONTEXT_TTL_S = 600.0
+_request_context: dict[str, tuple[float, str]] = {}
+
+
+def set_request_context(conversation_id: str, text: str) -> None:
+    """
+    Keep the text a request-phase policy appended to a web message.
+
+    The ingest gate drops a policy's rewrite on ALLOW; this slot carries the
+    appended part to the native hook route, which hands it back to the hook.
+    One slot per session, overwritten by a newer call, dropped after 10 minutes.
+
+    :param conversation_id: Conversation/session id, e.g. ``"conv_abc123"``.
+    :param text: The appended part, e.g. ``"Voice mode is on: ..."``.
+    """
+    with _lock:
+        _request_context[conversation_id] = (_now(), text)
+
+
+def take_request_context(conversation_id: str) -> str | None:
+    """
+    Return and clear the session's request-context slot.
+
+    :param conversation_id: Conversation/session id, e.g. ``"conv_abc123"``.
+    :returns: The stored text, or ``None`` when the slot is empty or older than
+        10 minutes.
+    """
+    with _lock:
+        entry = _request_context.pop(conversation_id, None)
+        if entry is None or _now() - entry[0] > _REQUEST_CONTEXT_TTL_S:
+            return None
+        return entry[1]
+
+
 def has_pending(conversation_id: str) -> bool:
     """
     Report whether a session still holds an un-consumed message.
@@ -949,3 +985,4 @@ def reset_for_tests() -> None:
     """
     with _lock:
         _pending.clear()
+        _request_context.clear()

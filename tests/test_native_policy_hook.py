@@ -254,11 +254,7 @@ def test_user_prompt_submit_maps_to_phase_request() -> None:
     assert result is not None
     event = result["event"]
     assert event["type"] == "PHASE_REQUEST"
-    assert event["data"] == {
-        "text": "delete the prod database",
-        "user_content": "delete the prod database",
-        "attachments": [],
-    }
+    assert event["data"] == {"text": "delete the prod database"}
     # A context dict must exist so the per-harness hook can stamp model/harness.
     assert event["context"] == {}
 
@@ -272,7 +268,7 @@ def test_user_prompt_submit_missing_prompt_yields_empty_text() -> None:
     """
     result = hook_payload_to_evaluation_request("UserPromptSubmit", {})
     assert result is not None
-    assert result["event"]["data"] == {"text": "", "user_content": "", "attachments": []}
+    assert result["event"]["data"] == {"text": ""}
 
 
 @pytest.mark.parametrize("action", ["POLICY_ACTION_DENY", "POLICY_ACTION_ASK"])
@@ -361,6 +357,16 @@ def test_user_prompt_submit_rewrite_not_prefixed_by_prompt_returns_none(
     )
     assert output is None
     assert "rewrote the prompt" in capsys.readouterr().err
+
+
+def test_user_prompt_submit_empty_prompt_never_injects_the_rewrite() -> None:
+    """An empty prompt would prefix-match anything; no context comes back."""
+    output = evaluation_response_to_hook_output(
+        "UserPromptSubmit",
+        {"result": "POLICY_ACTION_ALLOW", "data": {"user_content": "anything"}},
+        prompt="",
+    )
+    assert output is None
 
 
 def test_user_prompt_submit_deny_ignores_data() -> None:

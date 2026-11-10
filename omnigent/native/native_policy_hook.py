@@ -313,17 +313,14 @@ def hook_payload_to_evaluation_request(
     """
     if hook_event == _USER_PROMPT_SUBMIT:
         # Request-phase gate for native sessions. The server reads REQUEST
-        # content from ``data.text``; policies read ``data.user_content``.
+        # content from ``data.text`` (see ``_build_evaluation_context``).
         prompt = payload.get("prompt", "")
-        prompt_text = prompt if isinstance(prompt, str) else json.dumps(prompt)
         return {
             "event": {
                 "type": "PHASE_REQUEST",
                 "target": "",
                 "data": {
-                    "text": prompt_text,
-                    "user_content": prompt_text,
-                    "attachments": [],
+                    "text": prompt if isinstance(prompt, str) else json.dumps(prompt),
                 },
                 "context": {},
             },
@@ -378,15 +375,15 @@ def _prompt_additional_context(
         ``{"result": "POLICY_ACTION_ALLOW", "data": {"user_content": "hi\\n\\nbe brief"}}``.
     :param prompt: The submitted prompt, e.g. ``"hi"``.
     :returns: ``{"hookSpecificOutput": ...}`` carrying only the appended part,
-        or ``None`` when there is no data, no prompt, or the policy rewrote
-        rather than appended.
+        or ``None`` when there is no data, no (or an empty) prompt, or the
+        policy rewrote rather than appended.
     """
     data = eval_response.get("data")
     if isinstance(data, dict):
         rewritten = data.get("user_content")
     else:
         rewritten = data
-    if not isinstance(rewritten, str) or prompt is None:
+    if not isinstance(rewritten, str) or not prompt:
         return None
     if not rewritten.startswith(prompt):
         print(
@@ -447,6 +444,9 @@ def evaluation_response_to_hook_output(
     ALLOW (and the engine's no-match default) returns ``None`` so the prompt
     proceeds, unless the policy appended text to the prompt (``data``): that
     appended part is returned as ``hookSpecificOutput.additionalContext``.
+    For a message typed in the web composer the server evaluates policies at
+    ingest, keeps the appended part for the session, and the hook route returns
+    it here as the rewritten prompt (instead of a bare ALLOW).
     Unlike ``PreToolUse``, there is no separate user-consent gate
     on a prompt, so ALLOW need not preserve one.
 

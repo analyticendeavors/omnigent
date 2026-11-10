@@ -993,3 +993,26 @@ def test_interrupted_entries_expire_with_the_ttl(monkeypatch: pytest.MonkeyPatch
 
     clock["t"] = 1000.0 + pending_inputs._TTL_S + 0.1
     assert pending_inputs.pending_ids("conv_a") == []
+
+
+def test_request_context_is_taken_once() -> None:
+    """The appended text comes back once, then the slot is empty."""
+    pending_inputs.set_request_context("conv_a", "be brief")
+    assert pending_inputs.take_request_context("conv_a") == "be brief"
+    assert pending_inputs.take_request_context("conv_a") is None
+
+
+def test_request_context_newer_set_replaces_older() -> None:
+    """One slot per session: a newer set overwrites the older text."""
+    pending_inputs.set_request_context("conv_a", "old")
+    pending_inputs.set_request_context("conv_a", "new")
+    assert pending_inputs.take_request_context("conv_a") == "new"
+
+
+def test_request_context_expires_after_ten_minutes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A slot older than 10 minutes is dropped."""
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(pending_inputs, "_now", lambda: clock["t"])
+    pending_inputs.set_request_context("conv_a", "stale")
+    clock["t"] = 1000.0 + 601.0
+    assert pending_inputs.take_request_context("conv_a") is None

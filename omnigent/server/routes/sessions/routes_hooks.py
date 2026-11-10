@@ -807,6 +807,20 @@ def register_hooks_routes(
         # is "is a web prompt in flight", not text correlation (the native
         # transcript gives no reliable id channel — see ``pending_inputs``).
         if phase == Phase.REQUEST and pending_inputs.snapshot_for(session_id):
+            # Hand back the text the ingest gate's policies appended, as a rewrite of
+            # the prompt, so the hook can pass it to the model as context.
+            suffix = pending_inputs.take_request_context(session_id)
+            raw = raw_data.get("text") if isinstance(raw_data, dict) else raw_data
+            if suffix and isinstance(raw, str) and raw:
+                return Response(
+                    content=json.dumps(
+                        {
+                            "result": "POLICY_ACTION_ALLOW",
+                            "data": {"user_content": f"{raw}\n\n{suffix}"},
+                        }
+                    ),
+                    media_type="application/json",
+                )
             return Response(
                 content=json.dumps({"result": "POLICY_ACTION_ALLOW"}),
                 media_type="application/json",

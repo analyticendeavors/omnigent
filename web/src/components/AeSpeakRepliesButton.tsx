@@ -430,7 +430,7 @@ function SpeakRepliesControl({
           type="button"
           size="icon"
           variant="ghost"
-          className="relative -ml-1 h-7 w-4 text-muted-foreground pointer-coarse:before:absolute pointer-coarse:before:-inset-x-3.5 pointer-coarse:before:-inset-y-2 pointer-coarse:before:content-['']"
+          className="-ml-1 h-7 w-4 text-muted-foreground pointer-coarse:ml-0 pointer-coarse:h-11 pointer-coarse:w-11"
           aria-label="Speak replies menu"
           data-testid="ae-speak-replies-menu"
           disabled={disabled}
