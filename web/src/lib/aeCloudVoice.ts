@@ -6,6 +6,7 @@ import { emitCaption, type Speaker, type SpeakOptions } from "./aeSpeakReplies";
 import { splitForSpeech } from "./aeSpeechText";
 import { speakerSinkId } from "./aeAudioDevices";
 import { clearPlaybackBlocked, markPlaybackBlocked } from "./aeVoicePlayback";
+import { logVoice } from "./aeVoiceLog";
 import { withBasePath } from "./basePath";
 import { authenticatedFetch } from "./identity";
 
@@ -107,6 +108,8 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
       const controller = new AbortController();
       item.controller = controller;
       inflight++;
+      const t0 = Date.now();
+      logVoice("tts fetch");
       item.result = authenticatedFetch(withBasePath("/v1/ae/tts"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -117,7 +120,11 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
         }),
         signal: controller.signal,
       })
-        .then((r) => (r.ok ? r.blob() : null))
+        .then((r) => {
+          if (r.ok) logVoice("tts ok", `${Date.now() - t0} ms`);
+          else logVoice("tts fail", String(r.status));
+          return r.ok ? r.blob() : null;
+        })
         .catch(() => null)
         .finally(() => {
           inflight--;
@@ -163,12 +170,24 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
         resolve(ok);
       };
       release = () => finish(true);
-      el.onended = () => finish(true);
-      el.onerror = () => finish(false);
+      el.onended = () => {
+        logVoice("play end");
+        finish(true);
+      };
+      el.onerror = () => {
+        logVoice("play error", `media ${el.error?.code}`);
+        finish(false);
+      };
       el.src = url;
+      logVoice("play start");
       // A refused play() is not a failure: the item stays current until a tap plays it again.
       const refuse = (e: unknown): boolean => {
-        if ((e as { name?: string } | null)?.name !== "NotAllowedError") return false;
+        const name = (e as { name?: string } | null)?.name;
+        if (name !== "NotAllowedError") {
+          logVoice("play error", String(name));
+          return false;
+        }
+        logVoice("play blocked");
         markPlaybackBlocked(() => {
           void Promise.resolve(el.play())
             .then(clearPlaybackBlocked)

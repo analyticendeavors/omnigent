@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
 import { useAeSpeakReplies } from "@/hooks/useAeSpeakReplies";
+import { logVoice, requestVoiceLogInsert } from "@/lib/aeVoiceLog";
 import {
   micDevicesSupported,
   speakerSelectionSupported,
@@ -108,7 +109,8 @@ function RowHint({
     | "voice.voice"
     | "voice.rate"
     | "voice.microphone"
-    | "voice.speaker";
+    | "voice.speaker"
+    | "voice.log";
 }) {
   const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
   return (
@@ -371,6 +373,7 @@ function SpeakRepliesControl({
   const tapSpeaker = () => {
     if (voiceMode.on && speaking) {
       // A barge-in: stop now and stay quiet for the rest of this turn.
+      logVoice("barge");
       setVoiceBarged(chatId, true);
       stop();
     } else toggleVoice(!voiceMode.on);
@@ -584,6 +587,12 @@ function SpeakRepliesControl({
             Stop speaking
           </DropdownMenuItem>
         </div>
+        <DropdownMenuItem onSelect={requestVoiceLogInsert} data-testid="ae-voice-log">
+          <span className={ROW_LABEL_CLASS}>
+            Add voice log to message
+            <RowHint id="voice.log" />
+          </span>
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

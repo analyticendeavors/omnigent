@@ -3,6 +3,7 @@
 // next sentence, or alone as "Note this." when nothing is said for SNIP_WAIT_MS.
 
 import { useEffect, useRef, useState } from "react";
+import { logVoice } from "@/lib/aeVoiceLog";
 import { getVoiceSnapshot, type VoicePhase } from "@/lib/aeVoiceMode";
 import {
   countImageFiles,
@@ -123,6 +124,7 @@ export function useAeVoiceSnips(args: UseAeVoiceSnipsArgs): AeVoiceSnips {
     held.current = false;
     setPending(false);
     noteArmed.current = true;
+    logVoice("snip note this");
     l.setValue(SNIP_NOTE);
   };
 
@@ -145,7 +147,9 @@ export function useAeVoiceSnips(args: UseAeVoiceSnipsArgs): AeVoiceSnips {
   const onAccepted = (accepted: File[]) => {
     if (!activeRef.current || countImageFiles(accepted) === 0) return;
     const id = latest.current.chatId;
+    logVoice("snip accepted");
     if (id) getVoiceSnapshot(id).speak?.(SNIP_ACK);
+    logVoice("snip got it");
     startClock();
   };
 

@@ -6,6 +6,7 @@ import { useVoiceDictationHotkey } from "@/hooks/useVoiceDictationHotkey";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { getMicStream } from "@/lib/aeAudioDevices";
 import { publishMicLevel, resetMicLevel } from "@/lib/aeMicLevel";
+import { logVoice } from "@/lib/aeVoiceLog";
 import { DictationBusyError, DictationSession } from "@/lib/dictation";
 import { isElectronShell } from "@/lib/nativeBridge";
 import { cn } from "@/lib/utils";
@@ -225,11 +226,13 @@ export const ComposerMicButton = ({
       requestedRef.current = false;
       onListeningChangeRef.current?.(false);
       const err = (event as SpeechRecognitionErrorEventLike).error;
+      logVoice("mic error", String(err));
       // "network" means the recognizer's cloud backend refused us —
       // always the case in Electron/plain Chromium, occasionally a
       // transient blip in real Chrome. Serve THIS take from the server
       // instead; the next take tries Web Speech again.
       if (err === "network" && serverAvailableRef.current && !disabledRef.current) {
+        logVoice("mic server fallback");
         setIsListening(false);
         void toggleServerRef.current();
         return;
@@ -397,6 +400,7 @@ export const ComposerMicButton = ({
       serverBusyRef.current = false;
       return;
     }
+    logVoice("mic start server");
     try {
       // Snapshot point: let the parent record the text so Esc can revert to it.
       discardingRef.current = false;
@@ -451,6 +455,7 @@ export const ComposerMicButton = ({
         setIsListening(true);
       }
     } catch (startError) {
+      logVoice("mic error", `${(startError as Error)?.name}: ${(startError as Error)?.message}`);
       requestedRef.current = false;
       onListeningChangeRef.current?.(false);
       reportError(
@@ -498,7 +503,10 @@ export const ComposerMicButton = ({
     controllerStartRef.current = false;
     try {
       if (isListening) recognition.stop();
-      else recognition.start();
+      else {
+        logVoice("mic start browser");
+        recognition.start();
+      }
     } catch {
       // InvalidStateError from a double-call — drop the guard so the
       // user can try again, and let the next event reconcile state.
@@ -555,6 +563,7 @@ export const ComposerMicButton = ({
     if (isListening) requestedRef.current = false;
     if (prevListening.current === isListening) return;
     prevListening.current = isListening;
+    logVoice(isListening ? "mic listening" : "mic stopped");
     onListeningChangeRef.current?.(isListening);
   }, [isListening]);
 

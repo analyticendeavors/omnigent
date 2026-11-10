@@ -20,6 +20,7 @@ import {
   useVoiceSnapshot,
   type VoicePhase,
 } from "@/lib/aeVoiceMode";
+import { logVoice } from "@/lib/aeVoiceLog";
 import { useChatStore } from "@/store/chatStore";
 
 /** If the chat never shows a turn after a send, stop waiting for it. */
@@ -270,9 +271,11 @@ export function useAeVoiceMode({
         if (failures.current === 1) {
           retryTimer.current = setTimeout(() => {
             retryTimer.current = null;
+            logVoice("mic retry");
             if (latest.current.wantListen && !latest.current.micListening) startMic();
           }, MIC_RETRY_MS);
         } else {
+          logVoice("mic failed");
           setMicFailed(true);
         }
       } else if (stopAsked.current) {
@@ -306,12 +309,14 @@ export function useAeVoiceMode({
               : micStopped
                 ? "paused"
                 : "starting";
+    logVoice(`phase ${phase}`);
     setVoicePhase(chatId, phase);
   }, [chatId, on, speaking, waiting, micListening, micFailed, micStopped]);
 
   const send = useCallback(() => {
     const now = latest.current;
     if (!now.canSend) return;
+    logVoice("send");
     setAwaiting(true);
     if (sendTimer.current !== null) clearTimeout(sendTimer.current);
     sendTimer.current = setTimeout(() => {
@@ -331,6 +336,7 @@ export function useAeVoiceMode({
     const qs = latest.current.questions;
     if (!qs || card.current?.id === cardId) return;
     card.current = { id: cardId, index: 0, answers: {}, picked: [], custom: "" };
+    logVoice("card read");
     const q = qs[0];
     latest.current.speak?.(
       questionSpeech(
@@ -414,6 +420,7 @@ export function useAeVoiceMode({
   const onFinal = useCallback(
     (text: string): boolean => {
       if (!on) return false;
+      logVoice("final", text.slice(0, 60));
       const now = latest.current;
       const state = card.current;
       if (state && now.questions) {

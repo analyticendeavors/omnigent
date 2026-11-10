@@ -280,6 +280,11 @@ export const AE_SETTING_HINTS = {
     hint: "Where Natural (cloud) voices play. This device voices always use the system default. Saved on this device. Default: System default.",
     source: "tooltip",
   },
+  "voice.log": {
+    label: "Add voice log to message",
+    hint: "Puts the last two minutes of voice events into the message box to send to the agent. Nothing leaves this device until you send.",
+    source: "tooltip",
+  },
 } as const satisfies Record<string, AeSettingHint>;
 
 export type AeSettingHintId = keyof typeof AE_SETTING_HINTS;

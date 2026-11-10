@@ -471,15 +471,27 @@ describe("AeSpeakRepliesButton", () => {
     renderButton();
     await openMenu();
     const triggers = document.querySelectorAll("[data-slot=tooltip-trigger]");
-    expect(triggers).toHaveLength(8);
+    expect(triggers).toHaveLength(9);
     for (const el of triggers) {
       const group = el.closest("span.items-center.gap-1\\.5");
       expect(group).not.toBeNull();
-      expect(group?.textContent).toMatch(/Voice mode|Speak replies|Fast answers|Send snips|Voice|Speed|Microphone|Speaker/);
+      expect(group?.textContent).toMatch(/Voice mode|Speak replies|Fast answers|Send snips|Voice|Speed|Microphone|Speaker|Add voice log/);
     }
     const actions = screen.getByTestId("ae-speak-actions");
     expect(within(actions).getByTestId("ae-speak-read-last")).toBeInTheDocument();
     expect(within(actions).getByTestId("ae-speak-stop")).toHaveAttribute("data-disabled");
+  });
+
+  it("Add voice log to message asks the page to insert the log", async () => {
+    renderButton();
+    const user = await openMenu();
+    const seen: string[] = [];
+    const onInsert = (e: Event) => seen.push((e as CustomEvent<{ text: string }>).detail.text);
+    window.addEventListener("ae-voice-log-insert", onInsert);
+    await user.click(screen.getByTestId("ae-voice-log"));
+    window.removeEventListener("ae-voice-log-insert", onInsert);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatch(/^Voice log /);
   });
 
   it("Read last reply speaks the last reply and Stop speaking cancels it", async () => {

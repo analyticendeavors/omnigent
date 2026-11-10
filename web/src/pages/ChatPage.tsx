@@ -235,6 +235,7 @@ import { AeSpeakRepliesButton } from "@/components/AeSpeakRepliesButton";
 import { ComposerMicButton } from "@/components/ComposerMicButton";
 import { useAeVoiceMode } from "@/hooks/useAeVoiceMode";
 import { useAeVoiceSnips } from "@/hooks/useAeVoiceSnips";
+import { useVoiceLogInsert } from "@/lib/aeVoiceLog";
 import { AE_VOICE_RING, AeVoicePanel, voicePhaseKey } from "@/components/AeVoicePanel";
 import { useAeVoiceTyping } from "@/hooks/useAeVoiceTyping";
 import {
@@ -3575,6 +3576,7 @@ function ComposerImpl(
     ),
     labels: composerSession?.labels,
   });
+  useVoiceLogInsert(value, setValue);
   const voiceSnap = useVoiceSnapshot(composerSessionId);
   const voiceTyping = useAeVoiceTyping(voice.on, status !== "idle");
   const voiceCoarse = useIsCoarsePointer();

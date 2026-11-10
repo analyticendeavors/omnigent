@@ -3,6 +3,7 @@
 // the speech API or storage is missing.
 
 import { splitForSpeech } from "./aeSpeechText";
+import { logVoice } from "./aeVoiceLog";
 import { clearPlaybackBlocked, markPlaybackBlocked } from "./aeVoicePlayback";
 
 export const WORKING_CUE_TEXT = "Working on it.";
@@ -207,6 +208,7 @@ export function registerCloudPrimer(primer: (() => void) | null): void {
  * iOS refuses playback that no tap started. Never throws.
  */
 export function primeVoicePlayback(): void {
+  logVoice("prime");
   try {
     cloudPrimer?.();
   } catch {
@@ -279,10 +281,15 @@ export function createSpeaker(): Speaker {
     utterance.onstart = () => {
       if (gen !== generation) return;
       if (resumed) clearPlaybackBlocked();
+      logVoice("say start");
       emitCaption(chunk);
     };
-    utterance.onend = done;
+    utterance.onend = () => {
+      logVoice("say end");
+      done();
+    };
     utterance.onerror = (e) => {
+      logVoice(e.error === "not-allowed" ? "say blocked" : "say error", e.error);
       if (e.error === "not-allowed" && gen === generation) {
         // Keep the item current: speaking() stays true until a tap plays it or stop() runs.
         utterances.delete(utterance);

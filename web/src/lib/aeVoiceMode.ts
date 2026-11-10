@@ -8,6 +8,7 @@ import {
   castAskUserQuestionPayload,
   parseAskUserQuestionPreview,
 } from "./askUserQuestion";
+import { logVoice } from "./aeVoiceLog";
 import { withBasePath } from "./basePath";
 import type { AnyBlock, ElicitationBlock } from "./blocks";
 import { authenticatedFetch } from "./identity";
@@ -125,6 +126,12 @@ export function resetVoiceStore(): void {
 export const POST_RETRY_MS = 2000;
 
 async function postOnce(chatId: string, on: boolean): Promise<boolean> {
+  const ok = await postRaw(chatId, on);
+  logVoice(ok ? "label ok" : "label fail");
+  return ok;
+}
+
+async function postRaw(chatId: string, on: boolean): Promise<boolean> {
   try {
     const response = await authenticatedFetch(
       withBasePath(`/v1/ae/sessions/${encodeURIComponent(chatId)}/voice`),
@@ -157,6 +164,7 @@ export function syncVoiceLabel(chatId: string, labelOn: boolean): void {
 }
 
 export function setVoiceOn(chatId: string, on: boolean): void {
+  logVoice(on ? "voice on" : "voice off");
   writeVoiceMode(chatId, on);
   patch(chatId, { on, phase: on ? "starting" : "off", barged: false });
   void postVoiceLabel(chatId, on);
