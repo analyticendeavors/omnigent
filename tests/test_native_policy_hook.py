@@ -254,7 +254,11 @@ def test_user_prompt_submit_maps_to_phase_request() -> None:
     assert result is not None
     event = result["event"]
     assert event["type"] == "PHASE_REQUEST"
-    assert event["data"] == {"text": "delete the prod database"}
+    assert event["data"] == {
+        "text": "delete the prod database",
+        "user_content": "delete the prod database",
+        "attachments": [],
+    }
     # A context dict must exist so the per-harness hook can stamp model/harness.
     assert event["context"] == {}
 
@@ -268,7 +272,7 @@ def test_user_prompt_submit_missing_prompt_yields_empty_text() -> None:
     """
     result = hook_payload_to_evaluation_request("UserPromptSubmit", {})
     assert result is not None
-    assert result["event"]["data"] == {"text": ""}
+    assert result["event"]["data"] == {"text": "", "user_content": "", "attachments": []}
 
 
 @pytest.mark.parametrize("action", ["POLICY_ACTION_DENY", "POLICY_ACTION_ASK"])
@@ -316,6 +320,57 @@ def test_user_prompt_submit_non_blocking_actions_return_none(action: str) -> Non
     """
     output = evaluation_response_to_hook_output("UserPromptSubmit", {"result": action})
     assert output is None
+
+
+def test_user_prompt_submit_allow_with_appended_data_yields_suffix_only() -> None:
+    """A policy that appended a line to the prompt returns only that line as context."""
+    output = evaluation_response_to_hook_output(
+        "UserPromptSubmit",
+        {
+            "result": "POLICY_ACTION_ALLOW",
+            "data": {"user_content": "hello\n\nSpeak plainly."},
+        },
+        prompt="hello",
+    )
+    assert output == {
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": "Speak plainly.",
+        }
+    }
+
+
+def test_user_prompt_submit_allow_without_data_returns_none() -> None:
+    """No ``data`` means no context, even when the prompt is known."""
+    assert (
+        evaluation_response_to_hook_output(
+            "UserPromptSubmit", {"result": "POLICY_ACTION_ALLOW"}, prompt="hello"
+        )
+        is None
+    )
+
+
+def test_user_prompt_submit_rewrite_not_prefixed_by_prompt_returns_none(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A policy that rewrote rather than appended leaves the prompt unchanged."""
+    output = evaluation_response_to_hook_output(
+        "UserPromptSubmit",
+        {"result": "POLICY_ACTION_ALLOW", "data": {"user_content": "something else"}},
+        prompt="hello",
+    )
+    assert output is None
+    assert "rewrote the prompt" in capsys.readouterr().err
+
+
+def test_user_prompt_submit_deny_ignores_data() -> None:
+    """DENY still blocks, whatever ``data`` carries."""
+    output = evaluation_response_to_hook_output(
+        "UserPromptSubmit",
+        {"result": "POLICY_ACTION_DENY", "reason": "no", "data": "hello more"},
+        prompt="hello",
+    )
+    assert output == {"decision": "block", "reason": "no"}
 
 
 def test_fail_closed_pre_tool_use_denies() -> None:

@@ -266,7 +266,11 @@ def test_user_prompt_submit_converts_posts_and_blocks(
     assert exit_code == 0
     sent = _DenyHttpxClient.captured["json"]
     assert sent["event"]["type"] == "PHASE_REQUEST"
-    assert sent["event"]["data"] == {"text": "delete the prod database"}
+    assert sent["event"]["data"] == {
+        "text": "delete the prod database",
+        "user_content": "delete the prod database",
+        "attachments": [],
+    }
     # DENY → top-level decision/reason block (not permissionDecision).
     result = json.loads(captured.out)
     assert result == {"decision": "block", "reason": "rm blocked by admin policy"}

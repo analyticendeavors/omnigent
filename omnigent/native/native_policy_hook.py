@@ -313,14 +313,17 @@ def hook_payload_to_evaluation_request(
     """
     if hook_event == _USER_PROMPT_SUBMIT:
         # Request-phase gate for native sessions. The server reads REQUEST
-        # content from ``data.text`` (see ``_build_evaluation_context``).
+        # content from ``data.text``; policies read ``data.user_content``.
         prompt = payload.get("prompt", "")
+        prompt_text = prompt if isinstance(prompt, str) else json.dumps(prompt)
         return {
             "event": {
                 "type": "PHASE_REQUEST",
                 "target": "",
                 "data": {
-                    "text": prompt if isinstance(prompt, str) else json.dumps(prompt),
+                    "text": prompt_text,
+                    "user_content": prompt_text,
+                    "attachments": [],
                 },
                 "context": {},
             },
@@ -364,9 +367,50 @@ def hook_payload_to_evaluation_request(
     return None
 
 
+def _prompt_additional_context(
+    eval_response: dict[str, object],
+    prompt: str | None,
+) -> dict[str, object] | None:
+    """
+    Turn a request-phase rewrite that appended text into ``additionalContext``.
+
+    :param eval_response: Parsed ``EvaluationResponse``, e.g.
+        ``{"result": "POLICY_ACTION_ALLOW", "data": {"user_content": "hi\\n\\nbe brief"}}``.
+    :param prompt: The submitted prompt, e.g. ``"hi"``.
+    :returns: ``{"hookSpecificOutput": ...}`` carrying only the appended part,
+        or ``None`` when there is no data, no prompt, or the policy rewrote
+        rather than appended.
+    """
+    data = eval_response.get("data")
+    if isinstance(data, dict):
+        rewritten = data.get("user_content")
+    else:
+        rewritten = data
+    if not isinstance(rewritten, str) or prompt is None:
+        return None
+    if not rewritten.startswith(prompt):
+        print(
+            "omnigent evaluate-policy hook: policy rewrote the prompt instead of "
+            "appending; leaving the prompt unchanged",
+            file=sys.stderr,
+        )
+        return None
+    appended = rewritten[len(prompt) :].strip()
+    if not appended:
+        return None
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": _USER_PROMPT_SUBMIT,
+            "additionalContext": appended,
+        }
+    }
+
+
 def evaluation_response_to_hook_output(
     hook_event: str,
     eval_response: dict[str, object],
+    *,
+    prompt: str | None = None,
 ) -> dict[str, object] | None:
     """
     Convert an ``EvaluationResponse`` into native-harness hook output JSON.
@@ -401,7 +445,9 @@ def evaluation_response_to_hook_output(
     to a hard ALLOW/DENY before the response reaches the hook), so the hook
     should never see ASK; if it somehow does, it fails closed by blocking.
     ALLOW (and the engine's no-match default) returns ``None`` so the prompt
-    proceeds. Unlike ``PreToolUse``, there is no separate user-consent gate
+    proceeds, unless the policy appended text to the prompt (``data``): that
+    appended part is returned as ``hookSpecificOutput.additionalContext``.
+    Unlike ``PreToolUse``, there is no separate user-consent gate
     on a prompt, so ALLOW need not preserve one.
 
     Both Claude Code and Codex consume these exact output shapes, so the
@@ -411,6 +457,8 @@ def evaluation_response_to_hook_output(
         ``"PostToolUse"``, or ``"UserPromptSubmit"``.
     :param eval_response: Parsed ``EvaluationResponse`` from AP, e.g.
         ``{"result": "POLICY_ACTION_DENY", "reason": "blocked by policy"}``.
+    :param prompt: The submitted prompt text for ``UserPromptSubmit``, used to
+        find what a policy appended; ``None`` for other events.
     :returns: Hook output dict for the harness to read on stdout, or
         ``None`` when there is no verdict to express (allow with no
         rewrite on PostToolUse, or an unknown action).
@@ -429,7 +477,7 @@ def evaluation_response_to_hook_output(
                 "decision": "block",
                 "reason": reason or "Denied by policy",
             }
-        return None
+        return _prompt_additional_context(eval_response, prompt)
 
     if hook_event == _PRE_TOOL_USE:
         # ALLOW (the engine default when no policy matches) is omitted → None,

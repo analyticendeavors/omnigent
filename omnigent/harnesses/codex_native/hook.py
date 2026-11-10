@@ -195,7 +195,15 @@ def _main_evaluate_policy(argv: list[str]) -> int:
         )
         return _fail_closed()
 
-    hook_output = evaluation_response_to_hook_output(hook_event, eval_response)
+    hook_output = evaluation_response_to_hook_output(
+        hook_event,
+        eval_response,
+        prompt=(
+            payload["prompt"]
+            if hook_event == "UserPromptSubmit" and isinstance(payload.get("prompt"), str)
+            else None
+        ),
+    )
     if hook_output is not None:
         sys.stdout.write(json.dumps(hook_output))
     return 0

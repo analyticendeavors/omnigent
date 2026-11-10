@@ -146,6 +146,8 @@ function DeviceRow({
   const value = current ? current.id : !known && saved ? saved : SYSTEM_DEFAULT;
   // Before the browser shares device ids a saved choice cannot be named.
   const name = current ? current.label : !known && saved ? "Saved device" : "System default";
+  // The row value is short so it fits the phone-width menu; the radio item keeps the full name.
+  const rowValue = current ? shortDeviceName(name) : name === "System default" ? "Default" : name;
   return (
     <DropdownMenuSub>
       <DropdownMenuSubTrigger data-testid={`${testId}-trigger`}>
@@ -154,7 +156,7 @@ function DeviceRow({
           <RowHint id={hint} />
         </span>
         <span className={ROW_VALUE_CLASS} title={name}>
-          {current ? shortDeviceName(name) : name}
+          {rowValue}
         </span>
       </DropdownMenuSubTrigger>
       <DropdownMenuSubContent className="max-h-[60vh] overflow-y-auto">
@@ -428,7 +430,7 @@ function SpeakRepliesControl({
           type="button"
           size="icon"
           variant="ghost"
-          className="-ml-1 h-7 w-4 text-muted-foreground"
+          className="relative -ml-1 h-7 w-4 text-muted-foreground pointer-coarse:before:absolute pointer-coarse:before:-inset-x-3.5 pointer-coarse:before:-inset-y-2 pointer-coarse:before:content-['']"
           aria-label="Speak replies menu"
           data-testid="ae-speak-replies-menu"
           disabled={disabled}

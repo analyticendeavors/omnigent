@@ -382,13 +382,20 @@ describe("AeSpeakRepliesButton", () => {
       delete (HTMLMediaElement.prototype as { setSinkId?: unknown }).setSinkId;
     });
 
+    it("gives the menu caret a 44 px hit area on coarse pointers", async () => {
+      renderButton();
+      const trigger = screen.getByTestId("ae-speak-replies-menu");
+      expect(trigger.className).toContain("pointer-coarse:before:-inset-x-3.5");
+      expect(trigger.className).toContain("pointer-coarse:before:-inset-y-2");
+    });
+
     it("renders both rows under Speed and saves a pick", async () => {
       mediaDevices(LIST);
       (HTMLMediaElement.prototype as { setSinkId?: unknown }).setSinkId = setSinkId;
       renderButton();
       const user = await openMenu();
-      expect(screen.getByTestId("ae-speak-mic-trigger")).toHaveTextContent("System default");
-      expect(screen.getByTestId("ae-speak-speaker-trigger")).toHaveTextContent("System default");
+      expect(screen.getByTestId("ae-speak-mic-trigger")).toHaveTextContent("Default");
+      expect(screen.getByTestId("ae-speak-speaker-trigger")).toHaveTextContent("Default");
       await user.click(screen.getByTestId("ae-speak-mic-trigger"));
       const options = await screen.findAllByTestId("ae-speak-mic-option");
       expect(options.map((o) => o.textContent)).toEqual(["System default", "USB Mic"]);
@@ -447,7 +454,7 @@ describe("AeSpeakRepliesButton", () => {
       mediaDevices(LIST);
       renderButton();
       await openMenu();
-      expect(screen.getByTestId("ae-speak-mic-trigger")).toHaveTextContent("System default");
+      expect(screen.getByTestId("ae-speak-mic-trigger")).toHaveTextContent("Default");
     });
   });
 
@@ -513,7 +520,7 @@ describe("AeSpeakRepliesButton", () => {
       await user.click(screen.getByTestId("ae-speak-mic-trigger"));
       expect(await screen.findByText("Use the mic once to list devices.")).toBeInTheDocument();
       expect(screen.getAllByTestId("ae-speak-mic-option")).toHaveLength(1);
-      expect(screen.getByTestId("ae-speak-mic-trigger")).toHaveTextContent("System default");
+      expect(screen.getByTestId("ae-speak-mic-trigger")).toHaveTextContent("Default");
     });
 
     it("reads a saved microphone as Saved device", async () => {
@@ -534,7 +541,7 @@ describe("AeSpeakRepliesButton", () => {
       await user.keyboard("{Enter}");
       expect(window.localStorage.getItem("omnigent:ae-mic-device")).toBeNull();
       await openMenu();
-      expect(await screen.findByTestId("ae-speak-mic-trigger")).toHaveTextContent("System default");
+      expect(await screen.findByTestId("ae-speak-mic-trigger")).toHaveTextContent("Default");
     });
 
     it("gives the value rows the shared shrink classes", async () => {
