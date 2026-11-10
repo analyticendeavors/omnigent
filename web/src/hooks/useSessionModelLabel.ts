@@ -66,9 +66,9 @@ export function useSessionModelLabel(
   const fallbackLabel =
     cachedLabel ??
     (hostOption
-      ? hostOption.displayName != null
+      ? hostOption.displayName
         ? nativeModelLabel(hostOption)
-        : formatUnlistedModelLabel(nativeModelLabel(hostOption))
+        : formatUnlistedModelLabel(nativeModelLabel({ ...hostOption, displayName: undefined }))
       : null);
   const waiting = expectsCatalog && raw !== null && !catalogReady && fallbackLabel === null;
   // Finishing identity bootstrap must not restart an in-flight metadata wait.

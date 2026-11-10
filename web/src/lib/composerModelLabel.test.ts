@@ -129,6 +129,14 @@ describe("catalog model labels", () => {
     expect(formatStatusModelLabel("fusion-x", [fusion])).toBe("Fusion X");
   });
 
+  it("keeps the raw id when a suffix would hide which model it is", () => {
+    expect(formatStatusModelLabel("claude-fable-5-2[1M]")).toBe("Fable 5.2 (1M context)");
+    expect(formatStatusModelLabel("claude-haiku-4-5-20251001")).toBe("claude-haiku-4-5-20251001");
+    expect(formatStatusModelLabel("claude-opus-5-5[beta]")).toBe("claude-opus-5-5[beta]");
+    expect(formatStatusModelLabel("claude-opus-4-8[200k]")).toBe("claude-opus-4-8[200k]");
+    expect(formatStatusModelLabel("claude-opus-4-8-thinking")).toBe("claude-opus-4-8-thinking");
+  });
+
   it("retains the unknown and unmarked default states", () => {
     expect(defaultModelLabel([{ id: "opus" }])).toBe("Default");
     expect(formatStatusModelLabel(null)).toBeNull();

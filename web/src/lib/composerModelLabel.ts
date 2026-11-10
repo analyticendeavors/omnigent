@@ -47,12 +47,19 @@ export function compactModelTriggerLabel(value: string): string {
 
 /** A Claude id the catalog does not list, as people read it ("claude-fable-5-2[1m]" ->
  *  "Fable 5.2 (1M context)"); any other id is returned unchanged. */
+// A canonical Claude wire id, optionally the 1M-context variant: "claude-fable-5-2",
+// "claude-opus-5-5[1m]". A date ("-20251001") or any other suffix ("[beta]") is a
+// distinct model the bare label would hide, so those keep their raw id.
+const CANONICAL_CLAUDE_ID =
+  /^claude-(?:fable|opus|sonnet|haiku|mythos)-\d{1,2}(?:-\d{1,2})?(\[1m\])?$/i;
+
 export function formatUnlistedModelLabel(raw: string): string {
-  // Only a full "claude-" wire id: aliases ("sonnet_5") and namespaced catalog ids
-  // ("system.ai.claude-...") keep their own text.
-  const label = /^claude-/i.test(raw.trim()) ? aeClaudeVersionLabel(raw) : null;
+  // Only a canonical "claude-" wire id: aliases ("sonnet_5"), namespaced catalog ids
+  // ("system.ai.claude-...") and suffixed ids keep their own text.
+  const match = CANONICAL_CLAUDE_ID.exec(raw.trim());
+  const label = match ? aeClaudeVersionLabel(raw) : null;
   if (!label) return raw;
-  return /\[1m\]$/i.test(raw.trim()) ? `${label} (1M context)` : label;
+  return match?.[1] ? `${label} (1M context)` : label;
 }
 
 export function formatStatusModelLabel(

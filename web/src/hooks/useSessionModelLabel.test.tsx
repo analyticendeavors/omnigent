@@ -140,6 +140,16 @@ describe("useSessionModelLabel", () => {
     expect(readSessionModelLabelCache(cacheKey())).toBeNull();
   });
 
+  it("reads an unnamed host entry's Claude id as its version label", () => {
+    for (const displayName of [undefined, ""]) {
+      const { result } = renderLabel({
+        model: "claude-fable-5-2",
+        hostOptions: [{ id: "claude-fable-5-2", model: "claude-fable-5-2", displayName }],
+      });
+      expect(result.current).toEqual({ label: "Fable 5.2", loading: false, unavailable: false });
+    }
+  });
+
   it("uses a host entry's wire model when it has no display name", () => {
     const { result } = renderLabel({
       model: "alias-a",
