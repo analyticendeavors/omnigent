@@ -283,7 +283,30 @@ describe("while Claude starts", () => {
     await advance(0);
     expect(vi.mocked(authenticatedFetch).mock.calls.map(([url]) => url)).toEqual([
       "/v1/sessions/conv_a/context-usage",
-      "/v1/sessions/conv_a/context-usage?fresh=true",
+      "/v1/sessions/conv_a/context-usage?fresh=true&wake=true",
+    ]);
+  });
+
+  it("sends wake only for the user's own refresh, never for loads, retries or turn ends", async () => {
+    vi.mocked(authenticatedFetch)
+      .mockImplementationOnce(() => ok(PENDING))
+      .mockImplementation(() => ok());
+    useChatStore.setState({ conversationId: "conv_w", sessionStatus: "running" });
+    const { result } = renderHook(() =>
+      useAeContextSnapshot("conv_w", { enabled: true, identity }),
+    );
+    await advance(0);
+    await advance(AE_CONTEXT_RETRY_DELAYS_MS[0]);
+    act(() => useChatStore.setState({ sessionStatus: "idle" }));
+    await advance(0);
+    act(() => result.current.refresh());
+    await advance(0);
+    const urls = vi.mocked(authenticatedFetch).mock.calls.map(([url]) => String(url));
+    expect(urls).toEqual([
+      "/v1/sessions/conv_w/context-usage",
+      "/v1/sessions/conv_w/context-usage",
+      "/v1/sessions/conv_w/context-usage?fresh=true",
+      "/v1/sessions/conv_w/context-usage?fresh=true&wake=true",
     ]);
   });
 

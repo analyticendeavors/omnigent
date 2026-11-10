@@ -160,6 +160,9 @@ describe("AeRailContext", () => {
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(screen.getByTestId("ae-category-bar")).toBeTruthy());
     expect(screen.queryByText(/Could not load/)).toBeNull();
+    const urls = vi.mocked(authenticatedFetch).mock.calls.map(([url]) => String(url));
+    expect(urls[0]).not.toContain("wake=true");
+    expect(urls[1]).toContain("?fresh=true&wake=true");
   });
 
   it("shows Try again at once when the runner is offline", async () => {

@@ -289,6 +289,7 @@ async def _wake_runner_for_model_change(
     conv: Conversation,
     conversation_store: ConversationStore,
     runner_router: RunnerRouter | None,
+    action: str = "switch models",
 ) -> Conversation:
     """Restore a sleeping native session before applying an explicit model pick."""
     if await _get_runner_client(conv.id, runner_router) is not None:
@@ -303,7 +304,7 @@ async def _wake_runner_for_model_change(
     )
     if runner_client is None:
         raise OmnigentError(
-            "Cannot switch models while the session host is offline. Reconnect the host and retry.",
+            f"Cannot {action} while the session host is offline. Reconnect the host and retry.",
             code=ErrorCode.RUNNER_UNAVAILABLE,
         )
     terminal_ready = await _ensure_runner_session_initialized(

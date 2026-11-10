@@ -102,6 +102,8 @@ interface Entry {
   retryExhausted?: boolean;
   /** A runner-cache-skipping read was asked for while another request was in flight. */
   wantFresh?: boolean;
+  /** The user's own refresh (which wakes a sleeping runner) came in while a request was in flight. */
+  wantWake?: boolean;
   /** The session status last handled for this entry, so every subscriber acts on an edge once. */
   lastStatus?: string | null;
 }
@@ -199,9 +201,14 @@ function settle(entry: Entry, data: ContextUsage): void {
   update(entry, { ...shown, error: undefined, inFlight: false, pending: retry });
 }
 
-async function readSnapshot(sessionId: string, fresh: boolean): Promise<ContextUsage> {
+async function readSnapshot(
+  sessionId: string,
+  fresh: boolean,
+  wake: boolean,
+): Promise<ContextUsage> {
+  const query = wake ? "?fresh=true&wake=true" : fresh ? "?fresh=true" : "";
   const response = await authenticatedFetch(
-    `/v1/sessions/${encodeURIComponent(sessionId)}/context-usage${fresh ? "?fresh=true" : ""}`,
+    `/v1/sessions/${encodeURIComponent(sessionId)}/context-usage${query}`,
   );
   if (!response.ok) {
     throw new Error(
@@ -211,15 +218,17 @@ async function readSnapshot(sessionId: string, fresh: boolean): Promise<ContextU
   return (await response.json()) as ContextUsage;
 }
 
-/** `fresh` skips the runner's own three-minute cache. */
-function load(entry: Entry, fresh = false): void {
+/** `fresh` skips the runner's own three-minute cache; `wake` (user refresh only) wakes a sleeping runner. */
+function load(entry: Entry, fresh = false, wake = false): void {
   if (entry.value.inFlight) {
     if (fresh) entry.wantFresh = true;
+    if (wake) entry.wantWake = true;
     return;
   }
   entry.wantFresh = false;
+  entry.wantWake = false;
   update(entry, { inFlight: true });
-  readSnapshot(entry.sessionId, fresh)
+  readSnapshot(entry.sessionId, fresh, wake)
     .then(
       (data) => settle(entry, data),
       (error: unknown) => {
@@ -237,7 +246,7 @@ function load(entry: Entry, fresh = false): void {
     .finally(() => {
       entry.settledAt = Date.now();
       schedule(entry);
-      if (entry.wantFresh) load(entry, true);
+      if (entry.wantFresh) load(entry, true, entry.wantWake);
     });
 }
 
@@ -260,10 +269,10 @@ function watch(entry: Entry): () => void {
 }
 
 /** Read anew past the runner's cache, with a new retry window: refresh and turn end. */
-function reload(entry: Entry): void {
+function reload(entry: Entry, wake = false): void {
   resetRetry(entry);
   entry.retryExhausted = false;
-  load(entry, true);
+  load(entry, true, wake);
 }
 
 /** Drops every cached snapshot and timer; tests call it between cases. */
@@ -317,7 +326,7 @@ export function useAeContextSnapshot(
     if (wasActive && (status === "idle" || status === "failed")) reload(entry);
   }, [enabled, id, identity, status]);
   const refresh = useCallback(() => {
-    if (id) reload(entryFor(id, identity));
+    if (id) reload(entryFor(id, identity), true);
   }, [id, identity]);
   const pending = value.pending === true;
   return {
