@@ -175,10 +175,21 @@ describe("AeInlinePrCards", () => {
       });
       renderText(`Opened ${url(41)}`, [url(41)], card(41));
       await screen.findByTestId("ae-pr-receipt");
+      // Read the receipt the moment it first says "merged": it is open already,
+      // never one collapsed frame first (that frame flaked CI on 2026-11-09).
+      const firstMerged: (string | null)[] = [];
+      const watch = new MutationObserver(() => {
+        if (firstMerged.length > 0) return;
+        if (screen.queryByTestId("ae-pr-receipt-word")?.textContent !== "merged") return;
+        firstMerged.push(screen.getByTestId("ae-pr-receipt").getAttribute("aria-expanded"));
+      });
+      watch.observe(document.body, { subtree: true, childList: true, characterData: true });
       fireEvent.click(screen.getByRole("button", { name: "Squash into main" }));
       await vi.waitFor(() =>
         expect(screen.getByTestId("ae-pr-receipt-word").textContent).toBe("merged"),
       );
+      watch.disconnect();
+      expect(firstMerged).toEqual(["true"]);
       expect(screen.getByTestId("ae-pr-receipt")).toHaveAttribute("data-tone", "purple");
       // It opens on its own, so the note and its offer show.
       expect(screen.getByTestId("ae-pr-receipt")).toHaveAttribute("aria-expanded", "true");

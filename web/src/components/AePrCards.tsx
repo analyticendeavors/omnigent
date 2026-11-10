@@ -711,10 +711,14 @@ export function AePrCardView({
     select: (mutation) => mutation.state.data as AeMergeResult,
   }).filter((done) => !done.session || done.session.id === sessionId);
   const result = panel ? mergedByCard : (mergedElsewhere.at(-1) ?? null);
-  // The receipt opens when a merge lands, so the note and its offer show.
-  useEffect(() => {
-    if (variant === "inline" && result) setOpen(true);
-  }, [variant, result]);
+  // The receipt opens when a merge lands, so the note and its offer show. Set
+  // while rendering, not in an effect, so the frame that first says "merged" is
+  // already open (an effect left one collapsed frame, which flaked CI, 2026-11-09).
+  const [openedFor, setOpenedFor] = useState<AeMergeResult | null>(null);
+  if (variant === "inline" && result && result !== openedFor) {
+    setOpenedFor(result);
+    setOpen(true);
+  }
   // Inline and panel cards share the operation, including when one mounts mid-update.
   const { data: branchUpdate } = useQuery<{ sha: string; started: number } | null>({
     queryKey: updateKey,
