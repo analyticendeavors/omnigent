@@ -9412,7 +9412,8 @@ def _keep_appended_request_text(session_id: str, user_text: str, data: object) -
 
     A native session's hook re-evaluates the prompt and the hook route answers a
     web prompt with a bare ALLOW; this slot lets it hand the appended part back.
-    A rewrite that does not start with the original text is ignored.
+    A message with nothing appended (or a rewrite that does not start with the
+    original text) clears the session's queue so an earlier line cannot ride on it.
 
     :param session_id: Session id, e.g. ``"conv_abc123"``.
     :param user_text: The message text the policy saw.
@@ -9420,11 +9421,13 @@ def _keep_appended_request_text(session_id: str, user_text: str, data: object) -
         ``{"user_content": "hi\\n\\nbe brief"}``.
     """
     rewritten = data.get("user_content") if isinstance(data, dict) else data
-    if not isinstance(rewritten, str) or not user_text or not rewritten.startswith(user_text):
-        return
-    suffix = rewritten[len(user_text) :].strip()
+    suffix = ""
+    if isinstance(rewritten, str) and user_text and rewritten.startswith(user_text):
+        suffix = rewritten[len(user_text) :].strip()
     if suffix:
         pending_inputs.set_request_context(session_id, suffix)
+    else:
+        pending_inputs.clear_request_context(session_id)
 
 
 async def _evaluate_input_policy(

@@ -111,6 +111,7 @@ import re
 import threading
 import time
 import uuid
+from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -749,40 +750,65 @@ def resolve_matching_text(
         )
 
 
-# One request-context slot per conversation: the text a request-phase policy appended
-# to a web-composer message, kept for the native hook's dedup answer (see routes_hooks).
+# A small FIFO of request-context texts per conversation: what a request-phase policy
+# appended to each web-composer message, kept for the native hook's dedup answer
+# (see routes_hooks). Each entry carries its own timestamp.
 _REQUEST_CONTEXT_TTL_S = 600.0
-_request_context: dict[str, tuple[float, str]] = {}
+_REQUEST_CONTEXT_CAP = 8
+_request_context: dict[str, deque[tuple[float, str]]] = {}
 
 
 def set_request_context(conversation_id: str, text: str) -> None:
     """
-    Keep the text a request-phase policy appended to a web message.
+    Queue the text a request-phase policy appended to a web message.
 
-    The ingest gate drops a policy's rewrite on ALLOW; this slot carries the
+    The ingest gate drops a policy's rewrite on ALLOW; this queue carries the
     appended part to the native hook route, which hands it back to the hook.
-    One slot per session, overwritten by a newer call, dropped after 10 minutes.
+    Entries expire after 10 minutes; past 8 queued the oldest is dropped.
 
     :param conversation_id: Conversation/session id, e.g. ``"conv_abc123"``.
     :param text: The appended part, e.g. ``"Voice mode is on: ..."``.
     """
     with _lock:
-        _request_context[conversation_id] = (_now(), text)
+        queue = _request_context.setdefault(conversation_id, deque(maxlen=_REQUEST_CONTEXT_CAP))
+        queue.append((_now(), text))
 
 
 def take_request_context(conversation_id: str) -> str | None:
     """
-    Return and clear the session's request-context slot.
+    Pop the oldest unexpired request-context text for the session.
 
     :param conversation_id: Conversation/session id, e.g. ``"conv_abc123"``.
-    :returns: The stored text, or ``None`` when the slot is empty or older than
-        10 minutes.
+    :returns: The oldest stored text younger than 10 minutes (older entries are
+        dropped on the way), or ``None`` when nothing is left.
     """
     with _lock:
-        entry = _request_context.pop(conversation_id, None)
-        if entry is None or _now() - entry[0] > _REQUEST_CONTEXT_TTL_S:
+        queue = _request_context.get(conversation_id)
+        if queue is None:
             return None
-        return entry[1]
+        now = _now()
+        result: str | None = None
+        while queue:
+            stamp, text = queue.popleft()
+            if now - stamp <= _REQUEST_CONTEXT_TTL_S:
+                result = text
+                break
+        if not queue:
+            _request_context.pop(conversation_id, None)
+        return result
+
+
+def clear_request_context(conversation_id: str) -> None:
+    """
+    Empty the session's request-context queue.
+
+    Called when a message is allowed with nothing appended, so a line left by an
+    earlier message cannot ride on a later one.
+
+    :param conversation_id: Conversation/session id, e.g. ``"conv_abc123"``.
+    """
+    with _lock:
+        _request_context.pop(conversation_id, None)
 
 
 def has_pending(conversation_id: str) -> bool:

@@ -561,6 +561,9 @@ async def test_input_allow_keeps_only_an_appended_rewrite(data: Any, expected: s
     from omnigent.runtime import pending_inputs
 
     pending_inputs.reset_for_tests()
+    if expected is None:
+        # An earlier message left a line behind; an ALLOW with nothing appended clears it.
+        pending_inputs.set_request_context("sess_1", "stale line")
     conv_store = _FakeConversationStore()
     agent_store = _FakeAgentStore(agent=_make_agent())
     conv = conv_store.get_conversation("sess_1")

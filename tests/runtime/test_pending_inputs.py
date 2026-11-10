@@ -1002,11 +1002,40 @@ def test_request_context_is_taken_once() -> None:
     assert pending_inputs.take_request_context("conv_a") is None
 
 
-def test_request_context_newer_set_replaces_older() -> None:
-    """One slot per session: a newer set overwrites the older text."""
+def test_request_context_is_a_fifo() -> None:
+    """Two sets then two takes return both texts in order; a third take is None."""
+    pending_inputs.set_request_context("conv_a", "first")
+    pending_inputs.set_request_context("conv_a", "second")
+    assert pending_inputs.take_request_context("conv_a") == "first"
+    assert pending_inputs.take_request_context("conv_a") == "second"
+    assert pending_inputs.take_request_context("conv_a") is None
+
+
+def test_request_context_expired_head_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An expired oldest entry is dropped and the next unexpired one is returned."""
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(pending_inputs, "_now", lambda: clock["t"])
     pending_inputs.set_request_context("conv_a", "old")
-    pending_inputs.set_request_context("conv_a", "new")
-    assert pending_inputs.take_request_context("conv_a") == "new"
+    clock["t"] = 1500.0
+    pending_inputs.set_request_context("conv_a", "fresh")
+    clock["t"] = 1650.0
+    assert pending_inputs.take_request_context("conv_a") == "fresh"
+
+
+def test_request_context_cap_drops_the_oldest() -> None:
+    """Past the cap the oldest entry is dropped."""
+    cap = pending_inputs._REQUEST_CONTEXT_CAP
+    for i in range(cap + 1):
+        pending_inputs.set_request_context("conv_a", f"t{i}")
+    assert pending_inputs.take_request_context("conv_a") == "t1"
+
+
+def test_clear_request_context_on_empty_and_filled_queue() -> None:
+    """Clear is a no-op on an empty queue and empties a filled one."""
+    pending_inputs.clear_request_context("conv_a")
+    pending_inputs.set_request_context("conv_a", "x")
+    pending_inputs.clear_request_context("conv_a")
+    assert pending_inputs.take_request_context("conv_a") is None
 
 
 def test_request_context_expires_after_ten_minutes(monkeypatch: pytest.MonkeyPatch) -> None:
