@@ -103,7 +103,7 @@ describe("catalog model labels", () => {
     expect(formatStatusModelLabel("system.ai.claude-opus-4-8", rows)).toBe(
       "system.ai.claude-opus-4-8",
     );
-    expect(formatStatusModelLabel("claude-opus-4-8[1m]", rows)).toBe("claude-opus-4-8[1m]");
+    expect(formatStatusModelLabel("claude-opus-4-8[1m]", rows)).toBe("Opus 4.8 (1M context)");
   });
 
   it("replaces a raw status ID with its display name when metadata arrives", () => {
@@ -112,6 +112,21 @@ describe("catalog model labels", () => {
     expect(formatStatusModelLabel(model, [{ id: model, displayName: "GPT-5.6 Luna" }])).toBe(
       "GPT-5.6 Luna",
     );
+  });
+
+  it("reads an unlisted Claude id as its version label", () => {
+    expect(formatStatusModelLabel("claude-fable-5-2")).toBe("Fable 5.2");
+    expect(formatStatusModelLabel("claude-fable-5-2[1m]")).toBe("Fable 5.2 (1M context)");
+    expect(formatStatusModelLabel("claude-opus-5-5", [])).toBe("Opus 5.5");
+    expect(
+      formatStatusModelLabel("claude-opus-5-5", [
+        { id: "opus", model: "claude-opus-5-5", displayName: "Listed Opus" },
+      ]),
+    ).toBe("Listed Opus");
+    expect(formatStatusModelLabel("gpt-6-astra")).toBe("gpt-6-astra");
+    expect(formatStatusModelLabel("mystery-model")).toBe("mystery-model");
+    const fusion = { id: "fusion-x", displayName: "Fusion X" };
+    expect(formatStatusModelLabel("fusion-x", [fusion])).toBe("Fusion X");
   });
 
   it("retains the unknown and unmarked default states", () => {
@@ -132,7 +147,7 @@ describe("effort labels", () => {
 
   it("joins the unmodified model ID and effort", () => {
     expect(formatModelEffortStatusLabel("claude-opus-4-8[1m]", "xhigh")).toBe(
-      "claude-opus-4-8[1m] xHigh",
+      "Opus 4.8 (1M context) xHigh",
     );
     expect(formatModelEffortStatusLabel("gpt-5.5", null)).toBe("gpt-5.5");
     expect(formatModelEffortStatusLabel(null, "high")).toBe("High");

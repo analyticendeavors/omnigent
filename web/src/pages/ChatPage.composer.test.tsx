@@ -2679,7 +2679,7 @@ describe("Composer model/effort label", () => {
         })}
       />,
     );
-    expect(label()).toHaveTextContent("claude-opus-4-8");
+    expect(label()).toHaveTextContent("Opus 4.8");
     expect(label()).not.toHaveTextContent("gpt-5.5");
   });
 

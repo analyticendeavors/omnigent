@@ -6,6 +6,7 @@
 // the harness config controls, and the store can all depend on one source of
 // truth without a circular import.
 
+import { aeClaudeVersionLabel } from "@/lib/aeClaudeModels";
 import { fusionModelLabel, isFusionModelUid } from "@/lib/devinFusion";
 import type { NativeModelOption } from "@/lib/types";
 
@@ -44,6 +45,16 @@ export function compactModelTriggerLabel(value: string): string {
   return withoutDefault.replace(/\s*\((\d+(?:\.\d+)?[KMG]) context\)/gi, " $1");
 }
 
+/** A Claude id the catalog does not list, as people read it ("claude-fable-5-2[1m]" ->
+ *  "Fable 5.2 (1M context)"); any other id is returned unchanged. */
+export function formatUnlistedModelLabel(raw: string): string {
+  // Only a full "claude-" wire id: aliases ("sonnet_5") and namespaced catalog ids
+  // ("system.ai.claude-...") keep their own text.
+  const label = /^claude-/i.test(raw.trim()) ? aeClaudeVersionLabel(raw) : null;
+  if (!label) return raw;
+  return /\[1m\]$/i.test(raw.trim()) ? `${label} (1M context)` : label;
+}
+
 export function formatStatusModelLabel(
   model: string | null,
   codexModelOptions: readonly NativeModelOption[] = [],
@@ -57,7 +68,7 @@ export function formatStatusModelLabel(
   const option =
     codexModelOptions.find((candidate) => candidate.id === raw) ??
     codexModelOptions.find((candidate) => candidate.model === raw);
-  return option ? nativeModelLabel(option) : raw;
+  return option ? nativeModelLabel(option) : formatUnlistedModelLabel(raw);
 }
 
 /** Normalize a reasoning-effort value to its display label — the single place

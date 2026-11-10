@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { findNativeModelOption } from "@/lib/codexNativeModels";
-import { formatStatusModelLabel, nativeModelLabel } from "@/lib/composerModelLabel";
+import {
+  formatStatusModelLabel,
+  formatUnlistedModelLabel,
+  nativeModelLabel,
+} from "@/lib/composerModelLabel";
 import { isCodexHarness } from "@/lib/harnessSetup";
 import { getCurrentUserId, resolveIdentity } from "@/lib/identity";
 import {
@@ -59,7 +63,13 @@ export function useSessionModelLabel(
       : (hostOptions.find((row) => row.id === raw) ?? hostOptions.find((row) => row.model === raw));
   const cachedLabel =
     cached !== null && raw !== null ? nativeModelLabel({ id: raw, displayName: cached }) : null;
-  const fallbackLabel = cachedLabel ?? (hostOption ? nativeModelLabel(hostOption) : null);
+  const fallbackLabel =
+    cachedLabel ??
+    (hostOption
+      ? hostOption.displayName != null
+        ? nativeModelLabel(hostOption)
+        : formatUnlistedModelLabel(nativeModelLabel(hostOption))
+      : null);
   const waiting = expectsCatalog && raw !== null && !catalogReady && fallbackLabel === null;
   // Finishing identity bootstrap must not restart an in-flight metadata wait.
   const target = JSON.stringify([scope.sessionId, scope.hostId, scope.agentId, scope.harness, raw]);
