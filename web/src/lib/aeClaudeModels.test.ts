@@ -7,6 +7,7 @@ import {
   aeClaudeVersion,
   aeClaudeVersionLabel,
   aeSplitPrevious,
+  aeMergeKnownClaudeModels,
   aeWithClaudeVersions,
 } from "./aeClaudeModels";
 
@@ -68,7 +69,7 @@ describe("aeWithClaudeVersions", () => {
     const rows = aeWithClaudeVersions(CATALOG);
     expect(rows.slice(0, 4).map((row) => [row.id, row.displayName])).toEqual([
       ["sonnet", "Sonnet 5.5"],
-      ["claude-fable-5-1[1m]", "Fable 5.1 (1M context)"],
+      ["claude-fable-5-2[1m]", "Fable 5.2 (1M context)"],
       ["opus", "Opus 5.5"],
       ["haiku", "Haiku 5.5"],
     ]);
@@ -84,6 +85,7 @@ describe("aeWithClaudeVersions", () => {
       "claude-sonnet-5",
       "claude-sonnet-4-6",
       "claude-haiku-4-5",
+      "claude-fable-5-1",
       "claude-fable-5",
     ]);
     for (const row of older) {
@@ -158,7 +160,9 @@ describe("aeWithClaudeVersions", () => {
 describe("aeSplitPrevious", () => {
   it("keeps the newest of each family and splits off the older ones", () => {
     const { latest, previous } = aeSplitPrevious(aeWithClaudeVersions(CATALOG));
-    expect(latest.map((row) => row.id)).toEqual(CATALOG.map((row) => row.id));
+    expect(latest.map((row) => row.id)).toEqual(
+      CATALOG.map((row) => (row.id === "claude-fable-5-1[1m]" ? "claude-fable-5-2[1m]" : row.id)),
+    );
     expect(previous.map((row) => row.id)).toContain("claude-opus-5");
     expect(previous).toHaveLength(AE_CLAUDE_KNOWN_MODELS.length - CATALOG.length);
   });
@@ -168,5 +172,86 @@ describe("aeSplitPrevious", () => {
     const { latest, previous } = aeSplitPrevious(rows);
     expect(latest).toEqual([{ id: "default" }, { id: "claude-opus-5-5" }]);
     expect(previous).toEqual([{ id: "opus-4-10" }]);
+  });
+});
+
+describe("promotion of a newer known model", () => {
+  it("moves the 1M Fable row to 5.2 and demotes 5.1", () => {
+    const rows = aeWithClaudeVersions(CATALOG);
+    const main = rows.find((row) => row.id === "claude-fable-5-2[1m]");
+    expect(main).toMatchObject({
+      model: "claude-fable-5-2",
+      displayName: "Fable 5.2 (1M context)",
+      source: SUBSCRIPTION,
+    });
+    expect(rows.some((row) => row.id === "claude-fable-5-1[1m]")).toBe(false);
+    const { latest, previous } = aeSplitPrevious(rows);
+    expect(latest.map((row) => row.id)).toContain("claude-fable-5-2[1m]");
+    expect(previous.find((row) => row.id === "claude-fable-5-1")?.displayName).toBe("Fable 5.1");
+  });
+
+  it("promotes a bare alias row to the plain 5.2 id", () => {
+    const rows = aeWithClaudeVersions([
+      { id: "fable", model: "claude-fable-5-1", displayName: "Fable", source: SUBSCRIPTION },
+    ]);
+    expect(rows[0]).toMatchObject({
+      id: "fable",
+      model: "claude-fable-5-2",
+      displayName: "Fable 5.2",
+    });
+    expect(rows.some((row) => row.id === "claude-fable-5-1")).toBe(true);
+  });
+
+  it("promotes a bare full id to claude-fable-5-2", () => {
+    const rows = aeWithClaudeVersions([
+      {
+        id: "claude-fable-5-1",
+        model: "claude-fable-5-1",
+        displayName: "Fable",
+        source: SUBSCRIPTION,
+      },
+    ]);
+    expect(rows[0]).toMatchObject({ id: "claude-fable-5-2", model: "claude-fable-5-2" });
+  });
+
+  it("leaves a catalog already on 5.2 unchanged", () => {
+    const current = CATALOG.map((row) =>
+      row.id.startsWith("claude-fable")
+        ? { ...row, id: "claude-fable-5-2[1m]", model: "claude-fable-5-2" }
+        : row,
+    );
+    const rows = aeWithClaudeVersions(current);
+    expect(
+      rows.filter((row) => row.source === SUBSCRIPTION && !row.id.startsWith("claude-")),
+    ).toEqual(
+      current
+        .filter((row) => !row.id.startsWith("claude-"))
+        .map((row) => ({
+          ...row,
+          displayName: expect.any(String),
+        })),
+    );
+    expect(rows.find((row) => row.id === "claude-fable-5-2[1m]")?.displayName).toBe(
+      "Fable 5.2 (1M context)",
+    );
+  });
+
+  it("does not touch Opus, Sonnet or Haiku rows", () => {
+    const rows = aeWithClaudeVersions(CATALOG);
+    expect(rows.find((row) => row.id === "opus")).toMatchObject({
+      model: "claude-opus-5-5",
+      displayName: "Opus 5.5",
+      isDefault: true,
+    });
+    expect(rows.find((row) => row.id === "sonnet")?.model).toBe("claude-sonnet-5-5");
+    expect(rows.find((row) => row.id === "haiku")?.model).toBe("claude-haiku-5-5");
+  });
+
+  it("lets an extra known id beat 5.2", () => {
+    const rows = aeMergeKnownClaudeModels(CATALOG, ["claude-fable-5-3"]);
+    expect(rows.find((row) => row.id === "claude-fable-5-3[1m]")?.displayName).toBe(
+      "Fable 5.3 (1M context)",
+    );
+    expect(rows.some((row) => row.id === "claude-fable-5-2")).toBe(true);
   });
 });
