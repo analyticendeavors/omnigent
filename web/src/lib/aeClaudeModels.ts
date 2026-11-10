@@ -1,6 +1,7 @@
 // Claude version labels and older Claude models for the model pickers (omnigent-ae,
 // 2026-10-19). A subscription catalog lists only each family's newest model, so the
 // older ids it still serves come from AE_CLAUDE_KNOWN_MODELS, each checked to answer.
+// 2026-11-10: a known id newer than the catalog's newest row of its family now takes that row's place (Fable 5.2).
 
 import { useMemo } from "react";
 import type { NativeModelOption } from "@/lib/types";
@@ -16,6 +17,7 @@ export const AE_CLAUDE_KNOWN_MODELS: readonly string[] = [
   "claude-sonnet-4-6",
   "claude-haiku-5-5",
   "claude-haiku-4-5",
+  "claude-fable-5-2",
   "claude-fable-5-1",
   "claude-fable-5",
 ];
@@ -84,14 +86,60 @@ function isSubscription(row: NativeModelOption): boolean {
 }
 
 /**
- * Subscription rows relabeled with their version ("Opus 5.5"), plus one row per
- * older known model of each family the subscription lists. Rows from other
- * sources pass through unchanged; with no subscription row, the same array.
+ * Rewrites the subscription row holding a family's newest version to the newest
+ * known id of that family, when a known id is newer. The `[1m]` suffix stays where
+ * the row had it; a bare family label is relabeled by the caller afterwards.
  */
-export function aeWithClaudeVersions(rows: NativeModelOption[]): NativeModelOption[] {
+function promoteKnown(rows: NativeModelOption[], known: readonly string[]): NativeModelOption[] {
+  const newest = newestByFamily(rows.filter(isSubscription), rowVersion);
+  const promoted = new Map<string, { version: AeClaudeVersion; id: string }>();
+  for (const id of known) {
+    const version = aeClaudeVersion(id);
+    const latest = version && newest.get(version.family);
+    if (!version || !latest || compareVersions(version, latest) <= 0) continue;
+    const held = promoted.get(version.family);
+    if (!held || compareVersions(version, held.version) > 0)
+      promoted.set(version.family, { version, id });
+  }
+  if (promoted.size === 0) return rows;
+  return rows.map((row) => {
+    const version = isSubscription(row) ? rowVersion(row) : null;
+    const target = version && promoted.get(version.family);
+    if (!version || !target) return row;
+    const current = newest.get(version.family);
+    if (!current || compareVersions(version, current) !== 0) return row;
+    const base = target.id.replace(CONTEXT_SUFFIX, "");
+    const withSuffix = (value: string) => (CONTEXT_SUFFIX.test(value) ? `${base}[1m]` : base);
+    const label = aeClaudeVersionLabel(base) ?? base;
+    const wide = CONTEXT_SUFFIX.test(row.id) || CONTEXT_SUFFIX.test(row.model ?? "");
+    const named =
+      BARE_CLAUDE_LABEL.test(row.displayName ?? row.id) ||
+      /^\w+( \d+(\.\d+)?)? \(1M context\)$/i.test(row.displayName ?? "");
+    const next: NativeModelOption = { ...row, id: withSuffix(row.id) };
+    // An alias id ("fable") has no version to rewrite; only a full id changes.
+    if (!aeClaudeVersion(row.id)) next.id = row.id;
+    if (row.model !== undefined) next.model = withSuffix(row.model);
+    if (named) next.displayName = wide ? `${label} (1M context)` : label;
+    return next;
+  });
+}
+
+/**
+ * Subscription rows relabeled with their version ("Opus 5.5"), plus one row per
+ * older known model of each family the subscription lists. A known id newer than a
+ * family's newest subscription row replaces that row (and its `[1m]` sibling).
+ * Rows from other sources pass through unchanged; with no subscription row, the
+ * same array. `extraKnown` adds ids (from a server route) to the known list.
+ */
+export function aeMergeKnownClaudeModels(
+  catalog: NativeModelOption[],
+  extraKnown: readonly string[] = [],
+): NativeModelOption[] {
+  const known = [...new Set([...extraKnown, ...AE_CLAUDE_KNOWN_MODELS])];
+  const rows = promoteKnown(catalog, known);
   const subscriptionRows = rows.filter(isSubscription);
   const newest = newestByFamily(subscriptionRows, rowVersion);
-  if (newest.size === 0) return rows;
+  if (newest.size === 0) return catalog;
   const relabeled = rows.map((row) => {
     const label = isSubscription(row) && aeClaudeVersionLabel(row.model ?? row.id);
     // Only a bare family name is relabeled; "Opus 5.5 (1M context)" already says more.
@@ -103,7 +151,7 @@ export function aeWithClaudeVersions(rows: NativeModelOption[]): NativeModelOpti
     .filter((row) => !CONTEXT_SUFFIX.test(row.model ?? row.id))
     .map(rowVersion);
   const older: NativeModelOption[] = [];
-  for (const id of AE_CLAUDE_KNOWN_MODELS) {
+  for (const id of known) {
     const version = aeClaudeVersion(id);
     const latest = version && newest.get(version.family);
     if (!version || !latest || compareVersions(version, latest) >= 0) continue;
@@ -118,6 +166,11 @@ export function aeWithClaudeVersions(rows: NativeModelOption[]): NativeModelOpti
     older.push({ id, model: id, displayName: aeClaudeVersionLabel(id) ?? id, source });
   }
   return [...relabeled, ...older];
+}
+
+/** {@link aeMergeKnownClaudeModels} with the built-in known list. */
+export function aeWithClaudeVersions(rows: NativeModelOption[]): NativeModelOption[] {
+  return aeMergeKnownClaudeModels(rows);
 }
 
 /** {@link aeWithClaudeVersions} for a picker, memoized; `rows` unchanged when not Claude. */

@@ -106,9 +106,10 @@ export function aeEffortDefaultFor(
 }
 
 // Claude Code's own default effort per model, read from the model catalog in
-// the installed Claude Code binary (2.1.306, 2026-10-20) with
+// the installed Claude Code binary (2.1.322, 2026-11-10) with
 // scripts/claude-effort-defaults.py in omnigent-ae; rerun it after a Claude
-// Code bump and update this table. Keyed by family and "major.minor".
+// Code bump and update this table. The Fable 5.2 row is assumed high: 2.1.322's
+// catalog does not list it yet. Keyed by family and "major.minor".
 export const CLAUDE_CODE_DEFAULT_EFFORT: Readonly<Record<string, string>> = {
   "opus 5.5": "medium",
   "opus 5": "high",
@@ -119,6 +120,7 @@ export const CLAUDE_CODE_DEFAULT_EFFORT: Readonly<Record<string, string>> = {
   "sonnet 5": "high",
   "sonnet 4.6": "high",
   "haiku 5.5": "medium",
+  "fable 5.2": "high",
   "fable 5.1": "high",
   "fable 5": "high",
 };
