@@ -14122,6 +14122,16 @@
               "title": "Fresh",
               "type": "boolean"
             }
+          },
+          {
+            "in": "query",
+            "name": "wake",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Wake",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
