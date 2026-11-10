@@ -64,6 +64,7 @@ import {
   useVoiceSnapshot,
   type VoicePhase,
 } from "@/lib/aeVoiceMode";
+import { useSendSnips, writeSendSnips } from "@/lib/aeVoiceSnips";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chatStore";
 
@@ -101,6 +102,7 @@ function RowHint({
     | "voice.mode"
     | "voice.speak"
     | "voice.fast"
+    | "voice.snips"
     | "voice.voice"
     | "voice.rate"
     | "voice.microphone"
@@ -189,7 +191,7 @@ function SwitchRow({
   label: string;
   checked: boolean;
   onChange: (next: boolean) => void;
-  hint: "voice.mode" | "voice.speak" | "voice.fast";
+  hint: "voice.mode" | "voice.speak" | "voice.fast" | "voice.snips";
   testId: string;
 }) {
   return (
@@ -237,6 +239,7 @@ function SpeakRepliesControl({
 }: AeSpeakRepliesButtonProps & { chatId: string }) {
   const [on, setOn] = useState(() => readSpeakReplies(chatId));
   const [fastEnabled, setFastEnabled] = useState(readFastEnabled);
+  const snips = useSendSnips();
   const [stored, setStored] = useState(readVoiceChoice);
   const [legacy, setLegacy] = useState(isLegacyVoiceChoice);
   const [cloudVoices, setCloudVoices] = useState<CloudVoice[]>([]);
@@ -458,6 +461,13 @@ function SpeakRepliesControl({
             testId="ae-speak-fast"
           />
         ) : null}
+        <SwitchRow
+          label="Send snips"
+          checked={snips}
+          onChange={writeSendSnips}
+          hint="voice.snips"
+          testId="ae-voice-snips"
+        />
         <DropdownMenuSub>
           <DropdownMenuSubTrigger data-testid="ae-speak-voice-trigger">
             <span className={ROW_LABEL_CLASS}>

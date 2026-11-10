@@ -250,6 +250,11 @@ export const AE_SETTING_HINTS = {
     hint: "While replies are spoken this chat answers at low effort, then goes back to its old effort when speaking turns off. On by default.",
     source: "existing",
   },
+  "voice.snips": {
+    label: "Send snips",
+    hint: "Voice mode only: a picture you attach gets a spoken Got it. and goes with your next sentence, or alone after 10 s as Note this. Per device.",
+    source: "tooltip",
+  },
   "voice.voice": {
     label: "Voice",
     hint: "Natural voices come from the server when it has them; others are this device's. Saved per device. Default: first natural voice, else best.",

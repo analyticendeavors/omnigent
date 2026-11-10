@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetCloudVoicesCache } from "@/lib/aeCloudVoice";
 import { getVoiceSnapshot, resetVoiceStore, setVoicePhase } from "@/lib/aeVoiceMode";
+import { resetSnipsStore } from "@/lib/aeVoiceSnips";
 import { useChatStore } from "@/store/chatStore";
 import { installFakeSpeech, makeVoice, removeFakeSpeech } from "@/test/fakeSpeech";
 import { AeSpeakRepliesButton } from "./AeSpeakRepliesButton";
@@ -40,6 +41,7 @@ function serveCloudVoices(voices: { id: string; name: string }[]) {
 beforeEach(() => {
   serveCloudVoices([]);
   window.localStorage.clear();
+  resetSnipsStore();
   resetVoiceStore();
   setEffort.mockClear();
   useChatStore.setState({ conversationId: "c1", blocks: [], status: "idle", setEffort } as never);
@@ -206,6 +208,17 @@ describe("AeSpeakRepliesButton", () => {
       setTimeout(resolve, 10);
     });
     expect(window.localStorage.getItem("omnigent:ae-speak-fast:c1")).not.toBeNull();
+  });
+
+  it("shows Send snips off by default, saves the switch and has a hint", async () => {
+    renderButton();
+    const user = await openMenu();
+    const row = screen.getByTestId("ae-voice-snips");
+    expect(row).toHaveAttribute("aria-checked", "false");
+    expect(within(row).getByTestId("ae-hint-voice.snips")).toBeInTheDocument();
+    await user.click(row);
+    expect(screen.getByTestId("ae-voice-snips")).toHaveAttribute("aria-checked", "true");
+    expect(window.localStorage.getItem("omnigent:ae-voice-snips")).toBe("true");
   });
 
   it("applies Fast answers once effort levels arrive", async () => {
@@ -438,16 +451,16 @@ describe("AeSpeakRepliesButton", () => {
     });
   });
 
-  it("puts the hint beside the label on all seven rows and the actions side by side", async () => {
+  it("puts the hint beside the label on all eight rows and the actions side by side", async () => {
     mediaDevicesForLayout();
     renderButton();
     await openMenu();
     const triggers = document.querySelectorAll("[data-slot=tooltip-trigger]");
-    expect(triggers).toHaveLength(7);
+    expect(triggers).toHaveLength(8);
     for (const el of triggers) {
       const group = el.closest("span.items-center.gap-1\\.5");
       expect(group).not.toBeNull();
-      expect(group?.textContent).toMatch(/Voice mode|Speak replies|Fast answers|Voice|Speed|Microphone|Speaker/);
+      expect(group?.textContent).toMatch(/Voice mode|Speak replies|Fast answers|Send snips|Voice|Speed|Microphone|Speaker/);
     }
     const actions = screen.getByTestId("ae-speak-actions");
     expect(within(actions).getByTestId("ae-speak-read-last")).toBeInTheDocument();

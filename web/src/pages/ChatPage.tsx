@@ -234,6 +234,7 @@ import {
 import { AeSpeakRepliesButton } from "@/components/AeSpeakRepliesButton";
 import { ComposerMicButton } from "@/components/ComposerMicButton";
 import { useAeVoiceMode } from "@/hooks/useAeVoiceMode";
+import { useAeVoiceSnips } from "@/hooks/useAeVoiceSnips";
 import type { AeMicController } from "@/lib/aeVoiceMode";
 import {
   COMPOSER_TIGHT_HOST_WRAPPER_CLASS,
@@ -3561,6 +3562,23 @@ function ComposerImpl(
       hasPendingElicitation
     ),
     labels: composerSession?.labels,
+  });
+  useAeVoiceSnips({
+    chatId: composerSessionId,
+    voiceOn: voice.on,
+    phase: voice.phase,
+    cardActive: voice.cardActive,
+    files,
+    addFiles,
+    value,
+    setValue,
+    submit,
+    canSend: !(
+      composerLockedByBtw ||
+      disabled ||
+      sendDisabledReason !== null ||
+      hasPendingElicitation
+    ),
   });
 
   return (
