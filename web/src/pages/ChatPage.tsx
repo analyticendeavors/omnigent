@@ -2464,6 +2464,7 @@ function ComposerImpl(
   // the create window issues no `/v1/sessions/temp:*` requests.
   const composerSessionId = isTempConvId(conversationId) ? null : conversationId;
   const speakEffort = useSessionEffort();
+  const speakCostRouting = useChatStore((s) => s.costControlModeOverride);
   const { session: composerSession } = useSession(composerSessionId);
   const composerBranch = useChatStore((s) => s.gitBranch);
   const claudePermissionMode = useChatStore((s) => s.claudePermissionMode);
@@ -4055,6 +4056,13 @@ function ComposerImpl(
                 canSetEffort={showEffort && effortLevels.includes("low")}
                 currentEffort={speakEffort}
                 readOnly={isReadOnly}
+                modelOptions={codexModelOptions}
+                canSetModel={
+                  modelPickerKind === "claude" &&
+                  showModels &&
+                  !(costRoutingEligible && speakCostRouting === "on")
+                }
+                canResetModel={supportsModelReset}
                 className={cn("size-8 md:size-7", COMPOSER_TIGHT_SPEAKER_CLASS)}
               />
               <ComposerMicButton

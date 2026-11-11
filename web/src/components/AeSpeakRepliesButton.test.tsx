@@ -6,6 +6,7 @@ import { resetCloudVoicesCache } from "@/lib/aeCloudVoice";
 import {
   getVoiceSnapshot,
   resetVoiceStore,
+  setVoiceOn,
   setVoiceBlocked,
   setVoicePhase,
   stopVoice,
@@ -432,7 +433,11 @@ describe("AeSpeakRepliesButton", () => {
 
     it("shows the device model on the row and the full label in the title and sub-menu", async () => {
       mediaDevices([
-        { kind: "audioinput", deviceId: "mic1", label: "Microphone (Logitech BRIO 4K Stream Edition)" },
+        {
+          kind: "audioinput",
+          deviceId: "mic1",
+          label: "Microphone (Logitech BRIO 4K Stream Edition)",
+        },
       ]);
       window.localStorage.setItem("omnigent:ae-mic-device", "mic1");
       renderButton();
@@ -493,7 +498,9 @@ describe("AeSpeakRepliesButton", () => {
     for (const el of triggers) {
       const group = el.closest("span.items-center.gap-1\\.5");
       expect(group).not.toBeNull();
-      expect(group?.textContent).toMatch(/Voice mode|Speak replies|Fast answers|Send snips|Mic while speaking|Voice|Speed|Microphone|Speaker|Add voice log/);
+      expect(group?.textContent).toMatch(
+        /Voice mode|Speak replies|Fast answers|Send snips|Mic while speaking|Voice|Speed|Microphone|Speaker|Add voice log/,
+      );
     }
     const actions = screen.getByTestId("ae-speak-actions");
     expect(within(actions).getByTestId("ae-speak-read-last")).toBeInTheDocument();
@@ -531,10 +538,243 @@ describe("AeSpeakRepliesButton", () => {
     await user.click(screen.getByTestId("ae-speak-read-last"));
     await waitFor(() => expect(synth.texts()).toEqual(["The last reply."]));
     const user2 = await openMenu();
-    await waitFor(() => expect(screen.getByTestId("ae-speak-stop")).not.toHaveAttribute("data-disabled"));
+    await waitFor(() =>
+      expect(screen.getByTestId("ae-speak-stop")).not.toHaveAttribute("data-disabled"),
+    );
     const cancels = synth.cancelCount;
     await user2.click(screen.getByTestId("ae-speak-stop"));
     expect(synth.cancelCount).toBeGreaterThan(cancels);
+  });
+
+  it("Read last reply uses the picked cloud voice and the picked speed", async () => {
+    const calls: { url: string; body: string }[] = [];
+    resetCloudVoicesCache();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init?: RequestInit) => {
+        if (String(url).includes("/tts/voices")) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ voices: [...CLOUD, { id: "rocky-xtts", name: "Rocky" }] }),
+              {
+                status: 200,
+              },
+            ),
+          );
+        }
+        calls.push({ url: String(url), body: String(init?.body) });
+        return new Promise<Response>(() => {});
+      }),
+    );
+    window.localStorage.setItem("omnigent:ae-speak-voice", "cloud:rocky-xtts");
+    window.localStorage.setItem("omnigent:ae-speak-rate", "1.25");
+    useChatStore.setState({
+      blocks: [
+        {
+          type: "text_done",
+          ctx: { agent: null, depth: 0, turn: 1, timestamp: 1, responseId: "r1", itemId: "i1" },
+          fullText: "The last reply.",
+          hasCodeBlocks: false,
+        },
+      ],
+    } as never);
+    renderButton();
+    const user = await openMenu();
+    expect(await screen.findByText("Rocky")).toBeInTheDocument();
+    await user.click(screen.getByTestId("ae-speak-read-last"));
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(JSON.parse(calls[0].body)).toEqual({
+      text: "The last reply.",
+      voice: "rocky-xtts",
+      rate: 1.25,
+    });
+  });
+
+  describe("Fast model", () => {
+    const MODELS = [
+      { id: "opus", model: "claude-opus-5-5" },
+      { id: "claude-sonnet-5", model: "claude-sonnet-5" },
+      { id: "claude-sonnet-5-5", model: "claude-sonnet-5-5" },
+    ];
+    const setModel = vi.fn((_m: string | null, _o?: unknown) => Promise.resolve());
+    const originalSetModel = useChatStore.getState().setModel;
+
+    function renderModelButton(
+      extra: Partial<React.ComponentProps<typeof AeSpeakRepliesButton>> = {},
+    ) {
+      return renderButton({
+        modelOptions: MODELS,
+        canSetModel: true,
+        canResetModel: true,
+        ...extra,
+      });
+    }
+    function voiceOn(on: boolean) {
+      act(() => setVoiceOn("c1", on));
+    }
+    // A mock that, like the store, records the override it was given.
+    function followStore() {
+      setModel.mockImplementation((m: string | null) => {
+        useChatStore.setState({ sessionModelOverride: m } as never);
+        return Promise.resolve();
+      });
+    }
+
+    beforeEach(() => {
+      setModel.mockReset();
+      setModel.mockImplementation(() => Promise.resolve());
+      useChatStore.setState({
+        setModel,
+        sessionModelOverride: "opus",
+        llmModel: "claude-opus-5-5",
+      } as never);
+    });
+    afterEach(() => {
+      useChatStore.setState({
+        setModel: originalSetModel,
+        sessionModelOverride: null,
+        llmModel: null,
+      } as never);
+    });
+
+    it.each([
+      ["a viewer", { readOnly: true }],
+      ["a non-Claude chat", { canSetModel: false }],
+      ["a chat without model rows", { modelOptions: [] }],
+    ])("has no row for %s", async (_name, extra) => {
+      renderModelButton(extra);
+      await openMenu();
+      expect(screen.queryByTestId("ae-voice-model-trigger")).toBeNull();
+    });
+
+    it("shows the row with its hint, the newest Sonnet as the default", async () => {
+      renderModelButton();
+      await openMenu();
+      const row = screen.getByTestId("ae-voice-model-trigger");
+      expect(within(row).getByText("Sonnet 5.5")).toBeInTheDocument();
+      expect(screen.getByTestId("ae-hint-voice.fast_model")).toBeInTheDocument();
+    });
+
+    it("switches to the fast model when Voice mode starts and back when it ends", async () => {
+      followStore();
+      renderModelButton();
+      voiceOn(true);
+      await waitFor(() =>
+        expect(setModel).toHaveBeenCalledWith("claude-sonnet-5-5", { expectConfirmation: true }),
+      );
+      expect(
+        JSON.parse(window.localStorage.getItem("omnigent:ae-voice-model-state:c1") ?? "null"),
+      ).toMatchObject({
+        previous: "opus",
+        fast: "claude-sonnet-5-5",
+      });
+      voiceOn(false);
+      await waitFor(() =>
+        expect(setModel).toHaveBeenLastCalledWith("opus", { expectConfirmation: true }),
+      );
+      await waitFor(() =>
+        expect(window.localStorage.getItem("omnigent:ae-voice-model-state:c1")).toBeNull(),
+      );
+      expect(setModel).toHaveBeenCalledTimes(2);
+    });
+
+    it("sends a chat that followed the default back to the default", async () => {
+      followStore();
+      useChatStore.setState({ sessionModelOverride: null, llmModel: "claude-opus-5-5" } as never);
+      renderModelButton();
+      voiceOn(true);
+      await waitFor(() =>
+        expect(setModel).toHaveBeenCalledWith("claude-sonnet-5-5", expect.anything()),
+      );
+      voiceOn(false);
+      await waitFor(() => expect(setModel).toHaveBeenLastCalledWith(null, expect.anything()));
+    });
+
+    it("restores the reported model when the session cannot reset to its default", async () => {
+      followStore();
+      useChatStore.setState({ sessionModelOverride: null, llmModel: "claude-opus-5-5" } as never);
+      renderModelButton({ canResetModel: false });
+      voiceOn(true);
+      await waitFor(() => expect(setModel).toHaveBeenCalledTimes(1));
+      voiceOn(false);
+      await waitFor(() => expect(setModel).toHaveBeenLastCalledWith("opus", expect.anything()));
+    });
+
+    it("leaves a model the person picked by hand during Voice mode", async () => {
+      followStore();
+      renderModelButton();
+      voiceOn(true);
+      await waitFor(() => expect(setModel).toHaveBeenCalledTimes(1));
+      act(() => useChatStore.setState({ sessionModelOverride: "claude-sonnet-5" } as never));
+      voiceOn(false);
+      await waitFor(() =>
+        expect(window.localStorage.getItem("omnigent:ae-voice-model-state:c1")).toBeNull(),
+      );
+      expect(setModel).toHaveBeenCalledTimes(1);
+    });
+
+    it("does nothing when the chat already runs the fast model", async () => {
+      useChatStore.setState({ sessionModelOverride: "claude-sonnet-5-5" } as never);
+      renderModelButton();
+      voiceOn(true);
+      await Promise.resolve();
+      expect(setModel).not.toHaveBeenCalled();
+      expect(window.localStorage.getItem("omnigent:ae-voice-model-state:c1")).toBeNull();
+    });
+
+    it("puts the model back after a reload that lost Voice mode", async () => {
+      followStore();
+      useChatStore.setState({ sessionModelOverride: "claude-sonnet-5-5" } as never);
+      window.localStorage.setItem(
+        "omnigent:ae-voice-model-state:c1",
+        JSON.stringify({ previous: "opus", fallback: "opus", fast: "claude-sonnet-5-5" }),
+      );
+      renderModelButton();
+      await waitFor(() =>
+        expect(setModel).toHaveBeenCalledWith("opus", { expectConfirmation: true }),
+      );
+      await waitFor(() =>
+        expect(window.localStorage.getItem("omnigent:ae-voice-model-state:c1")).toBeNull(),
+      );
+    });
+
+    it("forgets the switch when it is refused", async () => {
+      setModel.mockImplementation(() => Promise.reject(new Error("no")));
+      renderModelButton();
+      voiceOn(true);
+      await waitFor(() => expect(setModel).toHaveBeenCalledTimes(1));
+      await waitFor(() =>
+        expect(window.localStorage.getItem("omnigent:ae-voice-model-state:c1")).toBeNull(),
+      );
+    });
+
+    it("uses the model picked in the menu, and Off keeps the chat's model", async () => {
+      followStore();
+      renderModelButton();
+      const user = await openMenu();
+      await user.click(screen.getByTestId("ae-voice-model-trigger"));
+      const option = (await screen.findAllByTestId("ae-voice-model-option")).find(
+        (el) => el.textContent === "Sonnet 5",
+      ) as HTMLElement;
+      option.focus();
+      await user.keyboard("{Enter}");
+      expect(window.localStorage.getItem("omnigent:ae-voice-fast-model")).toBe("claude-sonnet-5");
+      voiceOn(true);
+      await waitFor(() =>
+        expect(setModel).toHaveBeenCalledWith("claude-sonnet-5", expect.anything()),
+      );
+      voiceOn(false);
+      await waitFor(() => expect(setModel).toHaveBeenLastCalledWith("opus", expect.anything()));
+      const user2 = await openMenu();
+      await user2.click(screen.getByTestId("ae-voice-model-trigger"));
+      screen.getByTestId("ae-voice-model-off").focus();
+      await user2.keyboard("{Enter}");
+      expect(window.localStorage.getItem("omnigent:ae-voice-fast-model")).toBe("off");
+      setModel.mockClear();
+      voiceOn(true);
+      await Promise.resolve();
+      expect(setModel).not.toHaveBeenCalled();
+    });
   });
 
   describe("device ids hidden before permission", () => {

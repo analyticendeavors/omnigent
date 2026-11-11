@@ -250,6 +250,11 @@ export const AE_SETTING_HINTS = {
     hint: "While replies are spoken this chat answers at low effort, then goes back to its old effort when speaking turns off. On by default.",
     source: "existing",
   },
+  "voice.fast_model": {
+    label: "Fast model",
+    hint: "Voice mode runs this chat on this model, then back on its own when Voice mode ends; a model you pick yourself stays. Default: newest Sonnet.",
+    source: "tooltip",
+  },
   "voice.snips": {
     label: "Send snips",
     hint: "Voice mode only: a picture you attach gets a spoken Got it. and goes with your next sentence, or alone after 10 s as Note this. Per device.",

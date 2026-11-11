@@ -241,6 +241,16 @@ export function primeVoicePlayback(): void {
   }
 }
 
+/** Unlocks the cloud voices' audio element only; call inside a tap. Never throws. */
+export function primeCloudPlayback(): void {
+  logVoice("prime cloud");
+  try {
+    cloudPrimer?.();
+  } catch {
+    // Priming is best effort.
+  }
+}
+
 export interface Speaker {
   speak: (text: string, opts: SpeakOptions) => void;
   stop: () => void;

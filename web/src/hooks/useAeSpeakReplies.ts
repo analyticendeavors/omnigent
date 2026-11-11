@@ -29,6 +29,7 @@ import {
   setVoicePlaying,
 } from "@/lib/aeVoiceMode";
 import { recordSpoken, resetEcho } from "@/lib/aeVoiceEcho";
+import { logVoice } from "@/lib/aeVoiceLog";
 import { usePlaybackBlocked } from "@/lib/aeVoicePlayback";
 import { type AnyBlock, LIVE_ITEM_PREFIX } from "@/lib/blocks";
 import { useChatStore } from "@/store/chatStore";
@@ -368,8 +369,11 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
       if (b.ctx.itemId?.startsWith(LIVE_ITEM_PREFIX) || b.fullText.trim() === "") continue;
       const text = speechTextFromMarkdown(stripTldr(b.fullText));
       if (text === "") continue;
+      const { voice: picked, rate: pickedRate } = optsRef.current;
+      // The voice log shows which voice a manual read used, to compare with the spoken replies.
+      logVoice("read last", picked ? `${picked.kind}:${picked.id} x${pickedRate}` : "default");
       getSpeaker().stop();
-      say(text, optsRef.current.voice, optsRef.current.rate);
+      say(text, picked, pickedRate);
       return;
     }
   }, []);

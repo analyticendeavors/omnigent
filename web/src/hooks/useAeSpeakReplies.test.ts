@@ -190,6 +190,23 @@ describe("useAeSpeakReplies", () => {
     vi.unstubAllGlobals();
   });
 
+  it("readLast sends the chosen cloud voice and rate to the server", () => {
+    const fetchMock = vi.fn(() => new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = mount(false, "c1", { kind: "cloud", id: "rocky-xtts" });
+    setStore({ blocks: [final("r1", "a", "Last reply.", { createdAtS: 1 })] });
+    act(() => result.current.readLast());
+    expect(synth.texts()).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({
+      text: "Last reply.",
+      voice: "rocky-xtts",
+      rate: 1,
+    });
+    vi.unstubAllGlobals();
+  });
+
   it("speaks a growing live preview, then only the remainder on the final", () => {
     mount();
     setStore({ blocks: [live("r1", "One. Two")] });

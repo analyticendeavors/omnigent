@@ -35,10 +35,24 @@ import {
 } from "@/lib/aeAudioDevices";
 import { type CloudVoice, fetchCloudVoices } from "@/lib/aeCloudVoice";
 import {
+  clearVoiceModelState,
+  effectiveModelId,
+  readVoiceModelPick,
+  readVoiceModelState,
+  resolveFastModel,
+  VOICE_MODEL_OFF,
+  voiceModelLabel,
+  writeVoiceModelPick,
+  writeVoiceModelState,
+} from "@/lib/aeVoiceModel";
+import { findNativeModelOption } from "@/lib/codexNativeModels";
+import type { NativeModelOption } from "@/lib/types";
+import {
   clearFastAnswersState,
   FAST_EFFORT,
   isSpeechSupported,
   listVoices,
+  primeCloudPlayback,
   primeVoicePlayback,
   onVoicesChanged,
   pickDefaultVoice,
@@ -92,6 +106,12 @@ export interface AeSpeakRepliesButtonProps {
   readOnly?: boolean;
   canSetEffort: boolean;
   currentEffort: string | null;
+  /** The chat's Claude model rows; the Fast model row needs a Claude chat with rows. */
+  modelOptions?: readonly NativeModelOption[];
+  /** False for a viewer, a non-Claude chat or a chat on cost routing. */
+  canSetModel?: boolean;
+  /** The session can go back to its default model (a null pick). */
+  canResetModel?: boolean;
 }
 
 function choiceKey(choice: VoiceChoice | null): string {
@@ -106,6 +126,7 @@ function RowHint({
     | "voice.mode"
     | "voice.speak"
     | "voice.fast"
+    | "voice.fast_model"
     | "voice.snips"
     | "voice.mic_while_speaking"
     | "voice.voice"
@@ -228,6 +249,8 @@ function SwitchRow({
   );
 }
 
+const NO_MODEL_OPTIONS: readonly NativeModelOption[] = [];
+
 function setChatEffort(level: string | null): Promise<void> {
   return useChatStore.getState().setEffort(level);
 }
@@ -244,6 +267,9 @@ function SpeakRepliesControl({
   readOnly,
   canSetEffort,
   currentEffort,
+  modelOptions = NO_MODEL_OPTIONS,
+  canSetModel = false,
+  canResetModel = false,
 }: AeSpeakRepliesButtonProps & { chatId: string }) {
   const [on, setOn] = useState(() => readSpeakReplies(chatId));
   const [fastEnabled, setFastEnabled] = useState(readFastEnabled);
@@ -351,6 +377,72 @@ function SpeakRepliesControl({
   useEffect(() => {
     if (on && fastEnabled && fastAvailable && currentEffort !== FAST_EFFORT) void applyFast();
   }, [on, fastEnabled, fastAvailable, currentEffort, applyFast]);
+
+  // Fast model: Voice mode runs a Claude chat on a quick model and puts the old one back at the end.
+  const [modelPick, setModelPick] = useState(readVoiceModelPick);
+  const fastModel = resolveFastModel(modelPick, modelOptions);
+  const modelAvailable = canSetModel && !readOnly && modelOptions.length > 0;
+  const fastRow = modelOptions.find((o) => o.id === fastModel);
+  const fastModelName = fastRow ? voiceModelLabel(fastRow) : "Off";
+  const modelWanted = voiceMode.on && fastModel !== null && modelAvailable;
+  const modelRefs = useRef({ wanted: modelWanted, fastModel, modelOptions, canResetModel });
+  modelRefs.current = { wanted: modelWanted, fastModel, modelOptions, canResetModel };
+  const modelAvailableRef = useRef(modelAvailable);
+  modelAvailableRef.current = modelAvailable;
+  const modelBusyRef = useRef(false);
+  const mayTouchModel = useCallback(
+    () => modelAvailableRef.current && useChatStore.getState().conversationId === chatId,
+    [chatId],
+  );
+
+  const revertModel = useCallback(async () => {
+    const state = readVoiceModelState(chatId);
+    if (!state || modelBusyRef.current || !mayTouchModel()) return;
+    const store = useChatStore.getState();
+    // A model picked by hand since Voice mode switched stays as the person left it.
+    if (store.sessionModelOverride === state.fast) {
+      const target = state.previous ?? (modelRefs.current.canResetModel ? null : state.fallback);
+      modelBusyRef.current = true;
+      try {
+        await store.setModel(target, { expectConfirmation: true });
+      } catch {
+        return;
+      } finally {
+        modelBusyRef.current = false;
+      }
+    }
+    clearVoiceModelState(chatId);
+  }, [chatId, mayTouchModel]);
+
+  const applyModel = useCallback(async () => {
+    const { fastModel: fast, modelOptions: options } = modelRefs.current;
+    if (modelBusyRef.current || readVoiceModelState(chatId) || fast === null) return;
+    const store = useChatStore.getState();
+    if (store.conversationId !== chatId) return;
+    if (effectiveModelId(options, store.sessionModelOverride, store.llmModel) === fast) return;
+    // Saved before the switch, so a reload or crash in the middle still puts the model back.
+    writeVoiceModelState(chatId, {
+      previous: store.sessionModelOverride,
+      fallback: findNativeModelOption(options, store.llmModel)?.id ?? store.llmModel,
+      fast,
+    });
+    modelBusyRef.current = true;
+    try {
+      await store.setModel(fast, { expectConfirmation: true });
+    } catch {
+      clearVoiceModelState(chatId);
+      return;
+    } finally {
+      modelBusyRef.current = false;
+    }
+    // Voice mode ended while the switch was in flight: put the model back now.
+    if (!modelRefs.current.wanted && mayTouchModel()) await revertModel();
+  }, [chatId, mayTouchModel, revertModel]);
+
+  useEffect(() => {
+    if (modelWanted) void applyModel();
+    else void revertModel();
+  }, [modelWanted, fastModel, applyModel, revertModel]);
 
   const toggleSpeak = (next: boolean) => {
     writeSpeakReplies(chatId, next);
@@ -461,6 +553,39 @@ function SpeakRepliesControl({
             hint="voice.fast"
             testId="ae-speak-fast"
           />
+        ) : null}
+        {modelAvailable ? (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger data-testid="ae-voice-model-trigger">
+              <span className={ROW_LABEL_CLASS}>
+                Fast model
+                <RowHint id="voice.fast_model" />
+              </span>
+              <span className={ROW_VALUE_CLASS}>{fastModelName}</span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="max-h-[60vh] overflow-y-auto">
+              <DropdownMenuRadioGroup
+                value={fastModel ?? VOICE_MODEL_OFF}
+                onValueChange={(next) => {
+                  writeVoiceModelPick(next);
+                  setModelPick(next);
+                }}
+              >
+                <DropdownMenuRadioItem value={VOICE_MODEL_OFF} data-testid="ae-voice-model-off">
+                  Off (keep the chat's model)
+                </DropdownMenuRadioItem>
+                {modelOptions.map((option) => (
+                  <DropdownMenuRadioItem
+                    key={option.id}
+                    value={option.id}
+                    data-testid="ae-voice-model-option"
+                  >
+                    {voiceModelLabel(option)}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
         ) : null}
         <SwitchRow
           label="Send snips"
@@ -582,7 +707,11 @@ function SpeakRepliesControl({
         <DropdownMenuSeparator />
         <div className="flex gap-1.5 px-1 pb-1 pt-0.5" data-testid="ae-speak-actions">
           <DropdownMenuItem
-            onSelect={readLast}
+            onSelect={() => {
+              // Inside the tap, like Voice mode: a cloud voice plays after its fetch, outside any tap.
+              primeCloudPlayback();
+              readLast();
+            }}
             data-testid="ae-speak-read-last"
             className="min-h-8 flex-1 justify-center rounded-md border border-border/60 text-[13px]"
           >
