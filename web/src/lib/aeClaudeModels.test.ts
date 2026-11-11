@@ -13,6 +13,7 @@ import {
   aeWithClaudeVersions,
 } from "./aeClaudeModels";
 
+const API = { kind: "api", label: "API", name: "anthropic" };
 const SUBSCRIPTION = { kind: "subscription", label: "Subscription", name: "claude" };
 
 /** The catalog a Claude subscription serves, as the host probe returns it. */
@@ -247,6 +248,45 @@ describe("promotion of a newer known model", () => {
       displayName: "Opus 5.5 (1M context)",
     });
     expect(rows.filter((row) => row.id.startsWith("claude-opus-6"))).toHaveLength(1);
+  });
+
+  it("copies the alias row's effort options to the new row but not isDefault", () => {
+    const rows = aeMergeKnownClaudeModels(
+      [
+        {
+          id: "opus",
+          model: "claude-opus-5-5",
+          displayName: "Opus",
+          isDefault: true,
+          defaultReasoningEffort: "high",
+          supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "high" }],
+          source: SUBSCRIPTION,
+        },
+      ],
+      ["claude-opus-6"],
+    );
+    expect(rows[0]).toMatchObject({
+      id: "claude-opus-6",
+      defaultReasoningEffort: "high",
+      supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "high" }],
+    });
+    expect(rows[0].isDefault).toBeFalsy();
+    expect(rows[1]).toMatchObject({ id: "opus", isDefault: true });
+    expect(rows.filter((row) => row.isDefault)).toHaveLength(1);
+  });
+
+  it("is not stopped by an API row with the same id", () => {
+    const rows = aeMergeKnownClaudeModels(
+      [
+        { id: "claude-opus-6", model: "claude-opus-6", displayName: "Opus 6", source: API },
+        { id: "opus", model: "claude-opus-5-5", displayName: "Opus", source: SUBSCRIPTION },
+      ],
+      ["claude-opus-6"],
+    );
+    expect(rows.filter((row) => row.id === "claude-opus-6").map((row) => row.source)).toEqual([
+      API,
+      SUBSCRIPTION,
+    ]);
   });
 
   it("promotes a bare full id to claude-fable-5-2", () => {

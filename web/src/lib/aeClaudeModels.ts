@@ -189,11 +189,14 @@ function promoteKnown(rows: NativeModelOption[], known: readonly string[]): Nati
       // would label the row with a version it does not start. It stays as it is; a new row with
       // the newer id goes in front of it.
       const id = wide ? `${base}[1m]` : base;
+      // A copy of the alias row, so the effort options come along; isDefault does not, because
+      // the composer sends no model override for a default row and that would start the alias.
+      const { isDefault: _isDefault, ...rest } = row;
       aliasInserts.set(index, {
+        ...rest,
         id,
         model: id,
         displayName: wide ? `${label} (1M context)` : label,
-        source: row.source,
       });
       out.push(row);
       return;
@@ -207,9 +210,9 @@ function promoteKnown(rows: NativeModelOption[], known: readonly string[]): Nati
     out.push(next);
   });
   if (aliasInserts.size === 0) return out;
-  // Insert each new row before its alias row, unless a row with that id already exists (a
+  // Insert each new row before its alias row, unless a subscription row with that id already exists (a
   // full-id row rewritten in place, or an earlier insert for the same width).
-  const taken = new Set(out.map((row) => row.id));
+  const taken = new Set(out.filter(isSubscription).map((row) => row.id));
   const result: NativeModelOption[] = [];
   out.forEach((row, index) => {
     const insert = aliasInserts.get(index);
