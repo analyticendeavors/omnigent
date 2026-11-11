@@ -162,3 +162,45 @@ describe("AeVoicePanel", () => {
     );
   }
 });
+
+describe("AeVoicePanel (stuck start)", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("offers a tap to start the mic after 3 s of starting, and the tap restarts", () => {
+    vi.useFakeTimers();
+    const onRestartMic = vi.fn();
+    panel({ phase: "starting", onRestartMic });
+    expect(screen.getByText("Starting the mic")).toBeTruthy();
+    act(() => {
+      vi.advanceTimersByTime(3100);
+    });
+    expect(screen.getByText("Tap to start the mic")).toBeTruthy();
+    act(() => screen.getByRole("button", { name: "Start the mic" }).click());
+    expect(onRestartMic).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not offer the tap when the phase moves on first", () => {
+    vi.useFakeTimers();
+    const { rerender, onEnd, onStop, onResume } = panel({
+      phase: "starting",
+      onRestartMic: vi.fn(),
+    });
+    rerender(
+      <AeVoicePanel
+        layout="bar"
+        phase="listening"
+        blocked={false}
+        heard=""
+        caption=""
+        onEnd={onEnd}
+        onStop={onStop}
+        onResume={onResume}
+        onRestartMic={vi.fn()}
+      />,
+    );
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(screen.queryByText("Tap to start the mic")).toBeNull();
+  });
+});

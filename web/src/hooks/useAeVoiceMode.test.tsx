@@ -53,6 +53,7 @@ const controller = {
     stop: vi.fn(() => {
       listening = false;
     }),
+    restart: vi.fn(),
     isListening: () => listening,
   },
 };

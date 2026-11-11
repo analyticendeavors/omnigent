@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCloudSpeaker, fetchCloudVoices, resetCloudVoicesCache } from "./aeCloudVoice";
-import { setCaptionHandler, setPlaybackHandler, type Speaker, type SpeakOptions } from "./aeSpeakReplies";
+import {
+  setCaptionHandler,
+  setPlaybackHandler,
+  type Speaker,
+  type SpeakOptions,
+} from "./aeSpeakReplies";
 import { clearPlaybackBlocked, isPlaybackBlocked, resumePlayback } from "./aeVoicePlayback";
 
 const OPTS: SpeakOptions = { voiceURI: null, rate: 1, cloudVoiceId: "en-US-AvaMultilingualNeural" };
@@ -13,6 +18,7 @@ class FakeAudio {
   onplaying: (() => void) | null = null;
   played: string[] = [];
   pauses = 0;
+  loads = 0;
   sinkId = "";
   sinks: string[] = [];
   static sinkFail = false;
@@ -39,6 +45,9 @@ class FakeAudio {
   }
   pause() {
     this.pauses++;
+  }
+  load() {
+    this.loads++;
   }
   removeAttribute(name: string) {
     if (name === "src") this.src = "";
@@ -197,6 +206,28 @@ describe("createCloudSpeaker", () => {
     FakeAudio.last?.end();
     await settle();
     expect(speaker.speaking()).toBe(false);
+  });
+
+  it("releases the audio element once the queue drains and plays the next reply after", async () => {
+    const speaker = createCloudSpeaker(new FakeDevice());
+    speaker.speak("Hello there.", OPTS);
+    await settle();
+    pending[0].resolve(mp3());
+    await settle();
+    expect(FakeAudio.last?.loads).toBe(0);
+    FakeAudio.last?.end();
+    await settle();
+    expect(speaker.speaking()).toBe(false);
+    const el = FakeAudio.last;
+    expect(el?.loads).toBe(1);
+    expect(el?.src).toBe("");
+    expect(el?.pauses).toBe(1);
+    speaker.speak("Again.", OPTS);
+    await settle();
+    pending[1].resolve(mp3());
+    await settle();
+    expect(FakeAudio.last).toBe(el);
+    expect(el?.played).toHaveLength(2);
   });
 
   it("sends the text, voice and rate as JSON", async () => {
@@ -386,7 +417,9 @@ describe("cloud playback refused by the browser", () => {
     const speaker = createCloudSpeaker(device);
     speaker.speak(sentence("a"), OPTS);
     await settle();
-    FakeAudio.plays.push(Promise.reject(Object.assign(new Error("x"), { name: "NotAllowedError" })));
+    FakeAudio.plays.push(
+      Promise.reject(Object.assign(new Error("x"), { name: "NotAllowedError" })),
+    );
     pending[0].resolve(mp3());
     await settle();
     return { speaker, device };
@@ -424,9 +457,11 @@ describe("cloud playback refused by the browser", () => {
     speaker.speak(sentence("a"), OPTS);
     await settle();
     let reject: (e: unknown) => void = () => {};
-    FakeAudio.plays.push(new Promise<void>((_, r) => {
-      reject = r;
-    }));
+    FakeAudio.plays.push(
+      new Promise<void>((_, r) => {
+        reject = r;
+      }),
+    );
     pending[0].resolve(mp3());
     await settle();
     speaker.stop();

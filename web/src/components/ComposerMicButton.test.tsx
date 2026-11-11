@@ -66,6 +66,7 @@ function installDictationSession() {
 let handlers: Record<string, (event: unknown) => void>;
 let startSpy: ReturnType<typeof vi.fn>;
 let stopSpy: ReturnType<typeof vi.fn>;
+let abortSpy: ReturnType<typeof vi.fn>;
 let recognitionLang: string | undefined;
 /** Original navigator.mediaDevices descriptor, restored after each test. */
 let originalMediaDevices: PropertyDescriptor | undefined;
@@ -76,6 +77,7 @@ function installSpeechRecognition() {
   handlers = {};
   startSpy = vi.fn();
   stopSpy = vi.fn();
+  abortSpy = vi.fn();
   recognitionLang = undefined;
   // A class (not an arrow fn) so `new Ctor()` is constructable — the component
   // does `new Ctor()` in its mount effect.
@@ -92,6 +94,7 @@ function installSpeechRecognition() {
     interimResults = false;
     start = startSpy;
     stop = stopSpy;
+    abort = abortSpy;
     addEventListener(type: string, handler: (event: unknown) => void) {
       handlers[type] = handler;
     }
@@ -847,5 +850,186 @@ describe("ComposerMicButton (server dictation)", () => {
     });
     expect(onInterim).not.toHaveBeenCalled();
     expect(onTranscript).not.toHaveBeenCalled();
+  });
+});
+
+describe("ComposerMicButton (Voice mode start recovery)", () => {
+  function mountWithController() {
+    const controller = { current: null as AeMicController | null };
+    const onListeningChange = vi.fn();
+    render(
+      <ComposerMicButton
+        onTranscript={vi.fn()}
+        controller={controller}
+        onListeningChange={onListeningChange}
+      />,
+    );
+    return { controller, onListeningChange };
+  }
+
+  it("an end with no start reports a failed start at once and lets the next start run", () => {
+    const { controller, onListeningChange } = mountWithController();
+    act(() => controller.current?.start());
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    act(() => handlers.end?.({}));
+    expect(onListeningChange).toHaveBeenLastCalledWith(false);
+    act(() => controller.current?.start());
+    expect(startSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("a start that fires no event trips the 4 s watchdog and frees the guards", () => {
+    vi.useFakeTimers();
+    try {
+      const { controller, onListeningChange } = mountWithController();
+      act(() => controller.current?.start());
+      act(() => {
+        vi.advanceTimersByTime(3900);
+      });
+      expect(onListeningChange).not.toHaveBeenCalled();
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+      expect(abortSpy).toHaveBeenCalledTimes(1);
+      expect(onListeningChange).toHaveBeenLastCalledWith(false);
+      // transitionRef and requestedRef are free: a retry reaches recognition.start() again.
+      act(() => controller.current?.start());
+      expect(startSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a start event cancels the watchdog", () => {
+    vi.useFakeTimers();
+    try {
+      const { controller, onListeningChange } = mountWithController();
+      act(() => controller.current?.start());
+      act(() => handlers.start?.({}));
+      act(() => {
+        vi.advanceTimersByTime(10_000);
+      });
+      expect(abortSpy).not.toHaveBeenCalled();
+      expect(onListeningChange).toHaveBeenLastCalledWith(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("restart withdraws a stuck start and starts again", () => {
+    const { controller } = mountWithController();
+    act(() => controller.current?.start());
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    act(() => controller.current?.restart());
+    expect(abortSpy).toHaveBeenCalledTimes(1);
+    expect(startSpy).toHaveBeenCalledTimes(2);
+    // The end of the aborted take is not an answer to the new start.
+    const onChange = vi.fn();
+    act(() => handlers.end?.({}));
+    act(() => handlers.start?.({}));
+    expect(controller.current?.isListening()).toBe(true);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
+describe("ComposerMicButton (level meter)", () => {
+  type Listener = () => void;
+  let ctxs: FakeCtx[];
+  let streams: FakeStream[];
+  class FakeTrack {
+    listeners: Record<string, Listener> = {};
+    stop = vi.fn();
+    addEventListener(type: string, cb: Listener) {
+      this.listeners[type] = cb;
+    }
+  }
+  class FakeStream {
+    track = new FakeTrack();
+    getTracks() {
+      return [this.track];
+    }
+  }
+  class FakeCtx {
+    state = "suspended";
+    listeners: Record<string, Listener> = {};
+    resume = vi.fn(() => Promise.resolve());
+    close = vi.fn();
+    constructor() {
+      ctxs.push(this);
+    }
+    addEventListener(type: string, cb: Listener) {
+      this.listeners[type] = cb;
+    }
+    createMediaStreamSource() {
+      return { connect: vi.fn(), disconnect: vi.fn() };
+    }
+    createAnalyser() {
+      return {
+        fftSize: 0,
+        smoothingTimeConstant: 0,
+        frequencyBinCount: 32,
+        getByteFrequencyData: vi.fn(),
+      };
+    }
+  }
+
+  async function listen() {
+    ctxs = [];
+    streams = [];
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn(() => {
+          const stream = new FakeStream();
+          streams.push(stream);
+          return Promise.resolve(stream);
+        }),
+        enumerateDevices: vi.fn().mockResolvedValue([]),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      },
+    });
+    vi.stubGlobal("AudioContext", FakeCtx);
+    vi.stubGlobal("requestAnimationFrame", () => 1);
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    render(<ComposerMicButton onTranscript={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Voice dictation" }));
+    await act(async () => {
+      handlers.start?.({});
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 0);
+      });
+    });
+  }
+
+  it("resumes a context that starts suspended", async () => {
+    await listen();
+    expect(ctxs[0].resume).toHaveBeenCalled();
+  });
+
+  it("resumes again when the context turns suspended or interrupted", async () => {
+    await listen();
+    const before = ctxs[0].resume.mock.calls.length;
+    ctxs[0].state = "suspended";
+    act(() => ctxs[0].listeners.statechange?.());
+    expect(ctxs[0].resume.mock.calls.length).toBe(before + 1);
+    ctxs[0].state = "interrupted";
+    act(() => ctxs[0].listeners.statechange?.());
+    expect(ctxs[0].resume.mock.calls.length).toBe(before + 2);
+    ctxs[0].state = "running";
+    act(() => ctxs[0].listeners.statechange?.());
+    expect(ctxs[0].resume.mock.calls.length).toBe(before + 2);
+  });
+
+  it("takes a fresh stream when the track ends", async () => {
+    await listen();
+    expect(streams).toHaveLength(1);
+    await act(async () => {
+      streams[0].track.listeners.ended?.();
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 0);
+      });
+    });
+    expect(streams[0].track.stop).toHaveBeenCalled();
+    expect(streams).toHaveLength(2);
   });
 });

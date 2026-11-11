@@ -3,6 +3,7 @@
 // borders and the product's muted palette, no gradients or shadows.
 
 import { KeyboardIcon } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useMicLevel } from "@/lib/aeMicLevel";
 import type { VoicePhase } from "@/lib/aeVoiceMode";
@@ -10,6 +11,9 @@ import { cn } from "@/lib/utils";
 
 export type VoicePhaseKey =
   "starting" | "listening" | "paused" | "unavailable" | "thinking" | "speaking" | "blocked";
+
+/** How long "Starting the mic" may sit before the tap action appears. */
+export const MIC_STUCK_MS = 3000;
 
 export interface AeVoicePanelProps {
   layout: "bar" | "sheet";
@@ -173,10 +177,21 @@ export function AeVoicePanel({
 }: AeVoicePanelProps) {
   const level = useMicLevel();
   const key = voicePhaseKey(phase, blocked);
+  // A start that hangs on "starting" gets a tap, so the mic start runs inside a gesture.
+  const [startStuck, setStartStuck] = useState(false);
+  useEffect(() => {
+    setStartStuck(false);
+    if (key !== "starting") return;
+    const t = setTimeout(() => setStartStuck(true), MIC_STUCK_MS);
+    return () => clearTimeout(t);
+  }, [key]);
   if (key === "off") return null;
   const tone = TONE[key];
-  const { label, sub } = words(key, heard, caption, micDetail);
-  const restartable = key === "paused" || key === "unavailable";
+  const tapToStart = key === "starting" && startStuck && Boolean(onRestartMic);
+  const { label, sub } = tapToStart
+    ? { label: "Tap to start the mic", sub: "" }
+    : words(key, heard, caption, micDetail);
+  const restartable = key === "paused" || key === "unavailable" || tapToStart;
   const action =
     key === "speaking"
       ? onStop
@@ -190,9 +205,11 @@ export function AeVoicePanel({
       ? "Stop speaking"
       : key === "blocked"
         ? "Play the reply"
-        : restartable
-          ? "Listen again"
-          : label;
+        : tapToStart
+          ? "Start the mic"
+          : restartable
+            ? "Listen again"
+            : label;
   const endButton = (
     <Button type="button" variant="outline" size="sm" aria-label="End voice mode" onClick={onEnd}>
       End

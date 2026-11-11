@@ -238,6 +238,16 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
       running = false;
       setSpeaking(false);
       emitCaption("");
+      // Drained: let go of the last clip. The element stays, so its unlock does too.
+      if (audio) {
+        try {
+          audio.pause();
+          audio.removeAttribute("src");
+          audio.load();
+        } catch {
+          // Releasing is best effort.
+        }
+      }
       return;
     }
     pump();

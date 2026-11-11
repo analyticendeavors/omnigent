@@ -26,6 +26,8 @@ export type VoicePhase =
 export interface AeMicController {
   start: () => void;
   stop: () => void;
+  /** Withdraws a pending start, then starts again (runs inside a tap). */
+  restart: () => void;
   isListening: () => boolean;
 }
 

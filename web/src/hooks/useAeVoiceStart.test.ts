@@ -5,7 +5,7 @@ import { installFakeSpeech, removeFakeSpeech } from "@/test/fakeSpeech";
 import { useAeVoiceStart } from "./useAeVoiceStart";
 
 function setup(over: { value?: string; canSubmit?: boolean } = {}) {
-  const mic = { start: vi.fn(), stop: vi.fn(), isListening: () => false };
+  const mic = { start: vi.fn(), stop: vi.fn(), restart: vi.fn(), isListening: () => false };
   const submit = vi.fn();
   const controller = { current: mic };
   const hook = renderHook(
