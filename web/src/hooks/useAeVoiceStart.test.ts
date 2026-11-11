@@ -105,15 +105,24 @@ describe("useAeVoiceStart with a mic that is already listening", () => {
     expect(result.current.phase).toBe("listening");
   });
 
-  it("restart starts the mic again and reports listening when it already is", () => {
+  it("restart gives the mic a fresh start and reports listening when it already is", () => {
     const { result, mic } = setup();
     act(() => result.current.toggle());
     act(() => result.current.onListening(false));
     expect(result.current.phase).toBe("unavailable");
     act(() => result.current.restart());
-    expect(mic.start).toHaveBeenCalledTimes(2);
+    expect(mic.restart).toHaveBeenCalledTimes(1);
     mic.isListening = () => true;
     act(() => result.current.restart());
     expect(result.current.phase).toBe("listening");
+  });
+
+  it("the Tap to start the mic tap calls restart, not start, so a stuck start gets a fresh recognizer", () => {
+    const { result, mic } = setup();
+    act(() => result.current.toggle());
+    expect(mic.start).toHaveBeenCalledTimes(1);
+    act(() => result.current.restart());
+    expect(mic.restart).toHaveBeenCalledTimes(1);
+    expect(mic.start).toHaveBeenCalledTimes(1);
   });
 });

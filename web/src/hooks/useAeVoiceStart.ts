@@ -101,7 +101,10 @@ export function useAeVoiceStart({
   }, [armed, controller, disarm, reportIfListening]);
 
   const restart = useCallback(() => {
-    controller.current?.start();
+    // A fresh recognizer inside the tap: a start that is stuck (iOS) ignores a second start().
+    const c = controller.current;
+    if (c?.restart) c.restart();
+    else c?.start();
     reportIfListening();
   }, [controller, reportIfListening]);
 
