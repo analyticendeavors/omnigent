@@ -192,16 +192,61 @@ describe("promotion of a newer known model", () => {
     expect(previous.find((row) => row.id === "claude-fable-5-1")?.displayName).toBe("Fable 5.1");
   });
 
-  it("promotes a bare alias row to the plain 5.2 id", () => {
+  it("leaves a bare alias row alone and puts a 5.2 row in front of it", () => {
     const rows = aeWithClaudeVersions([
       { id: "fable", model: "claude-fable-5-1", displayName: "Fable", source: SUBSCRIPTION },
     ]);
-    expect(rows[0]).toMatchObject({
-      id: "fable",
+    expect(rows[0]).toEqual({
+      id: "claude-fable-5-2",
       model: "claude-fable-5-2",
       displayName: "Fable 5.2",
+      source: SUBSCRIPTION,
     });
-    expect(rows.some((row) => row.id === "claude-fable-5-1")).toBe(true);
+    expect(rows[1]).toMatchObject({
+      id: "fable",
+      model: "claude-fable-5-1",
+      displayName: "Fable 5.1",
+    });
+    expect(rows.filter((row) => row.model === "claude-fable-5-1")).toHaveLength(1);
+  });
+
+  it("puts a newer opus row before the untouched opus alias row", () => {
+    const rows = aeMergeKnownClaudeModels(
+      [{ id: "opus", model: "claude-opus-5-5", displayName: "Opus", source: SUBSCRIPTION }],
+      ["claude-opus-6"],
+    );
+    expect(rows.map((row) => row.id).slice(0, 2)).toEqual(["claude-opus-6", "opus"]);
+    expect(rows.filter((row) => row.model === "claude-opus-5-5")).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      model: "claude-opus-6",
+      displayName: "Opus 6",
+      source: SUBSCRIPTION,
+    });
+    expect(rows[1]).toMatchObject({ model: "claude-opus-5-5", displayName: "Opus 5.5" });
+  });
+
+  it("keeps the 1M suffix on the row inserted before a wide alias row", () => {
+    const rows = aeMergeKnownClaudeModels(
+      [
+        {
+          id: "opus[1m]",
+          model: "claude-opus-5-5[1m]",
+          displayName: "Opus",
+          source: SUBSCRIPTION,
+        },
+      ],
+      ["claude-opus-6"],
+    );
+    expect(rows.map((row) => row.id).slice(0, 2)).toEqual(["claude-opus-6[1m]", "opus[1m]"]);
+    expect(rows[0]).toMatchObject({
+      model: "claude-opus-6[1m]",
+      displayName: "Opus 6 (1M context)",
+    });
+    expect(rows[1]).toMatchObject({
+      model: "claude-opus-5-5[1m]",
+      displayName: "Opus 5.5 (1M context)",
+    });
+    expect(rows.filter((row) => row.id.startsWith("claude-opus-6"))).toHaveLength(1);
   });
 
   it("promotes a bare full id to claude-fable-5-2", () => {

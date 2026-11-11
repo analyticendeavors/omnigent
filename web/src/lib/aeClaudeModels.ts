@@ -2,6 +2,7 @@
 // 2026-10-19). A subscription catalog lists only each family's newest model, so the
 // older ids it still serves come from AE_CLAUDE_KNOWN_MODELS, each checked to answer.
 // 2026-11-10: a known id newer than the catalog's newest row of its family now takes that row's place (Fable 5.2).
+// 2026-11-10: a known id newer than an alias row ("opus") gets its own row in front of it; the alias row is untouched.
 // 2026-11-10: ids the box's new-model watch saw answer on the plan join the known list at run time.
 
 import { useMemo, useSyncExternalStore } from "react";
@@ -154,7 +155,8 @@ function isSubscription(row: NativeModelOption): boolean {
 /**
  * Rewrites the subscription row holding a family's newest version to the newest
  * known id of that family, when a known id is newer. The `[1m]` suffix stays where
- * the row had it; a bare family label is relabeled by the caller afterwards.
+ * the row had it; a bare family label is relabeled by the caller afterwards. An alias
+ * row ("opus") is left alone and gets a new row for the newer id in front of it.
  */
 function promoteKnown(rows: NativeModelOption[], known: readonly string[]): NativeModelOption[] {
   const newest = newestByFamily(rows.filter(isSubscription), rowVersion);
@@ -168,26 +170,56 @@ function promoteKnown(rows: NativeModelOption[], known: readonly string[]): Nati
       promoted.set(version.family, { version, id });
   }
   if (promoted.size === 0) return rows;
-  return rows.map((row) => {
+  const out: NativeModelOption[] = [];
+  const aliasInserts = new Map<number, NativeModelOption>();
+  rows.forEach((row, index) => {
     const version = isSubscription(row) ? rowVersion(row) : null;
     const target = version && promoted.get(version.family);
-    if (!version || !target) return row;
-    const current = newest.get(version.family);
-    if (!current || compareVersions(version, current) !== 0) return row;
+    const current = version && newest.get(version.family);
+    if (!version || !target || !current || compareVersions(version, current) !== 0) {
+      out.push(row);
+      return;
+    }
     const base = target.id.replace(CONTEXT_SUFFIX, "");
+    const wide = CONTEXT_SUFFIX.test(row.id) || CONTEXT_SUFFIX.test(row.model ?? "");
     const withSuffix = (value: string) => (CONTEXT_SUFFIX.test(value) ? `${base}[1m]` : base);
     const label = aeClaudeVersionLabel(base) ?? base;
-    const wide = CONTEXT_SUFFIX.test(row.id) || CONTEXT_SUFFIX.test(row.model ?? "");
+    if (!aeClaudeVersion(row.id)) {
+      // An alias id ("opus") resolves to whatever the CLI maps it to, so rewriting its model
+      // would label the row with a version it does not start. It stays as it is; a new row with
+      // the newer id goes in front of it.
+      const id = wide ? `${base}[1m]` : base;
+      aliasInserts.set(index, {
+        id,
+        model: id,
+        displayName: wide ? `${label} (1M context)` : label,
+        source: row.source,
+      });
+      out.push(row);
+      return;
+    }
     const named =
       BARE_CLAUDE_LABEL.test(row.displayName ?? row.id) ||
       /^\w+( \d+(\.\d+)?)? \(1M context\)$/i.test(row.displayName ?? "");
     const next: NativeModelOption = { ...row, id: withSuffix(row.id) };
-    // An alias id ("fable") has no version to rewrite; only a full id changes.
-    if (!aeClaudeVersion(row.id)) next.id = row.id;
     if (row.model !== undefined) next.model = withSuffix(row.model);
     if (named) next.displayName = wide ? `${label} (1M context)` : label;
-    return next;
+    out.push(next);
   });
+  if (aliasInserts.size === 0) return out;
+  // Insert each new row before its alias row, unless a row with that id already exists (a
+  // full-id row rewritten in place, or an earlier insert for the same width).
+  const taken = new Set(out.map((row) => row.id));
+  const result: NativeModelOption[] = [];
+  out.forEach((row, index) => {
+    const insert = aliasInserts.get(index);
+    if (insert && !taken.has(insert.id)) {
+      taken.add(insert.id);
+      result.push(insert);
+    }
+    result.push(row);
+  });
+  return result;
 }
 
 /**
