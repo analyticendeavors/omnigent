@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { createCloudSpeaker } from "@/lib/aeCloudVoice";
 import {
   createSpeaker,
+  primeCloudPlayback,
   registerCloudPrimer,
   setCaptionHandler,
   setPlaybackHandler,
@@ -373,6 +374,8 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
       // The voice log shows which voice a manual read used, to compare with the spoken replies.
       logVoice("read last", picked ? `${picked.kind}:${picked.id} x${pickedRate}` : "default");
       getSpeaker().stop();
+      // After stop(), which pauses and clears a primed element; still synchronous inside the tap.
+      if (picked?.kind === "cloud") primeCloudPlayback();
       say(text, picked, pickedRate);
       return;
     }

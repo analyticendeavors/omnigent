@@ -4,6 +4,7 @@ import { activeEchoWords, resetEcho } from "@/lib/aeVoiceEcho";
 import {
   emitCaption,
   emitPlaying,
+  registerCloudPrimer,
   WORKING_CUE_DELAY_MS,
   WORKING_CUE_TEXT,
 } from "@/lib/aeSpeakReplies";
@@ -204,6 +205,24 @@ describe("useAeSpeakReplies", () => {
       voice: "rocky-xtts",
       rate: 1,
     });
+    vi.unstubAllGlobals();
+  });
+
+  it("readLast primes the cloud playback after stop(), not before", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
+    const order: string[] = [];
+    registerCloudPrimer(() => order.push(`prime@cancel${synth.cancelCount}`));
+    const { result } = mount(false, "c1", { kind: "cloud", id: "rocky-xtts" });
+    setStore({ blocks: [final("r1", "a", "Last reply.", { createdAtS: 1 })] });
+    const before = synth.cancelCount;
+    act(() => result.current.readLast());
+    // stop() cancels the device speaker first; the prime comes after it.
+    expect(synth.cancelCount).toBeGreaterThan(before);
+    expect(order).toEqual([`prime@cancel${synth.cancelCount}`]);
+    registerCloudPrimer(null);
     vi.unstubAllGlobals();
   });
 

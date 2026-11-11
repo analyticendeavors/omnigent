@@ -5,6 +5,7 @@
 
 import { ChevronDownIcon, Volume2Icon, VolumeXIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { AeHint } from "@/components/AeHint";
 import { Button } from "@/components/ui/button";
 import {
@@ -37,11 +38,13 @@ import { type CloudVoice, fetchCloudVoices } from "@/lib/aeCloudVoice";
 import {
   clearVoiceModelState,
   effectiveModelId,
+  mayRevertVoiceModel,
   readVoiceModelPick,
   readVoiceModelState,
   resolveFastModel,
   VOICE_MODEL_OFF,
   voiceModelLabel,
+  voiceModelVerdict,
   writeVoiceModelPick,
   writeVoiceModelState,
 } from "@/lib/aeVoiceModel";
@@ -52,7 +55,6 @@ import {
   FAST_EFFORT,
   isSpeechSupported,
   listVoices,
-  primeCloudPlayback,
   primeVoicePlayback,
   onVoicesChanged,
   pickDefaultVoice,
@@ -74,6 +76,7 @@ import {
 } from "@/lib/aeSpeakReplies";
 import {
   registerVoiceSpeaker,
+  readVoiceMode,
   registerVoiceStop,
   setVoiceBarged,
   setVoiceOn,
@@ -87,6 +90,8 @@ import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chatStore";
 
 const MAX_VOICES = 12;
+const VOICE_LIST_RETRIES = 3;
+const VOICE_LIST_RETRY_MS = 2000;
 
 const PHASE_WORD: Record<VoicePhase, string> = {
   off: "",
@@ -288,11 +293,25 @@ function SpeakRepliesControl({
   }, [chatId]);
   useEffect(() => {
     let live = true;
-    void fetchCloudVoices().then((list) => {
-      if (live) setCloudVoices(list);
-    });
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let attempts = 0;
+    const load = () => {
+      void fetchCloudVoices().then((list) => {
+        if (!live) return;
+        if (list.length > 0) {
+          setCloudVoices(list);
+          return;
+        }
+        // An empty list may be a failed fetch: retry a few times (a successful list is cached).
+        attempts += 1;
+        if (attempts <= VOICE_LIST_RETRIES)
+          timer = setTimeout(load, VOICE_LIST_RETRY_MS * attempts);
+      });
+    };
+    load();
     return () => {
       live = false;
+      if (timer) clearTimeout(timer);
     };
   }, []);
   useEffect(() => {
@@ -304,16 +323,24 @@ function SpeakRepliesControl({
   // A stored cloud voice the server no longer offers, or none stored: first cloud voice, else the device's.
   const deviceDefault = pickDefaultVoice(voices);
   // A bare value from before the prefixes is no choice once the server has cloud voices.
+  // A stored cloud voice is never silently swapped for the device voice while the list is empty
+  // (not loaded yet, or the fetch failed): the server knows the id, and the cloud speaker falls
+  // back to the device per sentence if it cannot play.
   const voice: VoiceChoice | null =
     stored?.kind === "device" && !(legacy && cloudVoices.length > 0)
       ? { kind: "device", id: stored.id }
-      : stored?.kind === "cloud" && cloudVoices.some((v) => v.id === stored.id)
+      : stored?.kind === "cloud" &&
+          (cloudVoices.length === 0 || cloudVoices.some((v) => v.id === stored.id))
         ? { kind: "cloud", id: stored.id }
         : cloudVoices[0]
           ? { kind: "cloud", id: cloudVoices[0].id }
           : deviceDefault
             ? { kind: "device", id: deviceDefault.voiceURI }
             : null;
+  const replacedCloud = stored?.kind === "cloud" && voice?.kind === "device";
+  useEffect(() => {
+    if (replacedCloud) logVoice("cloud voice replaced", `${choiceKey(stored)} -> device`);
+  }, [replacedCloud, stored]);
 
   const { speaking, stop, readLast, speak } = useAeSpeakReplies({
     chatId,
@@ -395,30 +422,80 @@ function SpeakRepliesControl({
     [chatId],
   );
 
-  const revertModel = useCallback(async () => {
+  // A refused restore is retried once when the turn goes idle (or on the next render that wants it).
+  const revertFailures = useRef(0);
+  const [revertRetry, setRevertRetry] = useState(false);
+  const chatStatus = useChatStore((st) => st.status);
+  const applyRef = useRef<() => Promise<void>>(() => Promise.resolve());
+
+  const revertModel = useCallback(async (): Promise<void> => {
     const state = readVoiceModelState(chatId);
     if (!state || modelBusyRef.current || !mayTouchModel()) return;
+    // Another tab's live switch is not this tab's to put back.
+    if (!mayRevertVoiceModel(state, readVoiceMode(chatId))) return;
     const store = useChatStore.getState();
+    const verdict = voiceModelVerdict(
+      state,
+      store.sessionModelOverride,
+      modelRefs.current.modelOptions,
+    );
+    // Not hydrated yet, or a switch may still be in flight: keep the state for a later pass.
+    if (verdict === "keep") return;
     // A model picked by hand since Voice mode switched stays as the person left it.
-    if (store.sessionModelOverride === state.fast) {
-      const target = state.previous ?? (modelRefs.current.canResetModel ? null : state.fallback);
+    if (verdict === "revert") {
+      const canReset = modelRefs.current.canResetModel;
+      const target = state.previous ?? (canReset ? null : state.fallback);
+      if (target === null && state.previous === null && !canReset) {
+        // Nothing to restore and no way to reset: setModel(null) would be refused.
+        logVoice("model restore skipped", "no previous model and no reset");
+        clearVoiceModelState(chatId);
+        return;
+      }
       modelBusyRef.current = true;
       try {
         await store.setModel(target, { expectConfirmation: true });
       } catch {
+        revertFailures.current += 1;
+        logVoice("model restore failed", `attempt ${revertFailures.current}`);
+        if (revertFailures.current === 1) setRevertRetry(true);
+        else {
+          setRevertRetry(false);
+          toast.error("Could not switch the model back. Pick it in the model menu.");
+        }
         return;
       } finally {
         modelBusyRef.current = false;
       }
     }
+    revertFailures.current = 0;
+    setRevertRetry(false);
     clearVoiceModelState(chatId);
+    // Voice mode came back on while the restore was in flight: switch again.
+    if (modelRefs.current.wanted) void applyRef.current();
   }, [chatId, mayTouchModel]);
 
   const applyModel = useCallback(async () => {
     const { fastModel: fast, modelOptions: options } = modelRefs.current;
-    if (modelBusyRef.current || readVoiceModelState(chatId) || fast === null) return;
+    if (modelBusyRef.current || fast === null) return;
     const store = useChatStore.getState();
     if (store.conversationId !== chatId) return;
+    const existing = readVoiceModelState(chatId);
+    if (existing && store.sessionModelOverride === existing.fast) {
+      // Already switched. A new Fast model pick while Voice mode runs switches again.
+      if (existing.fast === fast || !mayRevertVoiceModel(existing, readVoiceMode(chatId))) return;
+      writeVoiceModelState(chatId, { ...existing, fast, owner: existing.owner, at: existing.at });
+      modelBusyRef.current = true;
+      try {
+        await store.setModel(fast, { expectConfirmation: true });
+      } catch {
+        writeVoiceModelState(chatId, existing);
+        return;
+      } finally {
+        modelBusyRef.current = false;
+      }
+      if (!modelRefs.current.wanted && mayTouchModel()) await revertModel();
+      return;
+    }
     if (effectiveModelId(options, store.sessionModelOverride, store.llmModel) === fast) return;
     // Saved before the switch, so a reload or crash in the middle still puts the model back.
     writeVoiceModelState(chatId, {
@@ -438,11 +515,17 @@ function SpeakRepliesControl({
     // Voice mode ended while the switch was in flight: put the model back now.
     if (!modelRefs.current.wanted && mayTouchModel()) await revertModel();
   }, [chatId, mayTouchModel, revertModel]);
+  applyRef.current = applyModel;
 
   useEffect(() => {
     if (modelWanted) void applyModel();
     else void revertModel();
   }, [modelWanted, fastModel, applyModel, revertModel]);
+
+  // The one retry of a refused restore waits for the turn to go idle.
+  useEffect(() => {
+    if (revertRetry && chatStatus === "idle" && !modelWanted) void revertModel();
+  }, [revertRetry, chatStatus, modelWanted, revertModel]);
 
   const toggleSpeak = (next: boolean) => {
     writeSpeakReplies(chatId, next);
@@ -708,8 +791,7 @@ function SpeakRepliesControl({
         <div className="flex gap-1.5 px-1 pb-1 pt-0.5" data-testid="ae-speak-actions">
           <DropdownMenuItem
             onSelect={() => {
-              // Inside the tap, like Voice mode: a cloud voice plays after its fetch, outside any tap.
-              primeCloudPlayback();
+              // readLast primes a cloud voice itself, after its stop(), still inside this tap.
               readLast();
             }}
             data-testid="ae-speak-read-last"

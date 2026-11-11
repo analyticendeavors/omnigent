@@ -7,7 +7,11 @@ import {
   readVoiceModelState,
   resolveFastModel,
   VOICE_MODEL_OFF,
+  mayRevertVoiceModel,
   voiceModelLabel,
+  voiceModelVerdict,
+  voiceTabId,
+  type VoiceModelState,
   writeVoiceModelPick,
   writeVoiceModelState,
 } from "./aeVoiceModel";
@@ -68,11 +72,58 @@ describe("aeVoiceModel", () => {
       previous: "opus",
       fallback: "opus",
       fast: "claude-sonnet-5-5",
+      owner: voiceTabId(),
+      at: expect.any(Number),
     });
     expect(readVoiceModelState("c2")).toBeNull();
     clearVoiceModelState("c1");
     expect(readVoiceModelState("c1")).toBeNull();
     window.localStorage.setItem("omnigent:ae-voice-model-state:c3", "{nope");
     expect(readVoiceModelState("c3")).toBeNull();
+  });
+
+  describe("restore verdicts", () => {
+    const NOW = 1_000_000_000;
+    const base: VoiceModelState = {
+      previous: "opus",
+      fallback: "opus",
+      fast: "claude-sonnet-5-5",
+      owner: "tab-a",
+      at: NOW,
+    };
+    it("reverts while still on the fast model", () => {
+      expect(voiceModelVerdict(base, "claude-sonnet-5-5", OPTIONS, NOW)).toBe("revert");
+    });
+    it("keeps the state while the override is empty, unknown or the previous model", () => {
+      expect(voiceModelVerdict(base, null, OPTIONS, NOW)).toBe("keep");
+      expect(voiceModelVerdict(base, "opus", OPTIONS, NOW)).toBe("keep");
+      expect(voiceModelVerdict(base, "mystery", OPTIONS, NOW)).toBe("keep");
+    });
+    it("treats a known third model as hand-picked", () => {
+      expect(voiceModelVerdict(base, "claude-haiku-4-5", OPTIONS, NOW)).toBe("hand-picked");
+    });
+    it("treats an abandoned state as hand-picked", () => {
+      expect(voiceModelVerdict(base, null, OPTIONS, NOW + 7 * 3_600_000)).toBe("hand-picked");
+    });
+  });
+
+  describe("tab ownership", () => {
+    const NOW = 1_000_000_000;
+    const state: VoiceModelState = {
+      previous: null,
+      fallback: null,
+      fast: "f",
+      owner: "other-tab",
+      at: NOW,
+    };
+    it("lets the owner, an ownerless state, a persisted-off chat or a stale state revert", () => {
+      expect(mayRevertVoiceModel({ ...state, owner: voiceTabId() }, true, NOW)).toBe(true);
+      expect(mayRevertVoiceModel({ ...state, owner: null }, true, NOW)).toBe(true);
+      expect(mayRevertVoiceModel(state, false, NOW)).toBe(true);
+      expect(mayRevertVoiceModel(state, true, NOW + 7 * 3_600_000)).toBe(true);
+    });
+    it("leaves another live tab's state alone", () => {
+      expect(mayRevertVoiceModel(state, true, NOW + 1000)).toBe(false);
+    });
   });
 });

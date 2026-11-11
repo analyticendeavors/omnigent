@@ -89,6 +89,42 @@ export interface VoiceModelState {
   fallback: string | null;
   /** The model Voice mode switched to. */
   fast: string;
+  /** The tab that applied the switch (null for a state saved before tabs were recorded). */
+  owner: string | null;
+  /** When the switch was recorded, epoch ms (0 when unknown). */
+  at: number;
+}
+
+/** Another tab's state counts as abandoned after this long. */
+export const VOICE_MODEL_STALE_MS = 6 * 60 * 60 * 1000;
+
+const TAB_KEY = "omnigent:ae-voice-tab-id";
+let memoryTabId: string | null = null;
+
+/** An id for this browser tab (kept in sessionStorage, so a reload keeps it). */
+export function voiceTabId(): string {
+  if (memoryTabId) return memoryTabId;
+  let id: string | null;
+  try {
+    id = typeof window === "undefined" ? null : window.sessionStorage.getItem(TAB_KEY);
+  } catch {
+    id = null;
+  }
+  if (!id) {
+    id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    try {
+      window.sessionStorage.setItem(TAB_KEY, id);
+    } catch {
+      // The id then lives for this page only.
+    }
+  }
+  memoryTabId = id;
+  return id;
+}
+
+/** Test hook: forget the cached tab id. */
+export function resetVoiceTabId(): void {
+  memoryTabId = null;
 }
 
 export function readVoiceModelState(chatId: string): VoiceModelState | null {
@@ -101,16 +137,63 @@ export function readVoiceModelState(chatId: string): VoiceModelState | null {
       previous: typeof parsed.previous === "string" ? parsed.previous : null,
       fallback: typeof parsed.fallback === "string" ? parsed.fallback : null,
       fast: parsed.fast,
+      owner: typeof parsed.owner === "string" ? parsed.owner : null,
+      at: typeof parsed.at === "number" ? parsed.at : 0,
     };
   } catch {
     return null;
   }
 }
 
-export function writeVoiceModelState(chatId: string, state: VoiceModelState): void {
-  setItem(STATE_KEY + chatId, JSON.stringify(state));
+export function writeVoiceModelState(
+  chatId: string,
+  state: Omit<VoiceModelState, "owner" | "at"> & Partial<Pick<VoiceModelState, "owner" | "at">>,
+): void {
+  setItem(
+    STATE_KEY + chatId,
+    JSON.stringify({ ...state, owner: state.owner ?? voiceTabId(), at: state.at ?? Date.now() }),
+  );
 }
 
 export function clearVoiceModelState(chatId: string): void {
   setItem(STATE_KEY + chatId, null);
+}
+
+function stale(state: VoiceModelState, now: number): boolean {
+  return state.at === 0 || now - state.at > VOICE_MODEL_STALE_MS;
+}
+
+/**
+ * May this tab revert and clear the state? The tab that applied the switch may; so may any tab for
+ * a state saved before owners were recorded, an abandoned one, or one whose chat has Voice mode
+ * persisted off. Another live tab's state is left alone.
+ */
+export function mayRevertVoiceModel(
+  state: VoiceModelState,
+  voicePersistedOn: boolean,
+  now: number = Date.now(),
+): boolean {
+  return (
+    state.owner === null || state.owner === voiceTabId() || !voicePersistedOn || stale(state, now)
+  );
+}
+
+export type VoiceModelVerdict = "revert" | "hand-picked" | "keep";
+
+/**
+ * What the chat's current model says about the saved state. `revert`: still on the fast model.
+ * `hand-picked`: a known model that is neither the fast nor the previous one (or the state is
+ * abandoned): leave it and forget the state. `keep`: not hydrated yet, or a switch to the fast
+ * model may still be in flight (the override is unknown, empty or the previous one).
+ */
+export function voiceModelVerdict(
+  state: VoiceModelState,
+  override: string | null,
+  options: readonly NativeModelOption[],
+  now: number = Date.now(),
+): VoiceModelVerdict {
+  if (override === state.fast) return "revert";
+  if (stale(state, now)) return "hand-picked";
+  if (override === null || override === state.previous) return "keep";
+  return options.some((o) => o.id === override) ? "hand-picked" : "keep";
 }

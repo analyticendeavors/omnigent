@@ -1,6 +1,7 @@
 import { AE_SETTING_HINTS } from "@/lib/aeSettingHints";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetCloudVoicesCache } from "@/lib/aeCloudVoice";
 import {
@@ -590,6 +591,40 @@ describe("AeSpeakRepliesButton", () => {
     });
   });
 
+  it("keeps a stored cloud voice while the voice list is empty", async () => {
+    const calls: string[] = [];
+    resetCloudVoicesCache();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init?: RequestInit) => {
+        if (String(url).includes("/tts/voices")) {
+          return Promise.resolve(new Response(JSON.stringify({ voices: [] }), { status: 200 }));
+        }
+        calls.push(String(init?.body));
+        return new Promise<Response>(() => {});
+      }),
+    );
+    window.localStorage.setItem("omnigent:ae-speak-voice", "cloud:rocky-xtts");
+    useChatStore.setState({
+      blocks: [
+        {
+          type: "text_done",
+          ctx: { agent: null, depth: 0, turn: 1, timestamp: 1, responseId: "r1", itemId: "i1" },
+          fullText: "The last reply.",
+          hasCodeBlocks: false,
+        },
+      ],
+    } as never);
+    const synth = installFakeSpeech();
+    synth.voices = [makeVoice({ name: "Plain", lang: "en-US", default: true })];
+    renderButton();
+    const user = await openMenu();
+    await user.click(screen.getByTestId("ae-speak-read-last"));
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(JSON.parse(calls[0]).voice).toBe("rocky-xtts");
+    expect(synth.texts()).toEqual([]);
+  });
+
   describe("Fast model", () => {
     const MODELS = [
       { id: "opus", model: "claude-opus-5-5" },
@@ -746,6 +781,157 @@ describe("AeSpeakRepliesButton", () => {
       await waitFor(() =>
         expect(window.localStorage.getItem("omnigent:ae-voice-model-state:c1")).toBeNull(),
       );
+    });
+
+    const STATE_KEY = "omnigent:ae-voice-model-state:c1";
+    function saveState(extra: Record<string, unknown> = {}) {
+      window.localStorage.setItem(
+        STATE_KEY,
+        JSON.stringify({
+          previous: "opus",
+          fallback: "opus",
+          fast: "claude-sonnet-5-5",
+          owner: null,
+          at: Date.now(),
+          ...extra,
+        }),
+      );
+    }
+
+    it("retries a refused restore once the turn is idle, then shows a toast", async () => {
+      const toastSpy = vi.spyOn(toast, "error").mockImplementation(() => "");
+      followStore();
+      renderModelButton();
+      voiceOn(true);
+      await waitFor(() => expect(setModel).toHaveBeenCalledTimes(1));
+      setModel.mockImplementation(() => Promise.reject(new Error("no")));
+      voiceOn(false);
+      await waitFor(() => expect(setModel).toHaveBeenCalledTimes(3));
+      await waitFor(() => expect(toastSpy).toHaveBeenCalledTimes(1));
+      // The state stays so a later pass can still put the model back.
+      expect(window.localStorage.getItem(STATE_KEY)).not.toBeNull();
+      toastSpy.mockRestore();
+    });
+
+    it("clears the state when the retry of a refused restore succeeds", async () => {
+      const toastSpy = vi.spyOn(toast, "error").mockImplementation(() => "");
+      followStore();
+      renderModelButton();
+      voiceOn(true);
+      await waitFor(() => expect(setModel).toHaveBeenCalledTimes(1));
+      setModel.mockImplementationOnce(() => Promise.reject(new Error("no")));
+      voiceOn(false);
+      await waitFor(() => expect(setModel).toHaveBeenCalledTimes(3));
+      await waitFor(() => expect(window.localStorage.getItem(STATE_KEY)).toBeNull());
+      expect(toastSpy).not.toHaveBeenCalled();
+      toastSpy.mockRestore();
+    });
+
+    it("switches again when Voice mode comes back on during an in-flight restore", async () => {
+      followStore();
+      renderModelButton();
+      voiceOn(true);
+      await waitFor(() => expect(setModel).toHaveBeenCalledTimes(1));
+      let release: () => void = () => {};
+      setModel.mockImplementationOnce((m: string | null) => {
+        return new Promise<void>((resolve) => {
+          release = () => {
+            useChatStore.setState({ sessionModelOverride: m } as never);
+            resolve();
+          };
+        });
+      });
+      voiceOn(false);
+      await waitFor(() => expect(setModel).toHaveBeenCalledTimes(2));
+      voiceOn(true);
+      await act(async () => release());
+      await waitFor(() => expect(setModel).toHaveBeenCalledTimes(3));
+      expect(setModel).toHaveBeenLastCalledWith("claude-sonnet-5-5", expect.anything());
+    });
+
+    it.each([
+      ["no override yet", null],
+      ["the previous model (a switch may be in flight)", "opus"],
+      ["a model this chat does not list", "mystery"],
+    ])("keeps the saved state after a reload while the override is %s", async (_n, override) => {
+      useChatStore.setState({ sessionModelOverride: override } as never);
+      saveState();
+      renderModelButton();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(setModel).not.toHaveBeenCalled();
+      expect(window.localStorage.getItem(STATE_KEY)).not.toBeNull();
+    });
+
+    it("forgets the saved state once a known third model is the override", async () => {
+      useChatStore.setState({ sessionModelOverride: "claude-sonnet-5" } as never);
+      saveState();
+      renderModelButton();
+      await waitFor(() => expect(window.localStorage.getItem(STATE_KEY)).toBeNull());
+      expect(setModel).not.toHaveBeenCalled();
+    });
+
+    it("switches to a new Fast model pick while Voice mode runs and records it", async () => {
+      followStore();
+      renderModelButton();
+      voiceOn(true);
+      await waitFor(() => expect(setModel).toHaveBeenCalledTimes(1));
+      const user = await openMenu();
+      await user.click(screen.getByTestId("ae-voice-model-trigger"));
+      const option = (await screen.findAllByTestId("ae-voice-model-option")).find(
+        (el) => el.textContent === "Sonnet 5",
+      ) as HTMLElement;
+      option.focus();
+      await user.keyboard("{Enter}");
+      await waitFor(() =>
+        expect(setModel).toHaveBeenLastCalledWith("claude-sonnet-5", { expectConfirmation: true }),
+      );
+      await waitFor(() =>
+        expect(JSON.parse(window.localStorage.getItem(STATE_KEY) ?? "{}")).toMatchObject({
+          fast: "claude-sonnet-5",
+          previous: "opus",
+        }),
+      );
+      voiceOn(false);
+      await waitFor(() => expect(setModel).toHaveBeenLastCalledWith("opus", expect.anything()));
+    });
+
+    describe("another tab's switch", () => {
+      beforeEach(() => {
+        followStore();
+        useChatStore.setState({ sessionModelOverride: "claude-sonnet-5-5" } as never);
+        // This tab's Voice mode is off while the other tab keeps it on for the chat.
+        getVoiceSnapshot("c1");
+      });
+      it("is left alone while its Voice mode is on and the state is fresh", async () => {
+        window.localStorage.setItem("omnigent:ae-voice-mode:c1", "true");
+        saveState({ owner: "some-other-tab" });
+        renderModelButton();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(setModel).not.toHaveBeenCalled();
+        expect(window.localStorage.getItem(STATE_KEY)).not.toBeNull();
+      });
+      it("is put back when Voice mode is persisted off for the chat", async () => {
+        saveState({ owner: "some-other-tab" });
+        renderModelButton();
+        await waitFor(() => expect(setModel).toHaveBeenCalledWith("opus", expect.anything()));
+        await waitFor(() => expect(window.localStorage.getItem(STATE_KEY)).toBeNull());
+      });
+      it("is put back when the state is stale", async () => {
+        window.localStorage.setItem("omnigent:ae-voice-mode:c1", "true");
+        saveState({ owner: "some-other-tab", at: Date.now() - 7 * 3_600_000 });
+        renderModelButton();
+        await waitFor(() => expect(setModel).toHaveBeenCalledWith("opus", expect.anything()));
+      });
+    });
+
+    it("skips setModel(null) and clears the state when there is nothing to restore", async () => {
+      useChatStore.setState({ sessionModelOverride: "claude-sonnet-5-5" } as never);
+      saveState({ previous: null, fallback: null });
+      renderModelButton({ canResetModel: false });
+      await waitFor(() => expect(window.localStorage.getItem(STATE_KEY)).toBeNull());
+      expect(setModel).not.toHaveBeenCalled();
     });
 
     it("uses the model picked in the menu, and Off keeps the chat's model", async () => {
