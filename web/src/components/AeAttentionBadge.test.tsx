@@ -31,11 +31,46 @@ beforeEach(() => fetchMock.mockReset());
 afterEach(cleanup);
 
 describe("AeAttentionBadge", () => {
-  it("draws nothing at zero", async () => {
+  it("draws a green check at zero when every source was read", async () => {
     answer(counts(0, 0));
+    renderBadge();
+    const check = await screen.findByTestId("ae-attention-pill");
+    expect(check.dataset.kind).toBe("clear");
+    expect(check.getAttribute("aria-label")).toBe("Nothing needs you");
+    expect(check.getAttribute("title")).toBe("Nothing needs you. Every source was read.");
+    expect(check.getAttribute("class")).toContain("text-success");
+  });
+
+  it("draws a small check in the compact form at zero", async () => {
+    answer(counts(0, 0));
+    renderBadge(true);
+    const check = await screen.findByTestId("ae-attention-dot");
+    expect(check.dataset.kind).toBe("clear");
+    expect(check.getAttribute("class")).toContain("text-success");
+    expect(screen.queryByTestId("ae-attention-pill")).toBeNull();
+  });
+
+  it("draws a question mark, never a check, at zero with an unreadable source", async () => {
+    answer({ ...counts(0, 0), unknown: ["Git repos could not be read"] });
+    renderBadge();
+    const pill = await screen.findByTestId("ae-attention-pill");
+    expect(pill.dataset.kind).toBe("unknown");
+    expect(pill.textContent).toBe("?");
+    expect(document.querySelector('[data-kind="clear"]')).toBeNull();
+  });
+
+  it("draws nothing while the first answer is loading", async () => {
+    let release: (v: unknown) => void = () => {};
+    fetchMock.mockReturnValue(
+      new Promise((r) => {
+        release = r;
+      }),
+    );
     renderBadge();
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(screen.queryByTestId("ae-attention-pill")).toBeNull();
+    release({ ok: true, status: 200, json: async () => counts(0, 0) });
+    await screen.findByTestId("ae-attention-pill");
   });
 
   it("draws a neutral pill with the review count", async () => {

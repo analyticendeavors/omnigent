@@ -14,8 +14,17 @@ const summary = (
 });
 
 describe("aeAttentionView", () => {
-  it("shows nothing at zero, before an answer, and for a viewer who may see no source", () => {
-    expect(aeAttentionView(summary()).kind).toBe("none");
+  it("shows a check at zero when every source was read", () => {
+    expect(aeAttentionView(summary())).toMatchObject({
+      kind: "clear",
+      text: "",
+      label: "Nothing needs you",
+      tooltip: "Nothing needs you. Every source was read.",
+      unsure: false,
+    });
+  });
+
+  it("shows nothing before an answer, and for a viewer who may see no source", () => {
     expect(aeAttentionView(undefined).kind).toBe("none");
     expect(
       aeAttentionView({ sources: [], counts: { urgent: 0, review: 0, by_source: {} }, unknown: [] })

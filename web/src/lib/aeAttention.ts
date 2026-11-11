@@ -5,7 +5,7 @@
 // What the number means: the urgent count when anything is urgent, else the review count. A red 6
 // is six things to act on now, not a backlog; the tooltip always gives the split. When a source
 // could not be read the number is the known count plus "?", and when the route itself fails it is
-// "?" alone: an error never reads as zero.
+// "?" alone: an error never reads as zero. A true zero (every source read) is kind "clear".
 
 import { useQuery } from "@tanstack/react-query";
 import { authenticatedFetch } from "@/lib/identity";
@@ -30,7 +30,7 @@ export interface AeAttentionSummary {
   unknown: string[];
 }
 
-export type AeAttentionKind = "none" | "urgent" | "review" | "unknown";
+export type AeAttentionKind = "none" | "clear" | "urgent" | "review" | "unknown";
 
 export interface AeAttentionView {
   kind: AeAttentionKind;
@@ -77,6 +77,16 @@ export function aeAttentionView(
   if (summary.sources.length === 0 && !unsure) {
     return { kind: "none", text: "", label: "", tooltip: "", unsure: false };
   }
+  if (urgent === 0 && review === 0 && !unsure) {
+    // A summary was read, sources exist, every one read cleanly: the one true zero.
+    return {
+      kind: "clear",
+      text: "",
+      label: "Nothing needs you",
+      tooltip: "Nothing needs you. Every source was read.",
+      unsure: false,
+    };
+  }
   const split = `${urgent} urgent, ${review} to review`;
   const by = Object.entries(summary.counts.by_source)
     .map(([id, c]) => [SOURCE_NAMES[id] ?? id, c.urgent + c.review] as const)
@@ -89,10 +99,8 @@ export function aeAttentionView(
     .filter(Boolean)
     .join(" ");
   if (urgent === 0 && review === 0) {
-    // Nothing known to act on: quiet when all sources read, "?" alone when one did not.
-    return unsure
-      ? { kind: "unknown", text: "?", label, tooltip, unsure }
-      : { kind: "none", text: "", label: "", tooltip: "", unsure: false };
+    // Nothing known to act on, but a source could not be read: "?" alone, never a check.
+    return { kind: "unknown", text: "?", label, tooltip, unsure };
   }
   const shown = urgent > 0 ? urgent : review;
   return {
