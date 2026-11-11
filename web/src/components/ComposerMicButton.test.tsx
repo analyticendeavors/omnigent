@@ -18,11 +18,15 @@
 
 import type { AeMicController } from "@/lib/aeVoiceMode";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { CapabilitiesContext } from "@/lib/CapabilitiesContext";
 import type { ServerInfo } from "@/lib/capabilities";
 import { DictationBusyError as BusyError, type DictationSessionEvents } from "@/lib/dictation";
 import { getMicLevel, resetMicLevel } from "@/lib/aeMicLevel";
+import { formatVoiceLog, resetVoiceLog } from "@/lib/aeVoiceLog";
+import { getVoiceSnapshot, resetVoiceStore, setVoiceOn } from "@/lib/aeVoiceMode";
+import { useAeVoiceMode } from "@/hooks/useAeVoiceMode";
 import { ComposerMicButton } from "./ComposerMicButton";
 
 // Controllable DictationSession stand-in for the server-mode tests. The
@@ -941,6 +945,8 @@ describe("ComposerMicButton (Voice mode start recovery)", () => {
       const { controller, onListeningChange } = mountWithController();
       act(() => controller.current?.start());
       act(() => handlers.start?.({}));
+      // A live mic reports its audio at once; a take without it is the liveness watchdog's.
+      act(() => handlers.audiostart?.({}));
       act(() => {
         vi.advanceTimersByTime(10_000);
       });
@@ -1114,6 +1120,7 @@ describe("ComposerMicButton (level meter)", () => {
   let streams: FakeStream[];
   class FakeTrack {
     listeners: Record<string, Listener> = {};
+    muted = false;
     stop = vi.fn();
     addEventListener(type: string, cb: Listener) {
       this.listeners[type] = cb;
@@ -1271,5 +1278,335 @@ describe("ComposerMicButton (level meter)", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  describe("Voice mode liveness", () => {
+    let frames: (() => void)[];
+
+    async function listenVoice() {
+      ctxs = [];
+      streams = [];
+      frames = [];
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: {
+          getUserMedia: vi.fn(() => {
+            const stream = new FakeStream();
+            streams.push(stream);
+            return Promise.resolve(stream);
+          }),
+          enumerateDevices: vi.fn().mockResolvedValue([]),
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+        },
+      });
+      vi.stubGlobal("AudioContext", FakeCtx);
+      vi.stubGlobal("requestAnimationFrame", (cb: () => void) => {
+        frames.push(cb);
+        return frames.length;
+      });
+      vi.stubGlobal("cancelAnimationFrame", vi.fn());
+      resetVoiceLog();
+      const controller = { current: null as AeMicController | null };
+      const onListeningChange = vi.fn();
+      render(
+        <ComposerMicButton
+          onTranscript={vi.fn()}
+          controller={controller}
+          onListeningChange={onListeningChange}
+        />,
+      );
+      act(() => controller.current?.start());
+      await act(async () => {
+        handlers.start?.({});
+        handlers.audiostart?.({});
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      // A healthy context; the tests spoil one thing at a time.
+      ctxs[0].state = "running";
+      act(() => ctxs[0].listeners.statechange?.());
+      return { controller, onListeningChange };
+    }
+
+    /** Runs the meter's frames once a second for `seconds`, as a visible tab would. */
+    async function runFrames(seconds: number) {
+      for (let i = 0; i < seconds; i += 1) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1000);
+          const run = frames.splice(0);
+          for (const cb of run) cb();
+        });
+      }
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      // Unmount while the animation-frame stubs are still installed.
+      cleanup();
+      vi.useRealTimers();
+    });
+
+    it("a meter track that stays muted makes the take deaf and is reported as such", async () => {
+      const { controller, onListeningChange } = await listenVoice();
+      streams[0].track.muted = true;
+      act(() => streams[0].track.listeners.mute?.());
+      await runFrames(1);
+      expect(onListeningChange).not.toHaveBeenLastCalledWith(false, "deaf");
+      await runFrames(2);
+      expect(onListeningChange).toHaveBeenLastCalledWith(false, "deaf");
+      expect(onListeningChange.mock.calls.filter((c) => c[0] === false)).toHaveLength(1);
+      expect(instances).toHaveLength(2);
+      expect(abortSpy).toHaveBeenCalledTimes(1);
+      expect(controller.current?.isListening()).toBe(false);
+      const log = formatVoiceLog();
+      expect(log).toContain("meter track mute");
+      expect(log).toContain("mic deaf track muted");
+    });
+
+    it("a mute that ends in time is forgiven", async () => {
+      const { onListeningChange } = await listenVoice();
+      act(() => streams[0].track.listeners.mute?.());
+      await runFrames(1);
+      act(() => streams[0].track.listeners.unmute?.());
+      await runFrames(5);
+      expect(onListeningChange).not.toHaveBeenCalledWith(false, "deaf");
+      expect(formatVoiceLog()).toContain("meter track unmute");
+    });
+
+    it("a context that stays suspended for 6 s makes the take deaf", async () => {
+      const { onListeningChange } = await listenVoice();
+      ctxs[0].state = "suspended";
+      act(() => ctxs[0].listeners.statechange?.());
+      await runFrames(5);
+      expect(onListeningChange).not.toHaveBeenCalledWith(false, "deaf");
+      await runFrames(2);
+      expect(onListeningChange).toHaveBeenLastCalledWith(false, "deaf");
+      expect(formatVoiceLog()).toContain("mic deaf context not running");
+    });
+
+    it("an analyser that reads all zeros for 6 s makes the take deaf", async () => {
+      const { onListeningChange } = await listenVoice();
+      await runFrames(5);
+      expect(onListeningChange).not.toHaveBeenCalledWith(false, "deaf");
+      await runFrames(3);
+      expect(onListeningChange).toHaveBeenLastCalledWith(false, "deaf");
+      expect(formatVoiceLog()).toContain("mic deaf analyser silent");
+    });
+
+    it("sound the recognizer itself heard means the mic works, whatever the meter reads", async () => {
+      const { onListeningChange } = await listenVoice();
+      act(() => handlers.soundstart?.({}));
+      await runFrames(10);
+      expect(onListeningChange).not.toHaveBeenCalledWith(false, "deaf");
+    });
+  });
+});
+
+describe("ComposerMicButton (stop and liveness watchdogs)", () => {
+  function mountVoice() {
+    const controller = { current: null as AeMicController | null };
+    const onListeningChange = vi.fn();
+    render(
+      <ComposerMicButton
+        onTranscript={vi.fn()}
+        controller={controller}
+        onListeningChange={onListeningChange}
+      />,
+    );
+    return { controller, onListeningChange };
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    resetVoiceLog();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("a stop that gets no end replaces the recognizer, frees the guard and reports not listening", () => {
+    const { controller, onListeningChange } = mountVoice();
+    act(() => controller.current?.start());
+    act(() => handlers.start?.({}));
+    act(() => handlers.audiostart?.({}));
+    expect(controller.current?.isListening()).toBe(true);
+    act(() => controller.current?.stop());
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+    act(() => void vi.advanceTimersByTime(1499));
+    expect(abortSpy).not.toHaveBeenCalled();
+    expect(controller.current?.isListening()).toBe(true);
+    act(() => void vi.advanceTimersByTime(1));
+    expect(abortSpy).toHaveBeenCalledTimes(1);
+    expect(instances).toHaveLength(2);
+    expect(controller.current?.isListening()).toBe(false);
+    expect(onListeningChange).toHaveBeenLastCalledWith(false);
+    expect(formatVoiceLog()).toContain("mic stop watchdog");
+    // The guard is free: the next start reaches recognition.start() on the new recognizer.
+    act(() => controller.current?.start());
+    expect(startSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("a stop answered by end in time leaves the recognizer alone", () => {
+    const { controller } = mountVoice();
+    act(() => controller.current?.start());
+    act(() => handlers.start?.({}));
+    act(() => handlers.audiostart?.({}));
+    act(() => controller.current?.stop());
+    act(() => handlers.end?.({}));
+    act(() => void vi.advanceTimersByTime(5000));
+    expect(abortSpy).not.toHaveBeenCalled();
+    expect(instances).toHaveLength(1);
+    expect(formatVoiceLog()).toContain("mic stop");
+  });
+
+  it("logs a stop the transition guard turned away", () => {
+    const { controller } = mountVoice();
+    act(() => controller.current?.start());
+    act(() => handlers.start?.({}));
+    act(() => controller.current?.stop());
+    act(() => controller.current?.stop());
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+    expect(formatVoiceLog()).toContain("mic stop refused");
+  });
+
+  it("a take with no audiostart for 3 s is deaf: replaced and reported once", () => {
+    const { controller, onListeningChange } = mountVoice();
+    act(() => controller.current?.start());
+    act(() => handlers.start?.({}));
+    act(() => void vi.advanceTimersByTime(2999));
+    expect(onListeningChange).not.toHaveBeenCalledWith(false, "deaf");
+    act(() => void vi.advanceTimersByTime(500));
+    expect(onListeningChange.mock.calls.filter((c) => c[0] === false)).toEqual([[false, "deaf"]]);
+    expect(abortSpy).toHaveBeenCalledTimes(1);
+    expect(instances).toHaveLength(2);
+    expect(controller.current?.isListening()).toBe(false);
+    expect(formatVoiceLog()).toContain("mic deaf no audiostart");
+    // The retry starts cleanly on the new recognizer.
+    act(() => controller.current?.start());
+    expect(startSpy).toHaveBeenCalledTimes(2);
+    act(() => instances[1].handlers.start?.({}));
+    expect(controller.current?.isListening()).toBe(true);
+  });
+
+  it("an audiostart inside the window keeps the take", () => {
+    const { controller, onListeningChange } = mountVoice();
+    act(() => controller.current?.start());
+    act(() => handlers.start?.({}));
+    act(() => void vi.advanceTimersByTime(1000));
+    act(() => handlers.audiostart?.({}));
+    act(() => void vi.advanceTimersByTime(20_000));
+    expect(onListeningChange).not.toHaveBeenCalledWith(false, "deaf");
+    expect(abortSpy).not.toHaveBeenCalled();
+  });
+
+  it("a hand-started take (not Voice mode) is never replaced for being quiet", () => {
+    render(<ComposerMicButton onTranscript={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Voice dictation" }));
+    act(() => handlers.start?.({}));
+    act(() => void vi.advanceTimersByTime(20_000));
+    expect(abortSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not arm liveness while the mic permission is not granted", async () => {
+    stubPermission("prompt");
+    const { controller, onListeningChange } = mountVoice();
+    act(() => controller.current?.start());
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    act(() => handlers.start?.({}));
+    act(() => void vi.advanceTimersByTime(20_000));
+    expect(onListeningChange).not.toHaveBeenCalledWith(false, "deaf");
+    expect(formatVoiceLog()).toContain("mic liveness skipped");
+  });
+
+  it("restart while listening forces a new recognizer instead of returning early", () => {
+    const { controller, onListeningChange } = mountVoice();
+    act(() => controller.current?.start());
+    act(() => handlers.start?.({}));
+    act(() => handlers.audiostart?.({}));
+    expect(controller.current?.isListening()).toBe(true);
+    onListeningChange.mockClear();
+    act(() => controller.current?.restart());
+    expect(abortSpy).toHaveBeenCalledTimes(1);
+    expect(instances).toHaveLength(2);
+    expect(startSpy).toHaveBeenCalledTimes(2);
+    expect(controller.current?.isListening()).toBe(false);
+    // Voice mode asked for this itself: it hears no stop in between.
+    expect(onListeningChange).not.toHaveBeenCalledWith(false);
+    act(() => instances[1].handlers.start?.({}));
+    expect(controller.current?.isListening()).toBe(true);
+    expect(onListeningChange).toHaveBeenLastCalledWith(true);
+  });
+
+  it("events from the replaced recognizer change nothing, audiostart included", () => {
+    const { controller, onListeningChange } = mountVoice();
+    act(() => controller.current?.start());
+    act(() => handlers.start?.({}));
+    act(() => controller.current?.restart());
+    act(() => instances[1].handlers.start?.({}));
+    onListeningChange.mockClear();
+    act(() => {
+      instances[0].handlers.audiostart?.({});
+      instances[0].handlers.soundstart?.({});
+      instances[0].handlers.end?.({});
+      instances[0].handlers.error?.({ error: "aborted" });
+    });
+    expect(onListeningChange).not.toHaveBeenCalled();
+    expect(controller.current?.isListening()).toBe(true);
+    // The old take's audiostart did not count for the new one: it is deaf at 3 s.
+    act(() => void vi.advanceTimersByTime(3500));
+    expect(onListeningChange).toHaveBeenLastCalledWith(false, "deaf");
+  });
+
+  it("deaf twice in a row leaves Voice mode on the restartable unavailable phase", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response("{}", { status: 200 }))),
+    );
+    resetVoiceStore();
+    function Harness() {
+      const controller = useRef<AeMicController | null>(null);
+      const voice = useAeVoiceMode({
+        chatId: "c1",
+        controller,
+        status: "idle",
+        value: "",
+        submit: vi.fn(),
+        canSend: true,
+      });
+      return (
+        <>
+          <span data-testid="detail">{voice.micDetail ?? ""}</span>
+          <ComposerMicButton
+            onTranscript={vi.fn()}
+            controller={controller}
+            onListeningChange={voice.onListening}
+          />
+        </>
+      );
+    }
+    act(() => setVoiceOn("c1", true));
+    render(<Harness />);
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    act(() => handlers.start?.({}));
+    expect(getVoiceSnapshot("c1").phase).toBe("listening");
+    // First deaf take: the phase leaves listening and the mic is started again after 1 s.
+    act(() => void vi.advanceTimersByTime(3500));
+    expect(getVoiceSnapshot("c1").phase).not.toBe("listening");
+    expect(getVoiceSnapshot("c1").phase).not.toBe("unavailable");
+    act(() => void vi.advanceTimersByTime(1000));
+    expect(startSpy).toHaveBeenCalledTimes(2);
+    act(() => instances[instances.length - 1].handlers.start?.({}));
+    expect(getVoiceSnapshot("c1").phase).toBe("listening");
+    // Second deaf take: no third try, the panel gets the restartable phase and a reason.
+    act(() => void vi.advanceTimersByTime(3500));
+    expect(getVoiceSnapshot("c1").phase).toBe("unavailable");
+    expect(screen.getByTestId("detail").textContent).toBe("Mic went quiet, tap to restart");
+    act(() => void vi.advanceTimersByTime(5000));
+    expect(startSpy).toHaveBeenCalledTimes(2);
   });
 });

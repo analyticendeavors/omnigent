@@ -2,7 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { disarmVoiceForNextChat, GRACE_MS, takeVoiceArm } from "@/lib/aeVoiceMode";
 import { installFakeSpeech, removeFakeSpeech } from "@/test/fakeSpeech";
-import { useAeVoiceStart } from "./useAeVoiceStart";
+import { READY_POLL_MS, READY_WAIT_MS, useAeVoiceStart } from "./useAeVoiceStart";
 
 function setup(over: { value?: string; canSubmit?: boolean } = {}) {
   const mic = { start: vi.fn(), stop: vi.fn(), restart: vi.fn(), isListening: () => false, startPath: () => "browser" as const };
@@ -66,17 +66,37 @@ describe("useAeVoiceStart", () => {
   });
 
   it("does not submit when the page cannot submit or the draft is empty", () => {
-    const blocked = setup({ canSubmit: false });
-    act(() => blocked.result.current.toggle());
-    act(() => blocked.result.current.onFinal("hello"));
-    act(() => void vi.advanceTimersByTime(GRACE_MS + 10));
-    expect(blocked.submit).not.toHaveBeenCalled();
-
     const empty = setup({ value: "  " });
     act(() => empty.result.current.toggle());
     act(() => empty.result.current.onFinal("hello"));
     act(() => void vi.advanceTimersByTime(GRACE_MS + 10));
     expect(empty.submit).not.toHaveBeenCalled();
+  });
+
+  it("holds a message the page cannot submit yet and sends it once the chat is ready", () => {
+    const { result, submit, rerender } = setup({ canSubmit: false });
+    act(() => result.current.toggle());
+    act(() => result.current.onFinal("hello"));
+    act(() => void vi.advanceTimersByTime(GRACE_MS + 10));
+    expect(result.current.phase).toBe("preparing");
+    expect(submit).not.toHaveBeenCalled();
+    rerender({ value: "hello", canSubmit: true });
+    act(() => void vi.advanceTimersByTime(READY_POLL_MS));
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(result.current.armed).toBe(false);
+  });
+
+  it("says the chat was not ready after the window instead of dropping the message silently", () => {
+    const { result, submit } = setup({ canSubmit: false });
+    act(() => result.current.toggle());
+    act(() => result.current.onFinal("hello"));
+    act(() => void vi.advanceTimersByTime(GRACE_MS + READY_WAIT_MS + READY_POLL_MS));
+    expect(submit).not.toHaveBeenCalled();
+    expect(result.current.phase).toBe("stalled");
+    expect(result.current.armed).toBe(true);
+    // Saying something again starts a new wait.
+    act(() => result.current.onFinal("again"));
+    expect(result.current.phase).toBe("listening");
   });
 
   it("ignores a final while not armed", () => {

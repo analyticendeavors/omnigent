@@ -79,6 +79,18 @@ const MIC_FIRST_START_WATCHDOG_MS = 8000;
 const METER_STABLE_MS = 30_000;
 const METER_MAX_REACQUIRES = 3;
 const METER_RETRY_MS = 1000;
+// A browser stop that gets no `end` in this long is given up on: the recognizer is replaced.
+const MIC_STOP_WATCHDOG_MS = 1500;
+// Voice mode liveness: a take that listens but hears nothing is replaced. Checked this often.
+const MIC_LIVENESS_TICK_MS = 500;
+// No audiostart this long after the take started.
+const MIC_NO_AUDIO_MS = 3000;
+// The meter's track stays muted this long.
+const MIC_TRACK_MUTED_MS = 2000;
+// The meter's AudioContext is not running, or its analyser reads all zeros, this long.
+const MIC_METER_STALL_MS = 6000;
+// The analyser is only believed while its animation frames keep arriving.
+const MIC_METER_FRESH_MS = 1500;
 
 export interface ComposerMicButtonProps {
   onTranscript: (text: string) => void;
@@ -107,8 +119,11 @@ export interface ComposerMicButtonProps {
   onVoiceDiscard?: () => void;
   /** Voice mode: filled with start, stop and the listening state. */
   controller?: MutableRefObject<AeMicController | null>;
-  /** Voice mode: called when listening starts or stops. */
-  onListeningChange?: (listening: boolean) => void;
+  /**
+   * Voice mode: called when listening starts or stops. `reason` is "deaf" when the take was
+   * listening but the mic went quiet (the recognizer was replaced); Voice mode retries once.
+   */
+  onListeningChange?: (listening: boolean, reason?: "deaf") => void;
 }
 
 /** getUserMedia permission failures, distinct from transport failures. */
@@ -187,6 +202,26 @@ export const ComposerMicButton = ({
   const startSeenRef = useRef(false);
   const browserStartPendingRef = useRef(false);
   const startWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Browser stop: the watchdog that replaces a recognizer whose `end` never came.
+  const stopWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Voice mode take liveness (browser path): the take was started by Voice mode, the interval
+  // that checks it, and what this take has shown so far.
+  const voiceTakeRef = useRef(false);
+  const livenessTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const takeStartRef = useRef(0);
+  const audioStartSeenRef = useRef(false);
+  const heardSoundRef = useRef(false);
+  // Written by the meter: since when its track is muted, its context stalled, its analyser
+  // all zeros, and when its last frame ran. null means "not so".
+  const meterMutedSinceRef = useRef<number | null>(null);
+  const ctxStallSinceRef = useRef<number | null>(null);
+  const silentSinceRef = useRef<number | null>(null);
+  const meterTickRef = useRef(0);
+  // The next listening change was made by us (a deaf replace or a forced restart): Voice mode
+  // was told another way, or needs no word.
+  const quietStopRef = useRef(false);
+  const armLivenessRef = useRef<() => void>(() => {});
+  const listeningRef = useRef(false);
   // Mic permission as the Permissions API reports it; "unknown" when it cannot say.
   const permissionRef = useRef<"granted" | "other" | "unknown">("unknown");
   // True once any take on this page fired `start` (the first take gets the longer window).
@@ -201,6 +236,14 @@ export const ComposerMicButton = ({
     if (startWatchdogRef.current !== null) clearTimeout(startWatchdogRef.current);
     startWatchdogRef.current = null;
     browserStartPendingRef.current = false;
+  }, []);
+  const clearStopWatchdog = useCallback(() => {
+    if (stopWatchdogRef.current !== null) clearTimeout(stopWatchdogRef.current);
+    stopWatchdogRef.current = null;
+  }, []);
+  const clearLiveness = useCallback(() => {
+    if (livenessTimerRef.current !== null) clearInterval(livenessTimerRef.current);
+    livenessTimerRef.current = null;
   }, []);
   // Server-take guard, deliberately separate from transitionRef: a failed
   // Web Speech attempt fires a late "end" event that resets transitionRef,
@@ -238,12 +281,71 @@ export const ComposerMicButton = ({
     const detachers = new Map<SpeechRecognitionLike, () => void>();
 
     // Tells Voice mode a start never reached listening, at most once per take.
-    const failPendingStart = () => {
+    const failPendingStart = (reason?: "deaf") => {
       if (!requestedRef.current) return;
       requestedRef.current = false;
       controllerStartRef.current = false;
-      onListeningChangeRef.current?.(false);
+      if (reason) onListeningChangeRef.current?.(false, reason);
+      else onListeningChangeRef.current?.(false);
     };
+
+    // The take is listening but the mic is deaf: swap the recognizer and tell Voice mode the
+    // take failed, so it retries once and then shows a mic it can restart by tap.
+    const reportDeaf = (reason: string) => {
+      logVoice("mic deaf", reason);
+      clearLiveness();
+      clearStartWatchdog();
+      clearStopWatchdog();
+      voiceTakeRef.current = false;
+      replace();
+      transitionRef.current = false;
+      listeningRef.current = false;
+      quietStopRef.current = true;
+      setIsListening(false);
+      requestedRef.current = true;
+      failPendingStart("deaf");
+    };
+
+    const checkLiveness = () => {
+      if (!voiceTakeRef.current || !listeningRef.current) return;
+      const now = Date.now();
+      if (!audioStartSeenRef.current && now - takeStartRef.current >= MIC_NO_AUDIO_MS) {
+        reportDeaf("no audiostart");
+        return;
+      }
+      // Sound the recognizer itself heard means the mic works, whatever the meter says.
+      if (heardSoundRef.current) return;
+      const muted = meterMutedSinceRef.current;
+      if (muted !== null && now - muted >= MIC_TRACK_MUTED_MS) {
+        reportDeaf("track muted");
+        return;
+      }
+      const stall = ctxStallSinceRef.current;
+      if (stall !== null && now - stall >= MIC_METER_STALL_MS) {
+        reportDeaf("context not running");
+        return;
+      }
+      const silent = silentSinceRef.current;
+      if (
+        silent !== null &&
+        now - silent >= MIC_METER_STALL_MS &&
+        now - meterTickRef.current <= MIC_METER_FRESH_MS
+      ) {
+        reportDeaf("analyser silent");
+      }
+    };
+
+    // Armed once a Voice mode take has started and the mic permission is not in doubt.
+    const armLiveness = () => {
+      if (!voiceTakeRef.current || livenessTimerRef.current !== null) return;
+      if (permissionRef.current === "other") {
+        logVoice("mic liveness skipped", "permission");
+        return;
+      }
+      takeStartRef.current = Date.now();
+      livenessTimerRef.current = setInterval(checkLiveness, MIC_LIVENESS_TICK_MS);
+    };
+    armLivenessRef.current = armLiveness;
 
     const build = (): SpeechRecognitionLike => {
       const recognition = new Ctor();
@@ -258,7 +360,9 @@ export const ComposerMicButton = ({
         logVoice("mic event start");
         startSeenRef.current = true;
         startedOnceRef.current = true;
+        quietStopRef.current = false;
         clearStartWatchdog();
+        armLiveness();
         transitionRef.current = false;
         discardingRef.current = false;
         setError(null);
@@ -270,6 +374,9 @@ export const ComposerMicButton = ({
         if (!current() || serverTakeOwnsState()) return;
         logVoice("mic event end");
         clearStartWatchdog();
+        clearStopWatchdog();
+        clearLiveness();
+        voiceTakeRef.current = false;
         transitionRef.current = false;
         if (requestedRef.current && !startSeenRef.current) {
           // The recognizer ended without ever starting (a Bluetooth route change on iOS):
@@ -282,6 +389,9 @@ export const ComposerMicButton = ({
       const handleError = (event: Event) => {
         if (!current() || serverTakeOwnsState()) return;
         clearStartWatchdog();
+        clearStopWatchdog();
+        clearLiveness();
+        voiceTakeRef.current = false;
         transitionRef.current = false;
         // Only a start still waiting is reported here; a live take's end is reported by
         // the listening effect, so the hook never sees two false answers for one take.
@@ -306,8 +416,28 @@ export const ComposerMicButton = ({
         }
         setIsListening(false);
       };
+      const handleAudioStart = () => {
+        if (!current()) return;
+        logVoice("mic event audiostart");
+        audioStartSeenRef.current = true;
+      };
+      const handleSoundStart = () => {
+        if (!current()) return;
+        logVoice("mic event soundstart");
+        heardSoundRef.current = true;
+      };
+      const handleSpeechStart = () => {
+        if (!current()) return;
+        logVoice("mic event speechstart");
+        heardSoundRef.current = true;
+      };
+      const handleAudioEnd = () => {
+        if (!current()) return;
+        logVoice("mic event audioend");
+      };
       const handleResult = (event: Event) => {
         if (!current()) return;
+        heardSoundRef.current = true;
         // Drop late events that arrive after the composer went disabled, or after
         // an Esc discard the parent has already reverted.
         if (disabledRef.current || discardingRef.current) return;
@@ -327,11 +457,19 @@ export const ComposerMicButton = ({
       recognition.addEventListener("end", handleEnd);
       recognition.addEventListener("error", handleError);
       recognition.addEventListener("result", handleResult);
+      recognition.addEventListener("audiostart", handleAudioStart);
+      recognition.addEventListener("soundstart", handleSoundStart);
+      recognition.addEventListener("speechstart", handleSpeechStart);
+      recognition.addEventListener("audioend", handleAudioEnd);
       detachers.set(recognition, () => {
         recognition.removeEventListener("start", handleStart);
         recognition.removeEventListener("end", handleEnd);
         recognition.removeEventListener("error", handleError);
         recognition.removeEventListener("result", handleResult);
+        recognition.removeEventListener("audiostart", handleAudioStart);
+        recognition.removeEventListener("soundstart", handleSoundStart);
+        recognition.removeEventListener("speechstart", handleSpeechStart);
+        recognition.removeEventListener("audioend", handleAudioEnd);
       });
       return recognition;
     };
@@ -339,6 +477,8 @@ export const ComposerMicButton = ({
     // WebKit stays in Aborting until the old recognizer's end, so start() on it throws.
     // A new instance can start inside the same tap: discard the old one, abort it, build anew.
     const replace = () => {
+      clearLiveness();
+      clearStopWatchdog();
       const old = recognitionRef.current;
       if (old) {
         detachers.get(old)?.();
@@ -365,7 +505,7 @@ export const ComposerMicButton = ({
       recognitionRef.current = null;
       replaceRecognitionRef.current = () => {};
     };
-  }, [Ctor, lang, reportError, clearStartWatchdog]);
+  }, [Ctor, lang, reportError, clearStartWatchdog, clearStopWatchdog, clearLiveness]);
 
   // Auto-stop if the composer goes disabled mid-dictation. Stops the
   // recognizer; the disabledRef guard in handleResult catches any final
@@ -396,6 +536,8 @@ export const ComposerMicButton = ({
       sessionRef.current?.cancel();
       sessionRef.current = null;
       if (startWatchdogRef.current !== null) clearTimeout(startWatchdogRef.current);
+      if (stopWatchdogRef.current !== null) clearTimeout(stopWatchdogRef.current);
+      if (livenessTimerRef.current !== null) clearInterval(livenessTimerRef.current);
     },
     [],
   );
@@ -433,6 +575,12 @@ export const ComposerMicButton = ({
       source.connect(analyser);
       for (const track of next.getTracks()) {
         track.addEventListener?.("ended", onTrackEnded);
+        track.addEventListener?.("mute", onTrackMute);
+        track.addEventListener?.("unmute", onTrackUnmute);
+        if (track.muted) {
+          logVoice("meter track mute", "at connect");
+          if (meterMutedSinceRef.current === null) meterMutedSinceRef.current = Date.now();
+        }
       }
       // A track that stays live for a while earns the reacquire budget back.
       if (stableTimer !== null) clearTimeout(stableTimer);
@@ -442,10 +590,23 @@ export const ComposerMicButton = ({
       }, METER_STABLE_MS);
     };
 
+    // A muted track delivers silence: Voice mode's liveness check decides if it stays that way.
+    const onTrackMute = () => {
+      if (cancelled) return;
+      logVoice("meter track mute");
+      if (meterMutedSinceRef.current === null) meterMutedSinceRef.current = Date.now();
+    };
+    const onTrackUnmute = () => {
+      if (cancelled) return;
+      logVoice("meter track unmute");
+      meterMutedSinceRef.current = null;
+    };
+
     // The route changed under the stream (Bluetooth, a call): take a fresh one.
     const onTrackEnded = () => {
       if (cancelled || reacquiring) return;
       logVoice("meter track ended");
+      meterMutedSinceRef.current = null;
       if (stableTimer !== null) clearTimeout(stableTimer);
       stableTimer = null;
       if (reacquires >= METER_MAX_REACQUIRES) return;
@@ -509,9 +670,15 @@ export const ComposerMicButton = ({
       audioCtx = new AudioContext();
       logVoice("meter ctx", String(audioCtx.state));
       const ctx = audioCtx;
+      const noteCtx = () => {
+        if (ctx.state === "running") ctxStallSinceRef.current = null;
+        else if (ctxStallSinceRef.current === null) ctxStallSinceRef.current = Date.now();
+      };
+      noteCtx();
       // iOS starts (or later parks) the context suspended or interrupted; wake it.
       ctx.addEventListener?.("statechange", () => {
         logVoice("meter ctx", String(ctx.state));
+        noteCtx();
         if (!cancelled && (ctx.state === "suspended" || (ctx.state as string) === "interrupted")) {
           resumeCtx();
         }
@@ -527,6 +694,17 @@ export const ComposerMicButton = ({
 
       const tick = () => {
         node.getByteFrequencyData(data);
+        let signal = false;
+        for (let i = 0; i < data.length; i += 1) {
+          if (data[i] > 0) {
+            signal = true;
+            break;
+          }
+        }
+        const frameAt = Date.now();
+        meterTickRef.current = frameAt;
+        if (signal) silentSinceRef.current = null;
+        else if (silentSinceRef.current === null) silentSinceRef.current = frameAt;
         let total = 0;
         for (let i = 0; i < BAR_BINS.length; i += 1) {
           const [lo, hi] = BAR_BINS[i];
@@ -549,6 +727,10 @@ export const ComposerMicButton = ({
 
     return () => {
       cancelled = true;
+      meterMutedSinceRef.current = null;
+      ctxStallSinceRef.current = null;
+      silentSinceRef.current = null;
+      meterTickRef.current = 0;
       if (stableTimer !== null) clearTimeout(stableTimer);
       if (retryTimer !== null) clearTimeout(retryTimer);
       resetMicLevel();
@@ -660,6 +842,21 @@ export const ComposerMicButton = ({
   }, [reportError]);
   toggleServerRef.current = toggleServer;
 
+  // A browser stop that gets no `end`: swap the recognizer and call the take over.
+  const armStopWatchdog = useCallback(() => {
+    clearStopWatchdog();
+    stopWatchdogRef.current = setTimeout(() => {
+      stopWatchdogRef.current = null;
+      logVoice("mic stop watchdog");
+      clearLiveness();
+      voiceTakeRef.current = false;
+      replaceRecognitionRef.current();
+      transitionRef.current = false;
+      listeningRef.current = false;
+      setIsListening(false);
+    }, MIC_STOP_WATCHDOG_MS);
+  }, [clearStopWatchdog, clearLiveness]);
+
   // Returns whether anything began: false when a guard turned the call away.
   const toggle = useCallback((): boolean => {
     // An active (or starting) server take is owned by the server path,
@@ -680,17 +877,25 @@ export const ComposerMicButton = ({
       return true;
     }
     // Guard against rapid clicks landing before start/end event fires.
-    if (transitionRef.current) return false;
+    if (transitionRef.current) {
+      if (listeningRef.current) logVoice("mic stop refused");
+      return false;
+    }
     const recognition = recognitionRef.current;
     if (!recognition) return false;
     transitionRef.current = true;
     // The Web Speech path has no server start to consume the controller's flag.
     controllerStartRef.current = false;
     try {
-      if (isListening) recognition.stop();
-      else {
+      if (listeningRef.current) {
+        logVoice("mic stop");
+        recognition.stop();
+        armStopWatchdog();
+      } else {
         logVoice("mic start browser");
         startSeenRef.current = false;
+        audioStartSeenRef.current = false;
+        heardSoundRef.current = false;
         browserStartPendingRef.current = true;
         recognition.start();
       }
@@ -702,10 +907,9 @@ export const ComposerMicButton = ({
       return false;
     }
     return true;
-  }, [isListening, serverAvailable, toggleServer]);
+  }, [serverAvailable, toggleServer, armStopWatchdog]);
 
   // Voice mode drives the mic through this handle; the button keeps working alone.
-  const listeningRef = useRef(isListening);
   listeningRef.current = isListening;
   useEffect(() => {
     if (!controller) return;
@@ -729,6 +933,8 @@ export const ComposerMicButton = ({
               ) {
                 armWatchdog();
               }
+              // A take already listening on a prompt now answered gets its liveness check.
+              if (status.state === "granted" && listeningRef.current) armLivenessRef.current();
             };
             apply();
             status.addEventListener?.("change", apply);
@@ -774,6 +980,7 @@ export const ComposerMicButton = ({
       if (toggle()) {
         // A new start replaces any earlier withdrawn one.
         withdrawRef.current = false;
+        voiceTakeRef.current = true;
         if (browserStartPendingRef.current) {
           watchPermission();
           armWatchdog();
@@ -791,21 +998,31 @@ export const ComposerMicButton = ({
       // A tap on a stuck "starting": discard the pending browser start, then start again
       // inside the tap. A server start still connecting is never withdrawn: it is healthy.
       restart: () => {
-        if (listeningRef.current) return;
         if (serverBusyRef.current || sessionRef.current) return;
+        if (listeningRef.current && pathRef.current !== "browser") return;
         if (pathRef.current === "browser") {
-          logVoice("mic restart");
+          logVoice("mic restart", listeningRef.current ? "while listening" : undefined);
           clearStartWatchdog();
+          clearStopWatchdog();
+          clearLiveness();
           requestedRef.current = false;
           controllerStartRef.current = false;
           transitionRef.current = false;
           startSeenRef.current = false;
+          if (listeningRef.current) {
+            // A take that says it listens may be deaf: drop it, and start a new one below.
+            listeningRef.current = false;
+            quietStopRef.current = true;
+            setIsListening(false);
+          }
           // WebKit refuses start() on a recognizer still aborting: use a new one.
           replaceRecognitionRef.current();
         }
         start();
       },
       stop: () => {
+        voiceTakeRef.current = false;
+        clearLiveness();
         if (listeningRef.current) {
           requestedRef.current = false;
           toggle();
@@ -827,13 +1044,18 @@ export const ComposerMicButton = ({
     return () => {
       controller.current = null;
     };
-  }, [controller, toggle, clearStartWatchdog]);
+  }, [controller, toggle, clearStartWatchdog, clearStopWatchdog, clearLiveness]);
   const prevListening = useRef(isListening);
   useEffect(() => {
     if (isListening) requestedRef.current = false;
     if (prevListening.current === isListening) return;
     prevListening.current = isListening;
     logVoice(isListening ? "mic listening" : "mic stopped");
+    if (!isListening && quietStopRef.current) {
+      // Our own replace: Voice mode was told (a deaf take) or restarts the mic itself.
+      quietStopRef.current = false;
+      return;
+    }
     onListeningChangeRef.current?.(isListening);
   }, [isListening]);
 

@@ -10,7 +10,16 @@ import type { VoicePhase } from "@/lib/aeVoiceMode";
 import { cn } from "@/lib/utils";
 
 export type VoicePhaseKey =
-  "starting" | "listening" | "paused" | "unavailable" | "thinking" | "speaking" | "blocked";
+  | "starting"
+  | "listening"
+  | "paused"
+  | "unavailable"
+  | "thinking"
+  | "speaking"
+  | "approval"
+  | "preparing"
+  | "stalled"
+  | "blocked";
 
 /** How long "Starting the mic" may sit before the tap action appears. */
 export const MIC_STUCK_MS = 3000;
@@ -55,6 +64,9 @@ export const AE_VOICE_RING: Record<VoicePhaseKey | "off", string> = {
   paused: "border-border",
   unavailable: "border-border",
   thinking: "border-amber-500",
+  approval: "border-amber-500",
+  preparing: "border-amber-500",
+  stalled: "border-border",
   speaking: "border-blue-500",
   blocked: "border-red-500",
 };
@@ -71,6 +83,24 @@ const TONE: Record<VoicePhaseKey, { text: string; panel: string; ring: string; d
     panel: "border-amber-500/50 bg-amber-500/10",
     ring: "border-amber-500/40",
     disc: "bg-amber-500",
+  },
+  approval: {
+    text: "text-amber-500",
+    panel: "border-amber-500/50 bg-amber-500/10",
+    ring: "border-amber-500/40",
+    disc: "bg-amber-500",
+  },
+  preparing: {
+    text: "text-amber-500",
+    panel: "border-amber-500/50 bg-amber-500/10",
+    ring: "border-amber-500/40",
+    disc: "bg-amber-500",
+  },
+  stalled: {
+    text: "text-muted-foreground",
+    panel: "border-border bg-muted/40",
+    ring: "border-border",
+    disc: "bg-muted-foreground",
   },
   speaking: {
     text: "text-blue-500",
@@ -155,6 +185,12 @@ function words(
       return { label: "Working on it", sub: "Mic muted until the reply ends" };
     case "speaking":
       return { label: "Speaking, tap to stop", sub: caption };
+    case "approval":
+      return { label: "Waiting for your OK", sub: "Say run it, or decline" };
+    case "preparing":
+      return { label: "Getting the chat ready", sub: heard.trim() || "Your message is held" };
+    case "stalled":
+      return { label: "Chat not ready", sub: "Your message was not sent. Press Start session." };
     case "blocked":
       return {
         label: "Tap to hear the reply",
@@ -251,7 +287,8 @@ export function AeVoicePanel({
               className={cn(
                 "size-20 rounded-full",
                 tone.disc,
-                key === "thinking" && "animate-pulse",
+                (key === "thinking" || key === "approval" || key === "preparing") &&
+                  "animate-pulse",
               )}
             />
           </span>

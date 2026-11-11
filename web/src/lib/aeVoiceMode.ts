@@ -20,7 +20,19 @@ export const GRACE_MS = 2000;
 export const RESUME_MS = 300;
 
 export type VoicePhase =
-  "off" | "starting" | "listening" | "paused" | "unavailable" | "thinking" | "speaking";
+  | "off"
+  | "starting"
+  | "listening"
+  | "paused"
+  | "unavailable"
+  | "thinking"
+  | "speaking"
+  /** A pending approval card (such as the session limit) waits for a spoken answer. */
+  | "approval"
+  /** The new-chat page holds a spoken message until the chat can be created. */
+  | "preparing"
+  /** The new-chat page gave up waiting for the chat to be ready. */
+  | "stalled";
 
 /** What the composer mic exposes so Voice mode can start and stop it. */
 export interface AeMicController {
@@ -513,4 +525,52 @@ export function questionsOf(
   const questions = payload?.questions;
   if (!questions || questions.length === 0 || questions.some((q) => q.isSecret)) return null;
   return questions;
+}
+
+/** A pending yes-or-no card (not a question, a plan, a form or a link) Voice mode can answer. */
+export interface VoiceApproval {
+  id: string;
+  /** True for the session-limit card, which has its own spoken line. */
+  slotCap: boolean;
+}
+
+/** The pending approval card, or null when the block is not a plain accept or decline card. */
+export function approvalOf(block: ElicitationBlock | undefined): VoiceApproval | null {
+  if (!block || block.status !== "pending") return null;
+  const askPayload =
+    castAskUserQuestionPayload(block.askUserQuestion) ??
+    parseAskUserQuestionPreview(block.contentPreview);
+  if (askPayload !== null) return null;
+  const plan = block.exitPlanMode?.plan;
+  if (typeof plan === "string" && plan !== "") return null;
+  if (block.codexCommand) return null;
+  if (typeof block.url === "string" && block.url !== "" && !block.url.startsWith("/approve/")) {
+    return null;
+  }
+  const props = (block.requestedSchema as { properties?: unknown } | undefined)?.properties;
+  if (props && typeof props === "object" && Object.keys(props).length > 0) return null;
+  return { id: block.elicitationId, slotCap: /slot_cap/.test(block.policyName ?? "") };
+}
+
+/** The line read aloud when an approval card appears. */
+export function approvalSpeech(approval: VoiceApproval): string {
+  return approval.slotCap
+    ? "Slots full. Say run it, or decline."
+    : "Approval needed. Say run it, or decline.";
+}
+
+const APPROVE_WORDS = new Set(["yes", "ok", "okay", "yeah", "approve", "accept", "proceed"]);
+const DECLINE_WORDS = new Set(["decline", "no", "cancel", "reject", "deny", "nope"]);
+
+/**
+ * The verdict a short spoken reply gives: "run it", "yes" and "ok" accept; "decline", "no" and
+ * "cancel" decline. A decline word wins; a long sentence is conversation, not an answer.
+ */
+export function matchApprovalReply(text: string): "accept" | "decline" | null {
+  const said = words(text);
+  if (said.length === 0 || said.length > 5) return null;
+  if (said.some((w) => DECLINE_WORDS.has(w))) return "decline";
+  const joined = said.join(" ");
+  if (said.some((w) => APPROVE_WORDS.has(w)) || /\brun it\b/.test(joined)) return "accept";
+  return null;
 }

@@ -4,6 +4,7 @@
 
 import { type MutableRefObject, useCallback, useEffect, useRef, useState } from "react";
 import { primeVoicePlayback } from "@/lib/aeSpeakReplies";
+import { logVoice } from "@/lib/aeVoiceLog";
 import {
   type AeMicController,
   armVoiceForNextChat,
@@ -11,6 +12,11 @@ import {
   GRACE_MS,
   type VoicePhase,
 } from "@/lib/aeVoiceMode";
+
+/** How often a spoken message that is waiting for the chat to be ready checks again. */
+export const READY_POLL_MS = 500;
+/** How long it waits before it says the chat was not ready. */
+export const READY_WAIT_MS = 10_000;
 
 export interface UseAeVoiceStartArgs {
   controller: MutableRefObject<AeMicController | null>;
@@ -112,14 +118,33 @@ export function useAeVoiceStart({
     (_text: string) => {
       if (!armed) return;
       clearTimer();
+      // Something new was said: the held message is not waiting any more.
+      setPhase((p) => (p === "preparing" || p === "stalled" ? "listening" : p));
       // A pause after the sentence means it is finished; anything said sooner extends it.
-      timer.current = setTimeout(() => {
+      // A message that cannot go yet (the host or folder is still loading) is held and sent the
+      // moment the chat is ready; after the window it says so instead of dropping it.
+      const tryNow = (waited: number) => {
         timer.current = null;
         const now = latest.current;
-        if (!now.canSubmit || !now.value.trim()) return;
-        now.submit();
-        release();
-      }, GRACE_MS);
+        if (!now.value.trim()) return;
+        if (now.canSubmit) {
+          logVoice("start send");
+          now.submit();
+          release();
+          return;
+        }
+        if (waited >= READY_WAIT_MS) {
+          logVoice("start gave up", "chat not ready");
+          setPhase("stalled");
+          return;
+        }
+        if (waited === 0) {
+          logVoice("start waiting", "chat not ready");
+          setPhase("preparing");
+        }
+        timer.current = setTimeout(() => tryNow(waited + READY_POLL_MS), READY_POLL_MS);
+      };
+      timer.current = setTimeout(() => tryNow(0), GRACE_MS);
     },
     [armed, clearTimer, release],
   );

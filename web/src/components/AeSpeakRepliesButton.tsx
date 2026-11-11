@@ -101,6 +101,9 @@ const PHASE_WORD: Record<VoicePhase, string> = {
   unavailable: "Mic unavailable",
   thinking: "Working on it",
   speaking: "Speaking, tap to stop",
+  approval: "Waiting for your OK",
+  preparing: "Getting the chat ready",
+  stalled: "Chat not ready",
 };
 
 export interface AeSpeakRepliesButtonProps {

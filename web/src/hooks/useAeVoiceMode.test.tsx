@@ -17,7 +17,8 @@ import {
 } from "@/lib/aeVoiceMode";
 import { useChatStore } from "@/store/chatStore";
 import { installFakeSpeech, removeFakeSpeech, type FakeSynth } from "@/test/fakeSpeech";
-import { MIC_START_NET_MS, useAeVoiceMode } from "./useAeVoiceMode";
+import { formatVoiceLog, resetVoiceLog } from "@/lib/aeVoiceLog";
+import { MIC_DEAF_DETAIL, MIC_START_NET_MS, useAeVoiceMode } from "./useAeVoiceMode";
 
 const CARD = {
   type: "elicitation",
@@ -39,6 +40,20 @@ const CARD = {
       },
     ],
   },
+};
+
+// The session-limit card: a plain accept or decline, no question payload.
+const APPROVAL = {
+  type: "elicitation",
+  ctx: { depth: 0 },
+  elicitationId: "a1",
+  status: "pending",
+  targetSessionId: null,
+  message: "Four sessions are running.",
+  phase: "request",
+  policyName: "ae_slot_cap",
+  contentPreview: "",
+  requestedSchema: {},
 };
 
 let synth: FakeSynth;
@@ -86,6 +101,7 @@ function mount(initial: Partial<MountProps> = {}) {
 beforeEach(() => {
   vi.useFakeTimers();
   window.localStorage.clear();
+  resetVoiceLog();
   resetEcho();
   resetVoiceStore();
   listening = false;
@@ -776,5 +792,134 @@ describe("useAeVoiceMode", () => {
     expect(submitApproval).toHaveBeenCalledWith("e1", "accept", {
       "What now?": ["Merge it"],
     });
+  });
+
+  describe("an approval card without a question", () => {
+    function mountApproval(over: Partial<MountProps> = {}) {
+      const speak = vi.fn();
+      registerVoiceSpeaker("c1", speak);
+      useChatStore.setState({ blocks: [APPROVAL], sessionStatus: "running" } as never);
+      const hook = mount({ status: "streaming", ...over });
+      act(() => void vi.advanceTimersByTime(RESUME_MS + 50));
+      return { speak, ...hook };
+    }
+
+    it("shows the approval phase, speaks one line and keeps the mic open", () => {
+      const { speak, result } = mountApproval();
+      expect(getVoiceSnapshot("c1").phase).toBe("approval");
+      expect(result.current.approvalActive).toBe(true);
+      expect(result.current.cardActive).toBe(false);
+      expect(speak).toHaveBeenCalledTimes(1);
+      expect(speak).toHaveBeenCalledWith("Slots full. Say run it, or decline.");
+      expect(controller.current.start).toHaveBeenCalled();
+      expect(controller.current.stop).not.toHaveBeenCalled();
+      expect(formatVoiceLog()).toContain("approval pending");
+    });
+
+    it.each(["run it", "yes", "ok"])("accepts when %s is said", (said) => {
+      const { result } = mountApproval();
+      let used = false;
+      act(() => {
+        used = result.current.onFinal(said);
+      });
+      expect(used).toBe(true);
+      expect(submitApproval).toHaveBeenCalledWith("a1", "accept");
+      expect(submit).not.toHaveBeenCalled();
+    });
+
+    it.each(["decline", "no", "cancel"])("declines when %s is said", (said) => {
+      const { result } = mountApproval();
+      act(() => void result.current.onFinal(said));
+      expect(submitApproval).toHaveBeenCalledWith("a1", "decline");
+    });
+
+    it("ignores talk that is not an answer and never sends it as a message", () => {
+      const { result } = mountApproval({ value: "tell me about the weather today" });
+      let used = false;
+      act(() => {
+        used = result.current.onFinal("tell me about the weather today");
+      });
+      act(() => void vi.advanceTimersByTime(GRACE_MS + 10));
+      expect(used).toBe(true);
+      expect(submitApproval).not.toHaveBeenCalled();
+      expect(submit).not.toHaveBeenCalled();
+    });
+
+    it("leaves the approval phase when the card is answered", () => {
+      mountApproval();
+      act(() => {
+        useChatStore.setState({
+          blocks: [{ ...APPROVAL, status: "responded" }],
+          sessionStatus: "idle",
+        } as never);
+      });
+      expect(getVoiceSnapshot("c1").phase).not.toBe("approval");
+    });
+
+    it("is not offered for a form, a link or a plan card", () => {
+      const forms = [
+        { ...APPROVAL, requestedSchema: { properties: { reason: { type: "string" } } } },
+        { ...APPROVAL, url: "https://example.com/oauth" },
+        { ...APPROVAL, exitPlanMode: { plan: "Do it" } },
+      ];
+      for (const form of forms) {
+        useChatStore.setState({ blocks: [form] } as never);
+        const { result, unmount } = mount({ status: "streaming" });
+        expect(result.current.approvalActive).toBe(false);
+        unmount();
+      }
+    });
+  });
+
+  it("logs why a send was refused instead of returning silently", () => {
+    const { result } = mount({ value: "hello", canSend: false });
+    act(() => void result.current.onFinal("hello"));
+    act(() => void vi.advanceTimersByTime(GRACE_MS + 10));
+    expect(submit).not.toHaveBeenCalled();
+    expect(formatVoiceLog()).toContain("send refused composer");
+  });
+
+  it("retries once when a take comes back deaf, then shows a mic to restart by tap", () => {
+    const { result } = mount();
+    act(() => void result.current.onListening(true));
+    act(() => {
+      // The real mic has already dropped the take when it reports it.
+      listening = false;
+      result.current.onListening(false, "deaf");
+    });
+    expect(getVoiceSnapshot("c1").phase).not.toBe("unavailable");
+    controller.current.start.mockClear();
+    act(() => void vi.advanceTimersByTime(1000));
+    expect(controller.current.start).toHaveBeenCalledTimes(1);
+    act(() => void result.current.onListening(true));
+    act(() => {
+      // The real mic has already dropped the take when it reports it.
+      listening = false;
+      result.current.onListening(false, "deaf");
+    });
+    expect(getVoiceSnapshot("c1").phase).toBe("unavailable");
+    expect(result.current.micDetail).toBe(MIC_DEAF_DETAIL);
+    act(() => void result.current.onListening(true));
+    expect(getVoiceSnapshot("c1").phase).toBe("listening");
+    expect(result.current.micDetail).toBeNull();
+  });
+
+  it("heard words give a deaf mic its retry back", () => {
+    const { result } = mount({ value: "" });
+    act(() => void result.current.onListening(true));
+    act(() => {
+      // The real mic has already dropped the take when it reports it.
+      listening = false;
+      result.current.onListening(false, "deaf");
+    });
+    act(() => void vi.advanceTimersByTime(1000));
+    act(() => void result.current.onListening(true));
+    act(() => void result.current.onFinal("hello"));
+    act(() => {
+      // The real mic has already dropped the take when it reports it.
+      listening = false;
+      result.current.onListening(false, "deaf");
+    });
+    expect(getVoiceSnapshot("c1").phase).not.toBe("unavailable");
   });
 });

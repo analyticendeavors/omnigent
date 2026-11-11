@@ -3819,6 +3819,7 @@ function ComposerImpl(
                   blocked={voiceSnap.blocked}
                   heard={value}
                   caption={voiceSnap.caption}
+                  micDetail={voice.micDetail}
                   onEnd={() => setVoiceOn(composerSessionId, false)}
                   onStop={() => {
                     setVoiceBarged(composerSessionId, true);
@@ -4075,7 +4076,7 @@ function ComposerImpl(
                 disabled={
                   disabled ||
                   isReadOnly ||
-                  (hasPendingElicitation && !voice.cardActive) ||
+                  (hasPendingElicitation && !voice.cardActive && !voice.approvalActive) ||
                   composerLockedByBtw
                 }
                 onVoiceStart={() => {
