@@ -1,3 +1,4 @@
+import { AE_SETTING_HINTS } from "@/lib/aeSettingHints";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -225,6 +226,23 @@ describe("AeSpeakRepliesButton", () => {
     await user.click(row);
     expect(screen.getByTestId("ae-voice-snips")).toHaveAttribute("aria-checked", "true");
     expect(window.localStorage.getItem("omnigent:ae-voice-snips")).toBe("true");
+  });
+
+  it("has a Mic while speaking row, default wait, saved per device, with a hint", async () => {
+    renderButton();
+    const user = await openMenu();
+    const row = screen.getByTestId("ae-voice-mic-while-speaking");
+    expect(row).toHaveAttribute("aria-checked", "false");
+    expect(within(row).getByTestId("ae-hint-voice.mic_while_speaking")).toBeInTheDocument();
+    expect(AE_SETTING_HINTS["voice.mic_while_speaking"].hint.trim()).not.toBe("");
+    await user.click(row);
+    expect(screen.getByTestId("ae-voice-mic-while-speaking")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(window.localStorage.getItem("omnigent:ae-voice-mic-while-speaking")).toBe("always");
+    await user.click(screen.getByTestId("ae-voice-mic-while-speaking"));
+    expect(window.localStorage.getItem("omnigent:ae-voice-mic-while-speaking")).toBeNull();
   });
 
   it("applies Fast answers once effort levels arrive", async () => {
@@ -466,16 +484,16 @@ describe("AeSpeakRepliesButton", () => {
     });
   });
 
-  it("puts the hint beside the label on all eight rows and the actions side by side", async () => {
+  it("puts the hint beside the label on every row and the actions side by side", async () => {
     mediaDevicesForLayout();
     renderButton();
     await openMenu();
     const triggers = document.querySelectorAll("[data-slot=tooltip-trigger]");
-    expect(triggers).toHaveLength(9);
+    expect(triggers).toHaveLength(10);
     for (const el of triggers) {
       const group = el.closest("span.items-center.gap-1\\.5");
       expect(group).not.toBeNull();
-      expect(group?.textContent).toMatch(/Voice mode|Speak replies|Fast answers|Send snips|Voice|Speed|Microphone|Speaker|Add voice log/);
+      expect(group?.textContent).toMatch(/Voice mode|Speak replies|Fast answers|Send snips|Mic while speaking|Voice|Speed|Microphone|Speaker|Add voice log/);
     }
     const actions = screen.getByTestId("ae-speak-actions");
     expect(within(actions).getByTestId("ae-speak-read-last")).toBeInTheDocument();

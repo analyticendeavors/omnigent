@@ -7,6 +7,7 @@ import {
   createSpeaker,
   registerCloudPrimer,
   setCaptionHandler,
+  setPlaybackHandler,
   type Speaker,
   type VoiceChoice,
   WORKING_CUE_DELAY_MS,
@@ -25,7 +26,9 @@ import {
   setVoiceBarged,
   setVoiceBlocked,
   setVoiceCaption,
+  setVoicePlaying,
 } from "@/lib/aeVoiceMode";
+import { recordSpoken, resetEcho } from "@/lib/aeVoiceEcho";
 import { usePlaybackBlocked } from "@/lib/aeVoicePlayback";
 import { type AnyBlock, LIVE_ITEM_PREFIX } from "@/lib/blocks";
 import { useChatStore } from "@/store/chatStore";
@@ -161,10 +164,18 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
   }, [chatId, blocked]);
   useEffect(() => {
     if (!chatId) return;
-    setCaptionHandler((text) => setVoiceCaption(chatId, text));
+    setCaptionHandler((text) => {
+      setVoiceCaption(chatId, text);
+      recordSpoken(text);
+    });
+    setPlaybackHandler((playing) => setVoicePlaying(chatId, playing));
     return () => {
       setCaptionHandler(null);
+      setPlaybackHandler(null);
       setVoiceCaption(chatId, "");
+      // A chat change or an unmount mid-reply must not leave the echo window open.
+      setVoicePlaying(chatId, false);
+      resetEcho();
     };
   }, [chatId]);
 

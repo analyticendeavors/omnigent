@@ -1,13 +1,17 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSpeaker } from "@/lib/aeSpeakReplies";
+import { activeEchoWords, notePlayback, recordSpoken, resetEcho } from "@/lib/aeVoiceEcho";
+import { MIC_WHILE_SPEAKING_KEY } from "@/lib/aeVoiceMic";
 import {
   GRACE_MS,
   registerVoiceSpeaker,
+  registerVoiceStop,
   RESUME_MS,
   resetVoiceStore,
   setVoiceBarged,
   setVoiceOn,
+  setVoicePlaying,
   setVoiceSpeaking,
   getVoiceSnapshot,
 } from "@/lib/aeVoiceMode";
@@ -80,6 +84,7 @@ function mount(initial: Partial<MountProps> = {}) {
 beforeEach(() => {
   vi.useFakeTimers();
   window.localStorage.clear();
+  resetEcho();
   resetVoiceStore();
   listening = false;
   autoConnect = true;
@@ -113,7 +118,7 @@ describe("useAeVoiceMode", () => {
     expect(controller.current.start).toHaveBeenCalledTimes(1);
   });
 
-  it("sends the draft 600 ms after a final", () => {
+  it("sends the draft one grace (2 s) after a final", () => {
     const { result } = mount({ value: "hello there" });
     act(() => void result.current.onFinal("hello there"));
     act(() => void vi.advanceTimersByTime(GRACE_MS - 1));
@@ -130,6 +135,243 @@ describe("useAeVoiceMode", () => {
     act(() => void result.current.onPartial("and also"));
     act(() => void vi.advanceTimersByTime(2000));
     expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("restarts the grace after the next final when a partial cancelled the send", () => {
+    const { result } = mount({ value: "hello" });
+    act(() => void result.current.onFinal("hello"));
+    act(() => void vi.advanceTimersByTime(GRACE_MS - 100));
+    act(() => void result.current.onPartial("and also"));
+    act(() => void vi.advanceTimersByTime(GRACE_MS + 100));
+    expect(submit).not.toHaveBeenCalled();
+    act(() => void result.current.onFinal("and also"));
+    act(() => void vi.advanceTimersByTime(GRACE_MS - 1));
+    expect(submit).not.toHaveBeenCalled();
+    act(() => void vi.advanceTimersByTime(1));
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  const REPLY = "The build passed and the review is next.";
+
+  /** A reply is queued, then audio really plays. */
+  function startPlayback(): void {
+    recordSpoken(REPLY);
+    setVoiceSpeaking("c1", true);
+    setVoicePlaying("c1", true);
+  }
+
+  describe("mic while speaking: always", () => {
+    beforeEach(() => {
+      window.localStorage.setItem(MIC_WHILE_SPEAKING_KEY, "always");
+    });
+
+    it("keeps the mic muted while queued, and opens it once audio really plays", () => {
+      const stop = vi.fn();
+      const { result } = mount();
+      act(() => void registerVoiceStop("c1", stop));
+      act(() => setVoiceSpeaking("c1", true));
+      expect(controller.current.stop).toHaveBeenCalled();
+      expect(listening).toBe(false);
+      let kept = "";
+      act(() => {
+        kept = result.current.filterHeard("wait stop now", "final");
+      });
+      expect(kept).toBe("wait stop now");
+      expect(getVoiceSnapshot("c1").barged).toBe(false);
+      expect(stop).not.toHaveBeenCalled();
+      act(() => setVoicePlaying("c1", true));
+      act(() => void vi.advanceTimersByTime(RESUME_MS));
+      expect(listening).toBe(true);
+    });
+
+    it("keeps the mic off while thinking, before anything is spoken", () => {
+      const { rerender } = mount({ value: "hi", status: "idle" });
+      rerender({ chatId: "c1", value: "", status: "streaming", canSend: true, submit });
+      expect(controller.current.stop).toHaveBeenCalled();
+    });
+
+    it("a pure echo is dropped and does not barge", () => {
+      const { result } = mount();
+      act(() => startPlayback());
+      let kept = "x";
+      act(() => {
+        kept = result.current.filterHeard("the build passed and the review is next", "final");
+      });
+      expect(kept).toBe("");
+      expect(getVoiceSnapshot("c1").barged).toBe(false);
+    });
+
+    it("two new words in a final barge in, stop the reply and keep only the new words", () => {
+      const stop = vi.fn();
+      const { result } = mount();
+      act(() => {
+        registerVoiceStop("c1", stop);
+        startPlayback();
+      });
+      let kept = "";
+      act(() => {
+        kept = result.current.filterHeard("the build passed wait stop", "final");
+      });
+      expect(kept).toBe("wait stop");
+      expect(getVoiceSnapshot("c1").barged).toBe(true);
+      expect(stop).toHaveBeenCalled();
+    });
+
+    it("one interim with two new words then a pure echo interim never barges", () => {
+      const stop = vi.fn();
+      const { result } = mount();
+      act(() => {
+        registerVoiceStop("c1", stop);
+        startPlayback();
+      });
+      let a = "x";
+      let b = "x";
+      act(() => {
+        a = result.current.filterHeard("the build passed wait stop", "interim");
+        b = result.current.filterHeard("the build passed and the review", "interim");
+      });
+      expect(a).toBe("");
+      expect(b).toBe("");
+      expect(getVoiceSnapshot("c1").barged).toBe(false);
+      expect(stop).not.toHaveBeenCalled();
+    });
+
+    it("two interims in a row with new words barge in", () => {
+      const stop = vi.fn();
+      const { result } = mount();
+      act(() => {
+        registerVoiceStop("c1", stop);
+        startPlayback();
+      });
+      let b = "";
+      act(() => {
+        result.current.filterHeard("wait stop", "interim");
+        b = result.current.filterHeard("wait stop now", "interim");
+      });
+      expect(b).toBe("wait stop now");
+      expect(getVoiceSnapshot("c1").barged).toBe(true);
+      expect(stop).toHaveBeenCalled();
+    });
+
+    it("an utterance that began inside the window stays filtered when its final lands late", () => {
+      const { result } = mount();
+      act(() => startPlayback());
+      act(() => void result.current.filterHeard("the build passed", "interim"));
+      act(() => setVoiceSpeaking("c1", false));
+      act(() => void vi.advanceTimersByTime(3000));
+      let kept = "x";
+      act(() => {
+        kept = result.current.filterHeard("the build passed", "final");
+      });
+      expect(kept).toBe("");
+      // The next utterance, with no interim in the window, is not filtered.
+      act(() => {
+        kept = result.current.filterHeard("the build passed", "final");
+      });
+      expect(kept).toBe("the build passed");
+    });
+
+    it("an interim with no final leaves no stale pin once the mic stops", () => {
+      const { result } = mount();
+      act(() => startPlayback());
+      act(() => void result.current.filterHeard("the build passed", "interim"));
+      act(() => setVoiceSpeaking("c1", false));
+      act(() => void result.current.onListening(false));
+      act(() => void vi.advanceTimersByTime(3000));
+      let kept = "";
+      act(() => {
+        kept = result.current.filterHeard("the build passed", "final");
+      });
+      expect(kept).toBe("the build passed");
+    });
+
+    it("a one-word continuation (not in the reply) in the tail reaches the draft and cancels a pending grace", () => {
+      const { result } = mount({ value: "hello" });
+      act(() => void result.current.onFinal("hello"));
+      act(() => {
+        startPlayback();
+        setVoiceSpeaking("c1", false);
+      });
+      act(() => void vi.advanceTimersByTime(500));
+      let kept = "";
+      act(() => {
+        kept = result.current.filterHeard("tomorrow", "interim");
+        result.current.onPartial(kept);
+      });
+      expect(kept).toBe("tomorrow");
+      act(() => void vi.advanceTimersByTime(GRACE_MS + 100));
+      expect(submit).not.toHaveBeenCalled();
+    });
+
+    it("bargeIn clears a pending grace", () => {
+      const { result } = mount({ value: "hello" });
+      act(() => startPlayback());
+      act(() => void vi.advanceTimersByTime(RESUME_MS));
+      act(() => void result.current.onFinal("hello"));
+      act(() => void result.current.bargeIn());
+      act(() => void vi.advanceTimersByTime(GRACE_MS + 100));
+      expect(submit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("mic while speaking: wait", () => {
+    it("never barges: a final with new words while a reply plays is dropped", () => {
+      const stop = vi.fn();
+      const { result } = mount({ value: "hello" });
+      act(() => {
+        registerVoiceStop("c1", stop);
+        startPlayback();
+      });
+      let kept = "";
+      let used = false;
+      act(() => {
+        kept = result.current.filterHeard("wait stop now please", "final");
+        used = result.current.onFinal(kept);
+      });
+      expect(used).toBe(true);
+      expect(getVoiceSnapshot("c1").barged).toBe(false);
+      expect(stop).not.toHaveBeenCalled();
+      act(() => void vi.advanceTimersByTime(GRACE_MS + 100));
+      expect(submit).not.toHaveBeenCalled();
+    });
+  });
+
+  it("a chat change closes the echo window", () => {
+    const { rerender } = mount();
+    act(() => startPlayback());
+    expect(activeEchoWords()).not.toBeNull();
+    rerender({ chatId: "c2", value: "", status: "idle", canSend: true, submit });
+    expect(activeEchoWords()).toBeNull();
+  });
+
+  it("bargeIn stops speech and leaves Voice mode on, only while speaking", () => {
+    const stop = vi.fn();
+    const { result } = mount();
+    act(() => void registerVoiceStop("c1", stop));
+    let handled = true;
+    act(() => {
+      handled = result.current.bargeIn();
+    });
+    expect(handled).toBe(false);
+    expect(stop).not.toHaveBeenCalled();
+    act(() => setVoiceSpeaking("c1", true));
+    act(() => {
+      handled = result.current.bargeIn();
+    });
+    expect(handled).toBe(true);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(getVoiceSnapshot("c1").barged).toBe(true);
+    expect(getVoiceSnapshot("c1").on).toBe(true);
+  });
+
+  it("filterHeard passes text through when the echo window is closed or Voice mode is off", () => {
+    const { result } = mount();
+    expect(result.current.filterHeard("just talking here", "final")).toBe("just talking here");
+    act(() => {
+      notePlayback(false);
+      setVoiceOn("c1", false);
+    });
+    expect(result.current.filterHeard("anything at all", "final")).toBe("anything at all");
   });
 
   it("does not send an empty draft", () => {

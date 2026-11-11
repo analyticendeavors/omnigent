@@ -127,3 +127,25 @@ describe("useVoiceDictationHotkey", () => {
     expect(onToggle).not.toHaveBeenCalled();
   });
 });
+
+describe("useVoiceDictationHotkey barge branch", () => {
+  const chord = { code: "KeyV", ctrlKey: true, altKey: true };
+
+  it("skips the toggle when the barge callback handled the chord", () => {
+    const toggle = vi.fn();
+    const barge = vi.fn(() => true);
+    renderHook(() => useVoiceDictationHotkey(toggle, true, false, barge));
+    press(chord);
+    expect(barge).toHaveBeenCalledTimes(1);
+    expect(toggle).not.toHaveBeenCalled();
+  });
+
+  it("toggles as before when the barge callback did not handle it", () => {
+    const toggle = vi.fn();
+    const barge = vi.fn(() => false);
+    renderHook(() => useVoiceDictationHotkey(toggle, true, false, barge));
+    press(chord);
+    expect(barge).toHaveBeenCalledTimes(1);
+    expect(toggle).toHaveBeenCalledTimes(1);
+  });
+});

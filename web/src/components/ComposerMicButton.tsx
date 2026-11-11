@@ -88,6 +88,8 @@ export interface ComposerMicButtonProps {
   /** Bind the global ⌘⌥V dictation hotkey to this mic. Enable on exactly one
    *  mounted mic (the primary composer) so two don't fight for the device. */
   enableHotkey?: boolean;
+  /** The hotkey runs this first; true means handled (Voice mode stopped a spoken reply). */
+  onHotkeyBarge?: () => boolean;
   /** Fired when dictation begins. The parent should snapshot the composer text
    *  here so {@link onVoiceDiscard} can revert to it. */
   onVoiceStart?: () => void;
@@ -112,6 +114,7 @@ export const ComposerMicButton = ({
   disabled,
   lang = getDefaultDictationLang(),
   enableHotkey = false,
+  onHotkeyBarge,
   onVoiceStart,
   onVoiceDiscard,
   controller,
@@ -570,7 +573,12 @@ export const ComposerMicButton = ({
   // ⌘⌥V toggles dictation from anywhere — same as clicking the button. Enabled
   // whenever dictation could run (Web Speech OR the server path) and the
   // composer isn't disabled, so the chord is inert when it can't do anything.
-  useVoiceDictationHotkey(toggle, enableHotkey && (Boolean(Ctor) || serverAvailable) && !disabled);
+  useVoiceDictationHotkey(
+    toggle,
+    enableHotkey && (Boolean(Ctor) || serverAvailable) && !disabled,
+    undefined,
+    onHotkeyBarge,
+  );
 
   // While listening, Enter commits (end the take, keep the text) and Esc
   // cancels (end the take, discard back to the pre-dictation snapshot). Bound in

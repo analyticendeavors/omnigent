@@ -188,6 +188,21 @@ export function setCaptionHandler(handler: ((text: string) => void) | null): voi
   captionHandler = handler;
 }
 
+// Audio is really playing (not just queued): the chat's hook registers the receiver.
+let playbackHandler: ((playing: boolean) => void) | null = null;
+
+export function setPlaybackHandler(handler: ((playing: boolean) => void) | null): void {
+  playbackHandler = handler;
+}
+
+export function emitPlaying(playing: boolean): void {
+  try {
+    playbackHandler?.(playing);
+  } catch {
+    // A receiver failure must not stop the voice.
+  }
+}
+
 export function emitCaption(text: string): void {
   try {
     captionHandler?.(text);
@@ -253,6 +268,7 @@ export function createSpeaker(): Speaker {
   const setSpeaking = (next: boolean) => {
     if (isSpeaking === next) return;
     isSpeaking = next;
+    if (!next) emitPlaying(false);
     notify();
   };
 
@@ -282,6 +298,7 @@ export function createSpeaker(): Speaker {
       if (gen !== generation) return;
       if (resumed) clearPlaybackBlocked();
       logVoice("say start");
+      emitPlaying(true);
       emitCaption(chunk);
     };
     utterance.onend = () => {

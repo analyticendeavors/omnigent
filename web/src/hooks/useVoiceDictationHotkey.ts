@@ -46,16 +46,21 @@ function focusOwnsHotkey(): boolean {
  * @param onToggle Start or stop the recognizer (the mic button's toggle).
  * @param enabled  Pass `false` to skip binding (e.g. the secondary composer in
  *   the New Chat dialog, so two mics don't fight for the device). Defaults on.
+ * @param beforeToggle Runs first; returning true means it handled the chord (Voice
+ *   mode stopping a spoken reply) and the toggle is skipped.
  */
 export function useVoiceDictationHotkey(
   onToggle: () => void,
   enabled = true,
   isMac = isMacPlatform(),
+  beforeToggle?: () => boolean,
 ): void {
   // Held in a ref so the bound handler always calls the latest closure without
   // re-registering on every render (onToggle changes as listening state flips).
   const latest = useRef(onToggle);
   latest.current = onToggle;
+  const before = useRef(beforeToggle);
+  before.current = beforeToggle;
 
   useEffect(() => {
     if (!enabled) return;
@@ -66,6 +71,7 @@ export function useVoiceDictationHotkey(
       if (focusOwnsHotkey()) return;
       e.preventDefault();
       e.stopPropagation();
+      if (before.current?.()) return;
       latest.current();
     };
     window.addEventListener("keydown", handler);

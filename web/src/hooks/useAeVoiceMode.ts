@@ -14,13 +14,17 @@ import {
   questionsOf,
   questionSpeech,
   RESUME_MS,
+  setVoiceBarged,
   setVoicePhase,
   splitDone,
+  stopVoice,
   syncVoiceLabel,
   useVoiceSnapshot,
   type VoicePhase,
 } from "@/lib/aeVoiceMode";
+import { activeEchoWords, resetEcho, splitEcho } from "@/lib/aeVoiceEcho";
 import { logVoice } from "@/lib/aeVoiceLog";
+import { useMicWhileSpeaking } from "@/lib/aeVoiceMic";
 import { useChatStore } from "@/store/chatStore";
 
 /** If the chat never shows a turn after a send, stop waiting for it. */
@@ -57,6 +61,15 @@ export interface AeVoiceMode {
   onFinal: (text: string) => boolean;
   /** A partial arrived; true when Voice mode used it (the draft should not take it). */
   onPartial: (text: string) => boolean;
+  /**
+   * Heard text with the speaker's own echo removed ("" when it is all echo, or held while a
+   * reply plays until it is clearly the person). Their own words heard while audio plays
+   * barge in when the mic stays open while speaking. `kind` is whether it is an interim or
+   * a final result.
+   */
+  filterHeard: (text: string, kind: "interim" | "final") => string;
+  /** Stops the reply being spoken (the hotkey); true when it did. The mic stays on. */
+  bargeIn: () => boolean;
   /** The mic reports it started or stopped listening (or failed to start). */
   onListening: (listening: boolean) => void;
 }
@@ -79,7 +92,8 @@ export function useAeVoiceMode({
   labels,
 }: UseAeVoiceModeArgs): AeVoiceMode {
   const voice = useVoiceSnapshot(chatId);
-  const { on, speaking, barged } = voice;
+  const { on, speaking, barged, playing } = voice;
+  const micMode = useMicWhileSpeaking();
   const block = useChatStore((s) =>
     s.blocks.find((b) => isPendingElicitation(b, s.conversationId)),
   );
@@ -103,11 +117,17 @@ export function useAeVoiceMode({
   const startPending = useRef(false);
   const stopAsked = useRef(false);
   const failures = useRef(0);
+  // Echo guard: the spoken words in force when this utterance began, and interims in a row
+  // that held two or more new words.
+  const utteranceWords = useRef<readonly string[] | null>(null);
+  const personInterims = useRef(0);
 
   // A turn is under way once the chat streams, the session runs, or the message is queued.
   const busy = status === "streaming" || sessionRunning || queued;
   const waiting = !cardActive && !barged && (awaiting || busy);
-  const muted = on && (speaking || waiting);
+  // The mic is muted while a reply is queued or made, and while it plays in "wait"; it opens
+  // in "always" only once audio really plays. Thinking stays muted in both.
+  const muted = on && (speaking ? micMode === "wait" || !playing : waiting);
   const quiet = muted || !ready;
   const wantListen = on && !quiet;
 
@@ -121,6 +141,9 @@ export function useAeVoiceMode({
     micListening,
     questions,
     speak: voice.speak,
+    speaking,
+    playing,
+    micMode,
   });
   latest.current = {
     value,
@@ -132,6 +155,9 @@ export function useAeVoiceMode({
     micListening,
     questions,
     speak: voice.speak,
+    speaking,
+    playing,
+    micMode,
   };
   const readyRef = useRef(ready);
   readyRef.current = ready;
@@ -155,6 +181,9 @@ export function useAeVoiceMode({
       startPending.current = false;
       stopAsked.current = false;
       failures.current = 0;
+      resetEcho();
+      utteranceWords.current = null;
+      personInterims.current = 0;
       setAwaiting(false);
       setMicFailed(false);
       setMicStopped(false);
@@ -253,6 +282,9 @@ export function useAeVoiceMode({
 
   const onListening = useCallback(
     (listening: boolean) => {
+      // A mic start or stop ends the utterance: an interim with no final leaves no pin behind.
+      utteranceWords.current = null;
+      personInterims.current = 0;
       if (listening) {
         clearNet();
         startPending.current = false;
@@ -417,6 +449,55 @@ export function useAeVoiceMode({
     [answerCard, clearGrace],
   );
 
+  const bargeIn = useCallback((): boolean => {
+    if (!chatId || !on || !latest.current.speaking) return false;
+    logVoice("barge");
+    clearGrace();
+    setVoiceBarged(chatId, true);
+    stopVoice(chatId);
+    return true;
+  }, [chatId, on, clearGrace]);
+
+  const filterHeard = useCallback(
+    (text: string, kind: "interim" | "final"): string => {
+      if (!on) return text;
+      // An utterance that began inside the window stays filtered however late its final lands.
+      const live = activeEchoWords();
+      // An interim after the window closed is a new utterance: an old pin is stale.
+      if (kind === "interim" && live === null) utteranceWords.current = null;
+      const words = live ?? utteranceWords.current;
+      if (kind === "interim") {
+        if (live !== null) utteranceWords.current = live;
+      } else {
+        utteranceWords.current = null;
+      }
+      if (!words) {
+        personInterims.current = 0;
+        return text;
+      }
+      const { fresh, person } = splitEcho(text, words);
+      const now = latest.current;
+      // Audio is playing and the mic is open: only clearly the person's words get through.
+      if (now.speaking && now.playing && now.micMode === "always") {
+        let confirmed = person;
+        if (kind === "interim") {
+          personInterims.current = person ? personInterims.current + 1 : 0;
+          confirmed = personInterims.current >= 2;
+        } else {
+          personInterims.current = 0;
+        }
+        if (!confirmed) {
+          logVoice("echo dropped");
+          return "";
+        }
+        personInterims.current = 0;
+        bargeIn();
+      }
+      return fresh.join(" ");
+    },
+    [on, bargeIn],
+  );
+
   const onFinal = useCallback(
     (text: string): boolean => {
       if (!on) return false;
@@ -453,5 +534,14 @@ export function useAeVoiceMode({
     [on, clearGrace],
   );
 
-  return { on, phase: voice.phase, cardActive, onFinal, onPartial, onListening };
+  return {
+    on,
+    phase: voice.phase,
+    cardActive,
+    filterHeard,
+    bargeIn,
+    onFinal,
+    onPartial,
+    onListening,
+  };
 }

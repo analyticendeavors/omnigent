@@ -4060,6 +4060,7 @@ function ComposerImpl(
               <ComposerMicButton
                 className={cn("size-8 md:size-7", COMPOSER_TIGHT_MIC_CLASS)}
                 enableHotkey
+                onHotkeyBarge={voice.bargeIn}
                 controller={micController}
                 onListeningChange={voice.onListening}
                 disabled={
@@ -4074,7 +4075,9 @@ function ComposerImpl(
                 onVoiceDiscard={() => {
                   setValue(voiceSnapshotRef.current);
                 }}
-                onTranscript={(text) => {
+                onTranscript={(raw) => {
+                  const text = voice.filterHeard(raw, "final");
+                  if (text === "" && raw !== "") return;
                   if (voice.onFinal(text)) return;
                   dictation.appendFinal(text);
                   dirtyRef.current = true;
@@ -4083,7 +4086,9 @@ function ComposerImpl(
                   resetCursor();
                   if (commandError !== null) setCommandError(null);
                 }}
-                onInterim={(text) => {
+                onInterim={(raw) => {
+                  const text = voice.filterHeard(raw, "interim");
+                  if (text === "" && raw !== "") return;
                   if (voice.onPartial(text)) return;
                   dictation.replaceInterim(text);
                   dirtyRef.current = true;

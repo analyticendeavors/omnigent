@@ -8,13 +8,14 @@ import {
   castAskUserQuestionPayload,
   parseAskUserQuestionPreview,
 } from "./askUserQuestion";
+import { notePlayback } from "./aeVoiceEcho";
 import { logVoice } from "./aeVoiceLog";
 import { withBasePath } from "./basePath";
 import type { AnyBlock, ElicitationBlock } from "./blocks";
 import { authenticatedFetch } from "./identity";
 
 /** Quiet time after a finished sentence before the draft is sent. */
-export const GRACE_MS = 600;
+export const GRACE_MS = 2000;
 /** Gap after the last spoken sentence before the mic comes back. */
 export const RESUME_MS = 300;
 
@@ -37,6 +38,8 @@ export interface VoiceSnapshot {
   speak: ((text: string) => void) | null;
   /** The person tapped to stop a reply: nothing more is spoken until the next send. */
   barged: boolean;
+  /** Audio is really playing (not just queued or being made). */
+  playing: boolean;
   /** The sentence being spoken right now; "" when nothing is. */
   caption: string;
   /** The browser refused to play the reply; a tap plays it. */
@@ -80,6 +83,7 @@ const OFF: VoiceSnapshot = {
   speaking: false,
   speak: null,
   barged: false,
+  playing: false,
   caption: "",
   blocked: false,
 };
@@ -183,6 +187,14 @@ export function setVoiceBarged(chatId: string, barged: boolean): void {
 
 export function setVoiceSpeaking(chatId: string, speaking: boolean): void {
   patch(chatId, { speaking });
+  // Nothing queued means nothing plays.
+  if (!speaking) setVoicePlaying(chatId, false);
+}
+
+/** Audio really started or stopped playing; the echo guard's window follows it. */
+export function setVoicePlaying(chatId: string, playing: boolean): void {
+  notePlayback(playing);
+  patch(chatId, { playing });
 }
 
 export function setVoiceCaption(chatId: string, caption: string): void {

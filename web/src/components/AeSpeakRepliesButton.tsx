@@ -67,6 +67,7 @@ import {
   useVoiceSnapshot,
   type VoicePhase,
 } from "@/lib/aeVoiceMode";
+import { useMicWhileSpeaking, writeMicWhileSpeaking } from "@/lib/aeVoiceMic";
 import { useSendSnips, writeSendSnips } from "@/lib/aeVoiceSnips";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chatStore";
@@ -106,6 +107,7 @@ function RowHint({
     | "voice.speak"
     | "voice.fast"
     | "voice.snips"
+    | "voice.mic_while_speaking"
     | "voice.voice"
     | "voice.rate"
     | "voice.microphone"
@@ -197,7 +199,7 @@ function SwitchRow({
   label: string;
   checked: boolean;
   onChange: (next: boolean) => void;
-  hint: "voice.mode" | "voice.speak" | "voice.fast" | "voice.snips";
+  hint: "voice.mode" | "voice.speak" | "voice.fast" | "voice.snips" | "voice.mic_while_speaking";
   testId: string;
 }) {
   return (
@@ -246,6 +248,7 @@ function SpeakRepliesControl({
   const [on, setOn] = useState(() => readSpeakReplies(chatId));
   const [fastEnabled, setFastEnabled] = useState(readFastEnabled);
   const snips = useSendSnips();
+  const micWhileSpeaking = useMicWhileSpeaking();
   const [stored, setStored] = useState(readVoiceChoice);
   const [legacy, setLegacy] = useState(isLegacyVoiceChoice);
   const [cloudVoices, setCloudVoices] = useState<CloudVoice[]>([]);
@@ -465,6 +468,13 @@ function SpeakRepliesControl({
           onChange={writeSendSnips}
           hint="voice.snips"
           testId="ae-voice-snips"
+        />
+        <SwitchRow
+          label="Mic while speaking"
+          checked={micWhileSpeaking === "always"}
+          onChange={(next) => writeMicWhileSpeaking(next ? "always" : "wait")}
+          hint="voice.mic_while_speaking"
+          testId="ae-voice-mic-while-speaking"
         />
         <DropdownMenuSub>
           <DropdownMenuSubTrigger data-testid="ae-speak-voice-trigger">

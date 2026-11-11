@@ -255,6 +255,11 @@ export const AE_SETTING_HINTS = {
     hint: "Voice mode only: a picture you attach gets a spoken Got it. and goes with your next sentence, or alone after 10 s as Note this. Per device.",
     source: "tooltip",
   },
+  "voice.mic_while_speaking": {
+    label: "Mic while speaking",
+    hint: "On: the mic stays open while a reply plays; speaking stops it, as does Ctrl+Alt+V (Cmd+Opt+V on Mac). Default: off. Per device.",
+    source: "tooltip",
+  },
   "voice.voice": {
     label: "Voice",
     hint: "Natural voices come from the server when it has them; others are this device's. Saved per device. Default: first natural voice, else best.",

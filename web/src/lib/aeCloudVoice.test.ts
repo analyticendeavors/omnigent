@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCloudSpeaker, fetchCloudVoices, resetCloudVoicesCache } from "./aeCloudVoice";
-import { setCaptionHandler, type Speaker, type SpeakOptions } from "./aeSpeakReplies";
+import { setCaptionHandler, setPlaybackHandler, type Speaker, type SpeakOptions } from "./aeSpeakReplies";
 import { clearPlaybackBlocked, isPlaybackBlocked, resumePlayback } from "./aeVoicePlayback";
 
 const OPTS: SpeakOptions = { voiceURI: null, rate: 1, cloudVoiceId: "en-US-AvaMultilingualNeural" };
@@ -10,6 +10,7 @@ class FakeAudio {
   src = "";
   onended: (() => void) | null = null;
   onerror: (() => void) | null = null;
+  onplaying: (() => void) | null = null;
   played: string[] = [];
   pauses = 0;
   sinkId = "";
@@ -208,6 +209,26 @@ describe("createCloudSpeaker", () => {
       voice: "en-US-AvaMultilingualNeural",
       rate: 1.25,
     });
+  });
+
+  it("reports real playback on the audio's playing event and the end on stop", async () => {
+    const seen: boolean[] = [];
+    setPlaybackHandler((p) => seen.push(p));
+    const speaker = createCloudSpeaker(new FakeDevice());
+    speaker.speak("Hello there.", OPTS);
+    await settle();
+    // Queued but still being made: nothing plays yet.
+    expect(seen).toEqual([]);
+    pending[0].resolve(mp3());
+    await settle();
+    // Play was asked for, but the element has not reported playing yet.
+    expect(FakeAudio.last?.played).toHaveLength(1);
+    expect(seen).toEqual([]);
+    FakeAudio.last?.onplaying?.();
+    expect(seen).toEqual([true]);
+    speaker.stop();
+    expect(seen).toEqual([true, false]);
+    setPlaybackHandler(null);
   });
 
   it("stop aborts requests, pauses the audio and empties the queue", async () => {

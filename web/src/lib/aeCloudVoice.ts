@@ -2,7 +2,7 @@
 // one server-made mp3 per sentence in order. A sentence the server cannot make is
 // read by the device speaker instead, so an outage still speaks.
 
-import { emitCaption, type Speaker, type SpeakOptions } from "./aeSpeakReplies";
+import { emitCaption, emitPlaying, type Speaker, type SpeakOptions } from "./aeSpeakReplies";
 import { splitForSpeech } from "./aeSpeechText";
 import { speakerSinkId } from "./aeAudioDevices";
 import { clearPlaybackBlocked, markPlaybackBlocked } from "./aeVoicePlayback";
@@ -98,6 +98,7 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
   const setSpeaking = (next: boolean) => {
     if (isSpeaking === next) return;
     isSpeaking = next;
+    if (!next) emitPlaying(false);
     listeners.forEach((cb) => cb());
   };
 
@@ -164,6 +165,7 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
         if (token === playToken) {
           el.onended = null;
           el.onerror = null;
+          el.onplaying = null;
           release = null;
         }
         URL.revokeObjectURL(url);
@@ -178,6 +180,8 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
         logVoice("play error", `media ${el.error?.code}`);
         finish(false);
       };
+      // The audio is really playing now, not just queued or still being made.
+      el.onplaying = () => emitPlaying(true);
       el.src = url;
       logVoice("play start");
       // A refused play() is not a failure: the item stays current until a tap plays it again.

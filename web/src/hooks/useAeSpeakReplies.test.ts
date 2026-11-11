@@ -1,6 +1,12 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { emitCaption, WORKING_CUE_DELAY_MS, WORKING_CUE_TEXT } from "@/lib/aeSpeakReplies";
+import { activeEchoWords, resetEcho } from "@/lib/aeVoiceEcho";
+import {
+  emitCaption,
+  emitPlaying,
+  WORKING_CUE_DELAY_MS,
+  WORKING_CUE_TEXT,
+} from "@/lib/aeSpeakReplies";
 import { getVoiceSnapshot, resetVoiceStore, setVoiceBarged } from "@/lib/aeVoiceMode";
 import { clearPlaybackBlocked, markPlaybackBlocked } from "@/lib/aeVoicePlayback";
 import { type AnyBlock, LIVE_ITEM_PREFIX } from "@/lib/blocks";
@@ -125,6 +131,43 @@ describe("useAeSpeakReplies engine choice", () => {
     flush();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(synth.texts()).toEqual(["One.", "Two. Three."]);
+  });
+});
+
+describe("useAeSpeakReplies echo window", () => {
+  beforeEach(() => resetEcho());
+
+  it("opens the echo window only when audio really plays", () => {
+    mount();
+    act(() => emitCaption("Hello there friend."));
+    expect(getVoiceSnapshot("c1").playing).toBe(false);
+    expect(activeEchoWords()).toBeNull();
+    act(() => emitPlaying(true));
+    expect(getVoiceSnapshot("c1").playing).toBe(true);
+    expect(activeEchoWords()).toContain("hello");
+  });
+
+  it("an unmount mid-reply closes the window and clears playing", () => {
+    const view = mount();
+    act(() => {
+      emitCaption("Hello there friend.");
+      emitPlaying(true);
+    });
+    expect(activeEchoWords()).not.toBeNull();
+    view.unmount();
+    expect(getVoiceSnapshot("c1").playing).toBe(false);
+    expect(activeEchoWords()).toBeNull();
+  });
+
+  it("a chat change closes the window", () => {
+    const view = mount();
+    act(() => {
+      emitCaption("Hello there friend.");
+      emitPlaying(true);
+    });
+    view.rerender({ enabled: true, chatId: "c2" });
+    expect(getVoiceSnapshot("c1").playing).toBe(false);
+    expect(activeEchoWords()).toBeNull();
   });
 });
 
