@@ -169,7 +169,7 @@ describe("AeVoicePanel (stuck start)", () => {
   it("offers a tap to start the mic after 3 s of starting, and the tap restarts", () => {
     vi.useFakeTimers();
     const onRestartMic = vi.fn();
-    panel({ phase: "starting", onRestartMic });
+    panel({ phase: "starting", onRestartMic, micStartPath: () => "browser" });
     expect(screen.getByText("Starting the mic")).toBeTruthy();
     act(() => {
       vi.advanceTimersByTime(3100);
@@ -177,6 +177,16 @@ describe("AeVoicePanel (stuck start)", () => {
     expect(screen.getByText("Tap to start the mic")).toBeTruthy();
     act(() => screen.getByRole("button", { name: "Start the mic" }).click());
     expect(onRestartMic).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers no tap while the start is on the server path", () => {
+    vi.useFakeTimers();
+    panel({ phase: "starting", onRestartMic: vi.fn(), micStartPath: () => "server" });
+    act(() => {
+      vi.advanceTimersByTime(10_000);
+    });
+    expect(screen.queryByText("Tap to start the mic")).toBeNull();
+    expect(screen.getByText("Starting the mic")).toBeTruthy();
   });
 
   it("does not offer the tap when the phase moves on first", () => {

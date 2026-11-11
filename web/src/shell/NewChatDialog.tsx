@@ -6686,6 +6686,7 @@ export function NewChatLandingScreen() {
                         onStop={() => {}}
                         onResume={() => {}}
                         onRestartMic={voiceStart.restart}
+                        micStartPath={() => newChatMic.current?.startPath() ?? null}
                       />
                     ) : null}
                     {/* Skill suggestions — floats above the composer box. */}

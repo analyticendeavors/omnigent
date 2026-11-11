@@ -36,6 +36,8 @@ export interface AeVoicePanelProps {
   onKeyboard?: () => void;
   /** Start the mic again when it is paused or unavailable; runs inside the tap. */
   onRestartMic?: () => void;
+  /** Which path the mic start is on; the tap to start shows for the browser path only. */
+  micStartPath?: () => "browser" | "server" | null;
   className?: string;
 }
 
@@ -173,6 +175,7 @@ export function AeVoicePanel({
   onResume,
   onKeyboard,
   onRestartMic,
+  micStartPath,
   className,
 }: AeVoicePanelProps) {
   const level = useMicLevel();
@@ -187,7 +190,9 @@ export function AeVoicePanel({
   }, [key]);
   if (key === "off") return null;
   const tone = TONE[key];
-  const tapToStart = key === "starting" && startStuck && Boolean(onRestartMic);
+  // A server start is a model cold start that can take 40 s; a tap there would only get in its way.
+  const tapToStart =
+    key === "starting" && startStuck && Boolean(onRestartMic) && micStartPath?.() === "browser";
   const { label, sub } = tapToStart
     ? { label: "Tap to start the mic", sub: "" }
     : words(key, heard, caption, micDetail);

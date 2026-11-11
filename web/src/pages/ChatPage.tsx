@@ -3830,6 +3830,7 @@ function ComposerImpl(
                   }}
                   onKeyboard={voiceSheet ? voiceTyping.startTyping : undefined}
                   onRestartMic={() => micController.current?.restart()}
+                  micStartPath={() => micController.current?.startPath() ?? null}
                 />
               ) : null}
               {/* Slash-command suggestions — floats above the composer box */}

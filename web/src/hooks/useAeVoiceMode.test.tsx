@@ -55,6 +55,7 @@ const controller = {
     }),
     restart: vi.fn(),
     isListening: () => listening,
+    startPath: () => "browser" as const,
   },
 };
 const submit = vi.fn();

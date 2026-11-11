@@ -68,6 +68,8 @@ let startSpy: ReturnType<typeof vi.fn>;
 let stopSpy: ReturnType<typeof vi.fn>;
 let abortSpy: ReturnType<typeof vi.fn>;
 let recognitionLang: string | undefined;
+/** Every recognizer the component built, oldest first, each with its own handlers. */
+let instances: { handlers: Record<string, (event: unknown) => void> }[];
 /** Original navigator.mediaDevices descriptor, restored after each test. */
 let originalMediaDevices: PropertyDescriptor | undefined;
 /** Original navigator.language descriptor, restored after each test. */
@@ -79,6 +81,7 @@ function installSpeechRecognition() {
   stopSpy = vi.fn();
   abortSpy = vi.fn();
   recognitionLang = undefined;
+  instances = [];
   // A class (not an arrow fn) so `new Ctor()` is constructable — the component
   // does `new Ctor()` in its mount effect.
   class FakeRecognition {
@@ -95,8 +98,13 @@ function installSpeechRecognition() {
     start = startSpy;
     stop = stopSpy;
     abort = abortSpy;
+    own: Record<string, (event: unknown) => void> = {};
+    constructor() {
+      instances.push({ handlers: this.own });
+    }
     addEventListener(type: string, handler: (event: unknown) => void) {
       handlers[type] = handler;
+      this.own[type] = handler;
     }
     removeEventListener() {}
   }
@@ -129,6 +137,7 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
+  delete (navigator as { permissions?: unknown }).permissions;
   // Restore navigator.mediaDevices so the stub never leaks to other test files.
   if (originalMediaDevices) {
     Object.defineProperty(navigator, "mediaDevices", originalMediaDevices);
@@ -656,6 +665,28 @@ describe("ComposerMicButton (server dictation)", () => {
     );
   });
 
+  it("names the server path, and a restart tap never withdraws a server start", async () => {
+    let resolveStart!: (s: SessionStub) => void;
+    sessionStartMock = vi.fn((events: DictationSessionEvents) => {
+      sessionEvents = events;
+      return new Promise<SessionStub>((resolve) => {
+        resolveStart = resolve;
+      });
+    });
+    const controller = { current: null as AeMicController | null };
+    renderServerMode({ controller });
+    expect(controller.current?.startPath()).toBe("server");
+    await act(async () => controller.current?.start());
+    act(() => controller.current?.restart());
+    await act(async () => {
+      resolveStart({ stop: sessionStopMock, cancel: sessionCancelMock });
+    });
+    // The healthy cold start finished and is listening; nothing cancelled it.
+    expect(sessionCancelMock).not.toHaveBeenCalled();
+    expect(sessionStartMock).toHaveBeenCalledTimes(1);
+    expect(controller.current?.isListening()).toBe(true);
+  });
+
   it("tells Voice mode when the mic is stopped from the button", async () => {
     const controller = { current: null as AeMicController | null };
     const onListeningChange = vi.fn();
@@ -877,13 +908,18 @@ describe("ComposerMicButton (Voice mode start recovery)", () => {
     expect(startSpy).toHaveBeenCalledTimes(2);
   });
 
-  it("a start that fires no event trips the 4 s watchdog and frees the guards", () => {
+  it("a start that fires no event trips the 8 s first-take watchdog and frees the guards", async () => {
     vi.useFakeTimers();
     try {
+      stubPermission("granted");
       const { controller, onListeningChange } = mountWithController();
       act(() => controller.current?.start());
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
       act(() => {
-        vi.advanceTimersByTime(3900);
+        vi.advanceTimersByTime(7900);
       });
       expect(onListeningChange).not.toHaveBeenCalled();
       act(() => {
@@ -915,21 +951,162 @@ describe("ComposerMicButton (Voice mode start recovery)", () => {
     }
   });
 
-  it("restart withdraws a stuck start and starts again", () => {
+  it("restart discards the old recognizer and starts a new one in the same tick", () => {
     const { controller } = mountWithController();
     act(() => controller.current?.start());
     expect(startSpy).toHaveBeenCalledTimes(1);
+    expect(instances).toHaveLength(1);
     act(() => controller.current?.restart());
     expect(abortSpy).toHaveBeenCalledTimes(1);
+    expect(instances).toHaveLength(2);
     expect(startSpy).toHaveBeenCalledTimes(2);
-    // The end of the aborted take is not an answer to the new start.
-    const onChange = vi.fn();
-    act(() => handlers.end?.({}));
-    act(() => handlers.start?.({}));
+    // The new recognizer's start is answered normally.
+    act(() => instances[1].handlers.start?.({}));
     expect(controller.current?.isListening()).toBe(true);
-    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("stale end and error events from a discarded recognizer change nothing", async () => {
+    vi.useFakeTimers();
+    try {
+      stubPermission("granted");
+      const { controller, onListeningChange } = mountWithController();
+      act(() => controller.current?.start());
+      act(() => controller.current?.restart());
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      onListeningChange.mockClear();
+      // The aborted take's own end and error(aborted) arrive after the new start.
+      act(() => {
+        instances[0].handlers.end?.({});
+        instances[0].handlers.error?.({ error: "aborted" });
+      });
+      expect(onListeningChange).not.toHaveBeenCalled();
+      // The new take's watchdog is still armed and still fires.
+      act(() => {
+        vi.advanceTimersByTime(8100);
+      });
+      expect(onListeningChange.mock.calls).toEqual([[false]]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a stuck take reports not listening once, and the retry uses a fresh recognizer", async () => {
+    vi.useFakeTimers();
+    try {
+      stubPermission("granted");
+      const { controller, onListeningChange } = mountWithController();
+      act(() => controller.current?.start());
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      act(() => {
+        vi.advanceTimersByTime(8100);
+      });
+      expect(onListeningChange.mock.calls.filter(([v]) => v === false)).toHaveLength(1);
+      // The aborted recognizer's late error does not report a second false.
+      act(() => instances[0].handlers.error?.({ error: "aborted" }));
+      expect(onListeningChange.mock.calls.filter(([v]) => v === false)).toHaveLength(1);
+      expect(instances).toHaveLength(2);
+      act(() => controller.current?.start());
+      expect(startSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("an error during a start that was waiting reports one false", () => {
+    const { controller, onListeningChange } = mountWithController();
+    act(() => controller.current?.start());
+    act(() => instances[0].handlers.error?.({ error: "audio-capture" }));
+    act(() => instances[0].handlers.end?.({}));
+    expect(onListeningChange.mock.calls.filter(([v]) => v === false)).toHaveLength(1);
+  });
+
+  it("no watchdog while the mic permission is not granted", async () => {
+    vi.useFakeTimers();
+    try {
+      stubPermission("prompt");
+      const { controller, onListeningChange } = mountWithController();
+      act(() => controller.current?.start());
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        vi.advanceTimersByTime(30_000);
+      });
+      expect(onListeningChange).not.toHaveBeenCalled();
+      expect(abortSpy).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("an unsupported permission query counts as not granted on the first take", () => {
+    vi.useFakeTimers();
+    try {
+      const { controller, onListeningChange } = mountWithController();
+      act(() => controller.current?.start());
+      act(() => {
+        vi.advanceTimersByTime(30_000);
+      });
+      expect(onListeningChange).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the first take waits 8 s, a restart after a reply 4 s", async () => {
+    vi.useFakeTimers();
+    try {
+      stubPermission("granted");
+      const { controller, onListeningChange } = mountWithController();
+      act(() => controller.current?.start());
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      act(() => {
+        vi.advanceTimersByTime(7900);
+      });
+      expect(onListeningChange).not.toHaveBeenCalled();
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+      expect(onListeningChange).toHaveBeenLastCalledWith(false);
+      // A take has now started on this page: later starts get the short window.
+      act(() => controller.current?.start());
+      act(() => instances[1].handlers.start?.({}));
+      act(() => instances[1].handlers.end?.({}));
+      onListeningChange.mockClear();
+      act(() => controller.current?.start());
+      act(() => {
+        vi.advanceTimersByTime(3900);
+      });
+      expect(onListeningChange).not.toHaveBeenCalled();
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+      expect(onListeningChange).toHaveBeenLastCalledWith(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the controller names the browser path, and the server path in server mode", () => {
+    const { controller } = mountWithController();
+    expect(controller.current?.startPath()).toBe("browser");
   });
 });
+
+function stubPermission(state: string) {
+  Object.defineProperty(navigator, "permissions", {
+    configurable: true,
+    value: { query: vi.fn().mockResolvedValue({ state, addEventListener: vi.fn() }) },
+  });
+}
 
 describe("ComposerMicButton (level meter)", () => {
   type Listener = () => void;
@@ -1031,5 +1208,68 @@ describe("ComposerMicButton (level meter)", () => {
     });
     expect(streams[0].track.stop).toHaveBeenCalled();
     expect(streams).toHaveLength(2);
+  });
+
+  async function endLatest() {
+    await act(async () => {
+      streams[streams.length - 1].track.listeners.ended?.();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+  }
+
+  async function endRepeatedly(times: number, thenLiveMs = 0): Promise<void> {
+    if (times === 0) return;
+    await endLatest();
+    if (thenLiveMs) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(thenLiveMs);
+      });
+    }
+    await endRepeatedly(times - 1, thenLiveMs);
+  }
+
+  it("stops reacquiring after three quick track ends", async () => {
+    await listen();
+    vi.useFakeTimers();
+    try {
+      await endRepeatedly(3);
+      expect(streams).toHaveLength(4);
+      // The budget is spent: a fourth end is not followed by a new stream.
+      await endLatest();
+      expect(streams).toHaveLength(4);
+      const gum = navigator.mediaDevices.getUserMedia as Mock;
+      expect(gum).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the count resets once a reacquired track has been live 30 s", async () => {
+    await listen();
+    vi.useFakeTimers();
+    try {
+      await endRepeatedly(3, 31_000);
+      await endLatest();
+      expect(streams).toHaveLength(5);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a failed reacquire is retried once after a second", async () => {
+    await listen();
+    vi.useFakeTimers();
+    try {
+      const gum = navigator.mediaDevices.getUserMedia as Mock;
+      gum.mockRejectedValueOnce(new DOMException("busy", "NotReadableError"));
+      await endLatest();
+      expect(streams).toHaveLength(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1100);
+      });
+      expect(streams).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -29,6 +29,8 @@ export interface AeMicController {
   /** Withdraws a pending start, then starts again (runs inside a tap). */
   restart: () => void;
   isListening: () => boolean;
+  /** Which path a start is on right now: only the browser one can be stuck inside a tap. */
+  startPath: () => "browser" | "server";
 }
 
 export interface VoiceSnapshot {

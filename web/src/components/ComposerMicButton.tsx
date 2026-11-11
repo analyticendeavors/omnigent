@@ -72,7 +72,13 @@ const BAR_BINS: readonly (readonly [number, number])[] = [
 
 const BAR_BASELINE = 0.2;
 // A Voice mode Web Speech start that fires no start, end or error in this long is given up on.
+// The first take of the page gets longer: a permission prompt or a slow Bluetooth route is not stuck.
 const MIC_START_WATCHDOG_MS = 4000;
+const MIC_FIRST_START_WATCHDOG_MS = 8000;
+// A meter track that has stayed live this long earns its reacquire budget back.
+const METER_STABLE_MS = 30_000;
+const METER_MAX_REACQUIRES = 3;
+const METER_RETRY_MS = 1000;
 
 export interface ComposerMicButtonProps {
   onTranscript: (text: string) => void;
@@ -181,7 +187,16 @@ export const ComposerMicButton = ({
   const startSeenRef = useRef(false);
   const browserStartPendingRef = useRef(false);
   const startWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const expectEndRef = useRef(false);
+  // Mic permission as the Permissions API reports it; "unknown" when it cannot say.
+  const permissionRef = useRef<"granted" | "other" | "unknown">("unknown");
+  // True once any take on this page fired `start` (the first take gets the longer window).
+  const startedOnceRef = useRef(false);
+  const permissionWatchedRef = useRef(false);
+  // Which path the controller's start would take right now.
+  const pathRef = useRef<"browser" | "server">("browser");
+  pathRef.current = !Ctor || (serverAvailable && isElectronShell()) ? "server" : "browser";
+  // Swaps the recognizer for a fresh one (set by the mount effect).
+  const replaceRecognitionRef = useRef<() => void>(() => {});
   const clearStartWatchdog = useCallback(() => {
     if (startWatchdogRef.current !== null) clearTimeout(startWatchdogRef.current);
     startWatchdogRef.current = null;
@@ -213,106 +228,142 @@ export const ComposerMicButton = ({
   useEffect(() => {
     if (!Ctor) return;
 
-    const recognition = new Ctor();
-    // Keep listening until the user clicks stop — no auto-stop on silence.
-    recognition.continuous = true;
-    recognition.interimResults = false;
-    recognition.lang = lang;
-
     // A dead recognizer keeps firing start/end/error after the take has
     // fallen back to the server; those stale events must not clobber the
     // server session's isListening/transition state.
     const serverTakeOwnsState = () => sessionRef.current !== null || serverBusyRef.current;
 
-    const handleStart = () => {
-      if (serverTakeOwnsState()) return;
-      logVoice("mic event start");
-      startSeenRef.current = true;
-      expectEndRef.current = false;
-      clearStartWatchdog();
-      transitionRef.current = false;
-      discardingRef.current = false;
-      setError(null);
-      setIsListening(true);
-      // Snapshot point: let the parent record the text so Esc can revert to it.
-      onVoiceStartRef.current?.();
-    };
-    const handleEnd = () => {
-      if (serverTakeOwnsState()) return;
-      logVoice("mic event end");
-      clearStartWatchdog();
-      if (expectEndRef.current && !startSeenRef.current) {
-        // The end of a take we aborted ourselves: not an answer to the new start.
-        expectEndRef.current = false;
-        return;
-      }
-      transitionRef.current = false;
-      if (requestedRef.current && !startSeenRef.current) {
-        // The recognizer ended without ever starting (a Bluetooth route change on iOS):
-        // say so now, so Voice mode retries instead of waiting out its backstop.
-        logVoice("mic ended before start");
-        requestedRef.current = false;
-        controllerStartRef.current = false;
-        onListeningChangeRef.current?.(false);
-      }
-      setIsListening(false);
-    };
-    const handleError = (event: Event) => {
-      if (serverTakeOwnsState()) return;
-      clearStartWatchdog();
-      expectEndRef.current = false;
-      transitionRef.current = false;
+    // Each recognizer is one generation. A discarded one (restart, watchdog) is detached
+    // and its events are ignored entirely: no watchdog clear, no report, no flag change.
+    const detachers = new Map<SpeechRecognitionLike, () => void>();
+
+    // Tells Voice mode a start never reached listening, at most once per take.
+    const failPendingStart = () => {
+      if (!requestedRef.current) return;
       requestedRef.current = false;
+      controllerStartRef.current = false;
       onListeningChangeRef.current?.(false);
-      const err = (event as SpeechRecognitionErrorEventLike).error;
-      logVoice("mic error", String(err));
-      // "network" means the recognizer's cloud backend refused us —
-      // always the case in Electron/plain Chromium, occasionally a
-      // transient blip in real Chrome. Serve THIS take from the server
-      // instead; the next take tries Web Speech again.
-      if (err === "network" && serverAvailableRef.current && !disabledRef.current) {
-        logVoice("mic server fallback");
-        setIsListening(false);
-        void toggleServerRef.current();
-        return;
-      }
-      // "no-speech" / "aborted" are routine (silence timeout, user stop).
-      if (err === "not-allowed" || err === "service-not-allowed") {
-        reportError("Microphone access denied. Allow access and try again.");
-      } else if (err && err !== "no-speech" && err !== "aborted") {
-        reportError("Voice input isn't available on this device.");
-      }
-      setIsListening(false);
     };
-    const handleResult = (event: Event) => {
-      // Drop late events that arrive after the composer went disabled, or after
-      // an Esc discard the parent has already reverted.
-      if (disabledRef.current || discardingRef.current) return;
-      const speechEvent = event as SpeechRecognitionEventLike;
-      let finalTranscript = "";
-      for (let i = speechEvent.resultIndex; i < speechEvent.results.length; i += 1) {
-        const result = speechEvent.results[i];
-        if (result.isFinal) {
-          finalTranscript += result[0]?.transcript ?? "";
+
+    const build = (): SpeechRecognitionLike => {
+      const recognition = new Ctor();
+      // Keep listening until the user clicks stop — no auto-stop on silence.
+      recognition.continuous = true;
+      recognition.interimResults = false;
+      recognition.lang = lang;
+      const current = () => recognitionRef.current === recognition;
+
+      const handleStart = () => {
+        if (!current() || serverTakeOwnsState()) return;
+        logVoice("mic event start");
+        startSeenRef.current = true;
+        startedOnceRef.current = true;
+        clearStartWatchdog();
+        transitionRef.current = false;
+        discardingRef.current = false;
+        setError(null);
+        setIsListening(true);
+        // Snapshot point: let the parent record the text so Esc can revert to it.
+        onVoiceStartRef.current?.();
+      };
+      const handleEnd = () => {
+        if (!current() || serverTakeOwnsState()) return;
+        logVoice("mic event end");
+        clearStartWatchdog();
+        transitionRef.current = false;
+        if (requestedRef.current && !startSeenRef.current) {
+          // The recognizer ended without ever starting (a Bluetooth route change on iOS):
+          // say so now, so Voice mode retries instead of waiting out its backstop.
+          logVoice("mic ended before start");
+          failPendingStart();
+        }
+        setIsListening(false);
+      };
+      const handleError = (event: Event) => {
+        if (!current() || serverTakeOwnsState()) return;
+        clearStartWatchdog();
+        transitionRef.current = false;
+        // Only a start still waiting is reported here; a live take's end is reported by
+        // the listening effect, so the hook never sees two false answers for one take.
+        failPendingStart();
+        const err = (event as SpeechRecognitionErrorEventLike).error;
+        logVoice("mic error", String(err));
+        // "network" means the recognizer's cloud backend refused us —
+        // always the case in Electron/plain Chromium, occasionally a
+        // transient blip in real Chrome. Serve THIS take from the server
+        // instead; the next take tries Web Speech again.
+        if (err === "network" && serverAvailableRef.current && !disabledRef.current) {
+          logVoice("mic server fallback");
+          setIsListening(false);
+          void toggleServerRef.current();
+          return;
+        }
+        // "no-speech" / "aborted" are routine (silence timeout, user stop).
+        if (err === "not-allowed" || err === "service-not-allowed") {
+          reportError("Microphone access denied. Allow access and try again.");
+        } else if (err && err !== "no-speech" && err !== "aborted") {
+          reportError("Voice input isn't available on this device.");
+        }
+        setIsListening(false);
+      };
+      const handleResult = (event: Event) => {
+        if (!current()) return;
+        // Drop late events that arrive after the composer went disabled, or after
+        // an Esc discard the parent has already reverted.
+        if (disabledRef.current || discardingRef.current) return;
+        const speechEvent = event as SpeechRecognitionEventLike;
+        let finalTranscript = "";
+        for (let i = speechEvent.resultIndex; i < speechEvent.results.length; i += 1) {
+          const result = speechEvent.results[i];
+          if (result.isFinal) {
+            finalTranscript += result[0]?.transcript ?? "";
+          }
+        }
+        const trimmed = finalTranscript.trim();
+        if (trimmed) onTranscriptRef.current(trimmed);
+      };
+
+      recognition.addEventListener("start", handleStart);
+      recognition.addEventListener("end", handleEnd);
+      recognition.addEventListener("error", handleError);
+      recognition.addEventListener("result", handleResult);
+      detachers.set(recognition, () => {
+        recognition.removeEventListener("start", handleStart);
+        recognition.removeEventListener("end", handleEnd);
+        recognition.removeEventListener("error", handleError);
+        recognition.removeEventListener("result", handleResult);
+      });
+      return recognition;
+    };
+
+    // WebKit stays in Aborting until the old recognizer's end, so start() on it throws.
+    // A new instance can start inside the same tap: discard the old one, abort it, build anew.
+    const replace = () => {
+      const old = recognitionRef.current;
+      if (old) {
+        detachers.get(old)?.();
+        detachers.delete(old);
+        try {
+          old.abort();
+        } catch {
+          // Nothing to abort.
         }
       }
-      const trimmed = finalTranscript.trim();
-      if (trimmed) onTranscriptRef.current(trimmed);
+      recognitionRef.current = build();
     };
 
-    recognition.addEventListener("start", handleStart);
-    recognition.addEventListener("end", handleEnd);
-    recognition.addEventListener("error", handleError);
-    recognition.addEventListener("result", handleResult);
-    recognitionRef.current = recognition;
+    recognitionRef.current = build();
+    replaceRecognitionRef.current = replace;
 
     return () => {
-      recognition.removeEventListener("start", handleStart);
-      recognition.removeEventListener("end", handleEnd);
-      recognition.removeEventListener("error", handleError);
-      recognition.removeEventListener("result", handleResult);
-      recognition.stop();
+      const old = recognitionRef.current;
+      if (old) {
+        detachers.get(old)?.();
+        detachers.delete(old);
+        old.stop();
+      }
       recognitionRef.current = null;
+      replaceRecognitionRef.current = () => {};
     };
   }, [Ctor, lang, reportError, clearStartWatchdog]);
 
@@ -364,6 +415,8 @@ export const ComposerMicButton = ({
     let analyser: AnalyserNode | null = null;
     let reacquires = 0;
     let reacquiring = false;
+    let stableTimer: ReturnType<typeof setTimeout> | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
     const resumeCtx = () => {
       try {
@@ -381,13 +434,21 @@ export const ComposerMicButton = ({
       for (const track of next.getTracks()) {
         track.addEventListener?.("ended", onTrackEnded);
       }
+      // A track that stays live for a while earns the reacquire budget back.
+      if (stableTimer !== null) clearTimeout(stableTimer);
+      stableTimer = setTimeout(() => {
+        stableTimer = null;
+        reacquires = 0;
+      }, METER_STABLE_MS);
     };
 
     // The route changed under the stream (Bluetooth, a call): take a fresh one.
     const onTrackEnded = () => {
       if (cancelled || reacquiring) return;
       logVoice("meter track ended");
-      if (reacquires >= 3) return;
+      if (stableTimer !== null) clearTimeout(stableTimer);
+      stableTimer = null;
+      if (reacquires >= METER_MAX_REACQUIRES) return;
       reacquires += 1;
       reacquiring = true;
       const old = stream;
@@ -397,20 +458,37 @@ export const ComposerMicButton = ({
         // Already disconnected.
       }
       if (old) for (const track of old.getTracks()) track.stop();
+      const attach = (next: MediaStream) => {
+        reacquiring = false;
+        if (cancelled) {
+          for (const track of next.getTracks()) track.stop();
+          return;
+        }
+        logVoice("meter re-acquired");
+        connect(next);
+        resumeCtx();
+      };
+      const fail = (err: unknown) => {
+        logVoice("meter mic failed", String((err as { name?: string } | null)?.name));
+      };
       void getMicStream(true)
-        .then((next) => {
-          reacquiring = false;
-          if (cancelled) {
-            for (const track of next.getTracks()) track.stop();
-            return;
-          }
-          logVoice("meter re-acquired");
-          connect(next);
-          resumeCtx();
-        })
+        .then(attach)
         .catch((err: unknown) => {
-          reacquiring = false;
-          logVoice("meter mic failed", String((err as { name?: string } | null)?.name));
+          fail(err);
+          // One more try after a second: the route is often still settling.
+          retryTimer = setTimeout(() => {
+            retryTimer = null;
+            if (cancelled) {
+              reacquiring = false;
+              return;
+            }
+            void getMicStream(true)
+              .then(attach)
+              .catch((err2: unknown) => {
+                reacquiring = false;
+                fail(err2);
+              });
+          }, METER_RETRY_MS);
         });
     };
 
@@ -471,6 +549,8 @@ export const ComposerMicButton = ({
 
     return () => {
       cancelled = true;
+      if (stableTimer !== null) clearTimeout(stableTimer);
+      if (retryTimer !== null) clearTimeout(retryTimer);
       resetMicLevel();
       if (rafId !== null) cancelAnimationFrame(rafId);
       if (stream) {
@@ -594,7 +674,7 @@ export const ComposerMicButton = ({
     // to the server — a visible ~1s "fail then recover" on every first take.
     // When the server can serve, go straight to it and skip the doomed attempt.
     // (Real browsers keep Web Speech primary; it genuinely works there.)
-    if (!Ctor || (serverAvailable && isElectronShell())) {
+    if (pathRef.current === "server") {
       if (!serverAvailable) return false;
       void toggleServer();
       return true;
@@ -622,13 +702,71 @@ export const ComposerMicButton = ({
       return false;
     }
     return true;
-  }, [isListening, Ctor, serverAvailable, toggleServer]);
+  }, [isListening, serverAvailable, toggleServer]);
 
   // Voice mode drives the mic through this handle; the button keeps working alone.
   const listeningRef = useRef(isListening);
   listeningRef.current = isListening;
   useEffect(() => {
     if (!controller) return;
+    // Reads the mic permission once per page, and keeps it current. The query is not
+    // supported everywhere (older iOS Safari); then the state stays "unknown".
+    const watchPermission = () => {
+      if (permissionWatchedRef.current) return;
+      permissionWatchedRef.current = true;
+      try {
+        const query = navigator.permissions?.query?.({ name: "microphone" as PermissionName });
+        void Promise.resolve(query)
+          .then((status) => {
+            if (!status) return;
+            const apply = () => {
+              permissionRef.current = status.state === "granted" ? "granted" : "other";
+              // A prompt just answered: the recognizer gets a fresh window to start.
+              if (
+                status.state === "granted" &&
+                browserStartPendingRef.current &&
+                !startSeenRef.current
+              ) {
+                armWatchdog();
+              }
+            };
+            apply();
+            status.addEventListener?.("change", apply);
+          })
+          .catch(() => {});
+      } catch {
+        // Unsupported: the state stays "unknown".
+      }
+    };
+
+    // A Web Speech start that never answers (no start, end or error) is given up on, so
+    // Voice mode retries. Not while the permission prompt may be open, and not before the
+    // permission is known to be granted (unknown counts as granted once a take has started).
+    const armWatchdog = () => {
+      if (startWatchdogRef.current !== null) clearTimeout(startWatchdogRef.current);
+      const windowMs = startedOnceRef.current ? MIC_START_WATCHDOG_MS : MIC_FIRST_START_WATCHDOG_MS;
+      startWatchdogRef.current = setTimeout(() => {
+        startWatchdogRef.current = null;
+        if (!browserStartPendingRef.current || startSeenRef.current) return;
+        const permission = permissionRef.current;
+        if (permission !== "granted" && !(permission === "unknown" && startedOnceRef.current)) {
+          // Possibly a permission prompt; its answer re-arms the watchdog.
+          logVoice("mic start watchdog skipped", permission);
+          return;
+        }
+        browserStartPendingRef.current = false;
+        logVoice("mic start watchdog");
+        // A fresh recognizer, so the retry's start() is not refused by one still aborting.
+        replaceRecognitionRef.current();
+        transitionRef.current = false;
+        if (requestedRef.current) {
+          requestedRef.current = false;
+          controllerStartRef.current = false;
+          onListeningChangeRef.current?.(false);
+        }
+      }, windowMs);
+    };
+
     const start = () => {
       if (listeningRef.current || requestedRef.current) return;
       requestedRef.current = true;
@@ -637,25 +775,8 @@ export const ComposerMicButton = ({
         // A new start replaces any earlier withdrawn one.
         withdrawRef.current = false;
         if (browserStartPendingRef.current) {
-          // A Web Speech start that never answers (no start, end or error) is given up
-          // on, so Voice mode retries; the server path keeps its own, longer allowance.
-          if (startWatchdogRef.current !== null) clearTimeout(startWatchdogRef.current);
-          startWatchdogRef.current = setTimeout(() => {
-            startWatchdogRef.current = null;
-            if (!browserStartPendingRef.current || startSeenRef.current) return;
-            browserStartPendingRef.current = false;
-            logVoice("mic start watchdog");
-            expectEndRef.current = true;
-            try {
-              recognitionRef.current?.abort();
-            } catch {
-              // Nothing to abort.
-            }
-            transitionRef.current = false;
-            requestedRef.current = false;
-            controllerStartRef.current = false;
-            onListeningChangeRef.current?.(false);
-          }, MIC_START_WATCHDOG_MS);
+          watchPermission();
+          armWatchdog();
         }
       } else {
         // Nothing began (a start still connecting, a guard): say so, so Voice mode retries.
@@ -666,25 +787,21 @@ export const ComposerMicButton = ({
     };
     controller.current = {
       start,
-      // A tap on a stuck "starting": withdraw the pending start, then start again inside the tap.
+      startPath: () => (serverBusyRef.current || sessionRef.current ? "server" : pathRef.current),
+      // A tap on a stuck "starting": discard the pending browser start, then start again
+      // inside the tap. A server start still connecting is never withdrawn: it is healthy.
       restart: () => {
         if (listeningRef.current) return;
-        if (requestedRef.current) {
+        if (serverBusyRef.current || sessionRef.current) return;
+        if (pathRef.current === "browser") {
           logVoice("mic restart");
-          const wasBrowser = browserStartPendingRef.current;
           clearStartWatchdog();
           requestedRef.current = false;
           controllerStartRef.current = false;
           transitionRef.current = false;
-          if (serverBusyRef.current) withdrawRef.current = true;
-          if (wasBrowser) {
-            expectEndRef.current = true;
-            try {
-              recognitionRef.current?.abort();
-            } catch {
-              // Not started yet; nothing to abort.
-            }
-          }
+          startSeenRef.current = false;
+          // WebKit refuses start() on a recognizer still aborting: use a new one.
+          replaceRecognitionRef.current();
         }
         start();
       },
