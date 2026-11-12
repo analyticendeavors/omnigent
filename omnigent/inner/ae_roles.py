@@ -223,6 +223,8 @@ def resolve_roles(conv: Conversation, store: ConversationStore) -> dict[str, Any
     roles = _own_helpers(roles) if _legacy_solo(conv) else roles
     roles = ae_reviewers.resolve_agents(roles, _agent_lookup(store))
     roles = ae_reviewers.attach_personas(roles, ae_reviewers.persona_lookup(_owner(conv, store)))
+    if _judge_available(_owner(conv, store)):
+        roles = {**roles, "judge": True}
     return {**roles, "current": _current_ids()}
 
 
@@ -578,13 +580,38 @@ def _advisor_line(roles: dict[str, Any]) -> str | None:
     )
 
 
+def _judge_available(owner: str) -> bool:
+    """Whether ``ask_judge`` is shown to this owner: the same answer as ``GET /v1/ae/decision``."""
+    try:
+        from ae_omni_policies import decision_status
+
+        return decision_status.reason(owner) is None
+    except Exception:  # noqa: BLE001 (a missing or broken judge must never block a turn)
+        return False
+
+
+_JUDGE_LINE = (
+    "Decision-1 judge: before you settle one of these yourself, call ask_judge: picking "
+    "between two or more approaches, full test suite or scoped tests, asking for review now "
+    "or fixing more, or whether work is ready to hand off. In Claude Code it is a deferred "
+    'tool: load it first with ToolSearch query "select:mcp__ae__ask_judge" (Codex: call it '
+    "directly). Write the question in neutral words with no names, paths or quoted text. If "
+    "it answers with low_confidence, errors, or is missing, decide yourself."
+)
+
+
 def _tools(roles: dict[str, Any]) -> str:
-    """The Agent tool sentence for the lead, plus how to name a role on each start."""
+    """The Agent tool sentence for the lead, plus how to name a role on each start.
+
+    When the server set the ``judge`` flag, the ask_judge line rides on the same line (the
+    block stays under its line budget).
+    """
     session = roles.get("lead_session")
     base = _TOOLS_OTHER if isinstance(session, dict) and session.get("claude") is False else _TOOLS
     # Native subagents apply under "own" too; create_session does not.
     named = [_SUBAGENT_ROLE] if helpers_of(roles) == OWN else [_SESSION_ROLE, _SUBAGENT_ROLE]
-    return " ".join([base, *named, _REPORT_REVIEW])
+    extra = [_JUDGE_LINE] if roles.get("judge") is True else []
+    return " ".join([base, *named, _REPORT_REVIEW, *extra])
 
 
 def render_roles(roles: object) -> str | None:
