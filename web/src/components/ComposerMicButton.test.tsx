@@ -1331,6 +1331,7 @@ describe("ComposerMicButton (level meter)", () => {
     /** Runs the meter's frames once a second for `seconds`, as a visible tab would. */
     async function runFrames(seconds: number) {
       for (let i = 0; i < seconds; i += 1) {
+        // oxlint-disable-next-line no-await-in-loop -- fake time must advance one second at a time
         await act(async () => {
           await vi.advanceTimersByTimeAsync(1000);
           const run = frames.splice(0);
@@ -1352,9 +1353,10 @@ describe("ComposerMicButton (level meter)", () => {
       const { controller, onListeningChange } = await listenVoice();
       streams[0].track.muted = true;
       act(() => streams[0].track.listeners.mute?.());
-      await runFrames(1);
+      await runFrames(4);
+      // The meter alone never decides: the recognizer has been quiet for under 6 s.
       expect(onListeningChange).not.toHaveBeenLastCalledWith(false, "deaf");
-      await runFrames(2);
+      await runFrames(3);
       expect(onListeningChange).toHaveBeenLastCalledWith(false, "deaf");
       expect(onListeningChange.mock.calls.filter((c) => c[0] === false)).toHaveLength(1);
       expect(instances).toHaveLength(2);
@@ -1395,10 +1397,35 @@ describe("ComposerMicButton (level meter)", () => {
       expect(formatVoiceLog()).toContain("mic deaf analyser silent");
     });
 
-    it("sound the recognizer itself heard means the mic works, whatever the meter reads", async () => {
+    it("a healthy take whose meter is muted and zero but whose results keep arriving is not deaf", async () => {
+      const { onListeningChange } = await listenVoice();
+      streams[0].track.muted = true;
+      act(() => streams[0].track.listeners.mute?.());
+      for (let i = 0; i < 6; i += 1) {
+        // oxlint-disable-next-line no-await-in-loop -- results arrive between stretches of fake time
+        await runFrames(4);
+        act(() => handlers.result?.(resultEvent("hello there")));
+      }
+      expect(onListeningChange).not.toHaveBeenCalledWith(false, "deaf");
+    });
+
+    it("an early soundstart then 6 s of recognizer silence with a muted meter is deaf", async () => {
       const { onListeningChange } = await listenVoice();
       act(() => handlers.soundstart?.({}));
-      await runFrames(10);
+      streams[0].track.muted = true;
+      act(() => streams[0].track.listeners.mute?.());
+      await runFrames(5);
+      expect(onListeningChange).not.toHaveBeenCalledWith(false, "deaf");
+      await runFrames(3);
+      expect(onListeningChange).toHaveBeenLastCalledWith(false, "deaf");
+      expect(formatVoiceLog()).toContain("mic deaf track muted");
+    });
+
+    it("recognizer silence for 6 s with a healthy meter is not deaf", async () => {
+      const { onListeningChange } = await listenVoice();
+      act(() => ctxs[0].listeners.statechange?.());
+      // A live signal on the analyser, no mute, a running context: the meter has no complaint.
+      await runFrames(1);
       expect(onListeningChange).not.toHaveBeenCalledWith(false, "deaf");
     });
   });
@@ -1426,7 +1453,7 @@ describe("ComposerMicButton (stop and liveness watchdogs)", () => {
     vi.useRealTimers();
   });
 
-  it("a stop that gets no end replaces the recognizer, frees the guard and reports not listening", () => {
+  it("a stop that gets no end in 4 s replaces the recognizer, frees the guard and reports not listening", () => {
     const { controller, onListeningChange } = mountVoice();
     act(() => controller.current?.start());
     act(() => handlers.start?.({}));
@@ -1434,11 +1461,12 @@ describe("ComposerMicButton (stop and liveness watchdogs)", () => {
     expect(controller.current?.isListening()).toBe(true);
     act(() => controller.current?.stop());
     expect(stopSpy).toHaveBeenCalledTimes(1);
-    act(() => void vi.advanceTimersByTime(1499));
+    act(() => void vi.advanceTimersByTime(3999));
     expect(abortSpy).not.toHaveBeenCalled();
     expect(controller.current?.isListening()).toBe(true);
     act(() => void vi.advanceTimersByTime(1));
-    expect(abortSpy).toHaveBeenCalledTimes(1);
+    // The old recognizer was already stopped, so a late final can still arrive: no abort.
+    expect(abortSpy).not.toHaveBeenCalled();
     expect(instances).toHaveLength(2);
     expect(controller.current?.isListening()).toBe(false);
     expect(onListeningChange).toHaveBeenLastCalledWith(false);
@@ -1446,6 +1474,54 @@ describe("ComposerMicButton (stop and liveness watchdogs)", () => {
     // The guard is free: the next start reaches recognition.start() on the new recognizer.
     act(() => controller.current?.start());
     expect(startSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("a final that arrives from the old recognizer within 1 s of the watchdog is still delivered once", () => {
+    const onTranscript = vi.fn();
+    const controller = { current: null as AeMicController | null };
+    render(<ComposerMicButton onTranscript={onTranscript} controller={controller} />);
+    act(() => controller.current?.start());
+    act(() => handlers.start?.({}));
+    act(() => handlers.audiostart?.({}));
+    act(() => controller.current?.stop());
+    act(() => void vi.advanceTimersByTime(4000));
+    expect(instances).toHaveLength(2);
+    act(() => void vi.advanceTimersByTime(900));
+    act(() => instances[0].handlers.result?.(resultEvent("send it now")));
+    expect(onTranscript).toHaveBeenCalledTimes(1);
+    expect(onTranscript).toHaveBeenCalledWith("send it now");
+    // One shot: a second final from the old recognizer is not delivered.
+    act(() => instances[0].handlers.result?.(resultEvent("again")));
+    expect(onTranscript).toHaveBeenCalledTimes(1);
+  });
+
+  it("a final after the 1 s late window is dropped", () => {
+    const onTranscript = vi.fn();
+    const controller = { current: null as AeMicController | null };
+    render(<ComposerMicButton onTranscript={onTranscript} controller={controller} />);
+    act(() => controller.current?.start());
+    act(() => handlers.start?.({}));
+    act(() => handlers.audiostart?.({}));
+    act(() => controller.current?.stop());
+    act(() => void vi.advanceTimersByTime(4000));
+    act(() => void vi.advanceTimersByTime(1100));
+    act(() => instances[0].handlers.result?.(resultEvent("too late")));
+    expect(onTranscript).not.toHaveBeenCalled();
+  });
+
+  it("a result that arrives after stop() holds the watchdog back instead of replacing the recognizer", () => {
+    const { controller } = mountVoice();
+    act(() => controller.current?.start());
+    act(() => handlers.start?.({}));
+    act(() => handlers.audiostart?.({}));
+    act(() => controller.current?.stop());
+    act(() => void vi.advanceTimersByTime(2000));
+    act(() => handlers.result?.(resultEvent("still talking")));
+    act(() => void vi.advanceTimersByTime(2000));
+    expect(instances).toHaveLength(1);
+    expect(formatVoiceLog()).toContain("result seen, waiting");
+    act(() => void vi.advanceTimersByTime(4000));
+    expect(instances).toHaveLength(2);
   });
 
   it("a stop answered by end in time leaves the recognizer alone", () => {
@@ -1471,11 +1547,11 @@ describe("ComposerMicButton (stop and liveness watchdogs)", () => {
     expect(formatVoiceLog()).toContain("mic stop refused");
   });
 
-  it("a take with no audiostart for 3 s is deaf: replaced and reported once", () => {
+  it("a take with no audiostart or sound for 5 s is deaf: replaced and reported once", () => {
     const { controller, onListeningChange } = mountVoice();
     act(() => controller.current?.start());
     act(() => handlers.start?.({}));
-    act(() => void vi.advanceTimersByTime(2999));
+    act(() => void vi.advanceTimersByTime(4999));
     expect(onListeningChange).not.toHaveBeenCalledWith(false, "deaf");
     act(() => void vi.advanceTimersByTime(500));
     expect(onListeningChange.mock.calls.filter((c) => c[0] === false)).toEqual([[false, "deaf"]]);
@@ -1557,8 +1633,8 @@ describe("ComposerMicButton (stop and liveness watchdogs)", () => {
     });
     expect(onListeningChange).not.toHaveBeenCalled();
     expect(controller.current?.isListening()).toBe(true);
-    // The old take's audiostart did not count for the new one: it is deaf at 3 s.
-    act(() => void vi.advanceTimersByTime(3500));
+    // The old take's audiostart did not count for the new one: it is deaf at 5 s.
+    act(() => void vi.advanceTimersByTime(5500));
     expect(onListeningChange).toHaveBeenLastCalledWith(false, "deaf");
   });
 
@@ -1595,7 +1671,7 @@ describe("ComposerMicButton (stop and liveness watchdogs)", () => {
     act(() => handlers.start?.({}));
     expect(getVoiceSnapshot("c1").phase).toBe("listening");
     // First deaf take: the phase leaves listening and the mic is started again after 1 s.
-    act(() => void vi.advanceTimersByTime(3500));
+    act(() => void vi.advanceTimersByTime(5500));
     expect(getVoiceSnapshot("c1").phase).not.toBe("listening");
     expect(getVoiceSnapshot("c1").phase).not.toBe("unavailable");
     act(() => void vi.advanceTimersByTime(1000));
@@ -1603,7 +1679,7 @@ describe("ComposerMicButton (stop and liveness watchdogs)", () => {
     act(() => instances[instances.length - 1].handlers.start?.({}));
     expect(getVoiceSnapshot("c1").phase).toBe("listening");
     // Second deaf take: no third try, the panel gets the restartable phase and a reason.
-    act(() => void vi.advanceTimersByTime(3500));
+    act(() => void vi.advanceTimersByTime(5500));
     expect(getVoiceSnapshot("c1").phase).toBe("unavailable");
     expect(screen.getByTestId("detail").textContent).toBe("Mic went quiet, tap to restart");
     act(() => void vi.advanceTimersByTime(5000));

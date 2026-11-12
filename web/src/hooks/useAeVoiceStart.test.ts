@@ -2,7 +2,14 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { disarmVoiceForNextChat, GRACE_MS, takeVoiceArm } from "@/lib/aeVoiceMode";
 import { installFakeSpeech, removeFakeSpeech } from "@/test/fakeSpeech";
-import { READY_POLL_MS, READY_WAIT_MS, useAeVoiceStart } from "./useAeVoiceStart";
+import {
+  DEAF_RETRY_MS,
+  READY_POLL_MS,
+  READY_WAIT_MS,
+  STALLED_POLL_MS,
+  START_MIC_DEAF_DETAIL,
+  useAeVoiceStart,
+} from "./useAeVoiceStart";
 
 function setup(over: { value?: string; canSubmit?: boolean } = {}) {
   const mic = { start: vi.fn(), stop: vi.fn(), restart: vi.fn(), isListening: () => false, startPath: () => "browser" as const };
@@ -144,5 +151,58 @@ describe("useAeVoiceStart with a mic that is already listening", () => {
     act(() => result.current.restart());
     expect(mic.restart).toHaveBeenCalledTimes(1);
     expect(mic.start).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("useAeVoiceStart deaf takes and held messages", () => {
+  it("retries once on a deaf take, then says the mic went quiet", () => {
+    const { result, mic } = setup();
+    act(() => result.current.toggle());
+    act(() => result.current.onListening(true));
+    act(() => result.current.onListening(false, "deaf"));
+    expect(result.current.phase).toBe("starting");
+    expect(mic.start).toHaveBeenCalledTimes(1);
+    act(() => void vi.advanceTimersByTime(DEAF_RETRY_MS));
+    expect(mic.start).toHaveBeenCalledTimes(2);
+    act(() => result.current.onListening(true));
+    act(() => result.current.onListening(false, "deaf"));
+    expect(result.current.phase).toBe("unavailable");
+    expect(result.current.micDetail).toBe(START_MIC_DEAF_DETAIL);
+    act(() => void vi.advanceTimersByTime(5000));
+    expect(mic.start).toHaveBeenCalledTimes(2);
+    // A tap is a fresh budget.
+    act(() => result.current.restart());
+    expect(result.current.micDetail).toBeNull();
+    act(() => result.current.onListening(true));
+    act(() => result.current.onListening(false, "deaf"));
+    expect(result.current.phase).toBe("starting");
+  });
+
+  it("does not let listening or paused overwrite a held message that is waiting", () => {
+    const { result } = setup({ canSubmit: false });
+    act(() => result.current.toggle());
+    act(() => result.current.onFinal("hello"));
+    act(() => void vi.advanceTimersByTime(GRACE_MS + 10));
+    expect(result.current.phase).toBe("preparing");
+    act(() => result.current.onListening(true));
+    expect(result.current.phase).toBe("preparing");
+    act(() => result.current.onListening(false));
+    expect(result.current.phase).toBe("preparing");
+    act(() => result.current.onListening(false, "deaf"));
+    expect(result.current.phase).toBe("preparing");
+  });
+
+  it("a stalled message keeps a slow poll and goes the moment the chat is ready", () => {
+    const { result, submit, rerender } = setup({ canSubmit: false });
+    act(() => result.current.toggle());
+    act(() => result.current.onFinal("hello"));
+    act(() => void vi.advanceTimersByTime(GRACE_MS + READY_WAIT_MS + READY_POLL_MS));
+    expect(result.current.phase).toBe("stalled");
+    act(() => void vi.advanceTimersByTime(STALLED_POLL_MS * 3));
+    expect(submit).not.toHaveBeenCalled();
+    rerender({ value: "hello", canSubmit: true });
+    act(() => void vi.advanceTimersByTime(STALLED_POLL_MS));
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(result.current.armed).toBe(false);
   });
 });

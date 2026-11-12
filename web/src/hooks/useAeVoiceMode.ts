@@ -4,6 +4,7 @@
 
 import { type MutableRefObject, useCallback, useEffect, useRef, useState } from "react";
 import {
+  APPROVAL_TAIL_MS,
   type AeMicController,
   approvalOf,
   approvalSpeech,
@@ -40,6 +41,8 @@ const MIC_RETRY_MS = 1000;
  */
 export const MIC_START_NET_MS = 60_000;
 const LABEL_KEY = "ae.voice";
+/** If the approval line never starts to play, the mic answer opens after this long. */
+const APPROVAL_NO_PLAY_MS = 8000;
 
 export interface UseAeVoiceModeArgs {
   chatId: string | null;
@@ -79,6 +82,8 @@ export interface AeVoiceMode {
   bargeIn: () => boolean;
   /** The mic reports it started or stopped listening (or failed to start). */
   onListening: (listening: boolean, reason?: "deaf") => void;
+  /** A tap on the unavailable or paused panel: a fresh retry budget, then a new recognizer. */
+  restartMic: () => void;
 }
 
 /** Shown on the unavailable panel after the mic went quiet twice in a row. */
@@ -104,9 +109,14 @@ export function useAeVoiceMode({
   const voice = useVoiceSnapshot(chatId);
   const { on, speaking, barged, playing } = voice;
   const micMode = useMicWhileSpeaking();
-  const block = useChatStore((s) =>
-    s.blocks.find((b) => isPendingElicitation(b, s.conversationId)),
-  );
+  // The newest pending card is the one on screen (as the approve hotkey reads it).
+  const block = useChatStore((s) => {
+    for (let i = s.blocks.length - 1; i >= 0; i -= 1) {
+      const b = s.blocks[i];
+      if (isPendingElicitation(b, s.conversationId)) return b;
+    }
+    return undefined;
+  });
   const sessionRunning = useChatStore((s) => s.sessionStatus === "running");
   const queued = useChatStore((s) => s.pendingUserMessages.length > 0);
   const questions = on ? questionsOf(block?.type === "elicitation" ? block : undefined) : null;
@@ -136,6 +146,12 @@ export function useAeVoiceMode({
   // that held two or more new words.
   const utteranceWords = useRef<readonly string[] | null>(null);
   const personInterims = useRef(0);
+  // Approval answers: the cards already answered by voice, when the recognition of the
+  // current utterance began, and the moment before which a heard final is the line's echo.
+  const approvalAnswered = useRef<Set<string>>(new Set());
+  const utteranceStartedAt = useRef<number | null>(null);
+  const approvalReadyAt = useRef(0);
+  const approvalPlaybackSeen = useRef(false);
 
   // A turn is under way once the chat streams, the session runs, or the message is queued.
   const busy = status === "streaming" || sessionRunning || queued;
@@ -202,6 +218,10 @@ export function useAeVoiceMode({
       resetEcho();
       utteranceWords.current = null;
       personInterims.current = 0;
+      approvalAnswered.current = new Set();
+      utteranceStartedAt.current = null;
+      approvalReadyAt.current = 0;
+      approvalPlaybackSeen.current = false;
       setAwaiting(false);
       setMicFailed(false);
       setMicStopped(false);
@@ -308,6 +328,7 @@ export function useAeVoiceMode({
       // A mic start or stop ends the utterance: an interim with no final leaves no pin behind.
       utteranceWords.current = null;
       personInterims.current = 0;
+      utteranceStartedAt.current = null;
       if (listening) {
         clearNet();
         startPending.current = false;
@@ -374,20 +395,20 @@ export function useAeVoiceMode({
       ? "off"
       : speaking
         ? "speaking"
-        : approvalActive
-          ? "approval"
-          : waiting
-            ? "thinking"
-            : micListening
-              ? "listening"
-              : micFailed
-                ? "unavailable"
+        : micFailed
+          ? "unavailable"
+          : approvalActive
+            ? "approval"
+            : waiting
+              ? "thinking"
+              : micListening
+                ? "listening"
                 : micStopped
                   ? "paused"
                   : "starting";
     logVoice(`phase ${phase}`);
     setVoicePhase(chatId, phase);
-  }, [chatId, on, speaking, approvalActive, waiting, micListening, micFailed, micStopped]);
+  }, [chatId, on, speaking, micFailed, approvalActive, waiting, micListening, micStopped]);
 
   const send = useCallback(() => {
     const now = latest.current;
@@ -445,8 +466,35 @@ export function useAeVoiceMode({
     if (!a || !say || approvalSpoken.current === approvalId) return;
     approvalSpoken.current = approvalId;
     logVoice("approval pending");
+    // Nothing heard before the line has played and its tail has passed counts as an answer.
+    approvalReadyAt.current = Math.max(approvalReadyAt.current, Date.now() + APPROVAL_NO_PLAY_MS);
     say(approvalSpeech(a));
   }, [approvalId, voice.speak]);
+
+  // The approval line, or any voice, playing: its own sound reaching the mic is never an answer.
+  // Playback ending starts a tail in which a heard final is still taken for its echo.
+  const audible = speaking || playing;
+  useEffect(() => {
+    if (audible) {
+      approvalPlaybackSeen.current = true;
+      approvalReadyAt.current = Number.POSITIVE_INFINITY;
+    } else if (approvalPlaybackSeen.current) {
+      approvalPlaybackSeen.current = false;
+      approvalReadyAt.current = Date.now() + APPROVAL_TAIL_MS;
+    }
+  }, [audible]);
+
+  const restartMic = useCallback(() => {
+    // A tap is a fresh start: the retry budget is whole again.
+    deafStreak.current = 0;
+    failures.current = 0;
+    if (retryTimer.current !== null) clearTimeout(retryTimer.current);
+    retryTimer.current = null;
+    setMicFailed(false);
+    setMicStopped(false);
+    setMicDetail(null);
+    controller.current?.restart();
+  }, [controller]);
 
   const answerCard = useCallback((state: CardState, answer: string | string[]) => {
     const qs = latest.current.questions;
@@ -572,6 +620,10 @@ export function useAeVoiceMode({
     (text: string): boolean => {
       if (!on) return false;
       logVoice("final", text.slice(0, 60));
+      // Something was heard: the mic is not deaf, whatever else this final does.
+      deafStreak.current = 0;
+      const startedAt = utteranceStartedAt.current ?? Date.now();
+      utteranceStartedAt.current = null;
       const now = latest.current;
       const state = card.current;
       if (state && now.questions) {
@@ -579,18 +631,21 @@ export function useAeVoiceMode({
         return true;
       }
       if (now.approval) {
-        // The card is answered by a short spoken verdict; anything else is ignored.
-        if (!now.quiet) {
+        // The card is answered by a whole spoken "run it" or "decline", never while the line
+        // (or any voice) plays, never inside its echo tail, and once per card.
+        const id = now.approval.id;
+        const clear = !now.speaking && !now.playing && startedAt >= approvalReadyAt.current;
+        if (!now.quiet && clear && !approvalAnswered.current.has(id)) {
           const verdict = matchApprovalReply(text);
           if (verdict !== null) {
+            approvalAnswered.current.add(id);
             logVoice("approval answer", verdict);
             clearGrace();
-            void useChatStore.getState().submitApproval(now.approval.id, verdict);
+            void useChatStore.getState().submitApproval(id, verdict);
           }
         }
         return true;
       }
-      deafStreak.current = 0;
       // Sound heard while the chat is busy or the voice is talking never reaches the draft.
       if (now.quiet) {
         clearGrace();
@@ -612,6 +667,8 @@ export function useAeVoiceMode({
     (_text: string): boolean => {
       clearGrace();
       if (!on) return false;
+      deafStreak.current = 0;
+      if (utteranceStartedAt.current === null) utteranceStartedAt.current = Date.now();
       return (
         latest.current.quiet ||
         (card.current !== null && latest.current.questions !== null) ||
@@ -632,5 +689,6 @@ export function useAeVoiceMode({
     onFinal,
     onPartial,
     onListening,
+    restartMic,
   };
 }

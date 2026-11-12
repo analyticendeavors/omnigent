@@ -33,6 +33,20 @@ const WORDS: [VoicePhase, string, string][] = [
 ];
 
 describe("AeVoicePanel", () => {
+  it("offers the restart and still names the approval when the mic went quiet during one", async () => {
+    const onRestartMic = vi.fn();
+    panel({
+      phase: "unavailable",
+      micDetail: "Mic went quiet, tap to restart",
+      approvalActive: true,
+      onRestartMic,
+    });
+    expect(screen.getByText("Mic unavailable")).toBeTruthy();
+    expect(screen.getByText(/Mic went quiet, tap to restart\. Approval waiting/)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Listen again" }));
+    expect(onRestartMic).toHaveBeenCalledTimes(1);
+  });
+
   it("renders nothing when Voice mode is off", () => {
     panel({ phase: "off" });
     expect(screen.queryByTestId("ae-voice-panel")).toBeNull();

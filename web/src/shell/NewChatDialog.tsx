@@ -6682,6 +6682,7 @@ export function NewChatLandingScreen() {
                         blocked={false}
                         heard={message}
                         caption=""
+                        micDetail={voiceStart.micDetail}
                         onEnd={voiceStart.disarm}
                         onStop={() => {}}
                         onResume={() => {}}

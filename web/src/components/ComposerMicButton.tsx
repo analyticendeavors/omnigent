@@ -80,11 +80,16 @@ const METER_STABLE_MS = 30_000;
 const METER_MAX_REACQUIRES = 3;
 const METER_RETRY_MS = 1000;
 // A browser stop that gets no `end` in this long is given up on: the recognizer is replaced.
-const MIC_STOP_WATCHDOG_MS = 1500;
+const MIC_STOP_WATCHDOG_MS = 4000;
+// After a stop watchdog replaced the recognizer, a final result from the old one still counts this long.
+const MIC_LATE_FINAL_MS = 1000;
 // Voice mode liveness: a take that listens but hears nothing is replaced. Checked this often.
 const MIC_LIVENESS_TICK_MS = 500;
-// No audiostart this long after the take started.
-const MIC_NO_AUDIO_MS = 3000;
+// No audiostart, soundstart, speechstart or result this long after the take started (a slow
+// Bluetooth route switch can take several seconds).
+const MIC_NO_AUDIO_MS = 5000;
+// The meter's deaf reasons only count once the recognizer itself showed no activity this long.
+const MIC_RECOGNIZER_QUIET_MS = 6000;
 // The meter's track stays muted this long.
 const MIC_TRACK_MUTED_MS = 2000;
 // The meter's AudioContext is not running, or its analyser reads all zeros, this long.
@@ -210,7 +215,12 @@ export const ComposerMicButton = ({
   const livenessTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const takeStartRef = useRef(0);
   const audioStartSeenRef = useRef(false);
-  const heardSoundRef = useRef(false);
+  // When the recognizer last showed any life (audiostart, soundstart, speechstart, a result),
+  // and whether it ever heard sound or produced a result this take.
+  const lastRecognizerActivityRef = useRef(0);
+  const recognizerSoundSeenRef = useRef(false);
+  // A result arrived since the last stop(): the stop watchdog waits instead of replacing.
+  const resultSinceStopRef = useRef(false);
   // Written by the meter: since when its track is muted, its context stalled, its analyser
   // all zeros, and when its last frame ran. null means "not so".
   const meterMutedSinceRef = useRef<number | null>(null);
@@ -231,7 +241,7 @@ export const ComposerMicButton = ({
   const pathRef = useRef<"browser" | "server">("browser");
   pathRef.current = !Ctor || (serverAvailable && isElectronShell()) ? "server" : "browser";
   // Swaps the recognizer for a fresh one (set by the mount effect).
-  const replaceRecognitionRef = useRef<() => void>(() => {});
+  const replaceRecognitionRef = useRef<(keepLateFinal?: boolean) => void>(() => {});
   const clearStartWatchdog = useCallback(() => {
     if (startWatchdogRef.current !== null) clearTimeout(startWatchdogRef.current);
     startWatchdogRef.current = null;
@@ -309,12 +319,18 @@ export const ComposerMicButton = ({
     const checkLiveness = () => {
       if (!voiceTakeRef.current || !listeningRef.current) return;
       const now = Date.now();
-      if (!audioStartSeenRef.current && now - takeStartRef.current >= MIC_NO_AUDIO_MS) {
+      // Recognizer activity first: no audiostart counts only when nothing else showed life.
+      if (
+        !audioStartSeenRef.current &&
+        !recognizerSoundSeenRef.current &&
+        now - takeStartRef.current >= MIC_NO_AUDIO_MS
+      ) {
         reportDeaf("no audiostart");
         return;
       }
-      // Sound the recognizer itself heard means the mic works, whatever the meter says.
-      if (heardSoundRef.current) return;
+      // The meter never decides alone: it counts only after the recognizer itself has shown
+      // no activity for a while (an early soundstart does not switch the checks off for good).
+      if (now - lastRecognizerActivityRef.current < MIC_RECOGNIZER_QUIET_MS) return;
       const muted = meterMutedSinceRef.current;
       if (muted !== null && now - muted >= MIC_TRACK_MUTED_MS) {
         reportDeaf("track muted");
@@ -343,6 +359,7 @@ export const ComposerMicButton = ({
         return;
       }
       takeStartRef.current = Date.now();
+      lastRecognizerActivityRef.current = takeStartRef.current;
       livenessTimerRef.current = setInterval(checkLiveness, MIC_LIVENESS_TICK_MS);
     };
     armLivenessRef.current = armLiveness;
@@ -420,16 +437,19 @@ export const ComposerMicButton = ({
         if (!current()) return;
         logVoice("mic event audiostart");
         audioStartSeenRef.current = true;
+        lastRecognizerActivityRef.current = Date.now();
       };
       const handleSoundStart = () => {
         if (!current()) return;
         logVoice("mic event soundstart");
-        heardSoundRef.current = true;
+        recognizerSoundSeenRef.current = true;
+        lastRecognizerActivityRef.current = Date.now();
       };
       const handleSpeechStart = () => {
         if (!current()) return;
         logVoice("mic event speechstart");
-        heardSoundRef.current = true;
+        recognizerSoundSeenRef.current = true;
+        lastRecognizerActivityRef.current = Date.now();
       };
       const handleAudioEnd = () => {
         if (!current()) return;
@@ -437,7 +457,9 @@ export const ComposerMicButton = ({
       };
       const handleResult = (event: Event) => {
         if (!current()) return;
-        heardSoundRef.current = true;
+        recognizerSoundSeenRef.current = true;
+        resultSinceStopRef.current = true;
+        lastRecognizerActivityRef.current = Date.now();
         // Drop late events that arrive after the composer went disabled, or after
         // an Esc discard the parent has already reverted.
         if (disabledRef.current || discardingRef.current) return;
@@ -476,17 +498,46 @@ export const ComposerMicButton = ({
 
     // WebKit stays in Aborting until the old recognizer's end, so start() on it throws.
     // A new instance can start inside the same tap: discard the old one, abort it, build anew.
-    const replace = () => {
+    // `keepLateFinal` (the stop watchdog): the old recognizer was already stopped, so it is
+    // not aborted, and a final result it still delivers within a second is passed on once.
+    const replace = (keepLateFinal = false) => {
       clearLiveness();
       clearStopWatchdog();
       const old = recognitionRef.current;
       if (old) {
         detachers.get(old)?.();
         detachers.delete(old);
-        try {
-          old.abort();
-        } catch {
-          // Nothing to abort.
+        if (keepLateFinal) {
+          let lateDone = false;
+          const onLate = (event: Event) => {
+            if (lateDone) return;
+            const speechEvent = event as SpeechRecognitionEventLike;
+            let finalTranscript = "";
+            for (let i = speechEvent.resultIndex; i < speechEvent.results.length; i += 1) {
+              const result = speechEvent.results[i];
+              if (result.isFinal) finalTranscript += result[0]?.transcript ?? "";
+            }
+            const trimmed = finalTranscript.trim();
+            if (!trimmed) return;
+            lateDone = true;
+            old.removeEventListener("result", onLate);
+            clearTimeout(lateTimer);
+            if (!disabledRef.current && !discardingRef.current) {
+              logVoice("mic late final delivered");
+              onTranscriptRef.current(trimmed);
+            }
+          };
+          const lateTimer = setTimeout(() => {
+            lateDone = true;
+            old.removeEventListener("result", onLate);
+          }, MIC_LATE_FINAL_MS);
+          old.addEventListener("result", onLate);
+        } else {
+          try {
+            old.abort();
+          } catch {
+            // Nothing to abort.
+          }
         }
       }
       recognitionRef.current = build();
@@ -843,19 +894,30 @@ export const ComposerMicButton = ({
   toggleServerRef.current = toggleServer;
 
   // A browser stop that gets no `end`: swap the recognizer and call the take over.
-  const armStopWatchdog = useCallback(() => {
-    clearStopWatchdog();
-    stopWatchdogRef.current = setTimeout(() => {
-      stopWatchdogRef.current = null;
-      logVoice("mic stop watchdog");
-      clearLiveness();
-      voiceTakeRef.current = false;
-      replaceRecognitionRef.current();
-      transitionRef.current = false;
-      listeningRef.current = false;
-      setIsListening(false);
-    }, MIC_STOP_WATCHDOG_MS);
-  }, [clearStopWatchdog, clearLiveness]);
+  const armStopWatchdog = useCallback(
+    (extended = false): void => {
+      clearStopWatchdog();
+      resultSinceStopRef.current = false;
+      stopWatchdogRef.current = setTimeout(() => {
+        stopWatchdogRef.current = null;
+        // A result since the stop means the recognizer is still delivering: give it one more
+        // window instead of replacing it under a final that is on its way.
+        if (resultSinceStopRef.current && !extended) {
+          logVoice("mic stop watchdog", "result seen, waiting");
+          armStopWatchdog(true);
+          return;
+        }
+        logVoice("mic stop watchdog");
+        clearLiveness();
+        voiceTakeRef.current = false;
+        replaceRecognitionRef.current(true);
+        transitionRef.current = false;
+        listeningRef.current = false;
+        setIsListening(false);
+      }, MIC_STOP_WATCHDOG_MS);
+    },
+    [clearStopWatchdog, clearLiveness],
+  );
 
   // Returns whether anything began: false when a guard turned the call away.
   const toggle = useCallback((): boolean => {
@@ -895,7 +957,8 @@ export const ComposerMicButton = ({
         logVoice("mic start browser");
         startSeenRef.current = false;
         audioStartSeenRef.current = false;
-        heardSoundRef.current = false;
+        recognizerSoundSeenRef.current = false;
+        lastRecognizerActivityRef.current = 0;
         browserStartPendingRef.current = true;
         recognition.start();
       }

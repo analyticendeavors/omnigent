@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  approvalOf,
   armVoiceForNextChat,
   customAllowed,
   disarmVoiceForNextChat,
   getVoiceSnapshot,
   isDoneWord,
+  matchApprovalReply,
   matchSpokenOption,
   matchSpokenOptions,
   questionSpeech,
@@ -254,4 +256,62 @@ describe("arming the next chat", () => {
     disarmVoiceForNextChat();
     expect(takeVoiceArm()).toBe(false);
   });
+});
+
+describe("matchApprovalReply", () => {
+  it.each(["run it", "Run it.", "yes", "yeah", "okay", "OK", "approve", "go ahead"])(
+    "accepts exactly %s",
+    (said) => {
+      expect(matchApprovalReply(said)).toBe("accept");
+    },
+  );
+  it.each(["decline", "no", "cancel", "don't run it", "do not run it", "stop"])(
+    "declines exactly %s",
+    (said) => {
+      expect(matchApprovalReply(said)).toBe("decline");
+    },
+  );
+  it.each([
+    "don't say yes",
+    "do not approve",
+    "never run it",
+    "not okay",
+    "no way, yes",
+    "yes but don't",
+    "I would not go ahead",
+  ])("never accepts the negated sentence %s", (said) => {
+    expect(matchApprovalReply(said)).not.toBe("accept");
+  });
+  it("matches nothing for two phrases together", () => {
+    expect(matchApprovalReply("run it or decline")).toBeNull();
+    expect(matchApprovalReply("Say run it, or decline.")).toBeNull();
+  });
+  it.each(["please run it for me", "yesterday", "okay then let's talk", "nobody", "stopwatch"])(
+    "does nothing for the substring in %s",
+    (said) => {
+      expect(matchApprovalReply(said)).toBeNull();
+    },
+  );
+});
+
+describe("approvalOf", () => {
+  const base = {
+    type: "elicitation",
+    elicitationId: "a1",
+    status: "pending",
+    contentPreview: "",
+    requestedSchema: {},
+  };
+  it("takes only the session-limit card", () => {
+    expect(approvalOf({ ...base, policyName: "ae_slot_cap" } as never)).toEqual({
+      id: "a1",
+      slotCap: true,
+    });
+  });
+  it.each([undefined, "", "bash_permission", "write_policy", "web_fetch"])(
+    "never takes a tool-permission card (policy %s)",
+    (policyName) => {
+      expect(approvalOf({ ...base, policyName } as never)).toBeNull();
+    },
+  );
 });

@@ -527,16 +527,21 @@ export function questionsOf(
   return questions;
 }
 
-/** A pending yes-or-no card (not a question, a plan, a form or a link) Voice mode can answer. */
+/**
+ * A pending yes-or-no card Voice mode can answer. Only the session-limit card qualifies: a
+ * tool-permission card (Bash, Write, WebFetch) is never answered by a spoken word, because a
+ * prompt-injected call could be approved without the person looking at it.
+ */
 export interface VoiceApproval {
   id: string;
-  /** True for the session-limit card, which has its own spoken line. */
+  /** Always true: the session-limit card is the only card with a spoken answer. */
   slotCap: boolean;
 }
 
-/** The pending approval card, or null when the block is not a plain accept or decline card. */
+/** The pending session-limit card, or null for any other block. */
 export function approvalOf(block: ElicitationBlock | undefined): VoiceApproval | null {
   if (!block || block.status !== "pending") return null;
+  if (!/slot_cap/.test(block.policyName ?? "")) return null;
   const askPayload =
     castAskUserQuestionPayload(block.askUserQuestion) ??
     parseAskUserQuestionPreview(block.contentPreview);
@@ -549,7 +554,7 @@ export function approvalOf(block: ElicitationBlock | undefined): VoiceApproval |
   }
   const props = (block.requestedSchema as { properties?: unknown } | undefined)?.properties;
   if (props && typeof props === "object" && Object.keys(props).length > 0) return null;
-  return { id: block.elicitationId, slotCap: /slot_cap/.test(block.policyName ?? "") };
+  return { id: block.elicitationId, slotCap: true };
 }
 
 /** The line read aloud when an approval card appears. */
@@ -559,18 +564,27 @@ export function approvalSpeech(approval: VoiceApproval): string {
     : "Approval needed. Say run it, or decline.";
 }
 
-const APPROVE_WORDS = new Set(["yes", "ok", "okay", "yeah", "approve", "accept", "proceed"]);
-const DECLINE_WORDS = new Set(["decline", "no", "cancel", "reject", "deny", "nope"]);
+/** How long after the approval line stops playing a heard final still counts as its echo. */
+export const APPROVAL_TAIL_MS = 2500;
+
+const ACCEPT_PHRASES = new Set(["run it", "yes", "yeah", "okay", "ok", "approve", "go ahead"]);
+const DECLINE_PHRASES = new Set([
+  "decline",
+  "no",
+  "cancel",
+  "dont run it",
+  "do not run it",
+  "stop",
+]);
 
 /**
- * The verdict a short spoken reply gives: "run it", "yes" and "ok" accept; "decline", "no" and
- * "cancel" decline. A decline word wins; a long sentence is conversation, not an answer.
+ * The verdict a spoken reply gives. Only a whole utterance that is exactly one of the listed
+ * phrases counts ("run it", "yes", "decline", "no"); a longer sentence, a negation or two
+ * phrases together ("run it or decline") match nothing.
  */
 export function matchApprovalReply(text: string): "accept" | "decline" | null {
-  const said = words(text);
-  if (said.length === 0 || said.length > 5) return null;
-  if (said.some((w) => DECLINE_WORDS.has(w))) return "decline";
-  const joined = said.join(" ");
-  if (said.some((w) => APPROVE_WORDS.has(w)) || /\brun it\b/.test(joined)) return "accept";
+  const said = words(text).join(" ");
+  if (DECLINE_PHRASES.has(said)) return "decline";
+  if (ACCEPT_PHRASES.has(said)) return "accept";
   return null;
 }

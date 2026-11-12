@@ -800,7 +800,8 @@ describe("useAeVoiceMode", () => {
       registerVoiceSpeaker("c1", speak);
       useChatStore.setState({ blocks: [APPROVAL], sessionStatus: "running" } as never);
       const hook = mount({ status: "streaming", ...over });
-      act(() => void vi.advanceTimersByTime(RESUME_MS + 50));
+      // Past the window in which the approval line may still be playing, plus its echo tail.
+      act(() => void vi.advanceTimersByTime(8100));
       return { speak, ...hook };
     }
 
@@ -843,6 +844,107 @@ describe("useAeVoiceMode", () => {
       expect(used).toBe(true);
       expect(submitApproval).not.toHaveBeenCalled();
       expect(submit).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      "don't say yes",
+      "do not approve",
+      "never run it",
+      "run it or decline",
+      "please run it for me",
+      "yesterday",
+    ])("ignores %s", (said) => {
+      const { result } = mountApproval();
+      act(() => void result.current.onFinal(said));
+      expect(submitApproval).not.toHaveBeenCalled();
+    });
+
+    it("never answers a tool-permission card by voice", () => {
+      useChatStore.setState({
+        blocks: [{ ...APPROVAL, policyName: "bash_permission", elicitationId: "bash1" }],
+        sessionStatus: "running",
+      } as never);
+      const speak = vi.fn();
+      registerVoiceSpeaker("c1", speak);
+      const { result } = mount({ status: "streaming" });
+      act(() => void vi.advanceTimersByTime(9000));
+      expect(result.current.approvalActive).toBe(false);
+      expect(speak).not.toHaveBeenCalled();
+      act(() => void result.current.onFinal("yes"));
+      act(() => void result.current.onFinal("run it"));
+      expect(submitApproval).not.toHaveBeenCalled();
+    });
+
+    it("answers the newest pending card when several wait", () => {
+      useChatStore.setState({
+        blocks: [APPROVAL, { ...APPROVAL, elicitationId: "a2" }],
+        sessionStatus: "running",
+      } as never);
+      const { result } = mount({ status: "streaming" });
+      act(() => void vi.advanceTimersByTime(8100));
+      act(() => void result.current.onFinal("run it"));
+      expect(submitApproval).toHaveBeenCalledTimes(1);
+      expect(submitApproval).toHaveBeenCalledWith("a2", "accept");
+    });
+
+    it("submits once when the same answer arrives twice", () => {
+      const { result } = mountApproval();
+      act(() => void result.current.onFinal("run it"));
+      act(() => void result.current.onFinal("yes"));
+      expect(submitApproval).toHaveBeenCalledTimes(1);
+    });
+
+    it("ignores a final while the approval line plays and for 2.5 s after it ends", () => {
+      const { result } = mountApproval();
+      act(() => {
+        setVoiceSpeaking("c1", true);
+        setVoicePlaying("c1", true);
+      });
+      act(() => void result.current.onFinal("run it"));
+      expect(submitApproval).not.toHaveBeenCalled();
+      act(() => {
+        setVoicePlaying("c1", false);
+        setVoiceSpeaking("c1", false);
+      });
+      act(() => void vi.advanceTimersByTime(2400));
+      act(() => void result.current.onFinal("run it"));
+      expect(submitApproval).not.toHaveBeenCalled();
+      act(() => void vi.advanceTimersByTime(200));
+      act(() => void result.current.onFinal("run it"));
+      expect(submitApproval).toHaveBeenCalledTimes(1);
+    });
+
+    it("ignores a final whose recognition began inside the echo tail", () => {
+      const { result } = mountApproval();
+      act(() => {
+        setVoiceSpeaking("c1", true);
+        setVoicePlaying("c1", true);
+      });
+      act(() => {
+        setVoicePlaying("c1", false);
+        setVoiceSpeaking("c1", false);
+      });
+      act(() => void vi.advanceTimersByTime(1000));
+      act(() => void result.current.onPartial("run"));
+      act(() => void vi.advanceTimersByTime(2000));
+      act(() => void result.current.onFinal("run it"));
+      expect(submitApproval).not.toHaveBeenCalled();
+    });
+
+    it("shows the unavailable phase with a restart when the mic went quiet during an approval", () => {
+      const { result } = mountApproval();
+      act(() => void result.current.onListening(true));
+      for (let i = 0; i < 2; i += 1) {
+        act(() => {
+          listening = false;
+          result.current.onListening(false, "deaf");
+        });
+        act(() => void vi.advanceTimersByTime(1000));
+        if (i === 0) act(() => void result.current.onListening(true));
+      }
+      expect(result.current.approvalActive).toBe(true);
+      expect(getVoiceSnapshot("c1").phase).toBe("unavailable");
+      expect(result.current.micDetail).toBe(MIC_DEAF_DETAIL);
     });
 
     it("leaves the approval phase when the card is answered", () => {
@@ -902,6 +1004,31 @@ describe("useAeVoiceMode", () => {
     act(() => void result.current.onListening(true));
     expect(getVoiceSnapshot("c1").phase).toBe("listening");
     expect(result.current.micDetail).toBeNull();
+  });
+
+  it("a tap-restart after Mic went quiet gives a fresh retry", () => {
+    const { result } = mount();
+    const goDeaf = () =>
+      act(() => {
+        listening = false;
+        result.current.onListening(false, "deaf");
+      });
+    act(() => void result.current.onListening(true));
+    goDeaf();
+    act(() => void vi.advanceTimersByTime(1000));
+    act(() => void result.current.onListening(true));
+    goDeaf();
+    expect(getVoiceSnapshot("c1").phase).toBe("unavailable");
+    act(() => result.current.restartMic());
+    expect(controller.current.restart).toHaveBeenCalledTimes(1);
+    expect(result.current.micDetail).toBeNull();
+    act(() => void result.current.onListening(true));
+    goDeaf();
+    // The count started over: this deaf take is retried, not shown as failed.
+    expect(getVoiceSnapshot("c1").phase).not.toBe("unavailable");
+    controller.current.start.mockClear();
+    act(() => void vi.advanceTimersByTime(1000));
+    expect(controller.current.start).toHaveBeenCalledTimes(1);
   });
 
   it("heard words give a deaf mic its retry back", () => {

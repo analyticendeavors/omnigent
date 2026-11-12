@@ -3830,7 +3830,8 @@ function ComposerImpl(
                     resumePlayback();
                   }}
                   onKeyboard={voiceSheet ? voiceTyping.startTyping : undefined}
-                  onRestartMic={() => micController.current?.restart()}
+                  onRestartMic={voice.restartMic}
+                  approvalActive={voice.approvalActive}
                   micStartPath={() => micController.current?.startPath() ?? null}
                 />
               ) : null}

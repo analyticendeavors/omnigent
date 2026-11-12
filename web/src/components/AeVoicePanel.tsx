@@ -35,6 +35,8 @@ export interface AeVoicePanelProps {
   caption: string;
   /** Why the mic is unavailable, when known. */
   micDetail?: string | null;
+  /** A yes-or-no card is waiting, even when the mic cannot hear the answer. */
+  approvalActive?: boolean;
   /** Turn Voice mode off. */
   onEnd: () => void;
   /** Stop the current reply. */
@@ -171,6 +173,7 @@ function words(
   heard: string,
   caption: string,
   micDetail: string | null | undefined,
+  approvalActive: boolean,
 ): { label: string; sub: string } {
   switch (key) {
     case "starting":
@@ -180,7 +183,12 @@ function words(
     case "paused":
       return { label: "Mic stopped", sub: "Tap the mic to listen again" };
     case "unavailable":
-      return { label: "Mic unavailable", sub: micDetail || "Check the microphone permission" };
+      return {
+        label: "Mic unavailable",
+        sub: approvalActive
+          ? `${micDetail || "Check the microphone permission"}. Approval waiting: run it, or decline.`
+          : micDetail || "Check the microphone permission",
+      };
     case "thinking":
       return { label: "Working on it", sub: "Mic muted until the reply ends" };
     case "speaking":
@@ -206,6 +214,7 @@ export function AeVoicePanel({
   heard,
   caption,
   micDetail,
+  approvalActive = false,
   onEnd,
   onStop,
   onResume,
@@ -231,7 +240,7 @@ export function AeVoicePanel({
     key === "starting" && startStuck && Boolean(onRestartMic) && micStartPath?.() === "browser";
   const { label, sub } = tapToStart
     ? { label: "Tap to start the mic", sub: "" }
-    : words(key, heard, caption, micDetail);
+    : words(key, heard, caption, micDetail, approvalActive);
   const restartable = key === "paused" || key === "unavailable" || tapToStart;
   const action =
     key === "speaking"
