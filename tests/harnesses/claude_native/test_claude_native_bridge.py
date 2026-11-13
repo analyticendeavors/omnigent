@@ -12058,6 +12058,35 @@ async def test_hook_evaluate_endpoint_passes_prompt_for_spoken_style_suffix(
 
 
 @pytest.mark.asyncio
+async def test_hook_evaluate_endpoint_passes_an_ae_note_after_a_tool_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A PostToolUse ALLOW carrying ``data.ae_note`` reaches Claude as additionalContext."""
+    payload = {
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": "pytest -q"},
+        "tool_response": "ok",
+    }
+    client = _ScriptedPolicyClient(
+        {"result": "POLICY_ACTION_ALLOW", "data": {"ae_note": "Ask the judge."}}
+    )
+    relay, bridge_dir = _hook_relay(tmp_path, monkeypatch, client)
+    try:
+        body = await asyncio.to_thread(
+            _relay_request_raw, bridge_dir, "/hook/claude/evaluate-policy", payload
+        )
+        assert json.loads(body) == {
+            "hookSpecificOutput": {
+                "hookEventName": "PostToolUse",
+                "additionalContext": "Ask the judge.",
+            }
+        }
+    finally:
+        relay.close()
+
+
+@pytest.mark.asyncio
 async def test_hook_evaluate_endpoint_bare_allow_on_prompt_is_no_opinion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

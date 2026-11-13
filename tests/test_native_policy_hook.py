@@ -238,6 +238,50 @@ def test_post_tool_use_allow_returns_none() -> None:
     assert output is None
 
 
+def test_post_tool_use_allow_with_an_ae_note_becomes_additional_context() -> None:
+    """An ALLOW carrying ``data.ae_note`` sends only that line as additionalContext."""
+    output = evaluation_response_to_hook_output(
+        "PostToolUse",
+        {"result": "POLICY_ACTION_ALLOW", "data": {"ae_note": "  Ask the judge.  "}},
+    )
+    assert output == {
+        "hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "additionalContext": "Ask the judge.",
+        }
+    }
+
+
+@pytest.mark.parametrize(
+    "data",
+    [{"ae_note": ""}, {"ae_note": 3}, {"result": "rewritten output"}, "rewritten", None, []],
+)
+def test_post_tool_use_allow_without_a_usable_ae_note_stays_silent(data: object) -> None:
+    """A rewrite or an empty note is ignored: the hook never replaces a tool result."""
+    assert (
+        evaluation_response_to_hook_output(
+            "PostToolUse", {"result": "POLICY_ACTION_ALLOW", "data": data}
+        )
+        is None
+    )
+
+
+def test_post_tool_use_ae_note_is_ignored_on_deny_and_other_events() -> None:
+    """DENY keeps the policy-violation text; PreToolUse never reads the note."""
+    denied = evaluation_response_to_hook_output(
+        "PostToolUse",
+        {"result": "POLICY_ACTION_DENY", "reason": "no", "data": {"ae_note": "hint"}},
+    )
+    assert denied is not None
+    assert denied["hookSpecificOutput"]["additionalContext"] == "[Policy violation] no"  # type: ignore[index]
+    assert (
+        evaluation_response_to_hook_output(
+            "PreToolUse", {"result": "POLICY_ACTION_ALLOW", "data": {"ae_note": "hint"}}
+        )
+        is None
+    )
+
+
 def test_user_prompt_submit_maps_to_phase_request() -> None:
     """
     A UserPromptSubmit payload becomes a PHASE_REQUEST EvaluationRequest.

@@ -486,6 +486,41 @@ def test_post_tool_use_fails_open_on_error(
     assert captured.out == ""
 
 
+def test_post_tool_use_ae_note_reaches_codex_as_additional_context(
+    bridge_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A PostToolUse ALLOW carrying ``data.ae_note`` is printed as additionalContext."""
+
+    class _NoteClient(_DenyHttpxClient):
+        def post(self, url: str, *, json: dict[str, object]) -> httpx.Response:
+            del url, json
+            return httpx.Response(
+                200,
+                json={"result": "POLICY_ACTION_ALLOW", "data": {"ae_note": "Ask the judge."}},
+                request=httpx.Request("POST", "http://127.0.0.1:8787"),
+            )
+
+    write_policy_hook_config(bridge_dir, ap_server_url="http://127.0.0.1:8787", ap_auth_headers={})
+    monkeypatch.setattr(native_policy_hook.httpx, "Client", _NoteClient)
+    payload: dict[str, object] = {
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": "pytest -q"},
+        "tool_output": "ok",
+    }
+
+    assert _run_hook(bridge_dir, payload, monkeypatch) == 0
+
+    assert json.loads(capsys.readouterr().out) == {
+        "hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "additionalContext": "Ask the judge.",
+        }
+    }
+
+
 def test_pre_tool_use_uses_relay_when_tool_relay_json_has_session_id(
     bridge_dir: Path,
     monkeypatch: pytest.MonkeyPatch,

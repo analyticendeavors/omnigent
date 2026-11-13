@@ -512,6 +512,17 @@ def evaluation_response_to_hook_output(
                     "additionalContext": f"[Policy violation] {reason}",
                 },
             }
+        # An ALLOW whose data is ``{"ae_note": <line>}`` asks for one line of context after
+        # the result (the Decision-1 nudge); the tool output itself is never rewritten here.
+        data = eval_response.get("data")
+        note = data.get("ae_note") if isinstance(data, dict) else None
+        if action == "POLICY_ACTION_ALLOW" and isinstance(note, str) and note.strip():
+            return {
+                "hookSpecificOutput": {
+                    "hookEventName": _POST_TOOL_USE,
+                    "additionalContext": note.strip(),
+                },
+            }
         return None
 
     return None
