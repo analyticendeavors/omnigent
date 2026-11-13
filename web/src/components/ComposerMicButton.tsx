@@ -6,6 +6,7 @@ import { useVoiceDictationHotkey } from "@/hooks/useVoiceDictationHotkey";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { getMicStream } from "@/lib/aeAudioDevices";
 import { publishMicLevel, resetMicLevel } from "@/lib/aeMicLevel";
+import { publishVoiceBins, resetVoiceBins } from "@/lib/aeVoiceLevel";
 import { logVoice } from "@/lib/aeVoiceLog";
 import { DictationBusyError, DictationSession } from "@/lib/dictation";
 import { isElectronShell } from "@/lib/nativeBridge";
@@ -769,6 +770,7 @@ export const ComposerMicButton = ({
           if (el) el.style.transform = `scaleY(${scale})`;
         }
         publishMicLevel((total / BAR_BINS.length) * 1.6);
+        publishVoiceBins(data);
         rafId = requestAnimationFrame(tick);
       };
       rafId = requestAnimationFrame(tick);
@@ -785,6 +787,7 @@ export const ComposerMicButton = ({
       if (stableTimer !== null) clearTimeout(stableTimer);
       if (retryTimer !== null) clearTimeout(retryTimer);
       resetMicLevel();
+      resetVoiceBins();
       if (rafId !== null) cancelAnimationFrame(rafId);
       if (stream) {
         for (const track of stream.getTracks()) track.stop();

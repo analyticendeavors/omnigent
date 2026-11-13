@@ -4,6 +4,7 @@
 
 import { KeyboardIcon } from "lucide-react";
 import { useEffect, useState } from "react";
+import { AeVoiceRing } from "@/components/AeVoiceRing";
 import { Button } from "@/components/ui/button";
 import { useMicLevel } from "@/lib/aeMicLevel";
 import type { VoicePhase } from "@/lib/aeVoiceMode";
@@ -136,6 +137,16 @@ const TONE: Record<VoicePhaseKey, { text: string; panel: string; ring: string; d
   },
 };
 
+/** The sheet circle's disc radius (size-20), in CSS px; the ring is drawn around it. */
+const SHEET_DISC_RADIUS = 40;
+
+/** The sheet draws the reply in amber, to match its liquid ring; the bar keeps blue. */
+const SHEET_SPEAKING = {
+  text: "text-amber-500",
+  ring: "border-amber-500/40",
+  disc: "bg-amber-500",
+};
+
 const BAR_WEIGHTS = [0.6, 1, 0.8, 1, 0.7];
 const BAR_MIN_PX = 4;
 const BAR_MAX_PX = 16;
@@ -234,7 +245,9 @@ export function AeVoicePanel({
     return () => clearTimeout(t);
   }, [key]);
   if (key === "off") return null;
-  const tone = TONE[key];
+  const tone =
+    layout === "sheet" && key === "speaking" ? { ...TONE[key], ...SHEET_SPEAKING } : TONE[key];
+  const ringMode = key === "listening" ? "bars" : key === "speaking" ? "liquid" : "idle";
   // A server start is a model cold start that can take 40 s; a tap there would only get in its way.
   const tapToStart =
     key === "starting" && startStuck && Boolean(onRestartMic) && micStartPath?.() === "browser";
@@ -279,8 +292,9 @@ export function AeVoicePanel({
           type="button"
           aria-label={actionLabel}
           onClick={action}
-          className="my-3 flex size-24 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="relative my-6 flex size-24 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
+          <AeVoiceRing mode={ringMode} radius={SHEET_DISC_RADIUS} pulseKey={caption} />
           <span
             data-testid="ae-voice-ring"
             className={cn(
