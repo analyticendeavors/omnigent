@@ -346,17 +346,6 @@ _METADATA_OBSERVATION_EVENT_TYPES = frozenset(
 )
 
 
-def _flip_running_on_work(session_id: str, item_type: str, role: str | None) -> None:
-    """Publish ``running`` for the first assistant or tool item after an open prompt edge."""
-    if not ae_prompt_running.is_real_work(item_type, role):
-        return
-    if not ae_prompt_running.take_if_open(session_id):
-        return
-    if _session_status_cache.get(session_id) == "running":
-        return
-    _publish_status(session_id, "running")
-
-
 def _is_batchable_external_item(event: SessionEventInput) -> bool:
     """
     Whether a batch entry can skip :func:`_post_event_impl` and be appended
@@ -817,18 +806,10 @@ def register_events_routes(
                         continue
                     await _authorized_conversation(request, session_id)
                     add_audit_attrs(event_type=_EXTERNAL_CONVERSATION_ITEM_TYPE)
-                    run_events = list(run)
                     item_ids = await _persist_external_conversation_items(
-                        session_id, run_events, conversation_store
+                        session_id, list(run), conversation_store
                     )
                     acks.extend({"queued": False, "item_id": item_id} for item_id in item_ids)
-                    for event in run_events:
-                        item_data = event.data.get("item_data")
-                        _flip_running_on_work(
-                            session_id,
-                            str(event.data.get("item_type")),
-                            item_data.get("role") if isinstance(item_data, dict) else None,
-                        )
                 return acks
             return await _post_event_impl(
                 request,
@@ -1841,7 +1822,6 @@ def register_events_routes(
                 body,
                 conversation_store,
             )
-            _flip_running_on_work(session_id, "message", "assistant")
             return {"queued": False, "item_id": item_id}
         if body.type == _EXTERNAL_CONVERSATION_ITEM_TYPE:
             item_id = await _persist_external_conversation_item(
@@ -1852,12 +1832,6 @@ def register_events_routes(
                 created_by=created_by,
                 background_title_coordinator=background_title_coordinator,
                 enabled=background_session_titles_enabled(request.headers),
-            )
-            item_data = body.data.get("item_data")
-            _flip_running_on_work(
-                session_id,
-                str(body.data.get("item_type")),
-                item_data.get("role") if isinstance(item_data, dict) else None,
             )
             return {"queued": False, "item_id": item_id}
         if body.type == _EXTERNAL_OUTPUT_TEXT_DELTA_TYPE:
