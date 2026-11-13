@@ -438,6 +438,44 @@ def test_a_child_session_gets_only_the_helper_line(
     assert "do not start other sessions" in ae_roles.HELPER_NOTICE
 
 
+def test_a_helper_hears_the_judge_line_only_when_the_flag_is_set(
+    prefs: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ae_omni_policies import decision_status
+
+    seen: list[str | None] = []
+
+    def reason(caller: str | None) -> str | None:
+        seen.append(caller)
+        return None
+
+    monkeypatch.setattr(decision_status, "reason", reason)
+    notice = team_notice(conversation(parent_conversation_id="lead"), owner_store())
+    assert notice == {"ae_helper": True, "ae_helper_judge": True}
+    assert seen == ["local"]
+    text = render_team_notice(notice) or ""
+    assert text.startswith(ae_roles.HELPER_NOTICE)
+    assert text.count("Decision-1 judge: for every small choice") == 1
+    assert "select:mcp__ae__ask_judge" in text
+    # the flag alone changes nothing: no marker, no line
+    assert render_team_notice({"ae_helper": True}) == ae_roles.HELPER_NOTICE
+    assert render_team_notice({"ae_helper": True, "ae_helper_judge": "yes"}) == (
+        ae_roles.HELPER_NOTICE
+    )
+    monkeypatch.setattr(decision_status, "reason", lambda caller: "not_allowed")
+    assert team_notice(conversation(parent_conversation_id="lead"), owner_store()) == {
+        "ae_helper": True
+    }
+
+    def boom(caller: str | None) -> str | None:
+        raise RuntimeError("broken")
+
+    monkeypatch.setattr(decision_status, "reason", boom)
+    assert team_notice(conversation(parent_conversation_id="lead"), owner_store()) == {
+        "ae_helper": True
+    }
+
+
 @pytest.mark.parametrize("orch", ["1", "", " "])
 def test_a_lead_with_a_flag_orch_label_keeps_the_block(prefs: dict[str, Any], orch: str) -> None:
     notice = team_notice(conversation(labels={"ae.orch": orch}), owner_store()) or {}
@@ -1245,8 +1283,9 @@ def test_the_judge_line_renders_only_when_the_flag_is_true(prefs: dict[str, Any]
         base = render_roles(roles) or ""
         assert "ask_judge" not in base
         on = render_roles({**roles, "judge": True}) or ""
-        assert on.count("Decision-1 judge: before you settle one of these yourself") == 1
+        assert on.count("Decision-1 judge: for every small choice with clear options") == 1
         assert 'ToolSearch query "select:mcp__ae__ask_judge"' in on
+        assert "ask up to five in one call" in on
         assert "decide yourself." in on
         assert len(on.splitlines()) == len(base.splitlines())  # folded in, no extra line
         assert "ask_judge" not in (render_roles({**roles, "judge": False}) or "")
