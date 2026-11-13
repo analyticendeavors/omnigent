@@ -73,6 +73,20 @@ def test_only_assistant_text_and_tool_calls_are_real_work() -> None:
     assert not ae_prompt_running.is_real_work("compaction")
 
 
+def test_an_open_prompt_expires_after_the_limit() -> None:
+    now = [1000.0]
+    ae_prompt_running.reset(clock=lambda: now[0])
+    ae_prompt_running.note_prompt("ttl1")
+    now[0] += ae_prompt_running.OPEN_PROMPT_TTL_S - 1
+    assert ae_prompt_running.take_if_open("ttl1") is True
+
+    ae_prompt_running.note_prompt("ttl2")
+    now[0] += ae_prompt_running.OPEN_PROMPT_TTL_S + 1
+    assert ae_prompt_running.take_if_open("ttl2") is False
+    # The stale entry was dropped, not kept for a later item.
+    assert ae_prompt_running.take_if_open("ttl2") is False
+
+
 # ---- route ----
 
 
@@ -210,3 +224,42 @@ async def test_interrupt_clears_the_open_prompt(client: httpx.AsyncClient) -> No
     await _prompt(client, sid)
     await _post(client, sid, {"type": "stop_session", "data": {}})
     assert ae_prompt_running.take_if_open(sid) is False
+
+
+async def test_a_replayed_item_does_not_flip_and_keeps_the_prompt_open(
+    client: httpx.AsyncClient,
+) -> None:
+    sid = await _session(client, "pr-replay")
+    _session_status_cache[sid] = "idle"
+    # The item is already persisted when the prompt opens (a forwarder retry).
+    await _post(client, sid, _assistant_item("old", "dup1"))
+    _session_status_cache[sid] = "idle"
+    await _prompt(client, sid)
+
+    await _post(client, sid, _assistant_item("old", "dup1"))
+    assert _session_status_cache.get(sid) == "idle"
+    await _post(client, sid, [_assistant_item("old", "dup1")])
+    assert _session_status_cache.get(sid) == "idle"
+
+    await _post(client, sid, _assistant_item("new", "new1"))
+    assert _session_status_cache.get(sid) == "running"
+
+
+async def test_the_interrupt_route_clears_the_open_prompt(client: httpx.AsyncClient) -> None:
+    sid = await _session(client, "pr-int-route")
+    _session_status_cache[sid] = "idle"
+    await _prompt(client, sid)
+    await _post(client, sid, {"type": "interrupt", "data": {}})
+    await _post(client, sid, _assistant_item("late", "int1"))
+    assert _session_status_cache.get(sid) == "idle"
+
+
+async def test_an_external_interrupt_event_clears_the_open_prompt(
+    client: httpx.AsyncClient,
+) -> None:
+    sid = await _session(client, "pr-int-ext")
+    _session_status_cache[sid] = "idle"
+    await _prompt(client, sid)
+    await _post(client, sid, {"type": "external_session_interrupted", "data": {}})
+    await _post(client, sid, _assistant_item("late", "int2"))
+    assert _session_status_cache.get(sid) == "idle"
