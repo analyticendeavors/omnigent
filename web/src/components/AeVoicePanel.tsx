@@ -140,11 +140,11 @@ const TONE: Record<VoicePhaseKey, { text: string; panel: string; ring: string; d
 /** The sheet circle's disc radius (size-20), in CSS px; the ring is drawn around it. */
 const SHEET_DISC_RADIUS = 40;
 
-/** The sheet draws the reply in amber, to match its liquid ring; the bar keeps blue. */
+/** The sheet draws the reply in the ring's own amber token (darker in light mode for contrast); the bar keeps blue. */
 const SHEET_SPEAKING = {
-  text: "text-amber-500",
-  ring: "border-amber-500/40",
-  disc: "bg-amber-500",
+  text: "text-[color:var(--ae-voice-amber)]",
+  ring: "border-[color:color-mix(in_srgb,var(--ae-voice-amber)_40%,transparent)]",
+  disc: "bg-[color:var(--ae-voice-amber)]",
 };
 
 const BAR_WEIGHTS = [0.6, 1, 0.8, 1, 0.7];
@@ -287,12 +287,12 @@ export function AeVoicePanel({
         data-phase={key}
         className={cn("flex flex-col items-center px-4 pt-5 pb-3 text-center", className)}
       >
-        <div className={cn("text-sm font-medium", tone.text)}>{label}</div>
+        <div className={cn("relative z-10 text-sm font-medium", tone.text)}>{label}</div>
         <button
           type="button"
           aria-label={actionLabel}
           onClick={action}
-          className="relative my-6 flex size-24 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="relative isolate my-6 flex size-24 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <AeVoiceRing mode={ringMode} radius={SHEET_DISC_RADIUS} pulseKey={caption} />
           <span
@@ -316,7 +316,9 @@ export function AeVoicePanel({
             />
           </span>
         </button>
-        <div className="min-h-10 line-clamp-2 text-sm text-muted-foreground">{sub}</div>
+        <div className="relative z-10 min-h-10 line-clamp-2 text-sm text-muted-foreground">
+          {sub}
+        </div>
         <div className="mt-3 flex gap-3">
           {onKeyboard ? (
             <Button

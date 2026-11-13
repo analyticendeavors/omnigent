@@ -2,11 +2,11 @@
 // circle, takes no space and no taps. Bars follow the real mic bins, the liquid
 // ring follows a synthetic reply envelope (the reply <audio> is never routed
 // through an AudioContext). It draws only while mounted, visible and motion is allowed.
+// Reduced motion draws one still ring per mode, theme or pixel-ratio change, never per mic frame.
 
 import { useEffect, useRef } from "react";
-import { getVoiceBins, subscribeVoiceBins } from "@/lib/aeVoiceLevel";
+import { getVoiceBins } from "@/lib/aeVoiceLevel";
 import {
-  binsLevel,
   drawRing,
   drawStaticRing,
   newRingState,
@@ -23,8 +23,6 @@ export interface AeVoiceRingProps {
   /** Changes when the reply moves to a new sentence; gives the ring a small bump. */
   pulseKey?: string;
 }
-
-const COLOR_REFRESH_FRAMES = 60;
 
 function readColors(el: Element): RingColors {
   const cs = getComputedStyle(el);
@@ -44,6 +42,8 @@ export function AeVoiceRing({ mode, radius, pulseKey }: AeVoiceRingProps) {
     pulseSeen.current = pulseKey;
     stateRef.current.pulse = 1;
   }
+  // Set by the effect below: draws the still ring when motion is reduced, else does nothing.
+  const redrawStill = useRef<(() => void) | null>(null);
   const size = Math.round(radius * RING_EXTENT * 2);
 
   useEffect(() => {
@@ -51,26 +51,31 @@ export function AeVoiceRing({ mode, radius, pulseKey }: AeVoiceRingProps) {
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    const dpr = Math.max(1, window.devicePixelRatio || 1);
-    canvas.width = Math.round(size * dpr);
-    canvas.height = Math.round(size * dpr);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const mq = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    const darkMq = window.matchMedia?.("(prefers-color-scheme: dark)");
     let reduced = Boolean(mq?.matches);
+    // Cached; refreshed only when the theme changes.
     let colors = readColors(canvas);
     let raf: number | null = null;
-    let frames = 0;
     const t0 = performance.now();
 
-    const drawStill = () => {
-      colors = readColors(canvas);
-      drawStaticRing(ctx, modeRef.current, binsLevel(getVoiceBins()), radius, colors);
+    const sizeBuffer = () => {
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      canvas.width = Math.round(size * dpr);
+      canvas.height = Math.round(size * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return dpr;
     };
+    let dpr = sizeBuffer();
+
+    const drawStill = () => {
+      if (reduced) drawStaticRing(ctx, modeRef.current, radius, colors);
+    };
+    redrawStill.current = drawStill;
     const frame = (now: number) => {
       raf = null;
       if (document.hidden || reduced) return;
-      if (frames++ % COLOR_REFRESH_FRAMES === 0) colors = readColors(canvas);
       const t = (now - t0) / 1000;
       stepRing(stateRef.current, modeRef.current, t, getVoiceBins());
       drawRing(ctx, stateRef.current, t, radius, colors);
@@ -94,29 +99,56 @@ export function AeVoiceRing({ mode, radius, pulseKey }: AeVoiceRingProps) {
       stop();
       start();
     };
-    // Reduced motion has no loop: a new mic frame or a mode change redraws the still ring.
-    const unsubscribe = subscribeVoiceBins(() => {
-      if (reduced && !document.hidden) drawStill();
+    const onTheme = () => {
+      colors = readColors(canvas);
+      drawStill();
+    };
+    // A new device pixel ratio (window moved to another screen, browser zoom): resize the buffer.
+    let dprMq: MediaQueryList | undefined;
+    const onDpr = () => {
+      dpr = sizeBuffer();
+      watchDpr();
+      drawStill();
+    };
+    const watchDpr = () => {
+      dprMq?.removeEventListener?.("change", onDpr);
+      dprMq = window.matchMedia?.(`(resolution: ${dpr}dppx)`);
+      dprMq?.addEventListener?.("change", onDpr);
+    };
+    const onResize = () => {
+      const next = Math.max(1, window.devicePixelRatio || 1);
+      if (next !== dpr) onDpr();
+    };
+    watchDpr();
+    window.addEventListener("resize", onResize);
+    const observer = typeof MutationObserver === "undefined" ? null : new MutationObserver(onTheme);
+    observer?.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class", "data-theme"],
     });
+    darkMq?.addEventListener?.("change", onTheme);
     document.addEventListener("visibilitychange", onVisibility);
     mq?.addEventListener?.("change", onMotion);
     start();
     return () => {
       stop();
-      unsubscribe();
+      redrawStill.current = null;
+      window.removeEventListener("resize", onResize);
+      dprMq?.removeEventListener?.("change", onDpr);
+      observer?.disconnect();
+      darkMq?.removeEventListener?.("change", onTheme);
       document.removeEventListener("visibilitychange", onVisibility);
       mq?.removeEventListener?.("change", onMotion);
     };
   }, [radius, size]);
 
   // A mode change while still: redraw once. (Animated mode reads modeRef each frame.)
+  const stillMode = useRef(mode);
   useEffect(() => {
-    const canvas = canvasRef.current;
-    const mq = window.matchMedia?.("(prefers-reduced-motion: reduce)");
-    if (!canvas || !mq?.matches) return;
-    const ctx = canvas.getContext("2d");
-    if (ctx) drawStaticRing(ctx, mode, binsLevel(getVoiceBins()), radius, readColors(canvas));
-  }, [mode, radius]);
+    if (stillMode.current === mode) return;
+    stillMode.current = mode;
+    redrawStill.current?.();
+  }, [mode]);
 
   return (
     <canvas
@@ -125,7 +157,7 @@ export function AeVoiceRing({ mode, radius, pulseKey }: AeVoiceRingProps) {
       data-testid="ae-voice-ring-canvas"
       data-mode={mode}
       style={{ width: size, height: size }}
-      className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
+      className="pointer-events-none absolute top-1/2 left-1/2 -z-10 -translate-x-1/2 -translate-y-1/2"
     />
   );
 }

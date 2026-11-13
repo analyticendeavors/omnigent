@@ -239,7 +239,7 @@
   --session-active: #2f7fd4;
   /* Voice mode ring (omnigent-ae): teal for the user's voice, amber for the reply. */
   --ae-voice-teal: #3fa58e;
-  --ae-voice-amber: #d98a2b;
+  --ae-voice-amber: #b45309;
   /* Weaker panel border for low-contrast dividers. */
   --border-weak: #ececee;
   --button-icon-hover-color: #27272a;
@@ -284,7 +284,7 @@
      * light-mode #2f7fd4 reads too dim here). */
   --session-active: #5ca4f5;
   --ae-voice-teal: #5fd0b6;
-  --ae-voice-amber: #f0a85a;
+  --ae-voice-amber: #fbbf24;
   /* Pink tag surface — a heavier wash than light, since 6% all but vanishes
      * against the dark canvas. */
   --tag-pink: rgba(240, 1, 150, 0.15);

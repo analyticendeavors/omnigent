@@ -24,6 +24,7 @@ import { CapabilitiesContext } from "@/lib/CapabilitiesContext";
 import type { ServerInfo } from "@/lib/capabilities";
 import { DictationBusyError as BusyError, type DictationSessionEvents } from "@/lib/dictation";
 import { getMicLevel, resetMicLevel } from "@/lib/aeMicLevel";
+import { getVoiceBins } from "@/lib/aeVoiceLevel";
 import { formatVoiceLog, resetVoiceLog } from "@/lib/aeVoiceLog";
 import { getVoiceSnapshot, resetVoiceStore, setVoiceOn } from "@/lib/aeVoiceMode";
 import { useAeVoiceMode } from "@/hooks/useAeVoiceMode";
@@ -266,8 +267,11 @@ describe("ComposerMicButton", () => {
     });
     act(() => frame?.());
     expect(getMicLevel()).toBeGreaterThan(0.5);
+    // The same frame feeds the Voice ring's bins, and the bins clear with the mic.
+    expect(getVoiceBins()[3]).toBeCloseTo(128 / 255);
     act(() => handlers.end?.({}));
     expect(getMicLevel()).toBe(0);
+    expect(Math.max(...getVoiceBins())).toBe(0);
   });
 
   it("exposes start, stop and the listening state to Voice mode", () => {

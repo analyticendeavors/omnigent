@@ -78,17 +78,24 @@ const LIQUID_AMP = 0.22;
 const LIQUID_GAP = 0.1;
 /** Half the canvas, in R. */
 export const RING_EXTENT = 2.1;
+/**
+ * The painted ring is drawn at this fraction of R, so its outermost pixel (about
+ * 1.9 R for the tallest bars) stays inside the 24 px margin around the 96 px circle
+ * and never reaches the label or caption.
+ */
+export const RING_SCALE = 0.9;
 
 export function drawRing(
   ctx: CanvasRenderingContext2D,
   s: RingState,
   t: number,
-  R: number,
+  radius: number,
   colors: RingColors,
 ): void {
-  const cx = R * RING_EXTENT;
+  const cx = radius * RING_EXTENT;
   const cy = cx;
   ctx.clearRect(0, 0, cx * 2, cy * 2);
+  const R = radius * RING_SCALE;
   const spin = t * 0.25;
   ctx.lineCap = "round";
   ctx.strokeStyle = colors.teal;
@@ -125,21 +132,21 @@ export function drawRing(
   ctx.globalAlpha = 1;
 }
 
-/** Reduced motion: one still circle whose brightness carries the state. */
+/** Reduced motion: one still circle whose colour and brightness carry the mode. It never changes between mode changes. */
 export function drawStaticRing(
   ctx: CanvasRenderingContext2D,
   mode: VoiceRingMode,
-  level: number,
-  R: number,
+  radius: number,
   colors: RingColors,
 ): void {
-  const cx = R * RING_EXTENT;
+  const cx = radius * RING_EXTENT;
   ctx.clearRect(0, 0, cx * 2, cx * 2);
+  const R = radius * RING_SCALE;
   ctx.beginPath();
   ctx.arc(cx, cx, R * (mode === "liquid" ? LIQUID_BASE : BAR_INNER + 0.1), 0, Math.PI * 2);
   ctx.strokeStyle = mode === "liquid" ? colors.amber : colors.teal;
   ctx.lineWidth = Math.max(2, R * 0.07);
-  ctx.globalAlpha = mode === "idle" ? 0.25 : mode === "liquid" ? 0.9 : 0.3 + 0.7 * level;
+  ctx.globalAlpha = mode === "idle" ? 0.25 : mode === "liquid" ? 0.9 : 0.65;
   ctx.stroke();
   ctx.globalAlpha = 1;
 }
