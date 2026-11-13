@@ -68,7 +68,7 @@ from omnigent.runtime import (
 )
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.runtime.policies.approval import _ELICITATION_MODE
-from omnigent.server import ae_turn_edges, presence
+from omnigent.server import ae_prompt_running, ae_turn_edges, presence
 from omnigent.server._elicitation_registry import (
     _harness_elicitation_owners,
     _harness_elicitation_registry,
@@ -344,6 +344,17 @@ _METADATA_OBSERVATION_EVENT_TYPES = frozenset(
         _SUBAGENT_STATUS_TYPE,
     }
 )
+
+
+def _flip_running_on_work(session_id: str, item_type: str, role: str | None) -> None:
+    """Publish ``running`` for the first assistant or tool item after an open prompt edge."""
+    if not ae_prompt_running.is_real_work(item_type, role):
+        return
+    if not ae_prompt_running.take_if_open(session_id):
+        return
+    if _session_status_cache.get(session_id) == "running":
+        return
+    _publish_status(session_id, "running")
 
 
 def _is_batchable_external_item(event: SessionEventInput) -> bool:
@@ -806,10 +817,18 @@ def register_events_routes(
                         continue
                     await _authorized_conversation(request, session_id)
                     add_audit_attrs(event_type=_EXTERNAL_CONVERSATION_ITEM_TYPE)
+                    run_events = list(run)
                     item_ids = await _persist_external_conversation_items(
-                        session_id, list(run), conversation_store
+                        session_id, run_events, conversation_store
                     )
                     acks.extend({"queued": False, "item_id": item_id} for item_id in item_ids)
+                    for event in run_events:
+                        item_data = event.data.get("item_data")
+                        _flip_running_on_work(
+                            session_id,
+                            str(event.data.get("item_type")),
+                            item_data.get("role") if isinstance(item_data, dict) else None,
+                        )
                 return acks
             return await _post_event_impl(
                 request,
@@ -1551,6 +1570,7 @@ def register_events_routes(
             # Fence the cancelled turn, same as interrupt.
             _interrupt_fenced_sessions.add(session_id)
             ae_turn_edges.notify_turn_edge(session_id, "interrupted")
+            ae_prompt_running.note_turn_end(session_id)
             # Harness-agnostic forward: the runner kills the external
             # process for harnesses that have one (claude-native
             # hard-kills its tmux pane) and 204s otherwise. Unlike the
@@ -1821,6 +1841,7 @@ def register_events_routes(
                 body,
                 conversation_store,
             )
+            _flip_running_on_work(session_id, "message", "assistant")
             return {"queued": False, "item_id": item_id}
         if body.type == _EXTERNAL_CONVERSATION_ITEM_TYPE:
             item_id = await _persist_external_conversation_item(
@@ -1831,6 +1852,12 @@ def register_events_routes(
                 created_by=created_by,
                 background_title_coordinator=background_title_coordinator,
                 enabled=background_session_titles_enabled(request.headers),
+            )
+            item_data = body.data.get("item_data")
+            _flip_running_on_work(
+                session_id,
+                str(body.data.get("item_type")),
+                item_data.get("role") if isinstance(item_data, dict) else None,
             )
             return {"queued": False, "item_id": item_id}
         if body.type == _EXTERNAL_OUTPUT_TEXT_DELTA_TYPE:
@@ -1905,9 +1932,13 @@ def register_events_routes(
             _signal_harness_elicitation_resolved_by_id(session_id, elicitation_id)
             return {"queued": False}
         if body.type in (_EXTERNAL_SESSION_STATUS_TYPE, _SUBAGENT_STATUS_TYPE):
-            if body.type == _EXTERNAL_SESSION_STATUS_TYPE and body.data.get("ae_prompt_edge") is True:
+            if (
+                body.type == _EXTERNAL_SESSION_STATUS_TYPE
+                and body.data.get("ae_prompt_edge") is True
+            ):
                 # A prompt was submitted: a turn-open edge for observers, no status change.
                 ae_turn_edges.notify_turn_edge(session_id, "prompt")
+                ae_prompt_running.note_prompt(session_id)
                 return {"queued": False}
             status = body.data.get("status")
             if body.type == _SUBAGENT_STATUS_TYPE:
@@ -2051,6 +2082,8 @@ def register_events_routes(
                 background_tasks=bg_tasks,
                 blocked_on=blocked_on,
             )
+            if status == "failed" or (status == "idle" and data.get("turn_completed") is True):
+                ae_prompt_running.note_turn_end(session_id)
             if status == "idle" and data.get("turn_completed") is True:
                 ae_turn_edges.notify_turn_edge(
                     session_id, "idle", response_id=response_id, turn_completed=True
