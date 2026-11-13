@@ -8,6 +8,7 @@ import { getMicStream } from "@/lib/aeAudioDevices";
 import { publishMicLevel, resetMicLevel } from "@/lib/aeMicLevel";
 import { publishVoiceBins, resetVoiceBins } from "@/lib/aeVoiceLevel";
 import { logVoice } from "@/lib/aeVoiceLog";
+import { createStallDetector, isWebKitSpeech } from "@/lib/aeVoiceStall";
 import { DictationBusyError, DictationSession } from "@/lib/dictation";
 import { isElectronShell } from "@/lib/nativeBridge";
 import { cn } from "@/lib/utils";
@@ -97,6 +98,9 @@ const MIC_TRACK_MUTED_MS = 2000;
 const MIC_METER_STALL_MS = 6000;
 // The analyser is only believed while its animation frames keep arriving.
 const MIC_METER_FRESH_MS = 1500;
+// Stall restarts (speech heard, no result) allowed per minute before the take is called deaf.
+const MIC_STALL_MAX_PER_MIN = 3;
+const MIC_STALL_WINDOW_MS = 60_000;
 
 export interface ComposerMicButtonProps {
   onTranscript: (text: string) => void;
@@ -228,6 +232,12 @@ export const ComposerMicButton = ({
   const ctxStallSinceRef = useRef<number | null>(null);
   const silentSinceRef = useRef<number | null>(null);
   const meterTickRef = useRef(0);
+  // Speech energy from the meter against recognizer results: a take that heard the user and
+  // then produced nothing is stalled and gets a fresh recognizer without Voice mode noticing.
+  const stallRef = useRef(createStallDetector());
+  const stallTimesRef = useRef<number[]>([]);
+  // The next `start` event belongs to a recognizer we swapped in ourselves: no snapshot.
+  const silentStartRef = useRef(false);
   // The next listening change was made by us (a deaf replace or a forced restart): Voice mode
   // was told another way, or needs no word.
   const quietStopRef = useRef(false);
@@ -317,6 +327,41 @@ export const ComposerMicButton = ({
       failPendingStart("deaf");
     };
 
+    // A fresh recognizer started in place while the take stays "listening": Voice mode is told
+    // nothing, and the transcript already delivered is kept. False when start() threw.
+    const silentRestart = (): boolean => {
+      replace();
+      const next = recognitionRef.current;
+      if (!next) return false;
+      silentStartRef.current = true;
+      startSeenRef.current = false;
+      audioStartSeenRef.current = false;
+      recognizerSoundSeenRef.current = false;
+      lastRecognizerActivityRef.current = Date.now();
+      stallRef.current.reset(Date.now());
+      try {
+        next.start();
+      } catch {
+        silentStartRef.current = false;
+        return false;
+      }
+      // If the new recognizer never answers, the no-audiostart check still catches it.
+      armLiveness();
+      return true;
+    };
+
+    const handleStall = (sinceResultMs: number, now: number) => {
+      logVoice("mic stalled", String(sinceResultMs));
+      const recent = stallTimesRef.current.filter((t) => now - t < MIC_STALL_WINDOW_MS);
+      if (recent.length >= MIC_STALL_MAX_PER_MIN) {
+        stallTimesRef.current = recent;
+        reportDeaf("stalled repeatedly");
+        return;
+      }
+      stallTimesRef.current = [...recent, now];
+      if (!silentRestart()) reportDeaf("stall restart failed");
+    };
+
     const checkLiveness = () => {
       if (!voiceTakeRef.current || !listeningRef.current) return;
       const now = Date.now();
@@ -328,6 +373,14 @@ export const ComposerMicButton = ({
       ) {
         reportDeaf("no audiostart");
         return;
+      }
+      // Speech heard, then quiet, and no result since: the recognizer stalled.
+      if (permissionRef.current !== "other" && now - meterTickRef.current <= MIC_METER_FRESH_MS) {
+        const stalledFor = stallRef.current.evaluate(now);
+        if (stalledFor !== null) {
+          handleStall(stalledFor, now);
+          return;
+        }
       }
       // The meter never decides alone: it counts only after the recognizer itself has shown
       // no activity for a while (an early soundstart does not switch the checks off for good).
@@ -386,7 +439,8 @@ export const ComposerMicButton = ({
         setError(null);
         setIsListening(true);
         // Snapshot point: let the parent record the text so Esc can revert to it.
-        onVoiceStartRef.current?.();
+        if (silentStartRef.current) silentStartRef.current = false;
+        else onVoiceStartRef.current?.();
       };
       const handleEnd = () => {
         if (!current() || serverTakeOwnsState()) return;
@@ -461,6 +515,7 @@ export const ComposerMicButton = ({
         recognizerSoundSeenRef.current = true;
         resultSinceStopRef.current = true;
         lastRecognizerActivityRef.current = Date.now();
+        stallRef.current.result(Date.now());
         // Drop late events that arrive after the composer went disabled, or after
         // an Esc discard the parent has already reverted.
         if (disabledRef.current || discardingRef.current) return;
@@ -474,6 +529,27 @@ export const ComposerMicButton = ({
         }
         const trimmed = finalTranscript.trim();
         if (trimmed) onTranscriptRef.current(trimmed);
+        let interimChars = 0;
+        for (let i = speechEvent.resultIndex; i < speechEvent.results.length; i += 1) {
+          if (!speechEvent.results[i].isFinal) {
+            interimChars += (speechEvent.results[i][0]?.transcript ?? "").length;
+          }
+        }
+        if (trimmed) logVoice("mic result", `final ${trimmed.length}`);
+        else if (interimChars > 0) logVoice("mic result", `interim ${interimChars}`);
+        // WebKit's continuous mode stops delivering after its first final: take a fresh
+        // recognizer straight away so it never has to deliver a second one. Not while a stop
+        // is under way, and not on Chrome.
+        if (
+          trimmed &&
+          voiceTakeRef.current &&
+          listeningRef.current &&
+          stopWatchdogRef.current === null &&
+          isWebKitSpeech()
+        ) {
+          logVoice("mic recycle after final");
+          if (!silentRestart()) reportDeaf("recycle failed");
+        }
       };
 
       recognition.addEventListener("start", handleStart);
@@ -769,6 +845,7 @@ export const ComposerMicButton = ({
           const el = bars[i];
           if (el) el.style.transform = `scaleY(${scale})`;
         }
+        stallRef.current.feed(total / BAR_BINS.length, frameAt);
         publishMicLevel((total / BAR_BINS.length) * 1.6);
         publishVoiceBins(data);
         rafId = requestAnimationFrame(tick);
@@ -963,6 +1040,8 @@ export const ComposerMicButton = ({
         recognizerSoundSeenRef.current = false;
         lastRecognizerActivityRef.current = 0;
         browserStartPendingRef.current = true;
+        silentStartRef.current = false;
+        stallRef.current.reset(Date.now());
         recognition.start();
       }
     } catch {
