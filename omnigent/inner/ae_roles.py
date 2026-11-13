@@ -105,6 +105,9 @@ BALANCED: dict[str, Any] = {
 }
 SOLO = "solo"
 HELPER_KEY = "ae_helper"
+#: Set beside :data:`HELPER_KEY` when the judge is available to the helper's owner: the
+#: helper notice then also carries :data:`_JUDGE_LINE`.
+HELPER_JUDGE_KEY = "ae_helper_judge"
 HELPER_NOTICE = (
     "You are a helper session started by a lead session. Do the task you were given and "
     "report back to it; do not start other sessions or bring in other agents. Use your own "
@@ -324,7 +327,10 @@ def with_roles(
     :func:`effective_mode`).
     """
     if _is_child(conv):
-        return {HELPER_KEY: True}
+        helper: dict[str, object] = {HELPER_KEY: True}
+        if _judge_available(_owner(conv, store)):
+            helper[HELPER_JUDGE_KEY] = True
+        return helper
     try:
         roles = resolve_roles(conv, store)
     except Exception:  # noqa: BLE001 (the notice must never break a message)
@@ -591,12 +597,13 @@ def _judge_available(owner: str) -> bool:
 
 
 _JUDGE_LINE = (
-    "Decision-1 judge: before you settle one of these yourself, call ask_judge: picking "
-    "between two or more approaches, full test suite or scoped tests, asking for review now "
-    "or fixing more, or whether work is ready to hand off. In Claude Code it is a deferred "
-    'tool: load it first with ToolSearch query "select:mcp__ae__ask_judge" (Codex: call it '
-    "directly). Write the question in neutral words with no names, paths or quoted text. If "
-    "it answers with low_confidence, errors, or is missing, decide yourself."
+    "Decision-1 judge: for every small choice with clear options (which approach, which file "
+    "or step first, scoped or full tests, retry or change tack, fix more or ask for review, "
+    "ask the user or go on, ready to hand off), call ask_judge, then act on its answer unless "
+    "it says low_confidence. Gather the open choices and ask up to five in one call, each "
+    "with a neutral context line saying what it is about; a call takes about half a second. "
+    'Load it once at the start: ToolSearch query "select:mcp__ae__ask_judge" (Codex: call it '
+    "directly). No names, paths or quoted text; if it errors or is missing, decide yourself."
 )
 
 
@@ -703,6 +710,8 @@ def append_roles(text: str | None, metadata: Any) -> str | None:
     :data:`HELPER_NOTICE` alone.
     """
     if isinstance(metadata, dict) and metadata.get(HELPER_KEY) is True:
+        if metadata.get(HELPER_JUDGE_KEY) is True:
+            return f"{HELPER_NOTICE} {_JUDGE_LINE}"
         return HELPER_NOTICE
     block = render_roles(metadata.get("ae_roles")) if isinstance(metadata, dict) else None
     if text and block:
