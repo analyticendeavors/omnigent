@@ -475,6 +475,9 @@ export function useAeVoiceMode({
   // Playback ending starts a tail in which a heard final is still taken for its echo.
   const audible = speaking || playing;
   useEffect(() => {
+    controller.current?.setAssistantAudible?.(audible);
+  }, [audible, controller]);
+  useEffect(() => {
     if (audible) {
       approvalPlaybackSeen.current = true;
       approvalReadyAt.current = Number.POSITIVE_INFINITY;

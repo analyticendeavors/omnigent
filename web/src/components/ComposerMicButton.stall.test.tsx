@@ -10,6 +10,7 @@ type Handlers = Record<string, (event: unknown) => void>;
 let instances: { handlers: Handlers }[];
 let startSpy: ReturnType<typeof vi.fn>;
 let abortSpy: ReturnType<typeof vi.fn>;
+let stopSpy: ReturnType<typeof vi.fn>;
 let frames: (() => void)[];
 /** The byte every analyser bin reads: ~140 is speech, ~5 is a quiet room. */
 let binValue: number;
@@ -61,6 +62,7 @@ beforeEach(() => {
   instances = [];
   startSpy = vi.fn();
   abortSpy = vi.fn();
+  stopSpy = vi.fn();
   frames = [];
   binValue = QUIET;
   originalUa = Object.getOwnPropertyDescriptor(navigator, "userAgent");
@@ -69,7 +71,7 @@ beforeEach(() => {
     interimResults = false;
     lang = "en-US";
     start = startSpy;
-    stop = vi.fn();
+    stop = stopSpy;
     abort = abortSpy;
     own: Handlers = {};
     constructor() {
@@ -153,13 +155,14 @@ function revive() {
 }
 
 describe("ComposerMicButton (stall watchdog)", () => {
-  it("speech energy then 2.5 s quiet with no result swaps the recognizer without a stop report", async () => {
+  it("speech energy then 3.5 s quiet with no result swaps the recognizer without a stop report", async () => {
     const { controller, onListeningChange, onVoiceStart } = await listenVoice();
     await run(SPEECH, 1000);
-    await run(QUIET, 3000);
+    await run(QUIET, 4000);
     expect(instances).toHaveLength(2);
     expect(startSpy).toHaveBeenCalledTimes(2);
-    expect(abortSpy).toHaveBeenCalledTimes(1);
+    expect(abortSpy).not.toHaveBeenCalled();
+    expect(stopSpy).toHaveBeenCalledTimes(1);
     expect(onListeningChange).not.toHaveBeenCalledWith(false);
     expect(onListeningChange).not.toHaveBeenCalledWith(false, "deaf");
     expect(controller.current?.isListening()).toBe(true);
@@ -199,15 +202,133 @@ describe("ComposerMicButton (stall watchdog)", () => {
       // oxlint-disable-next-line no-await-in-loop -- each stall needs its own clock
       await run(SPEECH, 1000);
       // oxlint-disable-next-line no-await-in-loop
-      await run(QUIET, 3000);
+      await run(QUIET, 4000);
       expect(instances).toHaveLength(i + 2);
       revive();
     }
     expect(onListeningChange).not.toHaveBeenCalledWith(false, "deaf");
     await run(SPEECH, 1000);
-    await run(QUIET, 3000);
+    await run(QUIET, 4000);
     expect(onListeningChange.mock.calls.filter((c) => c[0] === false)).toEqual([[false, "deaf"]]);
     expect(formatVoiceLog()).toContain("mic deaf stalled repeatedly");
+  });
+});
+
+describe("ComposerMicButton (slow finals and restart failures)", () => {
+  it("a final at 2.6 s or 3 s is delivered once and no stall fires", async () => {
+    for (const quietMs of [2600, 3000]) {
+      cleanup();
+      instances.length = 0;
+      // oxlint-disable-next-line no-await-in-loop -- one take per case
+      const { onTranscript } = await listenVoice();
+      // oxlint-disable-next-line no-await-in-loop
+      await run(SPEECH, 1000);
+      // oxlint-disable-next-line no-await-in-loop
+      await run(QUIET, quietMs);
+      act(() => instances[0].handlers.result?.(resultEvent("slow one")));
+      // oxlint-disable-next-line no-await-in-loop
+      await run(QUIET, 4000);
+      expect(onTranscript).toHaveBeenCalledTimes(1);
+      expect(instances).toHaveLength(1);
+      expect(formatVoiceLog()).not.toContain("mic stalled");
+    }
+  });
+
+  it("a final from the old recognizer inside the late window is delivered once", async () => {
+    const { onTranscript } = await listenVoice();
+    await run(SPEECH, 1000);
+    await run(QUIET, 3700);
+    expect(instances).toHaveLength(2);
+    expect(onTranscript).not.toHaveBeenCalled();
+    act(() => instances[0].handlers.result?.(resultEvent("late words")));
+    act(() => instances[0].handlers.result?.(resultEvent("late words")));
+    expect(onTranscript).toHaveBeenCalledTimes(1);
+    expect(onTranscript).toHaveBeenCalledWith("late words");
+    expect(formatVoiceLog()).toContain("mic late final delivered");
+  });
+
+  it("audioend counts as the end of the speech for the quiet window", async () => {
+    await listenVoice();
+    await run(SPEECH, 1000);
+    await run(QUIET, 1500);
+    act(() => instances[0].handlers.audioend?.({}));
+    await run(QUIET, 3000);
+    expect(instances).toHaveLength(1);
+    await run(QUIET, 1000);
+    expect(instances).toHaveLength(2);
+  });
+
+  it("a replacement that ends before it starts reports deaf, not a manual stop", async () => {
+    const { controller, onListeningChange } = await listenVoice();
+    await run(SPEECH, 1000);
+    await run(QUIET, 4000);
+    expect(instances).toHaveLength(2);
+    act(() => instances[1].handlers.end?.({}));
+    expect(onListeningChange.mock.calls.filter((c) => c[0] === false)).toEqual([[false, "deaf"]]);
+    expect(formatVoiceLog()).toContain("mic deaf stall restart failed");
+    expect(controller.current?.isListening()).toBe(false);
+  });
+
+  it("a replacement that errors before it starts reports deaf too", async () => {
+    const { onListeningChange } = await listenVoice();
+    await run(SPEECH, 1000);
+    await run(QUIET, 4000);
+    act(() => instances[1].handlers.error?.({ error: "audio-capture" }));
+    expect(onListeningChange.mock.calls.filter((c) => c[0] === false)).toEqual([[false, "deaf"]]);
+  });
+});
+
+describe("ComposerMicButton (assistant audio, budget, hidden tab)", () => {
+  it("playback energy with no results never stalls", async () => {
+    const { controller } = await listenVoice();
+    act(() => controller.current?.setAssistantAudible?.(true));
+    await run(SPEECH, 3000);
+    await run(QUIET, 5000);
+    expect(instances).toHaveLength(1);
+    act(() => controller.current?.setAssistantAudible?.(false));
+    await run(SPEECH, 500);
+    await run(QUIET, 5000);
+    expect(instances).toHaveLength(1);
+    // The user speaking after the tail still counts.
+    await run(SPEECH, 1000);
+    await run(QUIET, 4000);
+    expect(instances).toHaveLength(2);
+  });
+
+  it("a new Voice mode take makes the stall budget whole again", async () => {
+    const { controller, onListeningChange } = await listenVoice();
+    for (let i = 0; i < 3; i += 1) {
+      // oxlint-disable-next-line no-await-in-loop
+      await run(SPEECH, 1000);
+      // oxlint-disable-next-line no-await-in-loop
+      await run(QUIET, 4000);
+      revive();
+    }
+    expect(instances).toHaveLength(4);
+    act(() => controller.current?.stop());
+    act(() => instances[instances.length - 1].handlers.end?.({}));
+    act(() => controller.current?.start());
+    act(() => {
+      const live = instances[instances.length - 1].handlers;
+      live.start?.({});
+      live.audiostart?.({});
+    });
+    await run(SPEECH, 1000);
+    await run(QUIET, 4000);
+    expect(onListeningChange).not.toHaveBeenCalledWith(false, "deaf");
+    expect(instances.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it("a hidden tab starts the detector clean", async () => {
+    await listenVoice();
+    await run(SPEECH, 1000);
+    Object.defineProperty(document, "hidden", { configurable: true, value: true });
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    Object.defineProperty(document, "hidden", { configurable: true, value: false });
+    await run(QUIET, 5000);
+    expect(instances).toHaveLength(1);
   });
 });
 

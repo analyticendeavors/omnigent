@@ -101,6 +101,9 @@ const MIC_METER_FRESH_MS = 1500;
 // Stall restarts (speech heard, no result) allowed per minute before the take is called deaf.
 const MIC_STALL_MAX_PER_MIN = 3;
 const MIC_STALL_WINDOW_MS = 60_000;
+// The assistant's own voice reaching the mic is not the user: no stall checks while it plays
+// and for this long after.
+const MIC_STALL_AUDIBLE_TAIL_MS = 1500;
 
 export interface ComposerMicButtonProps {
   onTranscript: (text: string) => void;
@@ -236,6 +239,9 @@ export const ComposerMicButton = ({
   // then produced nothing is stalled and gets a fresh recognizer without Voice mode noticing.
   const stallRef = useRef(createStallDetector());
   const stallTimesRef = useRef<number[]>([]);
+  // Voice mode's assistant is speaking (or just did): the stall detector is off.
+  const assistantAudibleRef = useRef(false);
+  const audibleUntilRef = useRef(0);
   // The next `start` event belongs to a recognizer we swapped in ourselves: no snapshot.
   const silentStartRef = useRef(false);
   // The next listening change was made by us (a deaf replace or a forced restart): Voice mode
@@ -314,6 +320,7 @@ export const ComposerMicButton = ({
     // take failed, so it retries once and then shows a mic it can restart by tap.
     const reportDeaf = (reason: string) => {
       logVoice("mic deaf", reason);
+      silentStartRef.current = false;
       clearLiveness();
       clearStartWatchdog();
       clearStopWatchdog();
@@ -329,8 +336,16 @@ export const ComposerMicButton = ({
 
     // A fresh recognizer started in place while the take stays "listening": Voice mode is told
     // nothing, and the transcript already delivered is kept. False when start() threw.
-    const silentRestart = (): boolean => {
-      replace();
+    const silentRestart = (keepLateFinal = false): boolean => {
+      if (keepLateFinal) {
+        // Ask the old recognizer to wrap up: a final it still owes is passed on once.
+        try {
+          recognitionRef.current?.stop();
+        } catch {
+          // Nothing to stop.
+        }
+      }
+      replace(keepLateFinal);
       const next = recognitionRef.current;
       if (!next) return false;
       silentStartRef.current = true;
@@ -359,7 +374,7 @@ export const ComposerMicButton = ({
         return;
       }
       stallTimesRef.current = [...recent, now];
-      if (!silentRestart()) reportDeaf("stall restart failed");
+      if (!silentRestart(true)) reportDeaf("stall restart failed");
     };
 
     const checkLiveness = () => {
@@ -375,7 +390,12 @@ export const ComposerMicButton = ({
         return;
       }
       // Speech heard, then quiet, and no result since: the recognizer stalled.
-      if (permissionRef.current !== "other" && now - meterTickRef.current <= MIC_METER_FRESH_MS) {
+      // (armLiveness already refuses a take whose permission is in doubt.)
+      if (
+        !assistantAudibleRef.current &&
+        now >= audibleUntilRef.current &&
+        now - meterTickRef.current <= MIC_METER_FRESH_MS
+      ) {
         const stalledFor = stallRef.current.evaluate(now);
         if (stalledFor !== null) {
           handleStall(stalledFor, now);
@@ -445,6 +465,12 @@ export const ComposerMicButton = ({
       const handleEnd = () => {
         if (!current() || serverTakeOwnsState()) return;
         logVoice("mic event end");
+        if (silentStartRef.current) {
+          // The swapped-in recognizer ended before it started: that is a failed restart, not a
+          // pause. Tell Voice mode the take went deaf so it retries.
+          reportDeaf("stall restart failed");
+          return;
+        }
         clearStartWatchdog();
         clearStopWatchdog();
         clearLiveness();
@@ -460,6 +486,15 @@ export const ComposerMicButton = ({
       };
       const handleError = (event: Event) => {
         if (!current() || serverTakeOwnsState()) return;
+        if (silentStartRef.current) {
+          const failed = (event as SpeechRecognitionErrorEventLike).error;
+          if (failed !== "not-allowed" && failed !== "service-not-allowed") {
+            logVoice("mic error", String(failed));
+            reportDeaf("stall restart failed");
+            return;
+          }
+          silentStartRef.current = false;
+        }
         clearStartWatchdog();
         clearStopWatchdog();
         clearLiveness();
@@ -509,6 +544,12 @@ export const ComposerMicButton = ({
       const handleAudioEnd = () => {
         if (!current()) return;
         logVoice("mic event audioend");
+        stallRef.current.speechEnd(Date.now());
+      };
+      const handleSpeechEnd = () => {
+        if (!current()) return;
+        logVoice("mic event speechend");
+        stallRef.current.speechEnd(Date.now());
       };
       const handleResult = (event: Event) => {
         if (!current()) return;
@@ -560,6 +601,7 @@ export const ComposerMicButton = ({
       recognition.addEventListener("soundstart", handleSoundStart);
       recognition.addEventListener("speechstart", handleSpeechStart);
       recognition.addEventListener("audioend", handleAudioEnd);
+      recognition.addEventListener("speechend", handleSpeechEnd);
       detachers.set(recognition, () => {
         recognition.removeEventListener("start", handleStart);
         recognition.removeEventListener("end", handleEnd);
@@ -569,6 +611,7 @@ export const ComposerMicButton = ({
         recognition.removeEventListener("soundstart", handleSoundStart);
         recognition.removeEventListener("speechstart", handleSpeechStart);
         recognition.removeEventListener("audioend", handleAudioEnd);
+        recognition.removeEventListener("speechend", handleSpeechEnd);
       });
       return recognition;
     };
@@ -678,6 +721,7 @@ export const ComposerMicButton = ({
     let stream: MediaStream | null = null;
     let audioCtx: AudioContext | null = null;
     let rafId: number | null = null;
+    let removeVisibility: (() => void) | null = null;
     // Snapshot so cleanup doesn't read a stale .current (exhaustive-deps).
     const bars = barRefs.current;
 
@@ -820,6 +864,13 @@ export const ComposerMicButton = ({
       const node = analyser;
       const data = new Uint8Array(node.frequencyBinCount);
 
+      let lastStallFrame = Date.now();
+      const onVisibility = () => {
+        if (document.hidden) stallRef.current.reset(Date.now());
+      };
+      document.addEventListener("visibilitychange", onVisibility);
+      removeVisibility = () => document.removeEventListener("visibilitychange", onVisibility);
+
       const tick = () => {
         node.getByteFrequencyData(data);
         let signal = false;
@@ -845,7 +896,13 @@ export const ComposerMicButton = ({
           const el = bars[i];
           if (el) el.style.transform = `scaleY(${scale})`;
         }
-        stallRef.current.feed(total / BAR_BINS.length, frameAt);
+        // Not while the assistant talks (its sound is not the user), and a frame after a long
+        // gap (a hidden or throttled tab) starts the detector clean.
+        if (frameAt - lastStallFrame > MIC_METER_FRESH_MS) stallRef.current.reset(frameAt);
+        lastStallFrame = frameAt;
+        if (!assistantAudibleRef.current && frameAt >= audibleUntilRef.current) {
+          stallRef.current.feed(total / BAR_BINS.length, frameAt);
+        }
         publishMicLevel((total / BAR_BINS.length) * 1.6);
         publishVoiceBins(data);
         rafId = requestAnimationFrame(tick);
@@ -857,6 +914,7 @@ export const ComposerMicButton = ({
 
     return () => {
       cancelled = true;
+      removeVisibility?.();
       meterMutedSinceRef.current = null;
       ctxStallSinceRef.current = null;
       silentSinceRef.current = null;
@@ -1126,6 +1184,8 @@ export const ComposerMicButton = ({
         // A new start replaces any earlier withdrawn one.
         withdrawRef.current = false;
         voiceTakeRef.current = true;
+        // A new Voice mode take: the stall budget is whole again.
+        stallTimesRef.current = [];
         if (browserStartPendingRef.current) {
           watchPermission();
           armWatchdog();
@@ -1147,6 +1207,8 @@ export const ComposerMicButton = ({
         if (listeningRef.current && pathRef.current !== "browser") return;
         if (pathRef.current === "browser") {
           logVoice("mic restart", listeningRef.current ? "while listening" : undefined);
+          stallTimesRef.current = [];
+          silentStartRef.current = false;
           clearStartWatchdog();
           clearStopWatchdog();
           clearLiveness();
@@ -1185,6 +1247,14 @@ export const ComposerMicButton = ({
         }
       },
       isListening: () => listeningRef.current,
+      setAssistantAudible: (audible) => {
+        const now = Date.now();
+        if (audible === assistantAudibleRef.current) return;
+        assistantAudibleRef.current = audible;
+        // Both edges forget what the meter heard: playback energy is not the user's speech.
+        if (!audible) audibleUntilRef.current = now + MIC_STALL_AUDIBLE_TAIL_MS;
+        stallRef.current.reset(now);
+      },
     };
     return () => {
       controller.current = null;
