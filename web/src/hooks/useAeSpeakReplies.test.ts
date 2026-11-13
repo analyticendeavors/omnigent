@@ -174,7 +174,7 @@ describe("useAeSpeakReplies echo window", () => {
 
 describe("useAeSpeakReplies", () => {
   it("sends a cloud voice's sentences to the server, not the device", () => {
-    const fetchMock = vi.fn(() => new Promise<Response>(() => {}));
+    const fetchMock = hangingFetch();
     vi.stubGlobal("fetch", fetchMock);
     mount(true, "c1", { kind: "cloud", id: "en-US-AvaMultilingualNeural" });
     setStore({ blocks: [final("r1", "item-1", "Whole reply.")] });
@@ -192,7 +192,7 @@ describe("useAeSpeakReplies", () => {
   });
 
   it("readLast sends the chosen cloud voice and rate to the server", () => {
-    const fetchMock = vi.fn(() => new Promise<Response>(() => {}));
+    const fetchMock = hangingFetch();
     vi.stubGlobal("fetch", fetchMock);
     const { result } = mount(false, "c1", { kind: "cloud", id: "rocky-xtts" });
     setStore({ blocks: [final("r1", "a", "Last reply.", { createdAtS: 1 })] });
@@ -209,10 +209,7 @@ describe("useAeSpeakReplies", () => {
   });
 
   it("readLast primes the cloud playback after stop(), not before", () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(() => new Promise<Response>(() => {})),
-    );
+    vi.stubGlobal("fetch", hangingFetch());
     const order: string[] = [];
     registerCloudPrimer(() => order.push(`prime@cancel${synth.cancelCount}`));
     const { result } = mount(false, "c1", { kind: "cloud", id: "rocky-xtts" });
@@ -243,10 +240,10 @@ describe("useAeSpeakReplies", () => {
     mount();
     setStore({ blocks: [chunk("r1", "Alpha. Be"), chunk("r1", "ta. Gam")] });
     flush();
-    expect(synth.texts()).toEqual(["Alpha. Beta."]);
+    expect(synth.texts()).toEqual(["Alpha.", "Beta."]);
     setStore({ blocks: [final("r1", "item-1", "Alpha. Beta. Gamma.")] });
     flush();
-    expect(synth.texts()).toEqual(["Alpha. Beta.", "Gamma."]);
+    expect(synth.texts()).toEqual(["Alpha.", "Beta.", "Gamma."]);
   });
 
   it("speaks a final that was never streamed whole", () => {
@@ -310,6 +307,78 @@ describe("useAeSpeakReplies", () => {
       vi.advanceTimersByTime(20000);
     });
     expect(synth.texts()).toEqual([WORKING_CUE_TEXT]);
+  });
+
+  it("says the cue with the device voice when a cloud voice is selected", () => {
+    const fetchMock = hangingFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    mount(true, "c1", CLOUD_CHOICE);
+    setStore({ status: "streaming", ...send() });
+    act(() => {
+      vi.advanceTimersByTime(WORKING_CUE_DELAY_MS + 10);
+    });
+    expect(synth.texts()).toEqual([WORKING_CUE_TEXT]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("cuts the cue when the real reply starts and speaks the reply with the cloud voice", () => {
+    const fetchMock = hangingFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    mount(true, "c1", CLOUD_CHOICE);
+    setStore({ status: "streaming", ...send() });
+    act(() => {
+      vi.advanceTimersByTime(WORKING_CUE_DELAY_MS + 10);
+    });
+    const cancels = synth.cancelCount;
+    setStore({ blocks: [live("r1", "Here it is. ")] });
+    flush();
+    expect(synth.cancelCount).toBeGreaterThan(cancels);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body)).text).toBe("Here it is.");
+    vi.unstubAllGlobals();
+  });
+
+  it("cuts the cue before a device reply, so the reply is not queued behind it", () => {
+    mount(true, "c1", { kind: "device", id: "v1" });
+    setStore({ status: "streaming", ...send() });
+    act(() => {
+      vi.advanceTimersByTime(WORKING_CUE_DELAY_MS + 10);
+    });
+    const cancels = synth.cancelCount;
+    setStore({ blocks: [live("r1", "Here it is. ")] });
+    flush();
+    expect(synth.cancelCount).toBeGreaterThan(cancels);
+    expect(synth.texts().at(-1)).toBe("Here it is.");
+  });
+
+  it("opens each reply with a short phrase, then keeps the normal chunking", () => {
+    mount(true, "c1", { kind: "device", id: "v1" });
+    setStore({
+      blocks: [
+        final(
+          "r1",
+          "item-1",
+          "Yes, I checked the build and it passed, so the release can go out today. Done. Fine.",
+        ),
+      ],
+    });
+    flush();
+    expect(synth.texts()).toEqual([
+      "Yes, I checked the build and it passed,",
+      "so the release can go out today. Done. Fine.",
+    ]);
+  });
+
+  it("makes only the first speech of a response short while it streams", () => {
+    mount(true, "c1", { kind: "device", id: "v1" });
+    setStore({ blocks: [chunk("r1", "One. Two. ")] });
+    flush();
+    expect(synth.texts()).toEqual(["One.", "Two."]);
+    setStore({ blocks: [chunk("r1", "One. Two. "), chunk("r1", "Three. Four. ")] });
+    flush();
+    expect(synth.texts()).toEqual(["One.", "Two.", "Three. Four."]);
   });
 
   it("skips the working cue when text arrives first", () => {
@@ -381,7 +450,7 @@ describe("useAeSpeakReplies", () => {
     flush();
     setStore({ blocks: [chunk("r1", "Alpha. Beta. "), f1, chunk("r1", "Gamma. Delta. "), f2] });
     flush();
-    expect(synth.texts()).toEqual(["Alpha. Beta.", "Gamma. Delta."]);
+    expect(synth.texts()).toEqual(["Alpha.", "Beta.", "Gamma. Delta."]);
   });
 
   it("does not repeat a final that differs from the preview in whitespace", () => {
@@ -390,7 +459,7 @@ describe("useAeSpeakReplies", () => {
     flush();
     setStore({ blocks: [final("r1", "i1", "One two.   Three four.\n")] });
     flush();
-    expect(synth.texts()).toEqual(["One two. Three four."]);
+    expect(synth.texts()).toEqual(["One two.", "Three four."]);
   });
 
   it("speaks only the sentence a final adds", () => {
@@ -399,7 +468,7 @@ describe("useAeSpeakReplies", () => {
     flush();
     setStore({ blocks: [final("r1", "i1", "One. Two. Three. Four.")] });
     flush();
-    expect(synth.texts()).toEqual(["One. Two.", "Three. Four."]);
+    expect(synth.texts()).toEqual(["One.", "Two.", "Three. Four."]);
   });
 
   it("accepts a refetched final only for a response streamed live", () => {

@@ -10,6 +10,7 @@ export const WORKING_CUE_TEXT = "Working on it.";
 export const WORKING_CUE_DELAY_MS = 6000;
 export const FAST_EFFORT = "low";
 export const RATE_FASTER = 1.25;
+export const RATE_FASTEST = 1.5;
 
 const SPEAK_KEY = "omnigent:ae-speak-replies:";
 const FAST_STATE_KEY = "omnigent:ae-speak-fast:";
@@ -102,11 +103,14 @@ export function writeVoiceChoice(choice: VoiceChoice | null): void {
 }
 
 export function readRate(): number {
-  return getItem(SPEAK_RATE_KEY) === String(RATE_FASTER) ? RATE_FASTER : 1;
+  const raw = getItem(SPEAK_RATE_KEY);
+  if (raw === String(RATE_FASTER)) return RATE_FASTER;
+  if (raw === String(RATE_FASTEST)) return RATE_FASTEST;
+  return 1;
 }
 
 export function writeRate(rate: number): void {
-  setItem(SPEAK_RATE_KEY, rate === RATE_FASTER ? String(RATE_FASTER) : null);
+  setItem(SPEAK_RATE_KEY, rate === RATE_FASTER || rate === RATE_FASTEST ? String(rate) : null);
 }
 
 export function isSpeechSupported(): boolean {
@@ -179,6 +183,8 @@ export interface SpeakOptions {
   rate: number;
   /** A cloud voice id; only the cloud speaker reads it. */
   cloudVoiceId?: string | null;
+  /** The first chunk is a short phrase, so the voice starts sooner (first speak of a reply). */
+  shortFirst?: boolean;
 }
 
 // The sentence being spoken, for the Voice panel. The chat's hook registers the receiver.
@@ -340,7 +346,7 @@ export function createSpeaker(): Speaker {
   return {
     speak(text, opts) {
       if (!isSpeechSupported()) return;
-      const chunks = splitForSpeech(text);
+      const chunks = splitForSpeech(text, undefined, { shortFirst: opts.shortFirst });
       if (chunks.length === 0) return;
       const gen = generation;
       pending += chunks.length;

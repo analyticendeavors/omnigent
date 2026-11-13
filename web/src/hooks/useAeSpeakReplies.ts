@@ -71,11 +71,11 @@ function getSpeaker(): Speaker {
   };
 }
 
-function say(text: string, voice: VoiceChoice | null, rate: number): void {
+function say(text: string, voice: VoiceChoice | null, rate: number, shortFirst = false): void {
   if (voice?.kind === "cloud") {
-    getCloud().speak(text, { voiceURI: null, rate, cloudVoiceId: voice.id });
+    getCloud().speak(text, { voiceURI: null, rate, cloudVoiceId: voice.id, shortFirst });
   } else {
-    getDevice().speak(text, { voiceURI: voice?.id ?? null, rate });
+    getDevice().speak(text, { voiceURI: voice?.id ?? null, rate, shortFirst });
   }
 }
 
@@ -193,6 +193,10 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
     // Sentences already spoken this turn, so a final never repeats its preview.
     const spoken = new Set<string>();
     let cueTimer: ReturnType<typeof setTimeout> | null = null;
+    // The Working on it cue is playing (it always uses the device voice): the real reply cuts it.
+    let cueActive = false;
+    // Responses whose first chunk was spoken: later text of a response keeps the normal chunking.
+    const started = new Set<string>();
     let spokenThisTurn = false;
     let synced = false;
     let prevStatus: "idle" | "streaming" = "idle";
@@ -241,7 +245,15 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
       if (getVoiceSnapshot(chatId).barged) return;
       spokenThisTurn = true;
       clearCue();
-      say(fresh.join(" "), lockFor(responseId), optsRef.current.rate);
+      // The cue must not delay the real reply, nor queue ahead of its first chunk.
+      if (cueActive) {
+        cueActive = false;
+        getDevice().stop();
+      }
+      // The first speech of a reply opens with a short phrase so the voice starts sooner.
+      const shortFirst = !started.has(responseId);
+      started.add(responseId);
+      say(fresh.join(" "), lockFor(responseId), optsRef.current.rate, shortFirst);
     };
     // Existing finals are handled and in-flight sources start at their current length, so
     // nothing already on screen is read back. Only a live source seeds the spoken set, and
@@ -253,6 +265,7 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
       trails.clear();
       spoken.clear();
       locks.clear();
+      started.clear();
       for (const b of blocks) if (b.ctx.itemId) handled.add(b.ctx.itemId);
       const scan = scanBlocks(blocks);
       for (const f of scan.finals) handled.add(f.key);
@@ -303,13 +316,21 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
         speaker.stop();
         snapshot(state.blocks, false);
         spokenThisTurn = false;
+        cueActive = false;
         clearCue();
         cueTimer = setTimeout(() => {
           cueTimer = null;
           if (!spokenThisTurn) {
             spokenThisTurn = true;
             if (!locks.has(CUE_LOCK)) locks.set(CUE_LOCK, optsRef.current.voice);
-            say(WORKING_CUE_TEXT, locks.get(CUE_LOCK) ?? null, optsRef.current.rate);
+            // A cloud voice may take seconds to make the cue: the device voice says it at once.
+            const cueVoice = locks.get(CUE_LOCK) ?? null;
+            cueActive = true;
+            say(
+              WORKING_CUE_TEXT,
+              cueVoice?.kind === "cloud" ? null : cueVoice,
+              optsRef.current.rate,
+            );
           }
         }, WORKING_CUE_DELAY_MS);
         prevStatus = state.status;
@@ -357,6 +378,7 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
       staleResponses.clear();
       spoken.clear();
       locks.clear();
+      started.clear();
     };
   }, [enabled, chatId]);
 

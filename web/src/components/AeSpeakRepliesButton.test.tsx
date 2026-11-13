@@ -389,6 +389,124 @@ describe("AeSpeakRepliesButton", () => {
     expect(window.localStorage.getItem("omnigent:ae-speak-rate")).toBe("1.25");
   });
 
+  it("offers Fastest 1.5x below Faster and stores it", async () => {
+    renderButton();
+    const user = await openMenu();
+    await user.click(screen.getByTestId("ae-speak-rate-trigger"));
+    const fastest = await screen.findByTestId("ae-speak-rate-fastest");
+    expect(fastest).toHaveTextContent("Fastest");
+    expect(fastest).toHaveTextContent("1.5x");
+    expect(
+      screen.getByTestId("ae-speak-rate-faster").compareDocumentPosition(fastest) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    fastest.focus();
+    await user.keyboard("{Enter}");
+    expect(window.localStorage.getItem("omnigent:ae-speak-rate")).toBe("1.5");
+  });
+
+  it("shows a stored 1.5 as Fastest and reads an unknown stored speed as Normal", async () => {
+    window.localStorage.setItem("omnigent:ae-speak-rate", "1.5");
+    const { unmount } = renderButton();
+    await openMenu();
+    expect(screen.getByTestId("ae-speak-rate-trigger")).toHaveTextContent("Fastest");
+    unmount();
+    window.localStorage.setItem("omnigent:ae-speak-rate", "2");
+    renderButton();
+    await openMenu();
+    expect(screen.getByTestId("ae-speak-rate-trigger")).toHaveTextContent("Normal");
+  });
+
+  describe("Voice chat voice", () => {
+    const BOTH = [
+      { id: "rocky-xtts", name: "Rocky", provider: "rocky" },
+      { id: "en-US-AvaMultilingualNeural", name: "Ava", provider: "azure" },
+    ];
+    const lastReply = () =>
+      useChatStore.setState({
+        blocks: [
+          {
+            type: "text_done",
+            ctx: { agent: null, depth: 0, turn: 1, timestamp: 1, responseId: "r1", itemId: "i1" },
+            fullText: "The last reply.",
+            hasCodeBlocks: false,
+          },
+        ],
+      } as never);
+    function spyTts() {
+      const calls: string[] = [];
+      resetCloudVoicesCache();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((url: string, init?: RequestInit) => {
+          if (String(url).includes("/tts/voices")) {
+            return Promise.resolve(new Response(JSON.stringify({ voices: BOTH }), { status: 200 }));
+          }
+          if (String(url).includes("/v1/ae/tts")) calls.push(JSON.parse(String(init?.body)).voice);
+          // A failed sentence falls to the device voice; nothing stays in flight for later tests.
+          return Promise.resolve(new Response("no", { status: 500 }));
+        }),
+      );
+      return calls;
+    }
+
+    it("is listed with a hint, Same as Speak replies and every voice", async () => {
+      spyTts();
+      renderButton();
+      const user = await openMenu();
+      expect(screen.getByTestId("ae-hint-voice.chat_voice")).toBeInTheDocument();
+      expect(AE_SETTING_HINTS["voice.chat_voice"].hint).toMatch(/Rocky/);
+      expect(AE_SETTING_HINTS["voice.chat_voice"].hint.length).toBeLessThanOrEqual(140);
+      await waitFor(() =>
+        expect(screen.getByTestId("ae-voice-chat-voice-trigger")).toHaveTextContent("Ava"),
+      );
+      await user.click(screen.getByTestId("ae-voice-chat-voice-trigger"));
+      expect(await screen.findByTestId("ae-voice-chat-voice-same")).toHaveTextContent(
+        "Same as Speak replies",
+      );
+      const names = screen.getAllByTestId("ae-voice-chat-voice-option").map((o) => o.textContent);
+      expect(names).toEqual(expect.arrayContaining(["Rocky", "Ava", "Aria (Natural)"]));
+    });
+
+    it("saves the pick on this device", async () => {
+      spyTts();
+      renderButton();
+      const user = await openMenu();
+      await user.click(screen.getByTestId("ae-voice-chat-voice-trigger"));
+      (await screen.findByTestId("ae-voice-chat-voice-same")).focus();
+      await user.keyboard("{Enter}");
+      expect(window.localStorage.getItem("omnigent:ae-voice-chat-voice")).toBe("same");
+    });
+
+    it("Read last reply uses it only while Voice mode is on", async () => {
+      const calls = spyTts();
+      window.localStorage.setItem("omnigent:ae-speak-voice", "cloud:rocky-xtts");
+      lastReply();
+      renderButton();
+      const user = await openMenu();
+      await screen.findByText("Rocky");
+      await user.click(screen.getByTestId("ae-speak-read-last"));
+      await waitFor(() => expect(calls).toEqual(["rocky-xtts"]));
+      act(() => setVoiceOn("c1", true));
+      const user2 = await openMenu();
+      await user2.click(screen.getByTestId("ae-speak-read-last"));
+      await waitFor(() => expect(calls).toEqual(["rocky-xtts", "en-US-AvaMultilingualNeural"]));
+    });
+
+    it("Same as Speak replies keeps the Speak voice in Voice mode", async () => {
+      const calls = spyTts();
+      window.localStorage.setItem("omnigent:ae-speak-voice", "cloud:rocky-xtts");
+      window.localStorage.setItem("omnigent:ae-voice-chat-voice", "same");
+      lastReply();
+      renderButton();
+      const user = await openMenu();
+      await screen.findByText("Rocky");
+      act(() => setVoiceOn("c1", true));
+      await user.click(screen.getByTestId("ae-speak-read-last"));
+      await waitFor(() => expect(calls).toEqual(["rocky-xtts"]));
+    });
+  });
+
   describe("Microphone and Speaker rows", () => {
     const setSinkId = vi.fn();
     const mediaDevices = (list: Partial<MediaDeviceInfo>[]) =>
@@ -495,7 +613,7 @@ describe("AeSpeakRepliesButton", () => {
     renderButton();
     await openMenu();
     const triggers = document.querySelectorAll("[data-slot=tooltip-trigger]");
-    expect(triggers).toHaveLength(10);
+    expect(triggers).toHaveLength(11);
     for (const el of triggers) {
       const group = el.closest("span.items-center.gap-1\\.5");
       expect(group).not.toBeNull();

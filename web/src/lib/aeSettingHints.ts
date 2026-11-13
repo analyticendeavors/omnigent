@@ -255,6 +255,11 @@ export const AE_SETTING_HINTS = {
     hint: "Voice mode runs this chat on this model, then back on its own when Voice mode ends; a model you pick yourself stays. Default: newest Sonnet.",
     source: "tooltip",
   },
+  "voice.chat_voice": {
+    label: "Voice chat voice",
+    hint: "The voice Voice mode speaks with. Rocky's voice is slower, so the default is the fastest natural voice. Saved per device.",
+    source: "tooltip",
+  },
   "voice.snips": {
     label: "Send snips",
     hint: "Voice mode only: a picture you attach gets a spoken Got it. and goes with your next sentence, or alone after 10 s as Note this. Per device.",
@@ -272,7 +277,7 @@ export const AE_SETTING_HINTS = {
   },
   "voice.rate": {
     label: "Speed",
-    hint: "How fast replies are read. Normal is the default; Faster is 1.25 times.",
+    hint: "How fast replies are read. Normal is the default; Faster is 1.25 times, Fastest 1.5 times.",
     source: "existing",
   },
   "voice.microphone": {

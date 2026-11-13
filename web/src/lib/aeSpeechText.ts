@@ -171,10 +171,49 @@ export function normalizeSentence(sentence: string): string {
     .trim();
 }
 
+/** A first sentence of this many words or fewer is spoken whole. */
+export const FIRST_PHRASE_MAX_WORDS = 10;
+/** A longer first sentence is cut at the first clause boundary after this many words. */
+export const FIRST_PHRASE_MIN_WORDS = 6;
+
+const CLAUSE_BOUNDARY = /[,;:](?=\s)|\s[-\u2013\u2014]+\s|[\u2013\u2014]/g;
+
+function wordCount(text: string): number {
+  return text.split(/\s+/).filter((w) => w !== "").length;
+}
+
+/**
+ * Splits the first sentence into a short opening phrase and the rest. A sentence of
+ * FIRST_PHRASE_MAX_WORDS or fewer, or one with no clause boundary after FIRST_PHRASE_MIN_WORDS
+ * words, comes back whole (rest is empty).
+ */
+export function splitFirstPhrase(sentence: string): { head: string; rest: string } {
+  const whole = { head: sentence, rest: "" };
+  if (wordCount(sentence) <= FIRST_PHRASE_MAX_WORDS) return whole;
+  for (const m of sentence.matchAll(CLAUSE_BOUNDARY)) {
+    const dash = m[0].length > 1 || /[\u2013\u2014]/.test(m[0]);
+    const head = sentence.slice(0, dash ? m.index : m.index + 1).trim();
+    const rest = sentence.slice(m.index + m[0].length).trim();
+    if (wordCount(head) < FIRST_PHRASE_MIN_WORDS) continue;
+    if (rest === "") return whole;
+    return { head, rest };
+  }
+  return whole;
+}
+
+export interface SplitForSpeechOptions {
+  /** The first chunk is a short phrase and is never merged with later sentences. */
+  shortFirst?: boolean;
+}
+
 /** Sentence-sized chunks, because Chrome stops an utterance past about 15 seconds. */
-export function splitForSpeech(text: string, maxLen = 220): string[] {
+export function splitForSpeech(
+  text: string,
+  maxLen = 220,
+  options: SplitForSpeechOptions = {},
+): string[] {
   const sentences = splitSentences(text);
-  const pieces: string[] = [];
+  let pieces: string[] = [];
   for (let sentence of sentences) {
     while (sentence.length > maxLen) {
       const head = sentence.slice(0, maxLen);
@@ -185,6 +224,12 @@ export function splitForSpeech(text: string, maxLen = 220): string[] {
     }
     if (sentence !== "") pieces.push(sentence);
   }
+  const first: string[] = [];
+  if (options.shortFirst && pieces.length > 0) {
+    const { head, rest } = splitFirstPhrase(pieces[0]);
+    first.push(head);
+    pieces = rest === "" ? pieces.slice(1) : [rest, ...pieces.slice(1)];
+  }
   const chunks: string[] = [];
   for (const piece of pieces) {
     const last = chunks.length - 1;
@@ -194,5 +239,5 @@ export function splitForSpeech(text: string, maxLen = 220): string[] {
       chunks.push(piece);
     }
   }
-  return chunks.filter((c) => c !== "");
+  return [...first, ...chunks].filter((c) => c !== "");
 }

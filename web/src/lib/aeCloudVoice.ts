@@ -13,6 +13,8 @@ import { authenticatedFetch } from "./identity";
 export interface CloudVoice {
   id: string;
   name: string;
+  /** Who makes the voice ("azure" or "rocky"); absent from an older server. */
+  provider?: string;
 }
 
 const LOOKAHEAD = 2;
@@ -226,7 +228,7 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
       unsubscribe = fallback.subscribe(() => {
         if (!fallback.speaking()) done();
       });
-      fallback.speak(item.text, { ...item.opts, cloudVoiceId: null });
+      fallback.speak(item.text, { ...item.opts, cloudVoiceId: null, shortFirst: false });
       if (!fallback.speaking()) done();
     });
 
@@ -267,7 +269,7 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
 
   return {
     speak(text, opts) {
-      const chunks = splitForSpeech(text);
+      const chunks = splitForSpeech(text, undefined, { shortFirst: opts.shortFirst });
       if (chunks.length === 0) return;
       for (const chunk of chunks) {
         queue.push({ text: chunk, opts, controller: null, result: null });

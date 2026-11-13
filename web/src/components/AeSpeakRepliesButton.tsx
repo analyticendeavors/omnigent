@@ -59,6 +59,7 @@ import {
   onVoicesChanged,
   pickDefaultVoice,
   RATE_FASTER,
+  RATE_FASTEST,
   rankVoices,
   readFastAnswersState,
   readFastEnabled,
@@ -84,6 +85,13 @@ import {
   useVoiceSnapshot,
   type VoicePhase,
 } from "@/lib/aeVoiceMode";
+import {
+  readVoiceChatVoicePick,
+  resolveVoiceChatVoice,
+  VOICE_CHAT_VOICE_SAME,
+  voiceChatVoiceKey,
+  writeVoiceChatVoicePick,
+} from "@/lib/aeVoiceChatVoice";
 import { useMicWhileSpeaking, writeMicWhileSpeaking } from "@/lib/aeVoiceMic";
 import { useSendSnips, writeSendSnips } from "@/lib/aeVoiceSnips";
 import { cn } from "@/lib/utils";
@@ -137,6 +145,7 @@ function RowHint({
     | "voice.fast_model"
     | "voice.snips"
     | "voice.mic_while_speaking"
+    | "voice.chat_voice"
     | "voice.voice"
     | "voice.rate"
     | "voice.microphone"
@@ -345,13 +354,21 @@ function SpeakRepliesControl({
     if (replacedCloud) logVoice("cloud voice replaced", `${choiceKey(stored)} -> device`);
   }, [replacedCloud, stored]);
 
+  // While Voice mode is on, the Voice chat voice speaks (replies, Read last reply, approval line).
+  const voiceMode = useVoiceSnapshot(chatId);
+  const [chatVoicePick, setChatVoicePick] = useState(readVoiceChatVoicePick);
+  const chatVoice = resolveVoiceChatVoice(
+    chatVoicePick,
+    cloudVoices,
+    voice,
+    deviceDefault ? { kind: "device", id: deviceDefault.voiceURI } : null,
+  );
   const { speaking, stop, readLast, speak } = useAeSpeakReplies({
     chatId,
     enabled: on,
-    voice,
+    voice: voiceMode.on ? chatVoice : voice,
     rate,
   });
-  const voiceMode = useVoiceSnapshot(chatId);
   useEffect(() => registerVoiceSpeaker(chatId, speak), [chatId, speak]);
   useEffect(() => registerVoiceStop(chatId, stop), [chatId, stop]);
   useEffect(() => setVoiceSpeaking(chatId, speaking), [chatId, speaking]);
@@ -573,6 +590,14 @@ function SpeakRepliesControl({
     (voice?.kind === "cloud"
       ? cloudVoices.find((v) => v.id === voice.id)?.name
       : chosenDevice && voiceLabel(chosenDevice)) ?? "Default";
+  const chatDevice =
+    chatVoice?.kind === "device" ? voices.find((v) => v.voiceURI === chatVoice.id) : null;
+  const chatVoiceName =
+    chatVoicePick === VOICE_CHAT_VOICE_SAME
+      ? "Same"
+      : ((chatVoice?.kind === "cloud"
+          ? cloudVoices.find((v) => v.id === chatVoice.id)?.name
+          : chatDevice && voiceLabel(chatDevice)) ?? "Default");
   const Icon = on ? Volume2Icon : VolumeXIcon;
 
   const phaseWord =
@@ -740,13 +765,64 @@ function SpeakRepliesControl({
           </DropdownMenuSubContent>
         </DropdownMenuSub>
         <DropdownMenuSub>
+          <DropdownMenuSubTrigger data-testid="ae-voice-chat-voice-trigger">
+            <span className={ROW_LABEL_CLASS}>
+              Voice chat voice
+              <RowHint id="voice.chat_voice" />
+            </span>
+            <span className={ROW_VALUE_CLASS} title={chatVoiceName}>
+              {chatVoiceName}
+            </span>
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="max-h-[60vh] overflow-y-auto">
+            <DropdownMenuRadioGroup
+              value={voiceChatVoiceKey(chatVoicePick, chatVoice)}
+              onValueChange={(key) => {
+                writeVoiceChatVoicePick(key);
+                setChatVoicePick(key);
+              }}
+            >
+              <DropdownMenuRadioItem
+                value={VOICE_CHAT_VOICE_SAME}
+                data-testid="ae-voice-chat-voice-same"
+              >
+                Same as Speak replies
+              </DropdownMenuRadioItem>
+              {cloudVoices.length > 0 ? (
+                <>
+                  <DropdownMenuLabel>Natural (cloud)</DropdownMenuLabel>
+                  {cloudVoices.map((v) => (
+                    <DropdownMenuRadioItem
+                      key={v.id}
+                      value={`cloud:${v.id}`}
+                      data-testid="ae-voice-chat-voice-option"
+                    >
+                      {v.name}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </>
+              ) : null}
+              <DropdownMenuLabel>This device</DropdownMenuLabel>
+              {ranked.map((v) => (
+                <DropdownMenuRadioItem
+                  key={v.voiceURI}
+                  value={`device:${v.voiceURI}`}
+                  data-testid="ae-voice-chat-voice-option"
+                >
+                  {voiceLabel(v)}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+        <DropdownMenuSub>
           <DropdownMenuSubTrigger data-testid="ae-speak-rate-trigger">
             <span className={ROW_LABEL_CLASS}>
               Speed
               <RowHint id="voice.rate" />
             </span>
             <span className={ROW_VALUE_CLASS}>
-              {rate === RATE_FASTER ? "Faster" : "Normal"}
+              {rate === RATE_FASTEST ? "Fastest" : rate === RATE_FASTER ? "Faster" : "Normal"}
             </span>
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent>
@@ -764,6 +840,13 @@ function SpeakRepliesControl({
               <DropdownMenuRadioItem value={String(RATE_FASTER)} data-testid="ae-speak-rate-faster">
                 Faster
                 <span className="ml-auto pl-3 text-xs text-muted-foreground">1.25x</span>
+              </DropdownMenuRadioItem>
+              <DropdownMenuRadioItem
+                value={String(RATE_FASTEST)}
+                data-testid="ae-speak-rate-fastest"
+              >
+                Fastest
+                <span className="ml-auto pl-3 text-xs text-muted-foreground">1.5x</span>
               </DropdownMenuRadioItem>
             </DropdownMenuRadioGroup>
           </DropdownMenuSubContent>

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   completeSentences,
   speechTextFromMarkdown,
+  splitFirstPhrase,
   splitForSpeech,
   stripTldr,
 } from "./aeSpeechText";
@@ -145,5 +146,65 @@ describe("splitForSpeech", () => {
 
   it("returns no empty chunks", () => {
     expect(splitForSpeech("  ")).toEqual([]);
+  });
+
+  describe("shortFirst", () => {
+    const first = { shortFirst: true };
+
+    it("never merges a short first sentence with the next ones", () => {
+      expect(splitForSpeech("One. Two. Three.", 220, first)).toEqual(["One.", "Two. Three."]);
+    });
+
+    it("keeps a first sentence of ten words or fewer whole", () => {
+      const ten = "One two three four five six seven eight nine ten, eleven.";
+      expect(splitFirstPhrase("One two three four five six seven eight nine ten.")).toEqual({
+        head: "One two three four five six seven eight nine ten.",
+        rest: "",
+      });
+      expect(splitForSpeech(`${ten} Next.`, 220, first)[0]).toBe(
+        "One two three four five six seven eight nine ten,",
+      );
+    });
+
+    it("cuts a long first sentence at the first clause boundary after six words", () => {
+      const text = "Yes, I checked the build and it passed, so the release can go out today. Done.";
+      expect(splitForSpeech(text, 220, first)).toEqual([
+        "Yes, I checked the build and it passed,",
+        "so the release can go out today. Done.",
+      ]);
+    });
+
+    it("skips a boundary before six words", () => {
+      expect(
+        splitForSpeech(
+          "Well, one two three four five; six seven eight nine ten eleven.",
+          220,
+          first,
+        ),
+      ).toEqual(["Well, one two three four five;", "six seven eight nine ten eleven."]);
+    });
+
+    it("cuts at a colon or a spaced dash too", () => {
+      expect(
+        splitFirstPhrase("Here is what happened: one two three four five six seven.").head,
+      ).toBe("Here is what happened: one two three four five six seven.");
+      expect(
+        splitFirstPhrase("The deploy ran fine and then - after a short wait - it stopped working.")
+          .head,
+      ).toBe("The deploy ran fine and then");
+    });
+
+    it("falls back to the whole sentence when no boundary follows six words", () => {
+      const long = "One two three four five six seven eight nine ten eleven twelve.";
+      expect(splitForSpeech(long, 220, first)).toEqual([long]);
+      expect(
+        splitFirstPhrase("One, two three four five six seven eight nine ten eleven.").head,
+      ).toBe("One, two three four five six seven eight nine ten eleven.");
+    });
+
+    it("leaves later chunks on the normal merge and the default unchanged", () => {
+      expect(splitForSpeech("One. Two. Three.", 10, first)).toEqual(["One.", "Two.", "Three."]);
+      expect(splitForSpeech("One. Two. Three.", 220)).toEqual(["One. Two. Three."]);
+    });
   });
 });
