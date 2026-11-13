@@ -140,18 +140,26 @@ export interface UseAeSpeakRepliesArgs {
   chatId: string | null;
   enabled: boolean;
   voice: VoiceChoice | null;
+  /** Voice mode is on: a change here drops the per-response voice lock. */
+  voiceMode?: boolean;
   rate: number;
 }
 
-export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRepliesArgs): {
+export function useAeSpeakReplies({
+  chatId,
+  enabled,
+  voice,
+  voiceMode = false,
+  rate,
+}: UseAeSpeakRepliesArgs): {
   speaking: boolean;
   stop: () => void;
   readLast: () => void;
   /** Speaks one line in the chosen voice (Voice mode reads question cards with it). */
   speak: (text: string) => void;
 } {
-  const optsRef = useRef({ voice, rate });
-  optsRef.current = { voice, rate };
+  const optsRef = useRef({ voice, rate, voiceMode });
+  optsRef.current = { voice, rate, voiceMode };
 
   const speaking = useSyncExternalStore(
     (cb) => getSpeaker().subscribe(cb),
@@ -195,6 +203,13 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
     let cueTimer: ReturnType<typeof setTimeout> | null = null;
     // The Working on it cue is playing (it always uses the device voice): the real reply cuts it.
     let cueActive = false;
+    let cueUnsub: (() => void) | null = null;
+    // The cue is over (cut, replaced or finished on its own): stop watching the device speaker.
+    const endCue = () => {
+      cueActive = false;
+      cueUnsub?.();
+      cueUnsub = null;
+    };
     // Responses whose first chunk was spoken: later text of a response keeps the normal chunking.
     const started = new Set<string>();
     let spokenThisTurn = false;
@@ -223,9 +238,19 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
     };
     // One engine per response: its first spoken sentence locks the voice for the rest of it
     // (and its final), so a late cloud list or a menu pick never overlaps the two queues.
+    // A lock made in another Voice mode state is dropped, so the next chunk uses the voice that
+    // now applies (the Voice chat voice only speaks while Voice mode is on).
     const locks = new Map<string, VoiceChoice | null>();
+    const lockModes = new Map<string, boolean>();
     const lockFor = (responseId: string): VoiceChoice | null => {
+      for (const [id, mode] of lockModes) {
+        if (mode !== optsRef.current.voiceMode) {
+          locks.delete(id);
+          lockModes.delete(id);
+        }
+      }
       if (!locks.has(responseId)) {
+        lockModes.set(responseId, optsRef.current.voiceMode);
         const cue = locks.get(CUE_LOCK);
         const first = [...locks.keys()].every((k) => k === CUE_LOCK);
         locks.set(responseId, first && cue !== undefined ? cue : optsRef.current.voice);
@@ -247,7 +272,7 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
       clearCue();
       // The cue must not delay the real reply, nor queue ahead of its first chunk.
       if (cueActive) {
-        cueActive = false;
+        endCue();
         getDevice().stop();
       }
       // The first speech of a reply opens with a short phrase so the voice starts sooner.
@@ -265,6 +290,7 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
       trails.clear();
       spoken.clear();
       locks.clear();
+      lockModes.clear();
       started.clear();
       for (const b of blocks) if (b.ctx.itemId) handled.add(b.ctx.itemId);
       const scan = scanBlocks(blocks);
@@ -316,16 +342,24 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
         speaker.stop();
         snapshot(state.blocks, false);
         spokenThisTurn = false;
-        cueActive = false;
+        endCue();
         clearCue();
         cueTimer = setTimeout(() => {
           cueTimer = null;
           if (!spokenThisTurn) {
             spokenThisTurn = true;
-            if (!locks.has(CUE_LOCK)) locks.set(CUE_LOCK, optsRef.current.voice);
+            if (!locks.has(CUE_LOCK)) {
+              locks.set(CUE_LOCK, optsRef.current.voice);
+              lockModes.set(CUE_LOCK, optsRef.current.voiceMode);
+            }
             // A cloud voice may take seconds to make the cue: the device voice says it at once.
             const cueVoice = locks.get(CUE_LOCK) ?? null;
             cueActive = true;
+            cueUnsub?.();
+            // The device speaker going idle means the cue finished on its own.
+            cueUnsub = getDevice().subscribe(() => {
+              if (!getDevice().speaking()) endCue();
+            });
             say(
               WORKING_CUE_TEXT,
               cueVoice?.kind === "cloud" ? null : cueVoice,
@@ -370,6 +404,7 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
     return () => {
       unsubscribe();
       clearCue();
+      endCue();
       speaker.stop();
       handled.clear();
       knownResponses.clear();
@@ -378,6 +413,7 @@ export function useAeSpeakReplies({ chatId, enabled, voice, rate }: UseAeSpeakRe
       staleResponses.clear();
       spoken.clear();
       locks.clear();
+      lockModes.clear();
       started.clear();
     };
   }, [enabled, chatId]);

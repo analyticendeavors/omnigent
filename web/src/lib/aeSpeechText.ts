@@ -176,7 +176,9 @@ export const FIRST_PHRASE_MAX_WORDS = 10;
 /** A longer first sentence is cut at the first clause boundary after this many words. */
 export const FIRST_PHRASE_MIN_WORDS = 6;
 
-const CLAUSE_BOUNDARY = /[,;:](?=\s)|\s[-\u2013\u2014]+\s|[\u2013\u2014]/g;
+// A dash (hyphen, en or em) splits only with whitespace on both sides, so a range like 2024-2026
+// and a word like well-known stay whole.
+const CLAUSE_BOUNDARY = /[,;:](?=\s)|\s[-\u2013\u2014]+\s/g;
 
 function wordCount(text: string): number {
   return text.split(/\s+/).filter((w) => w !== "").length;
@@ -191,7 +193,7 @@ export function splitFirstPhrase(sentence: string): { head: string; rest: string
   const whole = { head: sentence, rest: "" };
   if (wordCount(sentence) <= FIRST_PHRASE_MAX_WORDS) return whole;
   for (const m of sentence.matchAll(CLAUSE_BOUNDARY)) {
-    const dash = m[0].length > 1 || /[\u2013\u2014]/.test(m[0]);
+    const dash = m[0].length > 1;
     const head = sentence.slice(0, dash ? m.index : m.index + 1).trim();
     const rest = sentence.slice(m.index + m[0].length).trim();
     if (wordCount(head) < FIRST_PHRASE_MIN_WORDS) continue;

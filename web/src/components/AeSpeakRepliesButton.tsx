@@ -34,7 +34,7 @@ import {
   writeSpeakerDevice,
   type AudioDevice,
 } from "@/lib/aeAudioDevices";
-import { type CloudVoice, fetchCloudVoices } from "@/lib/aeCloudVoice";
+import { type CloudVoice, fetchCloudVoiceList } from "@/lib/aeCloudVoice";
 import {
   clearVoiceModelState,
   effectiveModelId,
@@ -212,7 +212,10 @@ function DeviceRow({
             System default
           </DropdownMenuRadioItem>
           {!known ? (
-            <div className="px-2 py-1.5 text-xs text-muted-foreground" data-testid={`${testId}-unknown`}>
+            <div
+              className="px-2 py-1.5 text-xs text-muted-foreground"
+              data-testid={`${testId}-unknown`}
+            >
               Use the mic once to list devices.
             </div>
           ) : null}
@@ -295,6 +298,8 @@ function SpeakRepliesControl({
   const [stored, setStored] = useState(readVoiceChoice);
   const [legacy, setLegacy] = useState(isLegacyVoiceChoice);
   const [cloudVoices, setCloudVoices] = useState<CloudVoice[]>([]);
+  // True once the server answered, even with an empty list (an empty list is then real).
+  const [cloudLoaded, setCloudLoaded] = useState(false);
   const [rate, setRate] = useState(readRate);
   const [voices, setVoices] = useState(listVoices);
   const savedDevices = useSavedAudioDevices();
@@ -308,13 +313,14 @@ function SpeakRepliesControl({
     let timer: ReturnType<typeof setTimeout> | null = null;
     let attempts = 0;
     const load = () => {
-      void fetchCloudVoices().then((list) => {
+      void fetchCloudVoiceList().then((list) => {
         if (!live) return;
-        if (list.length > 0) {
+        if (list !== null) {
+          setCloudLoaded(true);
           setCloudVoices(list);
           return;
         }
-        // An empty list may be a failed fetch: retry a few times (a successful list is cached).
+        // A failed fetch: retry a few times (a successful list is cached).
         attempts += 1;
         if (attempts <= VOICE_LIST_RETRIES)
           timer = setTimeout(load, VOICE_LIST_RETRY_MS * attempts);
@@ -359,14 +365,16 @@ function SpeakRepliesControl({
   const [chatVoicePick, setChatVoicePick] = useState(readVoiceChatVoicePick);
   const chatVoice = resolveVoiceChatVoice(
     chatVoicePick,
-    cloudVoices,
+    cloudLoaded ? cloudVoices : null,
     voice,
     deviceDefault ? { kind: "device", id: deviceDefault.voiceURI } : null,
+    voices.map((v) => v.voiceURI),
   );
   const { speaking, stop, readLast, speak } = useAeSpeakReplies({
     chatId,
     enabled: on,
     voice: voiceMode.on ? chatVoice : voice,
+    voiceMode: voiceMode.on,
     rate,
   });
   useEffect(() => registerVoiceSpeaker(chatId, speak), [chatId, speak]);

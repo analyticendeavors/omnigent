@@ -194,6 +194,18 @@ describe("splitForSpeech", () => {
       ).toBe("The deploy ran fine and then");
     });
 
+    it("does not split an unspaced dash: a numeric range or a hyphenated word", () => {
+      const range = "The report shows results for 2024\u20132026 across all of the regions listed.";
+      expect(splitFirstPhrase(range)).toEqual({ head: range, rest: "" });
+      const word = "This is a well-known problem that shows up in many of the older builds.";
+      expect(splitFirstPhrase(word)).toEqual({ head: word, rest: "" });
+      expect(
+        splitFirstPhrase(
+          "The deploy ran fine and then \u2014 after a short wait \u2014 it stopped.",
+        ).head,
+      ).toBe("The deploy ran fine and then");
+    });
+
     it("falls back to the whole sentence when no boundary follows six words", () => {
       const long = "One two three four five six seven eight nine ten eleven twelve.";
       expect(splitForSpeech(long, 220, first)).toEqual([long]);

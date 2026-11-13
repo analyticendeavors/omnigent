@@ -51,31 +51,39 @@ const SILENT_WAV = silentWavUri();
 
 // Only a successful list is kept; a failure is retried by the next call, one request at a time.
 let voicesCache: CloudVoice[] | null = null;
-let voicesInflight: Promise<CloudVoice[]> | null = null;
+let voicesInflight: Promise<CloudVoice[] | null> | null = null;
 
 export function resetCloudVoicesCache(): void {
   voicesCache = null;
   voicesInflight = null;
 }
 
-/** The server's natural voices; empty when it offers none or cannot be reached. */
-export function fetchCloudVoices(): Promise<CloudVoice[]> {
+/**
+ * The server's natural voices: null when the list is not loaded (a failed or non-200 fetch),
+ * an empty array when the server answered and offers none.
+ */
+export function fetchCloudVoiceList(): Promise<CloudVoice[] | null> {
   if (voicesCache) return Promise.resolve(voicesCache);
   voicesInflight ??= (async () => {
     try {
       const response = await authenticatedFetch(withBasePath("/v1/ae/tts/voices"));
-      if (response.status !== 200) return [];
+      if (response.status !== 200) return null;
       const body = (await response.json()) as { voices?: CloudVoice[] };
       const list = Array.isArray(body.voices) ? body.voices : [];
       voicesCache = list;
       return list;
     } catch {
-      return [];
+      return null;
     } finally {
       voicesInflight = null;
     }
   })();
   return voicesInflight;
+}
+
+/** The server's natural voices; empty when it offers none or cannot be reached. */
+export async function fetchCloudVoices(): Promise<CloudVoice[]> {
+  return (await fetchCloudVoiceList()) ?? [];
 }
 
 interface Item {

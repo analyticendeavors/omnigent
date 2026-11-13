@@ -40,33 +40,44 @@ export function writeVoiceChatVoicePick(pick: string | null): void {
   setItem(VOICE_CHAT_VOICE_KEY, pick);
 }
 
+/** The Rocky id, for a server that does not say who makes each voice. */
+export const ROCKY_VOICE_ID = "rocky-xtts";
+
+function isRocky(v: CloudVoice): boolean {
+  return v.provider === "rocky" || (v.provider === undefined && v.id === ROCKY_VOICE_ID);
+}
+
 /** The fastest cloud voice that is not Rocky's: the first one the server lists (Azure). */
 export function fastestCloudVoice(cloudVoices: readonly CloudVoice[]): CloudVoice | null {
-  return cloudVoices.find((v) => v.provider !== "rocky") ?? null;
+  return cloudVoices.find((v) => !isRocky(v)) ?? null;
 }
 
 /**
  * The voice Voice mode speaks with. `same` gives the Speak replies voice. A saved voice that the
- * server no longer lists falls to the default. The default is the fastest non-Rocky cloud voice,
- * else the device voice.
+ * server (or the device) no longer lists falls to the default. The default is the fastest non-Rocky
+ * cloud voice, else the device voice. `cloudVoices` is null while the list is not loaded (the
+ * saved cloud voice is kept then); `deviceVoiceURIs` is empty while the device list is not loaded.
  */
 export function resolveVoiceChatVoice(
   pick: string | null,
-  cloudVoices: readonly CloudVoice[],
+  cloudVoices: readonly CloudVoice[] | null,
   speakVoice: VoiceChoice | null,
   deviceDefault: VoiceChoice | null,
+  deviceVoiceURIs: readonly string[] = [],
 ): VoiceChoice | null {
   if (pick === VOICE_CHAT_VOICE_SAME) return speakVoice;
   if (pick !== null) {
     const [kind, ...rest] = pick.split(":");
     const id = rest.join(":");
-    if (kind === "device") return { kind: "device", id };
-    // An empty list is a list not loaded yet: keep the saved cloud voice, the server knows it.
-    if (cloudVoices.length === 0 || cloudVoices.some((v) => v.id === id)) {
+    if (kind === "device") {
+      if (deviceVoiceURIs.length === 0 || deviceVoiceURIs.includes(id)) {
+        return { kind: "device", id };
+      }
+    } else if (cloudVoices === null || cloudVoices.some((v) => v.id === id)) {
       return { kind: "cloud", id };
     }
   }
-  const fast = fastestCloudVoice(cloudVoices);
+  const fast = fastestCloudVoice(cloudVoices ?? []);
   return fast ? { kind: "cloud", id: fast.id } : deviceDefault;
 }
 

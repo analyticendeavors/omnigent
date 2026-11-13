@@ -29,6 +29,7 @@ describe("voice chat voice", () => {
   it("falls back to the device voice when only Rocky or nothing is listed", () => {
     expect(resolveVoiceChatVoice(null, [ROCKY], SPEAK, DEVICE)).toEqual(DEVICE);
     expect(resolveVoiceChatVoice(null, [], SPEAK, DEVICE)).toEqual(DEVICE);
+    expect(resolveVoiceChatVoice(null, null, SPEAK, DEVICE)).toEqual(DEVICE);
     expect(resolveVoiceChatVoice(null, [], SPEAK, null)).toBeNull();
   });
 
@@ -47,9 +48,35 @@ describe("voice chat voice", () => {
       id: "ava",
     });
     // A list not loaded yet keeps the saved cloud voice.
-    expect(resolveVoiceChatVoice("cloud:ava", [], SPEAK, DEVICE)).toEqual({
+    expect(resolveVoiceChatVoice("cloud:ava", null, SPEAK, DEVICE)).toEqual({
       kind: "cloud",
       id: "ava",
+    });
+  });
+
+  it("drops a saved cloud id when the server answered with an empty list", () => {
+    expect(resolveVoiceChatVoice("cloud:ava", [], SPEAK, DEVICE)).toEqual(DEVICE);
+  });
+
+  it("treats a voice with no provider as Rocky when it has the Rocky id", () => {
+    const bareRocky = { id: "rocky-xtts", name: "Rocky" };
+    const bareAva = { id: "ava", name: "Ava" };
+    expect(fastestCloudVoice([bareRocky, bareAva])).toBe(bareAva);
+    expect(resolveVoiceChatVoice(null, [bareRocky], SPEAK, DEVICE)).toEqual(DEVICE);
+  });
+
+  it("drops a saved device voice that is no longer installed, keeps it when the list is empty", () => {
+    expect(resolveVoiceChatVoice("device:gone", [AVA], SPEAK, DEVICE, ["aria"])).toEqual({
+      kind: "cloud",
+      id: "ava",
+    });
+    expect(resolveVoiceChatVoice("device:aria", [AVA], SPEAK, DEVICE, ["aria"])).toEqual({
+      kind: "device",
+      id: "aria",
+    });
+    expect(resolveVoiceChatVoice("device:gone", [AVA], SPEAK, DEVICE, [])).toEqual({
+      kind: "device",
+      id: "gone",
     });
   });
 

@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createCloudSpeaker, fetchCloudVoices, resetCloudVoicesCache } from "./aeCloudVoice";
+import {
+  createCloudSpeaker,
+  fetchCloudVoiceList,
+  fetchCloudVoices,
+  resetCloudVoicesCache,
+} from "./aeCloudVoice";
 import {
   setCaptionHandler,
   setPlaybackHandler,
@@ -160,6 +165,19 @@ describe("fetchCloudVoices", () => {
     resetCloudVoicesCache();
     fetchMock.mockRejectedValueOnce(new Error("offline"));
     expect(await fetchCloudVoices()).toEqual([]);
+  });
+});
+
+describe("fetchCloudVoiceList", () => {
+  it("tells a loaded empty list from a list not loaded", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ voices: [] }), { status: 200 }));
+    expect(await fetchCloudVoiceList()).toEqual([]);
+    resetCloudVoicesCache();
+    fetchMock.mockResolvedValueOnce(new Response("no", { status: 503 }));
+    expect(await fetchCloudVoiceList()).toBeNull();
+    resetCloudVoicesCache();
+    fetchMock.mockRejectedValueOnce(new Error("offline"));
+    expect(await fetchCloudVoiceList()).toBeNull();
   });
 });
 

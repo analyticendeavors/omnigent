@@ -353,6 +353,61 @@ describe("useAeSpeakReplies", () => {
     expect(synth.texts().at(-1)).toBe("Here it is.");
   });
 
+  it("uses the new voice for the next sentence when Voice mode turns off mid-response", () => {
+    const fetchMock = hangingFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    const { rerender } = renderHook(
+      (p: { voice: Choice; voiceMode: boolean }) =>
+        useAeSpeakReplies({ chatId: "c1", enabled: true, rate: 1, ...p }),
+      { initialProps: { voice: CLOUD_CHOICE, voiceMode: true } },
+    );
+    setStore({ blocks: [live("r1", "First sentence here. ")] });
+    flush();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(synth.texts()).toEqual([]);
+    rerender({ voice: { kind: "device", id: "v1" }, voiceMode: false });
+    setStore({ blocks: [live("r1", "First sentence here. Second sentence here. ")] });
+    flush();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(synth.texts()).toEqual(["Second sentence here."]);
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps the response's voice when only the voice pick changes", () => {
+    const fetchMock = hangingFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    const { rerender } = renderHook(
+      (p: { voice: Choice }) =>
+        useAeSpeakReplies({ chatId: "c1", enabled: true, rate: 1, voiceMode: false, ...p }),
+      { initialProps: { voice: CLOUD_CHOICE } },
+    );
+    setStore({ blocks: [live("r1", "First sentence here. ")] });
+    flush();
+    rerender({ voice: { kind: "device", id: "v1" } });
+    setStore({ blocks: [live("r1", "First sentence here. Second sentence here. ")] });
+    flush();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(synth.texts()).toEqual([]);
+    vi.unstubAllGlobals();
+  });
+
+  it("does not stop the device when the cue finished on its own before the reply", () => {
+    mount(true, "c1", { kind: "device", id: "v1" });
+    setStore({ status: "streaming", ...send() });
+    act(() => {
+      vi.advanceTimersByTime(WORKING_CUE_DELAY_MS + 10);
+    });
+    expect(synth.texts()).toEqual([WORKING_CUE_TEXT]);
+    act(() => {
+      synth.finishNext();
+    });
+    const cancels = synth.cancelCount;
+    setStore({ blocks: [live("r1", "Here it is. ")] });
+    flush();
+    expect(synth.texts().at(-1)).toBe("Here it is.");
+    expect(synth.cancelCount).toBe(cancels);
+  });
+
   it("opens each reply with a short phrase, then keeps the normal chunking", () => {
     mount(true, "c1", { kind: "device", id: "v1" });
     setStore({
