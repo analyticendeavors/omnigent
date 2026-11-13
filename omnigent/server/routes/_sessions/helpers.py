@@ -104,6 +104,7 @@ from omnigent.runtime.policies.engine import PolicyEngine
 from omnigent.runtime.tool_output import cap_tool_output
 from omnigent.server import (
     ae_family_prompts,
+    ae_prompt_running,
     ae_turn_edges,
     presence,
     session_live_state,
@@ -3363,6 +3364,7 @@ async def _persist_external_assistant_message(
         response_id=response_id,
         agent_name=agent_name,
     )
+    _flip_running_on_work(session_id, "message", "assistant")
     return persisted.id
 
 
@@ -5455,6 +5457,17 @@ def _publish_changed_files_invalidated(session_id: str, environment_id: str = "d
     )
 
 
+def _flip_running_on_work(session_id: str, item_type: str, role: str | None) -> None:
+    """Publish ``running`` for the first assistant or tool item after an open prompt edge."""
+    if not ae_prompt_running.is_real_work(item_type, role):
+        return
+    if not ae_prompt_running.take_if_open(session_id):
+        return
+    if _session_status_cache.get(session_id) == "running":
+        return
+    _publish_status(session_id, "running")
+
+
 def _publish_interrupted(session_id: str, response_id: str | None = None) -> None:
     """
     Publish a ``session.interrupted`` event to the live stream.
@@ -5471,6 +5484,7 @@ def _publish_interrupted(session_id: str, response_id: str | None = None) -> Non
         interrupted turns, e.g. ``"codex_turn_abc123"``.
     """
     ae_turn_edges.notify_turn_edge(session_id, "interrupted", response_id=response_id)
+    ae_prompt_running.note_turn_end(session_id)
     event = SessionInterruptedEvent(
         type="session.interrupted",
         data=SessionInterruptedPayload(

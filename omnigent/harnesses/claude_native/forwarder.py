@@ -27,13 +27,13 @@ from omnigent.harnesses.claude_native.ae_pane_progress import (
     clear_progress_on_rotation,
     relay_progress,
 )
+from omnigent.harnesses.claude_native.ae_prompt_edge import post_prompt_edge
 from omnigent.harnesses.claude_native.ae_prompt_suggest import (
     SuggestionState,
     cancel_prompt_suggestion,
     clear_prompt_suggestion,
     schedule_prompt_suggestion,
 )
-from omnigent.harnesses.claude_native.ae_prompt_edge import post_prompt_edge
 from omnigent.harnesses.claude_native.ae_subagent_model import report_subagent_model
 from omnigent.harnesses.claude_native.ae_transcript_tokens import TranscriptTokenTally
 from omnigent.harnesses.claude_native.bridge import (
@@ -897,6 +897,7 @@ class _ForwardDedupeState:
     # ``[System: scheduled prompt fired]`` marker (see the bridge parser).
     pending_settled_response_id: str | None = None
     settled_response_id: str | None = None
+    prompt_edge_cursors: set[int] = field(default_factory=set)
     # Failed cost posts are retried by this long-running poll loop. Without a
     # retry gate, an edge 429 turns the poll interval into a request storm and
     # prevents the limiter from recovering.
@@ -1495,6 +1496,12 @@ async def forward_claude_transcript_to_session(
                         # the same poll would lose the boundary. Cursor-keyed, so
                         # the main hook phase below does not re-mint.
                         await _prescan_precompact_edges(bridge_dir, hook_state)
+                        # The turn's prompt edge must reach the server before this
+                        # poll's transcript items, or its first tool call finds no
+                        # open prompt and the chat stays idle.
+                        await _prescan_prompt_edges(
+                            client, current_session_id, bridge_dir, hook_state, dedupe
+                        )
                         state = await _forward_available_items(
                             client=client,
                             session_id=current_session_id,
@@ -4083,7 +4090,10 @@ async def _forward_available_status_events(
                 record, parent_claude_session_ids=parent_claude_session_ids
             ):
                 await clear_prompt_suggestion(client, state=dedupe.prompt_suggest)
-                await post_prompt_edge(client, session_id)
+                if record.event_cursor in dedupe.prompt_edge_cursors:
+                    dedupe.prompt_edge_cursors.discard(record.event_cursor)
+                else:
+                    await post_prompt_edge(client, session_id)
                 with contextlib.suppress(Exception):
                     # This proves Claude saw a submit; later hooks can still block the turn.
                     _logger.info(
@@ -5183,6 +5193,44 @@ async def _prescan_precompact_edges(
             ),
             event_cursor=record.event_cursor,
         )
+
+
+async def _prescan_prompt_edges(
+    client: httpx.AsyncClient,
+    session_id: str,
+    bridge_dir: Path,
+    hook_state: HookForwardState | None,
+    dedupe: _ForwardDedupeState,
+) -> None:
+    """
+    Post this poll's main-session ``UserPromptSubmit`` edges before its transcript items.
+
+    Items run before hooks within a poll, so a turn's first tool call could reach the
+    server before its prompt edge. Each posted cursor is recorded on *dedupe* so the
+    hook phase does not post it again. The hook cursor is not advanced.
+
+    :param client: Omnigent HTTP client.
+    :param session_id: Omnigent session/conversation id.
+    :param bridge_dir: Native Claude bridge directory.
+    :param hook_state: Current hook cursor, or ``None`` before it is seeded.
+    :param dedupe: Per-session baseline holding the posted prompt-edge cursors.
+    :returns: None.
+    """
+    if hook_state is None:
+        return
+    result = await asyncio.to_thread(_read_hook_events_for_state, bridge_dir, hook_state)
+    parent_claude_session_ids = read_seen_claude_session_ids(bridge_dir)
+    for record in result.records:
+        if record.event_name != "UserPromptSubmit" or _is_subagent_hook_record(
+            record, parent_claude_session_ids=parent_claude_session_ids
+        ):
+            continue
+        if record.event_cursor in dedupe.prompt_edge_cursors:
+            continue
+        if len(dedupe.prompt_edge_cursors) > 1000:
+            dedupe.prompt_edge_cursors.clear()
+        dedupe.prompt_edge_cursors.add(record.event_cursor)
+        await post_prompt_edge(client, session_id)
 
 
 def _validated_hook_state(

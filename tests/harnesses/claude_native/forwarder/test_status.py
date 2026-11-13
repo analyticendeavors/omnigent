@@ -870,3 +870,103 @@ async def test_forwarder_does_not_leave_running_open_for_slash_command_only_turn
         request["data"] for request in requests if request["type"] == "external_conversation_item"
     ]
     assert any(item["item_type"] == "slash_command" for item in forwarded)
+
+
+@pytest.mark.asyncio
+async def test_forwarder_posts_the_prompt_edge_before_the_same_poll_items(tmp_path: Path) -> None:
+    """
+    A UserPromptSubmit and the turn's first tool call landing in one poll.
+
+    Items post before hooks within a poll, so without the prompt-edge prescan the
+    function_call reaches the server before the edge and the chat stays idle
+    while the tool runs. The edge is posted once, ahead of every item.
+    """
+    bridge_dir = tmp_path / "bridge"
+    transcript_path = tmp_path / "session.jsonl"
+    transcript_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "type": "user",
+                        "uuid": "user-1",
+                        "message": {"role": "user", "content": "run it"},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "uuid": "assistant-1",
+                        "message": {
+                            "role": "assistant",
+                            "content": [
+                                {"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": {}}
+                            ],
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    record_hook_event(
+        bridge_dir,
+        {
+            "hook_event_name": "SessionStart",
+            "session_id": "claude-session",
+            "transcript_path": str(transcript_path),
+        },
+    )
+    record_hook_event(
+        bridge_dir,
+        {"hook_event_name": "UserPromptSubmit", "session_id": "claude-session"},
+    )
+    server, thread, base_url = _start_recording_server()
+    task = asyncio.create_task(
+        forwarder.forward_claude_transcript_to_session(
+            base_url=base_url,
+            headers={},
+            session_id="conv_abc",
+            bridge_dir=bridge_dir,
+            agent_name="claude-native-ui",
+            start_at_end=False,
+            poll_interval_s=0.01,
+        )
+    )
+    bodies: list[dict[str, Any]] = []
+    try:
+        while not any(
+            b.get("type") == "external_conversation_item"
+            and b["data"].get("item_type") == "function_call"
+            for b in bodies
+        ):
+            bodies.append((await asyncio.wait_for(_get_recorded_request(server), 10))["body"])
+        # Let a later poll run so a double post of the edge would show up.
+        await asyncio.sleep(0.3)
+        while True:
+            try:
+                bodies.append((await asyncio.wait_for(_get_recorded_request(server), 0.2))["body"])
+            except TimeoutError:
+                break
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5.0)
+
+    edges = [
+        i
+        for i, b in enumerate(bodies)
+        if b.get("type") == "external_session_status" and b["data"].get("ae_prompt_edge") is True
+    ]
+    first_call = next(
+        i
+        for i, b in enumerate(bodies)
+        if b.get("type") == "external_conversation_item"
+        and b["data"].get("item_type") == "function_call"
+    )
+    assert len(edges) == 1, f"the prompt edge must post exactly once; got {bodies!r}"
+    assert edges[0] < first_call

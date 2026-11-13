@@ -276,6 +276,7 @@ from omnigent.server.routes._sessions.helpers import (
     _find_codex_native_subagent_child,
     _find_devin_native_subagent_child,
     _find_subagent_child_by_title,
+    _flip_running_on_work,
     _flush_relay_text,
     _forward_approval_to_runner,
     _forward_session_change_to_runner,
@@ -3199,6 +3200,9 @@ def _publish_persisted_external_item(
         message_id=message_id if isinstance(message_id, str) else None,
     )
     _drive_terminal_resolved_elicitation(session_id, persisted)
+    # Only newly persisted items reach here, so a replayed item never opens the turn.
+    role = getattr(persisted.data, "role", None)
+    _flip_running_on_work(session_id, persisted.type, role if isinstance(role, str) else None)
 
 
 async def _persist_external_conversation_items(
