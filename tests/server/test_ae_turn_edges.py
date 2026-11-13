@@ -132,3 +132,27 @@ async def test_an_idle_without_the_flag_is_not_a_completed_turn(client: httpx.As
     assert resp.status_code in (200, 202, 204), resp.text
 
     assert [edge.turn_completed for edge in seen if edge.session_id == session_id] == [False]
+
+
+@pytest.mark.usefixtures("_no_runner")
+async def test_a_prompt_edge_notifies_observers_and_publishes_no_status(
+    client: httpx.AsyncClient,
+) -> None:
+    agent = await create_test_agent(client, name="edges-route-prompt")
+    created = await client.post("/v1/sessions", json={"agent_id": agent["id"]})
+    session_id = created.json()["id"]
+    seen: list[TurnEdge] = []
+    register_turn_edge_observer(seen.append)
+
+    resp = await client.post(
+        f"/v1/sessions/{session_id}/events",
+        json={
+            "type": "external_session_status",
+            "data": {"status": "running", "ae_prompt_edge": True},
+        },
+    )
+    assert resp.status_code in (200, 202, 204), resp.text
+
+    assert [(e.status, e.turn_completed) for e in seen if e.session_id == session_id] == [
+        ("prompt", False)
+    ]

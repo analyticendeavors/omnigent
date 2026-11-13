@@ -32,7 +32,8 @@ class TurnEdge:
     """One turn-state edge of a session.
 
     :param session_id: The conversation id, e.g. ``"conv_abc123"``.
-    :param status: ``running``, ``waiting``, ``idle``, ``failed`` or ``interrupted``.
+    :param status: ``running``, ``waiting``, ``idle``, ``failed``, ``interrupted`` or
+        ``prompt`` (a claude-native UserPromptSubmit: a turn opened, no status published).
     :param response_id: The response id the edge carried, if any.
     :param turn_completed: ``True`` only for the Stop hook's idle edge.
     """

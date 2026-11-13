@@ -33,6 +33,7 @@ from omnigent.harnesses.claude_native.ae_prompt_suggest import (
     clear_prompt_suggestion,
     schedule_prompt_suggestion,
 )
+from omnigent.harnesses.claude_native.ae_prompt_edge import post_prompt_edge
 from omnigent.harnesses.claude_native.ae_subagent_model import report_subagent_model
 from omnigent.harnesses.claude_native.ae_transcript_tokens import TranscriptTokenTally
 from omnigent.harnesses.claude_native.bridge import (
@@ -4082,6 +4083,7 @@ async def _forward_available_status_events(
                 record, parent_claude_session_ids=parent_claude_session_ids
             ):
                 await clear_prompt_suggestion(client, state=dedupe.prompt_suggest)
+                await post_prompt_edge(client, session_id)
                 with contextlib.suppress(Exception):
                     # This proves Claude saw a submit; later hooks can still block the turn.
                     _logger.info(

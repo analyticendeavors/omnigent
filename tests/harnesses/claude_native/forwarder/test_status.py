@@ -127,21 +127,21 @@ async def test_forwarder_mirrors_interrupt_marker_for_ui(tmp_path: Path) -> None
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("submit_log_fails", [False, True])
-async def test_forwarder_posts_idle_on_stop_and_ignores_user_prompt_submit(
+async def test_forwarder_posts_idle_on_stop_and_only_a_prompt_edge_for_user_prompt_submit(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
     submit_log_fails: bool,
 ) -> None:
     """
-    ``Stop`` → idle (the authoritative turn-end); ``UserPromptSubmit`` ignored.
+    ``Stop`` → idle (the authoritative turn-end); ``UserPromptSubmit`` posts a prompt edge only.
 
     ``Stop`` is the fire-once turn-end edge that drives sub-agent terminal
     delivery (via ``external_session_status``, the codex-shared path). The
-    ``running`` edge stays PTY-derived, so ``UserPromptSubmit`` must NOT post a
-    status. We record ``UserPromptSubmit`` ahead of ``Stop``: the first (and
-    only) ``external_session_status`` POST must be the ``idle`` from ``Stop``.
-    A ``running`` arriving first would mean ``UserPromptSubmit`` still maps.
+    ``running`` edge stays PTY-derived, so ``UserPromptSubmit`` must NOT map to a
+    status. It posts one ``ae_prompt_edge`` (main session only, none for the
+    subagent), which the server turns into a turn-open edge with no status.
+    The ``idle`` from ``Stop`` follows.
     """
     caplog.set_level("INFO", logger="omnigent.harnesses.claude_native.forwarder")
     from omnigent.harnesses.claude_native import forwarder
@@ -198,6 +198,7 @@ async def test_forwarder_posts_idle_on_stop_and_ignores_user_prompt_submit(
         )
     )
     try:
+        prompt_edge = await _get_recorded_request(server)
         request = await _get_recorded_request(server)
     finally:
         task.cancel()
@@ -207,8 +208,11 @@ async def test_forwarder_posts_idle_on_stop_and_ignores_user_prompt_submit(
         server.server_close()
         thread.join(timeout=5.0)
 
-    # The first (and only) status POST is the Stop → idle. A ``running``
-    # arriving first would mean UserPromptSubmit is still wrongly mapped.
+    assert prompt_edge["body"] == {
+        "type": "external_session_status",
+        "data": {"status": "running", "ae_prompt_edge": True},
+    }
+    # The next POST is the Stop idle: the subagent's submit posted no edge.
     assert request["path"] == "/v1/sessions/conv_abc/events"
     # The Stop hook carries its authoritative background-shell count (0 here,
     # no background tasks) so a finished shell clears the indicator.

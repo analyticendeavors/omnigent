@@ -1905,6 +1905,10 @@ def register_events_routes(
             _signal_harness_elicitation_resolved_by_id(session_id, elicitation_id)
             return {"queued": False}
         if body.type in (_EXTERNAL_SESSION_STATUS_TYPE, _SUBAGENT_STATUS_TYPE):
+            if body.type == _EXTERNAL_SESSION_STATUS_TYPE and body.data.get("ae_prompt_edge") is True:
+                # A prompt was submitted: a turn-open edge for observers, no status change.
+                ae_turn_edges.notify_turn_edge(session_id, "prompt")
+                return {"queued": False}
             status = body.data.get("status")
             if body.type == _SUBAGENT_STATUS_TYPE:
                 if body.data.get("idle") is not True:
