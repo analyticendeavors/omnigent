@@ -56,6 +56,8 @@ export interface AeMoveAllAnswer {
   pending: { id: string; title: string; reason: string }[];
   /** No terminal was running: the login is stored and each starts on it next time. */
   queued?: { id: string; title: string; reason: string }[];
+  /** The server stopped paging at its hard row cap; some chats were not looked at. */
+  truncated?: boolean;
 }
 
 /** Re-read a chat's labels and its Usage numbers after its login changed. */
@@ -159,6 +161,7 @@ export async function moveAllAeClaudeChats(
     skipped: body?.skipped ?? [],
     pending: body?.pending ?? [],
     queued: body?.queued ?? [],
+    truncated: body?.truncated ?? false,
   };
 }
 
@@ -171,14 +174,25 @@ export function aeMoveAllSummary(answer: AeMoveAllAnswer, label?: string): strin
   const count = answer.moved.length + (answer.queued?.length ?? 0);
   const parts: string[] = [];
   if (count > 0) parts.push(`Moved ${plural(count, "chat")}${label ? ` to ${label}` : ""}`);
-  if (answer.pending.length > 0) {
-    parts.push(`${answer.pending.length} move when their reply ends`);
-  }
-  if (answer.skipped.length > 0) {
-    const why = answer.skipped.map((s) => `${s.title}: ${s.reason}`);
-    parts.push(`${answer.skipped.length} skipped: ${why.join(", ")}`);
-  }
+  // Busy chats retry on the server; chats the server was still switching finish on their own.
+  const stillSwitching = answer.pending.filter((p) => p.reason === "still switching").length;
+  const waiting = answer.pending.length - stillSwitching;
+  if (waiting > 0) parts.push(`${waiting} move when their reply ends`);
+  if (stillSwitching > 0) parts.push(`${stillSwitching} still switching`);
+  if (answer.skipped.length > 0) parts.push(skippedPart(answer.skipped));
+  if (answer.truncated) parts.push("too many chats to list: run it again if some did not move");
   return parts.length === 0 ? "No chats needed moving" : parts.join("; ");
+}
+
+/** Names up to three skipped chats; past that, counts them by reason (pinned runs can be many). */
+function skippedPart(skipped: { title: string; reason: string }[]): string {
+  if (skipped.length <= 3) {
+    return `${skipped.length} skipped: ${skipped.map((s) => `${s.title}: ${s.reason}`).join(", ")}`;
+  }
+  const byReason = new Map<string, number>();
+  for (const row of skipped) byReason.set(row.reason, (byReason.get(row.reason) ?? 0) + 1);
+  const groups = [...byReason].map(([reason, count]) => `${count} ${reason}`);
+  return `${skipped.length} skipped: ${groups.join(", ")}`;
 }
 
 const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;

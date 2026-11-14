@@ -79,6 +79,31 @@ describe("aeMoveAllSummary", () => {
     ).toBe("1 move when their reply ends");
   });
 
+  it("words a chat the server was still switching apart from one waiting on its reply", () => {
+    expect(
+      aeMoveAllSummary(
+        {
+          moved: ["a"],
+          skipped: [],
+          pending: [row("c", "moves when its reply ends"), row("d", "still switching")],
+        },
+        "Backup",
+      ),
+    ).toBe("Moved 1 chat to Backup; 1 move when their reply ends; 1 still switching");
+  });
+
+  it("counts many skipped chats by reason and says when the list was cut", () => {
+    const pinned = ["a", "b", "c", "d"].map((id) => row(id, "pinned by its scheduled task"));
+    expect(
+      aeMoveAllSummary(
+        { moved: [], skipped: [...pinned, row("e", "Offline")], pending: [], truncated: true },
+        "Backup",
+      ),
+    ).toBe(
+      "5 skipped: 4 pinned by its scheduled task, 1 Offline; too many chats to list: run it again if some did not move",
+    );
+  });
+
   it("names a chat that failed for a real reason", () => {
     expect(
       aeMoveAllSummary(
