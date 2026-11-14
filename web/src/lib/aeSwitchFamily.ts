@@ -1,7 +1,7 @@
 // The "Switch the child chats too?" question (omnigent-ae, 2026-10-28). Asked when a
 // chat with child chats is moved to another Claude login. The pickers (composer
 // menu, action dock) unmount when they close, so the question lives in this small
-// store and one dialog mounted in the app shell shows it, as aeMoveAllChats does.
+// store and one dialog mounted in the app shell shows it, as the (removed) move-all question did.
 
 import type { QueryClient } from "@tanstack/react-query";
 import { useSyncExternalStore } from "react";

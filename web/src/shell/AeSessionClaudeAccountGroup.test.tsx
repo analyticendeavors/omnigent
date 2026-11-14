@@ -5,7 +5,6 @@ import { AeClaudeAccountSubmenu } from "./AeClaudeAccountSubmenu";
 import { DropdownMenu, DropdownMenuContent } from "@/components/ui/dropdown-menu";
 import type { Host } from "@/hooks/useHosts";
 import { AE_ACCOUNT_FOLLOW_UP_DELAYS_MS } from "@/lib/aeClaudeAccount";
-import { dismissAeMoveAll } from "@/lib/aeMoveAllChats";
 import { dismissAeSwitchFamily, useAeSwitchFamilyRequest } from "@/lib/aeSwitchFamily";
 
 vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
@@ -61,7 +60,6 @@ beforeEach(() => {
   mutate.mockReset();
   vi.mocked(authenticatedFetch).mockReset();
   vi.mocked(showToast).mockReset();
-  dismissAeMoveAll();
   dismissAeSwitchFamily();
   familyRows.rows = [];
   labels = { "ae.claude_account": "AE Backup" };
@@ -244,9 +242,17 @@ describe("Account submenu inside a chat", () => {
     expect(screen.queryByTestId("composer-claude-account-new")).toBeNull();
   });
 
-  it("picking a new-chat default asks whether to move every open chat", () => {
+  it("picking a new-chat default moves every chat at once, with no question", async () => {
     mutate.mockImplementation((_input: unknown, options: { onSuccess?: () => void }) =>
       options.onSuccess?.(),
+    );
+    vi.mocked(authenticatedFetch).mockImplementation(() =>
+      json({
+        moved: ["a", "b"],
+        skipped: [],
+        pending: [{ id: "c", title: "C", reason: "moves when its reply ends" }],
+        queued: [{ id: "d", title: "D", reason: "starts at its next message" }],
+      }),
     );
     renderMenu();
     fireEvent.click(screen.getByTestId("composer-claude-account-AE Backup"));
@@ -254,5 +260,29 @@ describe("Account submenu inside a chat", () => {
       { harness: "claude-native", kind: "claude-oauth-select", account_name: "AE Backup" },
       expect.anything(),
     );
+    await waitFor(() =>
+      expect(showToast).toHaveBeenCalledWith(
+        "Moved 3 chats to AE Backup; 1 move when their reply ends",
+      ),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const [url, init] = vi.mocked(authenticatedFetch).mock.calls[0];
+    expect(url).toBe("/v1/ae/claude-account/move-all");
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      account: "AE Backup",
+      host_id: "host",
+    });
+  });
+
+  it("shows the server's refusal as a toast when the move fails", async () => {
+    mutate.mockImplementation((_input: unknown, options: { onSuccess?: () => void }) =>
+      options.onSuccess?.(),
+    );
+    vi.mocked(authenticatedFetch).mockImplementation(() =>
+      Promise.reject(new Error("Server down")),
+    );
+    renderMenu();
+    fireEvent.click(screen.getByTestId("composer-claude-account-AE Backup"));
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith("Server down"));
   });
 });

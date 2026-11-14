@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useDetectedCredentials, useStoreCredential, type Host } from "@/hooks/useHosts";
+import { useQueryClient } from "@tanstack/react-query";
 import { aePickDefaultClaudeAccount } from "@/lib/aePickDefaultClaudeAccount";
 import { AeSharedAccountMarker, aeIsSharedAccount } from "@/lib/aeSharedClaudeAccounts";
 
@@ -26,7 +27,8 @@ export function ClaudeAccounts({
   const [accountLabel, setAccountLabel] = useState("");
   const accounts = useDetectedCredentials(host?.host_id, !!host);
   const store = useStoreCredential(host?.host_id ?? "");
-  const pickDefault = aePickDefaultClaudeAccount(store, host?.host_id);
+  const queryClient = useQueryClient();
+  const pickDefault = aePickDefaultClaudeAccount(store, host?.host_id, queryClient);
   const addAccount = () => {
     if (store.isPending || !name.trim() || !token.trim()) return;
     store.mutate(

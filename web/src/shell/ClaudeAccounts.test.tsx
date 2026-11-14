@@ -1,8 +1,25 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  act,
+  fireEvent,
+  render as rtlRender,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ClaudeAccounts } from "./ClaudeAccounts";
 import type { Host } from "@/hooks/useHosts";
 import type * as identity from "@/lib/identity";
+
+// Picking a default login now moves every chat, which refreshes their queries.
+const render = (ui: ReactElement) =>
+  rtlRender(ui, {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={new QueryClient()}>{children}</QueryClientProvider>
+    ),
+  });
 
 const mutate = vi.fn();
 let rows = [

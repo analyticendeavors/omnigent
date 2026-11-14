@@ -20,9 +20,6 @@ export const AE_THIS_CHAT_HINT =
 export const AE_THIS_CHAT_BUSY_HINT =
   "Claude is replying. Wait for the reply, or stop it, then switch.";
 
-export const AE_MOVE_ALL_CAUTION =
-  "Each moved chat restarts on the new login and resumes its conversation; its next reply re-reads the conversation, which costs extra tokens on that subscription. Chats that are mid-reply are skipped.";
-
 export interface AeChildOutcome {
   id: string;
   title: string;
@@ -165,25 +162,23 @@ export async function moveAllAeClaudeChats(
   };
 }
 
-/** One line for the result, e.g. "Moved 4 chats; 1 skipped: Fix CI is mid-reply". */
+/**
+ * The toast after the default login changed and every chat moved with it (2026-11-13), e.g.
+ * "Moved 12 chats to Backup; 2 move when their reply ends". Chats with no running terminal
+ * (closed, archived) count as moved: their login is stored. Zero parts are left out.
+ */
 export function aeMoveAllSummary(answer: AeMoveAllAnswer, label?: string): string {
-  const count = answer.moved.length;
-  const moved = `Moved ${count} ${count === 1 ? "chat" : "chats"}`;
+  const count = answer.moved.length + (answer.queued?.length ?? 0);
   const parts: string[] = [];
-  const queued = answer.queued?.length ?? 0;
-  if (queued > 0) parts.push(`${plural(queued, "chat")} not running ${startsNext(queued, label)}`);
+  if (count > 0) parts.push(`Moved ${plural(count, "chat")}${label ? ` to ${label}` : ""}`);
   if (answer.pending.length > 0) {
-    parts.push(
-      `${answer.pending.length} still switching: ${answer.pending.map((s) => s.title).join(", ")}`,
-    );
+    parts.push(`${answer.pending.length} move when their reply ends`);
   }
   if (answer.skipped.length > 0) {
-    const why = answer.skipped.map((s) =>
-      s.reason === "mid-reply" ? `${s.title} is mid-reply` : `${s.title}: ${s.reason}`,
-    );
+    const why = answer.skipped.map((s) => `${s.title}: ${s.reason}`);
     parts.push(`${answer.skipped.length} skipped: ${why.join(", ")}`);
   }
-  return parts.length === 0 ? moved : `${moved}; ${parts.join("; ")}`;
+  return parts.length === 0 ? "No chats needed moving" : parts.join("; ");
 }
 
 const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;

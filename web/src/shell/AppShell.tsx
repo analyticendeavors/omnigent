@@ -12,7 +12,6 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Outlet, useLocation, useParams, useRebasePath, useSearchParams } from "@/lib/routing";
-import { AeMoveAllChatsDialog } from "@/shell/AeMoveAllChatsDialog";
 import { AePinFamilyChoiceHost } from "@/shell/AePinFamilyChoice";
 import { AeSwitchFamilyDialog } from "@/shell/AeSwitchFamilyDialog";
 import { CANVAS_CONVERSATION_MIN_WIDTH, CanvasWorkspace } from "@/canvas/CanvasWorkspace";
@@ -2875,7 +2874,6 @@ export function AppShell() {
               bottom: updateOverlayToastOffset(updateOverlayHeight),
             }}
           />
-          <AeMoveAllChatsDialog />
           <AeSwitchFamilyDialog />
           <AePinFamilyChoiceHost />
           <AeReloadNotice />

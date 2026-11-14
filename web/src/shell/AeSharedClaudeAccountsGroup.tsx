@@ -23,6 +23,7 @@ import {
   aeRelabelSharedClaudeAccount,
   aeRemoveSharedClaudeAccount,
 } from "@/lib/aeSharedClaudeAccounts";
+import { useQueryClient } from "@tanstack/react-query";
 import { aePickDefaultClaudeAccount } from "@/lib/aePickDefaultClaudeAccount";
 import { AE_PENCIL_ICON } from "@/lib/aePolicyEdit";
 import { AeTablerSvg } from "@/lib/aeTablerIcon";
@@ -80,7 +81,8 @@ export function AeSharedClaudeAccountsGroup({
   onChanged: () => void;
 }) {
   const store = useStoreCredential(hostId);
-  const pickDefault = aePickDefaultClaudeAccount(store, hostId);
+  const queryClient = useQueryClient();
+  const pickDefault = aePickDefaultClaudeAccount(store, hostId, queryClient);
   const invalidateAllHosts = useInvalidateDetectedCredentials();
   const [list, setList] = useState<AeSharedClaudeAccountList | null>(null);
   const [readError, setReadError] = useState<string | null>(null);

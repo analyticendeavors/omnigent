@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useDetectedCredentials, useStoreCredential, type Host } from "@/hooks/useHosts";
 import { AE_MENU_NOTE_CLASS, AE_MENU_ROW_CLASS, AE_MENU_WIDTH_CLASS } from "@/lib/aeMenuRow";
+import { useQueryClient } from "@tanstack/react-query";
 import { aePickDefaultClaudeAccount } from "@/lib/aePickDefaultClaudeAccount";
 import { AeSharedAccountMarker, aeIsSharedAccount } from "@/lib/aeSharedClaudeAccounts";
 import { isTempConvId } from "@/lib/tempConversationId";
@@ -42,7 +43,8 @@ export function AeClaudeAccountSubmenu({
   const [error, setError] = useState<string | null>(null);
   const accounts = useDetectedCredentials(host?.host_id, !!host);
   const store = useStoreCredential(host?.host_id ?? "");
-  const pickDefault = aePickDefaultClaudeAccount(store, host?.host_id);
+  const queryClient = useQueryClient();
+  const pickDefault = aePickDefaultClaudeAccount(store, host?.host_id, queryClient);
   if (!host) return null;
   const rows = (accounts.data ?? []).filter((row) => row.family.startsWith("claude-oauth"));
   const active = rows.find((row) => row.family === "claude-oauth-active");

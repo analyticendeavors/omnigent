@@ -9,7 +9,6 @@ import {
   aeSwitchSummary,
 } from "./aeClaudeAccount";
 import { aeOtherClaudeAccounts } from "./aeLimitGate";
-import { askAeMoveAll, dismissAeMoveAll } from "./aeMoveAllChats";
 
 describe("aeChatAccount", () => {
   it("prefers the last launch over a stored pick, as the server does", () => {
@@ -46,38 +45,59 @@ describe("aeChatAccountSettled", () => {
 });
 
 describe("aeMoveAllSummary", () => {
-  it("names the moved count and each skipped chat", () => {
-    expect(
-      aeMoveAllSummary({
-        moved: ["a"],
-        skipped: [
-          { id: "b", title: "Fix CI", reason: "mid-reply" },
-          { id: "c", title: "Docs", reason: "Claude account selection requires a connected host." },
-        ],
-        pending: [],
-      }),
-    ).toBe(
-      "Moved 1 chat; 2 skipped: Fix CI is mid-reply, Docs: Claude account selection requires a connected host.",
-    );
-    expect(aeMoveAllSummary({ moved: ["a", "b"], skipped: [], pending: [] })).toBe("Moved 2 chats");
-  });
+  const row = (id: string, reason: string) => ({ id, title: `Chat ${id}`, reason });
 
-  it("counts chats with no terminal running apart from the moved ones", () => {
-    const row = { title: "T", reason: "starts at its next message" };
+  it("counts moved and stored chats together and names the login", () => {
     expect(
       aeMoveAllSummary(
         {
           moved: ["a"],
           skipped: [],
           pending: [],
-          queued: [
-            { id: "b", ...row },
-            { id: "c", ...row },
-          ],
+          queued: [row("b", "starts at its next message"), row("c", "starts at its next message")],
         },
         "Backup",
       ),
-    ).toBe("Moved 1 chat; 2 chats not running start on Backup at their next message");
+    ).toBe("Moved 3 chats to Backup");
+    expect(aeMoveAllSummary({ moved: ["a"], skipped: [], pending: [] }, "Backup")).toBe(
+      "Moved 1 chat to Backup",
+    );
+  });
+
+  it("adds the chats that move when their reply ends, and leaves out zero parts", () => {
+    expect(
+      aeMoveAllSummary(
+        { moved: ["a", "b"], skipped: [], pending: [row("c", "moves when its reply ends")] },
+        "Backup",
+      ),
+    ).toBe("Moved 2 chats to Backup; 1 move when their reply ends");
+    expect(
+      aeMoveAllSummary(
+        { moved: [], skipped: [], pending: [row("c", "moves when its reply ends")] },
+        "Backup",
+      ),
+    ).toBe("1 move when their reply ends");
+  });
+
+  it("names a chat that failed for a real reason", () => {
+    expect(
+      aeMoveAllSummary(
+        {
+          moved: ["a"],
+          skipped: [row("b", "Claude account selection requires a connected host.")],
+          pending: [],
+        },
+        "Backup",
+      ),
+    ).toBe(
+      "Moved 1 chat to Backup; 1 skipped: Chat b: Claude account selection requires a connected host.",
+    );
+  });
+
+  it("says so when nothing needed moving", () => {
+    expect(aeMoveAllSummary({ moved: [], skipped: [], pending: [] }, "Backup")).toBe(
+      "No chats needed moving",
+    );
   });
 });
 
@@ -94,13 +114,6 @@ describe("aeOtherClaudeAccounts", () => {
   });
   it("lists none on provider credentials", () => {
     expect(aeOtherClaudeAccounts([...rows, { family: "claude-provider-env" }], "")).toEqual([]);
-  });
-});
-
-describe("askAeMoveAll", () => {
-  it("is a store the shell's dialog reads", () => {
-    askAeMoveAll({ account: "", label: "AE Default", hostId: undefined });
-    dismissAeMoveAll();
   });
 });
 
