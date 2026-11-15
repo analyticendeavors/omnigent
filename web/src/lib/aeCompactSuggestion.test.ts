@@ -78,9 +78,7 @@ describe("aeCompactSuggestion", () => {
 
   it("words the line in thousands", () => {
     expect(aeCompactTokens(370_400)).toBe("370k");
-    expect(aeCompactText(370_000)).toBe(
-      "This chat is at 370k tokens. Every reply re-reads all of it.",
-    );
+    expect(aeCompactText(370_000)).toBe("370k tokens. Full context processed each reply.");
     expect(aeCompactRailText(370_000)).toBe("370k tokens, re-read on every reply.");
   });
 });

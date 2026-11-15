@@ -1110,9 +1110,7 @@ describe("the Compact card", () => {
   it("shows the size and Compact and Not now when the label asks", async () => {
     renderDock([], [], SUGGEST);
     const lead = await screen.findByTestId("ae-dock-lead");
-    expect(lead.textContent).toContain(
-      "This chat is at 370k tokens. Every reply re-reads all of it.",
-    );
+    expect(lead.textContent).toContain("370k tokens. Full context processed each reply.");
     expect(within(lead).getByTestId("ae-dock-compact")).toBeTruthy();
     expect(within(lead).getByTestId("ae-dock-context-later")).toBeTruthy();
   });

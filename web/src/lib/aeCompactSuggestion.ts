@@ -73,7 +73,7 @@ export function aeCompactTokens(tokens: number): string {
 
 /** The card's line, and the rail line's tooltip. */
 export function aeCompactText(tokens: number): string {
-  return `This chat is at ${aeCompactTokens(tokens)} tokens. Every reply re-reads all of it.`;
+  return `${aeCompactTokens(tokens)} tokens. Full context processed each reply.`;
 }
 
 /** The rail's shorter line, which fits the Context card on one line. */

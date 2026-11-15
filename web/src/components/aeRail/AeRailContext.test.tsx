@@ -336,9 +336,7 @@ describe("Compact suggestion line", () => {
     const line = await screen.findByTestId("ae-rail-compact-suggest");
     expect(line.textContent).toBe("370k tokens, re-read on every reply.");
     expect(line.className).toContain("truncate");
-    expect(line.getAttribute("title")).toBe(
-      "This chat is at 370k tokens. Every reply re-reads all of it.",
-    );
+    expect(line.getAttribute("title")).toBe("370k tokens. Full context processed each reply.");
     await screen.findByRole("button", { name: /^Categories/ });
     expect(screen.queryByTestId("ae-rail-compact")).toBeNull();
   });
