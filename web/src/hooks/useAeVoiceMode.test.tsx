@@ -1122,6 +1122,15 @@ describe("voice log upload", () => {
     expect(reasons()).toEqual([]);
   });
 
+  it("a switch to a Voice-off chat still stops the mic, with no upload", () => {
+    setVoiceOn("c2", false);
+    const { rerender } = mount();
+    controller.current.stop.mockClear();
+    rerender({ chatId: "c2", value: "", status: "idle", canSend: true, submit });
+    expect(controller.current.stop).toHaveBeenCalled();
+    expect(reasons()).toEqual([]);
+  });
+
   it("attributes the Voice end upload to the chat it came on in", () => {
     const { rerender } = mount();
     // Same on state but the visible chat id moves to c2 while c1's voice ends.
