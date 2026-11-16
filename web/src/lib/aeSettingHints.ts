@@ -297,7 +297,12 @@ export const AE_SETTING_HINTS = {
   },
   "voice.log": {
     label: "Add voice log to message",
-    hint: "Puts the last two minutes of voice events into the message box to send to the agent. Nothing leaves this device until you send.",
+    hint: "Puts the last two minutes of voice events into the message box to send to the agent. Nothing goes to the chat until you send.",
+    source: "tooltip",
+  },
+  "voice.log_send": {
+    label: "Send voice log",
+    hint: "Sends the last two minutes of voice events to the server so a mic problem can be read later. Also sent when Voice mode hits trouble or ends.",
     source: "tooltip",
   },
 } as const satisfies Record<string, AeSettingHint>;

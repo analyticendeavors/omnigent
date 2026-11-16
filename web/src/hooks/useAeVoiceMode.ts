@@ -27,7 +27,7 @@ import {
   type VoicePhase,
 } from "@/lib/aeVoiceMode";
 import { activeEchoWords, resetEcho, splitEcho } from "@/lib/aeVoiceEcho";
-import { logVoice } from "@/lib/aeVoiceLog";
+import { logVoice, uploadVoiceLog } from "@/lib/aeVoiceLog";
 import { useMicWhileSpeaking } from "@/lib/aeVoiceMic";
 import { useChatStore } from "@/store/chatStore";
 
@@ -194,6 +194,9 @@ export function useAeVoiceMode({
   };
   const readyRef = useRef(ready);
   readyRef.current = ready;
+  // The voice log goes to the server with the chat it belongs to (see uploadVoiceLog).
+  const chatIdRef = useRef(chatId);
+  chatIdRef.current = chatId;
 
   const clearGrace = useCallback(() => {
     if (graceTimer.current !== null) clearTimeout(graceTimer.current);
@@ -275,6 +278,8 @@ export function useAeVoiceMode({
     netTimer.current = setTimeout(() => {
       netTimer.current = null;
       if (!startPending.current) return;
+      logVoice("mic stalled", "no answer to start");
+      void uploadVoiceLog("mic_stalled", chatIdRef.current);
       controller.current?.stop();
       onListeningRef.current(false);
     }, MIC_START_NET_MS);
@@ -287,6 +292,10 @@ export function useAeVoiceMode({
     if (!on) {
       clearGrace();
       // Turning the switch off hands the mic back, quiet.
+      if (wasOn.current) {
+        logVoice("voice end");
+        void uploadVoiceLog("voice_end", chatIdRef.current);
+      }
       if (wasOn.current && mic) {
         stopAsked.current = mic.isListening() || startPending.current;
         startPending.current = false;
@@ -354,6 +363,7 @@ export function useAeVoiceMode({
           }, MIC_RETRY_MS);
         } else {
           logVoice("mic failed");
+          void uploadVoiceLog("mic_deaf", chatIdRef.current);
           setMicDetail(MIC_DEAF_DETAIL);
           setMicFailed(true);
         }
@@ -371,6 +381,7 @@ export function useAeVoiceMode({
           }, MIC_RETRY_MS);
         } else {
           logVoice("mic failed");
+          void uploadVoiceLog("mic_failed", chatIdRef.current);
           setMicFailed(true);
         }
       } else if (stopAsked.current) {
@@ -381,6 +392,8 @@ export function useAeVoiceMode({
         return;
       } else if (latest.current.wantListen) {
         // Stopped from outside (the mic button, the hotkey): leave it stopped.
+        logVoice("mic paused", "stopped from outside");
+        void uploadVoiceLog("mic_paused", chatIdRef.current);
         setMicStopped(true);
       }
       stopAsked.current = false;

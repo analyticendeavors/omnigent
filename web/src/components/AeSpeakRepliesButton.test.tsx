@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetCloudVoicesCache } from "@/lib/aeCloudVoice";
+import { resetVoiceLog } from "@/lib/aeVoiceLog";
 import {
   getVoiceSnapshot,
   resetVoiceStore,
@@ -48,6 +49,7 @@ function serveCloudVoices(voices: { id: string; name: string }[]) {
 }
 
 beforeEach(() => {
+  resetVoiceLog();
   serveCloudVoices([]);
   window.localStorage.clear();
   resetSnipsStore();
@@ -613,12 +615,12 @@ describe("AeSpeakRepliesButton", () => {
     renderButton();
     await openMenu();
     const triggers = document.querySelectorAll("[data-slot=tooltip-trigger]");
-    expect(triggers).toHaveLength(11);
+    expect(triggers).toHaveLength(12);
     for (const el of triggers) {
       const group = el.closest("span.items-center.gap-1\\.5");
       expect(group).not.toBeNull();
       expect(group?.textContent).toMatch(
-        /Voice mode|Speak replies|Fast answers|Send snips|Mic while speaking|Voice|Speed|Microphone|Speaker|Add voice log/,
+        /Voice mode|Speak replies|Fast answers|Send snips|Mic while speaking|Voice|Speed|Microphone|Speaker|Add voice log|Send voice log/,
       );
     }
     const actions = screen.getByTestId("ae-speak-actions");
@@ -636,6 +638,44 @@ describe("AeSpeakRepliesButton", () => {
     window.removeEventListener("ae-voice-log-insert", onInsert);
     expect(seen).toHaveLength(1);
     expect(seen[0]).toMatch(/^Voice log /);
+  });
+
+  it("Send voice log uploads the log for this chat and says so", async () => {
+    const toastSpy = vi.spyOn(toast, "success").mockImplementation(() => "");
+    renderButton();
+    const user = await openMenu();
+    expect(
+      within(screen.getByTestId("ae-voice-log-send")).getByTestId("ae-hint-voice.log_send"),
+    ).toBeInTheDocument();
+    await user.click(screen.getByTestId("ae-voice-log-send"));
+    await waitFor(() => expect(toastSpy).toHaveBeenCalledWith("Voice log sent"));
+    const post = vi
+      .mocked(fetch)
+      .mock.calls.find(([url]) => String(url).includes("/v1/ae/voice-log"));
+    expect(post).toBeDefined();
+    const body = JSON.parse(String(((post as unknown[])[1] as RequestInit).body));
+    expect(body.reason).toBe("manual");
+    expect(body.chat_id).toBe("c1");
+    toastSpy.mockRestore();
+  });
+
+  it("Send voice log says so when the server refuses it", async () => {
+    const errorSpy = vi.spyOn(toast, "error").mockImplementation(() => "");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: unknown) =>
+        Promise.resolve(
+          String(url).includes("/v1/ae/voice-log")
+            ? new Response("{}", { status: 429 })
+            : new Response(JSON.stringify({ voices: [] }), { status: 200 }),
+        ),
+      ),
+    );
+    renderButton();
+    const user = await openMenu();
+    await user.click(screen.getByTestId("ae-voice-log-send"));
+    await waitFor(() => expect(errorSpy).toHaveBeenCalledWith("Could not send the voice log"));
+    errorSpy.mockRestore();
   });
 
   it("Read last reply speaks the last reply and Stop speaking cancels it", async () => {

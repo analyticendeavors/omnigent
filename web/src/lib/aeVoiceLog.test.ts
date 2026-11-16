@@ -7,6 +7,8 @@ import {
   logVoice,
   requestVoiceLogInsert,
   resetVoiceLog,
+  UPLOAD_MIN_GAP_MS,
+  uploadVoiceLog,
   useVoiceLogInsert,
 } from "./aeVoiceLog";
 
@@ -67,5 +69,81 @@ describe("voice log", () => {
     renderHook(() => useVoiceLogInsert("  /review the diff", setValue));
     act(() => requestVoiceLogInsert());
     expect(setValue).toHaveBeenLastCalledWith(expect.stringMatching(/^Voice log [\s\S]*\n\n {2}\/review the diff$/));
+  });
+});
+
+describe("uploadVoiceLog", () => {
+  const fetchMock = vi.fn();
+  beforeEach(() => {
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(() => Promise.resolve(new Response("{}", { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  function lastBody() {
+    const [url, init] = fetchMock.mock.calls.at(-1) as [string, RequestInit];
+    return { url, init, body: JSON.parse(String(init.body)) };
+  }
+
+  it("posts the buffer with the reason and chat id, keepalive, as JSON", async () => {
+    logVoice("mic start", "browser");
+    logVoice("final", "hello");
+    await expect(uploadVoiceLog("manual", "c1")).resolves.toBe("sent");
+    const { url, init, body } = lastBody();
+    expect(url).toContain("/v1/ae/voice-log");
+    expect(init.method).toBe("POST");
+    expect(init.keepalive).toBe(true);
+    expect(new Headers(init.headers).get("Content-Type")).toBe("application/json");
+    expect(body.reason).toBe("manual");
+    expect(body.chat_id).toBe("c1");
+    expect(body.lines[0].event).toBe("client");
+    expect(body.lines.map((l: { event: string }) => l.event)).toEqual([
+      "client",
+      "mic start",
+      "final",
+    ]);
+    expect(body.lines[2]).toEqual({ t: expect.any(Number), event: "final", detail: "hello" });
+  });
+
+  it("leaves chat_id out when there is none", async () => {
+    await uploadVoiceLog("voice_end");
+    expect("chat_id" in lastBody().body).toBe(false);
+  });
+
+  it("sends the same reason at most once per 20 s, and other reasons freely", async () => {
+    await expect(uploadVoiceLog("mic_failed")).resolves.toBe("sent");
+    await expect(uploadVoiceLog("mic_failed")).resolves.toBe("throttled");
+    await expect(uploadVoiceLog("mic_deaf")).resolves.toBe("sent");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(UPLOAD_MIN_GAP_MS - 1);
+    await expect(uploadVoiceLog("mic_failed")).resolves.toBe("throttled");
+    vi.advanceTimersByTime(1);
+    await expect(uploadVoiceLog("mic_failed")).resolves.toBe("sent");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("never throws: a rejected fetch and a refused answer both come back failed", async () => {
+    fetchMock.mockImplementationOnce(() => Promise.reject(new Error("offline")));
+    await expect(uploadVoiceLog("mic_failed")).resolves.toBe("failed");
+    fetchMock.mockImplementationOnce(() => Promise.resolve(new Response("{}", { status: 429 })));
+    await expect(uploadVoiceLog("mic_deaf")).resolves.toBe("failed");
+    fetchMock.mockImplementationOnce(() => {
+      throw new Error("sync throw");
+    });
+    await expect(uploadVoiceLog("mic_paused")).resolves.toBe("failed");
+  });
+
+  it("keeps the request under 60 KB by dropping the oldest events, and the line cap", async () => {
+    for (let i = 0; i < 400; i += 1) logVoice("e".repeat(90), "d".repeat(200));
+    await uploadVoiceLog("manual");
+    const { init, body } = lastBody();
+    expect(String(init.body).length).toBeLessThanOrEqual(60_000);
+    expect(body.lines.length).toBeLessThanOrEqual(500);
+    expect(body.lines[0].event).toBe("client");
+    for (const line of body.lines) {
+      expect(line.event.length).toBeLessThanOrEqual(64);
+      expect((line.detail ?? "").length).toBeLessThanOrEqual(300);
+    }
   });
 });

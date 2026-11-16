@@ -1050,3 +1050,74 @@ describe("useAeVoiceMode", () => {
     expect(getVoiceSnapshot("c1").phase).not.toBe("unavailable");
   });
 });
+
+describe("voice log upload", () => {
+  /** The reasons posted to the voice log route so far, in order. */
+  function reasons(): string[] {
+    return vi
+      .mocked(fetch)
+      .mock.calls.filter(([url]) => String(url).includes("/v1/ae/voice-log"))
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)).reason);
+  }
+
+  it("sends the log with the chat id when the mic fails to start twice", () => {
+    autoConnect = false;
+    const { result } = mount();
+    act(() => void result.current.onListening(false));
+    act(() => void vi.advanceTimersByTime(1000));
+    expect(reasons()).toEqual([]);
+    act(() => void result.current.onListening(false));
+    expect(reasons()).toEqual(["mic_failed"]);
+    const [, init] = vi
+      .mocked(fetch)
+      .mock.calls.find(([url]) => String(url).includes("/v1/ae/voice-log")) as [
+      unknown,
+      RequestInit,
+    ];
+    expect(JSON.parse(String(init.body)).chat_id).toBe("c1");
+  });
+
+  it("sends the log when the mic goes deaf twice", () => {
+    const { result } = mount();
+    act(() => void result.current.onListening(true));
+    for (let i = 0; i < 2; i += 1) {
+      act(() => {
+        listening = false;
+        result.current.onListening(false, "deaf");
+      });
+      act(() => void vi.advanceTimersByTime(1000));
+      act(() => void result.current.onListening(true));
+    }
+    expect(reasons()).toEqual(["mic_deaf"]);
+  });
+
+  it("sends the log when a start never answers", () => {
+    autoConnect = false;
+    mount();
+    act(() => void vi.advanceTimersByTime(MIC_START_NET_MS));
+    expect(reasons()).toContain("mic_stalled");
+  });
+
+  it("sends the log when the mic is stopped from outside", () => {
+    const { result } = mount();
+    act(() => void result.current.onListening(true));
+    act(() => {
+      listening = false;
+      result.current.onListening(false);
+    });
+    expect(reasons()).toEqual(["mic_paused"]);
+  });
+
+  it("sends the log when Voice mode ends, and not before", () => {
+    mount();
+    expect(reasons()).toEqual([]);
+    act(() => setVoiceOn("c1", false));
+    expect(reasons()).toEqual(["voice_end"]);
+  });
+
+  it("sends nothing when Voice mode was never on", () => {
+    setVoiceOn("c1", false);
+    mount();
+    expect(reasons()).toEqual([]);
+  });
+});

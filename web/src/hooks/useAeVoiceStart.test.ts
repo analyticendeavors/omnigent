@@ -1,5 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetVoiceLog } from "@/lib/aeVoiceLog";
 import { disarmVoiceForNextChat, GRACE_MS, takeVoiceArm } from "@/lib/aeVoiceMode";
 import { installFakeSpeech, removeFakeSpeech } from "@/test/fakeSpeech";
 import {
@@ -25,10 +26,16 @@ function setup(over: { value?: string; canSubmit?: boolean } = {}) {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  resetVoiceLog();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => Promise.resolve(new Response("{}", { status: 200 }))),
+  );
   installFakeSpeech();
 });
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   removeFakeSpeech();
   disarmVoiceForNextChat();
 });
@@ -204,5 +211,65 @@ describe("useAeVoiceStart deaf takes and held messages", () => {
     act(() => void vi.advanceTimersByTime(STALLED_POLL_MS));
     expect(submit).toHaveBeenCalledTimes(1);
     expect(result.current.armed).toBe(false);
+  });
+});
+
+describe("useAeVoiceStart voice log upload", () => {
+  /** The reasons posted to the voice log route so far, in order. */
+  function reasons(): { reason: string; chat_id?: string }[] {
+    return vi
+      .mocked(fetch)
+      .mock.calls.filter(([url]) => String(url).includes("/v1/ae/voice-log"))
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)));
+  }
+
+  it("sends the log when the mic never started, with no chat id", () => {
+    const { result } = setup();
+    act(() => result.current.toggle());
+    act(() => result.current.onListening(false));
+    expect(reasons()).toHaveLength(1);
+    expect(reasons()[0].reason).toBe("mic_failed");
+    expect(reasons()[0].chat_id).toBeUndefined();
+  });
+
+  it("sends the log when a mic that listened stops on its own", () => {
+    const { result } = setup();
+    act(() => result.current.toggle());
+    act(() => result.current.onListening(true));
+    act(() => result.current.onListening(false));
+    expect(reasons().map((r) => r.reason)).toEqual(["mic_paused"]);
+  });
+
+  it("sends the log when the mic goes deaf twice", () => {
+    const { result } = setup();
+    act(() => result.current.toggle());
+    act(() => result.current.onListening(true));
+    act(() => result.current.onListening(false, "deaf"));
+    expect(reasons()).toEqual([]);
+    act(() => void vi.advanceTimersByTime(DEAF_RETRY_MS));
+    act(() => result.current.onListening(false, "deaf"));
+    expect(reasons().map((r) => r.reason)).toEqual(["mic_deaf"]);
+  });
+
+  it("sends the log when the held message gives up waiting for the chat", () => {
+    const { result } = setup({ canSubmit: false });
+    act(() => result.current.toggle());
+    act(() => result.current.onFinal("hello"));
+    act(() => void vi.advanceTimersByTime(GRACE_MS + READY_WAIT_MS + READY_POLL_MS));
+    expect(reasons().map((r) => r.reason)).toEqual(["mic_stalled"]);
+  });
+
+  it("sends the log when the user ends it, but not when a message goes out", () => {
+    const sent = setup();
+    act(() => sent.result.current.toggle());
+    act(() => sent.result.current.onFinal("hello"));
+    act(() => void vi.advanceTimersByTime(GRACE_MS + 10));
+    expect(sent.submit).toHaveBeenCalledTimes(1);
+    expect(reasons()).toEqual([]);
+
+    const ended = setup();
+    act(() => ended.result.current.toggle());
+    act(() => ended.result.current.toggle());
+    expect(reasons().map((r) => r.reason)).toEqual(["voice_end"]);
   });
 });

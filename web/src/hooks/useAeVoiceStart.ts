@@ -4,7 +4,7 @@
 
 import { type MutableRefObject, useCallback, useEffect, useRef, useState } from "react";
 import { primeVoicePlayback } from "@/lib/aeSpeakReplies";
-import { logVoice } from "@/lib/aeVoiceLog";
+import { logVoice, uploadVoiceLog } from "@/lib/aeVoiceLog";
 import {
   type AeMicController,
   armVoiceForNextChat,
@@ -86,6 +86,9 @@ export function useAeVoiceStart({
   }, [clearTimer, clearRetry, controller]);
 
   const disarm = useCallback(() => {
+    // The user ended it (End or a second tap): send the log, no chat exists yet.
+    logVoice("voice end", "new chat");
+    void uploadVoiceLog("voice_end");
     disarmVoiceForNextChat();
     release();
   }, [release]);
@@ -113,10 +116,19 @@ export function useAeVoiceStart({
           }, DEAF_RETRY_MS);
         } else {
           logVoice("start mic failed");
+          void uploadVoiceLog("mic_deaf");
           setMicDetail(START_MIC_DEAF_DETAIL);
           setPhase((p) => (held(p) ? p : "unavailable"));
         }
         return;
+      }
+      // The mic stopped without being asked: before it ever listened it never started.
+      if (everListened.current) {
+        logVoice("start mic paused");
+        void uploadVoiceLog("mic_paused");
+      } else {
+        logVoice("start mic unavailable");
+        void uploadVoiceLog("mic_failed");
       }
       setPhase((p) => (held(p) ? p : everListened.current ? "paused" : "unavailable"));
     },
@@ -186,6 +198,7 @@ export function useAeVoiceStart({
           // moment the chat is ready, without a new utterance.
           if (waited === READY_WAIT_MS) {
             logVoice("start gave up", "chat not ready");
+            void uploadVoiceLog("mic_stalled");
             setPhase("stalled");
           }
           timer.current = setTimeout(() => tryNow(waited + STALLED_POLL_MS), STALLED_POLL_MS);
