@@ -1098,14 +1098,14 @@ describe("voice log upload", () => {
     expect(reasons()).toContain("mic_stalled");
   });
 
-  it("sends the log when the mic is stopped from outside", () => {
+  it("does not upload when the mic is stopped from outside (the user's own stop looks the same)", () => {
     const { result } = mount();
     act(() => void result.current.onListening(true));
     act(() => {
       listening = false;
       result.current.onListening(false);
     });
-    expect(reasons()).toEqual(["mic_paused"]);
+    expect(reasons()).toEqual([]);
   });
 
   it("sends the log when Voice mode ends, and not before", () => {
@@ -1113,6 +1113,29 @@ describe("voice log upload", () => {
     expect(reasons()).toEqual([]);
     act(() => setVoiceOn("c1", false));
     expect(reasons()).toEqual(["voice_end"]);
+  });
+
+  it("a chat switch is not Voice ending: no voice_end upload", () => {
+    setVoiceOn("c2", false);
+    const { rerender } = mount();
+    rerender({ chatId: "c2", value: "", status: "idle", canSend: true, submit });
+    expect(reasons()).toEqual([]);
+  });
+
+  it("attributes the Voice end upload to the chat it came on in", () => {
+    const { rerender } = mount();
+    // Same on state but the visible chat id moves to c2 while c1's voice ends.
+    rerender({ chatId: "c2", value: "", status: "idle", canSend: true, submit });
+    setVoiceOn("c2", true);
+    rerender({ chatId: "c2", value: "", status: "idle", canSend: true, submit });
+    act(() => setVoiceOn("c2", false));
+    const [, init] = vi
+      .mocked(fetch)
+      .mock.calls.find(([url]) => String(url).includes("/v1/ae/voice-log")) as [
+      unknown,
+      RequestInit,
+    ];
+    expect(JSON.parse(String(init.body))).toMatchObject({ reason: "voice_end", chat_id: "c2" });
   });
 
   it("sends nothing when Voice mode was never on", () => {

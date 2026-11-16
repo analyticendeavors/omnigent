@@ -511,8 +511,9 @@ export function SendVoiceLogRow({ chatId }: { chatId?: string | null }) {
     <DropdownMenuItem
       onSelect={() => {
         void uploadVoiceLog("manual", chatId).then((result) => {
-          if (result === "failed") toast.error("Could not send the voice log");
-          else toast.success("Voice log sent");
+          if (result === "sent") toast.success("Voice log sent");
+          else if (result === "throttled") toast.info("A voice log just went; try again shortly");
+          else toast.error("Could not send the voice log");
         });
       }}
       data-testid="ae-voice-log-send"

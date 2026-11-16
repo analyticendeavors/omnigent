@@ -2,6 +2,7 @@
 // first sentence starts a chat that opens with Voice mode on. The chevron beside it
 // (2026-11-16) opens the per-device voice choices that need no chat, and Send voice log.
 
+import { AeHint } from "@/components/AeHint";
 import { ChevronDownIcon, Volume2Icon } from "lucide-react";
 import {
   MicWhileSpeakingRow,
@@ -72,6 +73,7 @@ export function AeVoiceStartButton({
       >
         <Volume2Icon />
       </Button>
+      <AeHint id="voice.start" />
       <DropdownMenuTrigger asChild>
         <Button
           type="button"

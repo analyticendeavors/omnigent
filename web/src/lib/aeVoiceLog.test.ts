@@ -111,16 +111,58 @@ describe("uploadVoiceLog", () => {
     expect("chat_id" in lastBody().body).toBe(false);
   });
 
-  it("sends the same reason at most once per 20 s, and other reasons freely", async () => {
+  it("shares one budget across automatic reasons, one upload per 60 s", async () => {
     await expect(uploadVoiceLog("mic_failed")).resolves.toBe("sent");
     await expect(uploadVoiceLog("mic_failed")).resolves.toBe("throttled");
+    await expect(uploadVoiceLog("mic_deaf")).resolves.toBe("throttled");
+    await expect(uploadVoiceLog("voice_end")).resolves.toBe("throttled");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(UPLOAD_MIN_GAP_MS - 1);
+    await expect(uploadVoiceLog("mic_deaf")).resolves.toBe("throttled");
+    vi.advanceTimersByTime(1);
     await expect(uploadVoiceLog("mic_deaf")).resolves.toBe("sent");
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    vi.advanceTimersByTime(UPLOAD_MIN_GAP_MS - 1);
-    await expect(uploadVoiceLog("mic_failed")).resolves.toBe("throttled");
-    vi.advanceTimersByTime(1);
+  });
+
+  it("manual sends skip the client budget and do not spend it", async () => {
+    await expect(uploadVoiceLog("manual")).resolves.toBe("sent");
+    await expect(uploadVoiceLog("manual")).resolves.toBe("sent");
     await expect(uploadVoiceLog("mic_failed")).resolves.toBe("sent");
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await expect(uploadVoiceLog("manual")).resolves.toBe("sent");
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("spends the budget only after the server accepted, so a failure can be retried", async () => {
+    fetchMock.mockImplementationOnce(() => Promise.resolve(new Response("{}", { status: 503 })));
+    await expect(uploadVoiceLog("mic_failed")).resolves.toBe("failed");
+    await expect(uploadVoiceLog("mic_failed")).resolves.toBe("sent");
+    fetchMock.mockImplementationOnce(() => Promise.reject(new Error("offline")));
+    vi.advanceTimersByTime(UPLOAD_MIN_GAP_MS);
+    await expect(uploadVoiceLog("voice_end")).resolves.toBe("failed");
+    await expect(uploadVoiceLog("voice_end")).resolves.toBe("sent");
+  });
+
+  it("holds a second automatic upload while the first is still on its way", async () => {
+    let release: (r: Response) => void = () => {};
+    fetchMock.mockImplementationOnce(
+      () =>
+        new Promise<Response>((res) => {
+          release = res;
+        }),
+    );
+    const first = uploadVoiceLog("mic_failed");
+    await expect(uploadVoiceLog("mic_deaf")).resolves.toBe("throttled");
+    release(new Response("{}", { status: 200 }));
+    await expect(first).resolves.toBe("sent");
+  });
+
+  it("sends only the last two minutes", async () => {
+    logVoice("ancient");
+    vi.advanceTimersByTime(121_000);
+    logVoice("recent");
+    await uploadVoiceLog("manual");
+    const events = lastBody().body.lines.map((l: { event: string }) => l.event);
+    expect(events).toEqual(["client", "recent"]);
   });
 
   it("never throws: a rejected fetch and a refused answer both come back failed", async () => {
@@ -138,12 +180,21 @@ describe("uploadVoiceLog", () => {
     for (let i = 0; i < 400; i += 1) logVoice("e".repeat(90), "d".repeat(200));
     await uploadVoiceLog("manual");
     const { init, body } = lastBody();
-    expect(String(init.body).length).toBeLessThanOrEqual(60_000);
+    expect(new TextEncoder().encode(String(init.body)).length).toBeLessThanOrEqual(60_000);
     expect(body.lines.length).toBeLessThanOrEqual(500);
     expect(body.lines[0].event).toBe("client");
     for (const line of body.lines) {
       expect(line.event.length).toBeLessThanOrEqual(64);
       expect((line.detail ?? "").length).toBeLessThanOrEqual(300);
     }
+  });
+
+  it("measures bytes, not characters, so emoji and non-ASCII entries stay under the cap", async () => {
+    for (let i = 0; i < 300; i += 1) logVoice("\u{1F3A4}".repeat(16), "\u00e9\u{1F600}".repeat(40));
+    await uploadVoiceLog("manual");
+    const { init } = lastBody();
+    const text = String(init.body);
+    expect(text.length).toBeLessThan(new TextEncoder().encode(text).length);
+    expect(new TextEncoder().encode(text).length).toBeLessThanOrEqual(60_000);
   });
 });

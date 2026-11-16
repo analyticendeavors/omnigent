@@ -287,6 +287,16 @@ export function useAeVoiceMode({
   }, [controller, clearNet]);
 
   const wasOn = useRef(on);
+  // The chat Voice mode was on in, taken when it came on: its log belongs to that chat.
+  const onChatId = useRef(chatId);
+  // Switching chats is not Voice ending: forget the old on state before the effect below
+  // reads it, so the switch never uploads voice_end (and the new chat starts its own edge).
+  const lastChatId = useRef(chatId);
+  useEffect(() => {
+    if (lastChatId.current === chatId) return;
+    lastChatId.current = chatId;
+    wasOn.current = false;
+  }, [chatId]);
   useEffect(() => {
     const mic = controller.current;
     if (!on) {
@@ -294,7 +304,7 @@ export function useAeVoiceMode({
       // Turning the switch off hands the mic back, quiet.
       if (wasOn.current) {
         logVoice("voice end");
-        void uploadVoiceLog("voice_end", chatIdRef.current);
+        void uploadVoiceLog("voice_end", onChatId.current);
       }
       if (wasOn.current && mic) {
         stopAsked.current = mic.isListening() || startPending.current;
@@ -309,6 +319,7 @@ export function useAeVoiceMode({
       setMicDetail(null);
       return;
     }
+    if (!wasOn.current) onChatId.current = chatId;
     wasOn.current = true;
     if (!mic) return;
     if (wantListen) {
@@ -393,7 +404,8 @@ export function useAeVoiceMode({
       } else if (latest.current.wantListen) {
         // Stopped from outside (the mic button, the hotkey): leave it stopped.
         logVoice("mic paused", "stopped from outside");
-        void uploadVoiceLog("mic_paused", chatIdRef.current);
+        // Not uploaded: this stop is also the user's own (the mic button, the hotkey) and the
+        // two cannot be told apart here, so it stays a local log line only.
         setMicStopped(true);
       }
       stopAsked.current = false;

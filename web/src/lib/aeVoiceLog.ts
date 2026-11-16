@@ -31,50 +31,66 @@ export function logVoice(event: string, detail?: string): void {
 
 export function resetVoiceLog(): void {
   entries = [];
-  lastUpload.clear();
+  lastAutoUpload = null;
+  autoInFlight = false;
 }
 
 /** Why a log is sent; the server accepts exactly these. */
 export type VoiceLogReason =
   "mic_failed" | "mic_deaf" | "mic_stalled" | "mic_paused" | "voice_end" | "manual";
 
-/** The same reason is sent at most this often. */
-export const UPLOAD_MIN_GAP_MS = 20_000;
+/** The last two minutes: what "Add voice log to message" shows and what an upload carries. */
+export const VOICE_LOG_WINDOW_MS = 120_000;
+/** Automatic uploads share one budget: at most one per this long, whatever the reason. */
+export const UPLOAD_MIN_GAP_MS = 60_000;
 /** The server refuses a body over 64 KB (and so does a keepalive fetch); stay under it. */
 const UPLOAD_MAX_BYTES = 60_000;
 const UPLOAD_MAX_EVENT = 64;
 
-const lastUpload = new Map<VoiceLogReason, number>();
+/** When the last automatic upload was accepted by the server (null: none yet). */
+let lastAutoUpload: number | null = null;
+let autoInFlight = false;
+const encoder = new TextEncoder();
 
 /**
- * Sends the current log to the server, best effort: never throws, and a failed or refused
- * send is only a "failed" answer. The same reason goes at most once per UPLOAD_MIN_GAP_MS
- * ("throttled" means the last one just went). keepalive lets it finish while the page closes.
+ * Sends the last two minutes of the log to the server, best effort: never throws, and a
+ * failed or refused send is only a "failed" answer. Automatic reasons share one budget of one
+ * upload per UPLOAD_MIN_GAP_MS ("throttled" means one just went or is on its way); the budget
+ * is spent only when the server accepted the upload, so a failure can be retried. "manual"
+ * (the user tapped Send) skips that budget. keepalive lets it finish while the page closes.
  */
 export async function uploadVoiceLog(
   reason: VoiceLogReason,
   chatId?: string | null,
 ): Promise<"sent" | "throttled" | "failed"> {
+  const automatic = reason !== "manual";
+  let claimed = false;
   try {
     if (typeof window === "undefined") return "failed";
     const now = Date.now();
-    const last = lastUpload.get(reason);
-    if (last !== undefined && now - last < UPLOAD_MIN_GAP_MS) return "throttled";
-    lastUpload.set(reason, now);
+    if (automatic) {
+      if (autoInFlight || (lastAutoUpload !== null && now - lastAutoUpload < UPLOAD_MIN_GAP_MS)) {
+        return "throttled";
+      }
+      autoInFlight = true;
+      claimed = true;
+    }
     const ua = typeof navigator === "undefined" ? "" : navigator.userAgent;
     const head = { t: now, event: "client", detail: ua.slice(0, 200) };
     let lines = [
       head,
-      ...entries.map((e) => ({
-        t: e.t,
-        event: e.event.slice(0, UPLOAD_MAX_EVENT),
-        ...(e.detail ? { detail: e.detail.slice(0, MAX_DETAIL) } : {}),
-      })),
+      ...entries
+        .filter((e) => now - e.t <= VOICE_LOG_WINDOW_MS)
+        .map((e) => ({
+          t: e.t,
+          event: e.event.slice(0, UPLOAD_MAX_EVENT),
+          ...(e.detail ? { detail: e.detail.slice(0, MAX_DETAIL) } : {}),
+        })),
     ];
     const build = () => JSON.stringify({ reason, ...(chatId ? { chat_id: chatId } : {}), lines });
     let body = build();
-    // Oldest events go first when the buffer is too big for one request.
-    while (body.length > UPLOAD_MAX_BYTES && lines.length > 1) {
+    // Oldest events go first when the buffer is too big for one request (bytes, not characters).
+    while (encoder.encode(body).length > UPLOAD_MAX_BYTES && lines.length > 1) {
       lines = [head, ...lines.slice(Math.ceil((lines.length - 1) / 4) + 1)];
       body = build();
     }
@@ -84,13 +100,17 @@ export async function uploadVoiceLog(
       body,
       keepalive: true,
     });
-    return response.ok ? "sent" : "failed";
+    if (!response.ok) return "failed";
+    if (automatic) lastAutoUpload = now;
+    return "sent";
   } catch {
     return "failed";
+  } finally {
+    if (claimed) autoInFlight = false;
   }
 }
 
-export function formatVoiceLog(windowMs = 120_000): string {
+export function formatVoiceLog(windowMs = VOICE_LOG_WINDOW_MS): string {
   const now = Date.now();
   const inWindow = entries.filter((e) => now - e.t <= windowMs);
   const start = inWindow.length > 0 ? inWindow[0].t : now;

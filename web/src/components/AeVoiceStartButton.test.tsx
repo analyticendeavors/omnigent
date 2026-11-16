@@ -55,13 +55,13 @@ describe("AeVoiceStartButton", () => {
     expect(screen.queryByTestId("ae-voice-start-menu")).toBeNull();
   });
 
-  it("has a menu chevron with the speaker menu's touch sizing, and no separate hint icon", () => {
+  it("has a menu chevron with the speaker menu's touch sizing, and the visible hint icon for touch users", () => {
     render(<AeVoiceStartButton armed={false} onToggle={() => {}} />);
     const chevron = screen.getByTestId("ae-voice-start-menu");
     expect(chevron.getAttribute("aria-label")).toBe("Voice mode menu");
     expect(chevron.className).toContain("pointer-coarse:h-11");
     expect(chevron.className).toContain("pointer-coarse:w-9");
-    expect(screen.queryByTestId("ae-hint-voice.start")).toBeNull();
+    expect(screen.getByTestId("ae-hint-voice.start")).toBeTruthy();
   });
 
   it("disables the chevron with the button", () => {
