@@ -1023,6 +1023,7 @@ describe("AeActionDock child prompts", () => {
     expect(JSON.parse(String(call[1]?.body))).toEqual({
       action: "accept",
       content: { "Keep the Fuel Cost measure?": "Keep it" },
+      _meta: { source: "card" },
     });
     await waitFor(() => expect(screen.queryByTestId("ae-action-dock")).toBeNull());
   });
@@ -1064,6 +1065,7 @@ describe("AeActionDock child prompts", () => {
       expect(JSON.parse(String(call[1]?.body))).toEqual({
         action: "accept",
         content: { [field]: "Yes" },
+        _meta: { source: "card" },
       });
     });
   });
