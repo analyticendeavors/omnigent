@@ -18,6 +18,9 @@ describe("isAeGithubLinkUrl", () => {
     "https://github.com/acme/repo.name_x/pull/1#issuecomment-1234567",
     "https://github.com/acme/repo/issues/9#discussion_r42",
     "https://github.com/A-b.c_d/E.f-g_h/pull/1234567890",
+    "https://github.com/acme/repo/security/dependabot",
+    "https://github.com/acme/repo/security/dependabot/42",
+    "https://github.com/acme/repo/security/dependabot/3#x",
   ])("accepts %s", (url) => {
     expect(isAeGithubLinkUrl(url)).toBe(true);
   });
@@ -64,6 +67,17 @@ describe("isAeGithubLinkUrl", () => {
     ["a trailing newline", "https://github.com/a/b/pull/1\n"],
     ["a tab inside", "https://github.com/a/b/pu\tll/1"],
     ["a non-ASCII owner", "https://github.com/ａ/b/pull/1"],
+    ["the security page", "https://github.com/a/b/security"],
+    ["the advisories page", "https://github.com/a/b/security/advisories"],
+    ["one advisory", "https://github.com/a/b/security/advisories/GHSA-xxxx-xxxx-xxxx"],
+    ["an alert list query", "https://github.com/a/b/security/dependabot?q=x"],
+    ["alert zero", "https://github.com/a/b/security/dependabot/0"],
+    ["an alert with a suffix", "https://github.com/a/b/security/dependabot/1/x"],
+    ["a trailing slash on the alert list", "https://github.com/a/b/security/dependabot/"],
+    ["an upper-case alert list", "https://github.com/a/b/security/Dependabot"],
+    ["an encoded alert path", "https://github.com/a/b/security/%64ependabot"],
+    ["a dot-segment owner on the alert list", "https://github.com/../x/security/dependabot"],
+    ["a lookalike host on the alert list", "https://github.com.evil.example/a/b/security/dependabot"],
   ])("rejects %s", (_name, url) => {
     expect(isAeGithubLinkUrl(url)).toBe(false);
   });
