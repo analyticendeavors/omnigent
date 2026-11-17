@@ -1226,6 +1226,81 @@ async def test_resolve_url_decline_round_trip(client: httpx.AsyncClient) -> None
     assert resp.json()["hookSpecificOutput"]["decision"]["behavior"] == "deny"
 
 
+@pytest.mark.parametrize(
+    ("meta", "expected"),
+    [
+        ({"source": "voice_panel"}, "voice_panel"),
+        ({"source": "card", "persist": "session"}, "card"),
+        ({"source": "Voice"}, "unknown"),
+        ({"source": "x" * 500}, "unknown"),
+        ({"source": ["card"]}, "unknown"),
+        ({"source": None}, "unknown"),
+        ({"other": 1}, "unknown"),
+        (None, "unknown"),
+    ],
+)
+async def test_sanitize_resolve_source(meta: dict[str, Any] | None, expected: str) -> None:
+    """Only the known source names pass; everything else is logged as ``unknown``."""
+    from omnigent.server.routes.sessions.routes_elicitations import sanitize_resolve_source
+
+    assert sanitize_resolve_source(meta) == expected
+
+
+async def test_resolve_url_logs_one_line_with_sanitized_source(
+    client: httpx.AsyncClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """
+    The resolve route logs one INFO line (session, elicitation, action, source) and never
+    writes request content values: an unknown source is ``unknown`` and the form content and
+    free-text source stay out of the log.
+    """
+    import logging
+
+    agent = await create_test_agent(client, "test-resolve-url-log")
+    session_id = await _create_session(client, agent["id"])
+    hook_task, elicitation_id = await _park_permission_hook(client, session_id, tool_name="Bash")
+
+    with caplog.at_level(logging.INFO):
+        verdict = await client.post(
+            f"/v1/sessions/{session_id}/elicitations/{elicitation_id}/resolve",
+            json={
+                "action": "decline",
+                "content": {"feedback": "SECRET-CONTENT-VALUE"},
+                "_meta": {"source": "SECRET-SOURCE-VALUE"},
+            },
+        )
+    assert verdict.status_code == 202, verdict.text
+    await hook_task
+
+    lines = [r.getMessage() for r in caplog.records if "elicitation resolve:" in r.getMessage()]
+    assert lines == [
+        f"elicitation resolve: session={session_id} elicitation={elicitation_id} "
+        "action=decline source=unknown"
+    ]
+    assert "SECRET" not in caplog.text
+
+
+async def test_resolve_url_logs_known_source(
+    client: httpx.AsyncClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A known ``_meta.source`` is logged as sent."""
+    import logging
+
+    agent = await create_test_agent(client, "test-resolve-url-log-known")
+    session_id = await _create_session(client, agent["id"])
+    hook_task, elicitation_id = await _park_permission_hook(client, session_id, tool_name="Bash")
+
+    with caplog.at_level(logging.INFO):
+        verdict = await client.post(
+            f"/v1/sessions/{session_id}/elicitations/{elicitation_id}/resolve",
+            json={"action": "accept", "_meta": {"source": "voice_panel"}},
+        )
+    assert verdict.status_code == 202, verdict.text
+    resp = await hook_task
+    assert resp.json()["hookSpecificOutput"]["decision"]["behavior"] == "allow"
+    assert "action=accept source=voice_panel" in caplog.text
+
+
 async def test_resolve_url_cancel_round_trip(client: httpx.AsyncClient) -> None:
     """
     A ``cancel`` verdict at the URL endpoint maps to Claude's

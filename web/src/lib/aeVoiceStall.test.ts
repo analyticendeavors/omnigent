@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  createEventStallDetector,
   createStallDetector,
   isWebKitSpeech,
   MAX_FRAME_MS,
@@ -159,4 +160,40 @@ describe("isWebKitSpeech", () => {
       expect(isWebKitSpeech()).toBe(expected);
     });
   }
+});
+
+describe("event stall detector (meter off)", () => {
+  it("fires once: sound heard, sound ended, then STALL_QUIET_MS with no result", () => {
+    const d = createEventStallDetector();
+    d.reset(0);
+    d.heard(1000);
+    expect(d.evaluate(1000 + STALL_QUIET_MS + 5000)).toBeNull();
+    d.ended(2000);
+    expect(d.evaluate(2000 + STALL_QUIET_MS - 1)).toBeNull();
+    expect(d.evaluate(2000 + STALL_QUIET_MS)).toBe(2000 + STALL_QUIET_MS);
+    expect(d.evaluate(2000 + STALL_QUIET_MS + 1000)).toBeNull();
+  });
+
+  it("a result clears it, and an end with no sound heard is nothing", () => {
+    const d = createEventStallDetector();
+    d.reset(0);
+    d.ended(500);
+    expect(d.evaluate(500 + STALL_QUIET_MS + 1)).toBeNull();
+    d.heard(1000);
+    d.ended(2000);
+    d.result(3000);
+    expect(d.evaluate(2000 + STALL_QUIET_MS + 1)).toBeNull();
+  });
+
+  it("new sound after an end cancels the pending stall; reset forgets everything", () => {
+    const d = createEventStallDetector();
+    d.reset(0);
+    d.heard(1000);
+    d.ended(2000);
+    d.heard(3000);
+    expect(d.evaluate(2000 + STALL_QUIET_MS + 1)).toBeNull();
+    d.ended(4000);
+    d.reset(5000);
+    expect(d.evaluate(4000 + STALL_QUIET_MS + 1)).toBeNull();
+  });
 });

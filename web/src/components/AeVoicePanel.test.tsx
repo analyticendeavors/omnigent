@@ -47,6 +47,40 @@ describe("AeVoicePanel", () => {
     expect(onRestartMic).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["bar", "sheet"] as const)(
+    "%s: shows Run it and Decline while the line is speaking, and they answer the card",
+    async (layout) => {
+      const onApproval = vi.fn();
+      panel({
+        layout,
+        phase: "speaking",
+        caption: "Slots full.",
+        approvalActive: true,
+        onApproval,
+      });
+      expect(screen.getByText("Speaking, tap to stop")).toBeTruthy();
+      expect(screen.getByText("Waiting for your OK")).toBeTruthy();
+      await userEvent.click(screen.getByRole("button", { name: "Run it" }));
+      expect(onApproval).toHaveBeenLastCalledWith("accept");
+      await userEvent.click(screen.getByRole("button", { name: "Decline" }));
+      expect(onApproval).toHaveBeenLastCalledWith("decline");
+    },
+  );
+
+  it("the approval phase word is not repeated beside the buttons", () => {
+    panel({ phase: "approval", approvalActive: true, onApproval: vi.fn() });
+    expect(screen.getAllByText("Waiting for your OK")).toHaveLength(1);
+    expect(screen.getByTestId("ae-voice-approval-run")).toBeTruthy();
+  });
+
+  it("shows no approval buttons without a pending approval or without a handler", () => {
+    const { unmount } = panel({ phase: "speaking", approvalActive: false, onApproval: vi.fn() });
+    expect(screen.queryByTestId("ae-voice-approval")).toBeNull();
+    unmount();
+    panel({ phase: "speaking", approvalActive: true });
+    expect(screen.queryByTestId("ae-voice-approval")).toBeNull();
+  });
+
   it("renders nothing when Voice mode is off", () => {
     panel({ phase: "off" });
     expect(screen.queryByTestId("ae-voice-panel")).toBeNull();

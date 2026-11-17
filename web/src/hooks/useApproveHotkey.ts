@@ -28,6 +28,7 @@ import { schemaFields } from "@/components/blocks/ElicitationSchemaForm";
 import { hasCommandModifier, isMacPlatform } from "@/lib/hotkeys";
 import type { ElicitationBlock } from "@/lib/blocks";
 import { useChatStore } from "@/store/chatStore";
+import { withApprovalSource } from "@/lib/aeApprovalSource";
 
 /**
  * Whether the keystroke landed in a text field that holds a draft — the
@@ -89,7 +90,7 @@ export function useApproveHotkey(isMac = isMacPlatform()): void {
       // Intercept before the composer's Enter-to-send handler runs.
       e.preventDefault();
       e.stopPropagation();
-      void submitApproval(pending.elicitationId, "accept");
+      void submitApproval(pending.elicitationId, "accept", undefined, withApprovalSource("hotkey"));
     };
 
     window.addEventListener("keydown", handler, true);

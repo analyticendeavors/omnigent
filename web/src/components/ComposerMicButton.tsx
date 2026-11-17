@@ -6,9 +6,10 @@ import { useVoiceDictationHotkey } from "@/hooks/useVoiceDictationHotkey";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { getMicStream } from "@/lib/aeAudioDevices";
 import { publishMicLevel, resetMicLevel } from "@/lib/aeMicLevel";
-import { publishVoiceBins, resetVoiceBins } from "@/lib/aeVoiceLevel";
+import { publishVoiceBins, resetVoiceBins, syntheticVoiceBins } from "@/lib/aeVoiceLevel";
+import { readVoiceMeter } from "@/lib/aeVoiceMeter";
 import { logVoice } from "@/lib/aeVoiceLog";
-import { createStallDetector, isWebKitSpeech } from "@/lib/aeVoiceStall";
+import { createEventStallDetector, createStallDetector, isWebKitSpeech } from "@/lib/aeVoiceStall";
 import { DictationBusyError, DictationSession } from "@/lib/dictation";
 import { isElectronShell } from "@/lib/nativeBridge";
 import { cn } from "@/lib/utils";
@@ -73,6 +74,8 @@ const BAR_BINS: readonly (readonly [number, number])[] = [
 ];
 
 const BAR_BASELINE = 0.2;
+// One animation frame never moves the event-driven pulse by more than this (a throttled tab).
+const MAX_PULSE_FRAME_MS = 100;
 // A Voice mode Web Speech start that fires no start, end or error in this long is given up on.
 // The first take of the page gets longer: a permission prompt or a slow Bluetooth route is not stuck.
 const MIC_START_WATCHDOG_MS = 4000;
@@ -238,6 +241,11 @@ export const ComposerMicButton = ({
   // Speech energy from the meter against recognizer results: a take that heard the user and
   // then produced nothing is stalled and gets a fresh recognizer without Voice mode noticing.
   const stallRef = useRef(createStallDetector());
+  // Without the level meter the recognizer's events are the only signal: a second stall
+  // detector fed by them, and a pulse level they drive for the bars and the ring.
+  const meterOnRef = useRef(true);
+  const eventStallRef = useRef(createEventStallDetector());
+  const pulseTargetRef = useRef(0);
   const stallTimesRef = useRef<number[]>([]);
   // Voice mode's assistant is speaking (or just did): the stall detector is off.
   const assistantAudibleRef = useRef(false);
@@ -354,6 +362,7 @@ export const ComposerMicButton = ({
       recognizerSoundSeenRef.current = false;
       lastRecognizerActivityRef.current = Date.now();
       stallRef.current.reset(Date.now());
+      eventStallRef.current.reset(Date.now());
       try {
         next.start();
       } catch {
@@ -389,19 +398,24 @@ export const ComposerMicButton = ({
         reportDeaf("no audiostart");
         return;
       }
-      // Speech heard, then quiet, and no result since: the recognizer stalled.
+      // Speech heard, then quiet, and no result since: the recognizer stalled. With the meter
+      // off the recognizer's own events say so (soundstart, then soundend and a quiet spell).
       // (armLiveness already refuses a take whose permission is in doubt.)
       if (
         !assistantAudibleRef.current &&
         now >= audibleUntilRef.current &&
-        now - meterTickRef.current <= MIC_METER_FRESH_MS
+        (!meterOnRef.current || now - meterTickRef.current <= MIC_METER_FRESH_MS)
       ) {
-        const stalledFor = stallRef.current.evaluate(now);
+        const stalledFor = meterOnRef.current
+          ? stallRef.current.evaluate(now)
+          : eventStallRef.current.evaluate(now);
         if (stalledFor !== null) {
           handleStall(stalledFor, now);
           return;
         }
       }
+      // No meter, no meter-based deaf reasons (track muted, context stalled, analyser zeros).
+      if (!meterOnRef.current) return;
       // The meter never decides alone: it counts only after the recognizer itself has shown
       // no activity for a while (an early soundstart does not switch the checks off for good).
       if (now - lastRecognizerActivityRef.current < MIC_RECOGNIZER_QUIET_MS) return;
@@ -526,30 +540,45 @@ export const ComposerMicButton = ({
       const handleAudioStart = () => {
         if (!current()) return;
         logVoice("mic event audiostart");
+        pulseTargetRef.current = Math.max(pulseTargetRef.current, 0.2);
         audioStartSeenRef.current = true;
         lastRecognizerActivityRef.current = Date.now();
       };
       const handleSoundStart = () => {
         if (!current()) return;
         logVoice("mic event soundstart");
+        pulseTargetRef.current = 0.5;
+        eventStallRef.current.heard(Date.now());
         recognizerSoundSeenRef.current = true;
         lastRecognizerActivityRef.current = Date.now();
       };
       const handleSpeechStart = () => {
         if (!current()) return;
         logVoice("mic event speechstart");
+        pulseTargetRef.current = 0.8;
+        eventStallRef.current.heard(Date.now());
         recognizerSoundSeenRef.current = true;
         lastRecognizerActivityRef.current = Date.now();
       };
       const handleAudioEnd = () => {
         if (!current()) return;
         logVoice("mic event audioend");
+        pulseTargetRef.current = 0;
         stallRef.current.speechEnd(Date.now());
+        eventStallRef.current.ended(Date.now());
       };
       const handleSpeechEnd = () => {
         if (!current()) return;
         logVoice("mic event speechend");
+        pulseTargetRef.current = 0.2;
         stallRef.current.speechEnd(Date.now());
+        eventStallRef.current.ended(Date.now());
+      };
+      const handleSoundEnd = () => {
+        if (!current()) return;
+        logVoice("mic event soundend");
+        pulseTargetRef.current = 0;
+        eventStallRef.current.ended(Date.now());
       };
       const handleResult = (event: Event) => {
         if (!current()) return;
@@ -557,6 +586,8 @@ export const ComposerMicButton = ({
         resultSinceStopRef.current = true;
         lastRecognizerActivityRef.current = Date.now();
         stallRef.current.result(Date.now());
+        eventStallRef.current.result(Date.now());
+        pulseTargetRef.current = 0.65;
         // Drop late events that arrive after the composer went disabled, or after
         // an Esc discard the parent has already reverted.
         if (disabledRef.current || discardingRef.current) return;
@@ -602,6 +633,7 @@ export const ComposerMicButton = ({
       recognition.addEventListener("speechstart", handleSpeechStart);
       recognition.addEventListener("audioend", handleAudioEnd);
       recognition.addEventListener("speechend", handleSpeechEnd);
+      recognition.addEventListener("soundend", handleSoundEnd);
       detachers.set(recognition, () => {
         recognition.removeEventListener("start", handleStart);
         recognition.removeEventListener("end", handleEnd);
@@ -612,6 +644,7 @@ export const ComposerMicButton = ({
         recognition.removeEventListener("speechstart", handleSpeechStart);
         recognition.removeEventListener("audioend", handleAudioEnd);
         recognition.removeEventListener("speechend", handleSpeechEnd);
+        recognition.removeEventListener("soundend", handleSoundEnd);
       });
       return recognition;
     };
@@ -717,6 +750,45 @@ export const ComposerMicButton = ({
   // hides its audio buffer. Chrome batches the permission to one prompt.
   useEffect(() => {
     if (!isListening) return;
+    const meterOn = readVoiceMeter();
+    meterOnRef.current = meterOn;
+    logVoice(meterOn ? "meter on" : "meter off");
+    if (!meterOn) {
+      // No second capture: iOS WebKit lets the newest one win, which would take the mic from
+      // the recognizer. The bars and the ring follow the recognizer's events instead.
+      const bars = barRefs.current;
+      let level = 0;
+      let rafId: number | null = null;
+      let last = Date.now();
+      pulseTargetRef.current = 0;
+      const tick = () => {
+        const now = Date.now();
+        const dt = Math.min(MAX_PULSE_FRAME_MS, Math.max(0, now - last));
+        last = now;
+        const target = pulseTargetRef.current;
+        // Quick attack, slow decay; the target itself falls back to rest after a beat.
+        level += (target - level) * (1 - Math.exp(-dt / (target > level ? 60 : 220)));
+        pulseTargetRef.current = Math.max(0, target - dt / 900);
+        for (let i = 0; i < BAR_BINS.length; i += 1) {
+          const wobble = 0.8 + 0.2 * Math.sin(now / 130 + i * 1.9);
+          const scale = Math.max(BAR_BASELINE, Math.min(1, level * wobble * 1.4));
+          const el = bars[i];
+          if (el) el.style.transform = `scaleY(${scale})`;
+        }
+        publishMicLevel(level);
+        publishVoiceBins(syntheticVoiceBins(level, now));
+        rafId = requestAnimationFrame(tick);
+      };
+      rafId = requestAnimationFrame(tick);
+      return () => {
+        if (rafId !== null) cancelAnimationFrame(rafId);
+        resetMicLevel();
+        resetVoiceBins();
+        for (const el of bars) {
+          if (el) el.style.transform = `scaleY(${BAR_BASELINE})`;
+        }
+      };
+    }
     let cancelled = false;
     let stream: MediaStream | null = null;
     let audioCtx: AudioContext | null = null;
@@ -1100,6 +1172,7 @@ export const ComposerMicButton = ({
         browserStartPendingRef.current = true;
         silentStartRef.current = false;
         stallRef.current.reset(Date.now());
+        eventStallRef.current.reset(Date.now());
         recognition.start();
       }
     } catch {
@@ -1254,6 +1327,7 @@ export const ComposerMicButton = ({
         // Both edges forget what the meter heard: playback energy is not the user's speech.
         if (!audible) audibleUntilRef.current = now + MIC_STALL_AUDIBLE_TAIL_MS;
         stallRef.current.reset(now);
+        eventStallRef.current.reset(now);
       },
     };
     return () => {

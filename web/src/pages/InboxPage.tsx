@@ -82,6 +82,7 @@ import {
   writeInboxFilter,
   type InboxFilter,
 } from "@/lib/inboxFilterPreferences";
+import { withApprovalSource } from "@/lib/aeApprovalSource";
 import { latestOutputPreview } from "@/lib/lastAssistantText";
 import { relativeTime } from "@/lib/relativeTime";
 import { Link } from "@/lib/routing";
@@ -289,7 +290,8 @@ export function InboxPage() {
   // rollback on error. Success invalidates the session list so the row's
   // count (and the sidebar badge) drop without waiting for the socket.
   const makeSubmit = (item: InboxItem): SubmitApprovalFn => {
-    return (elicitationId, action, content, meta) => {
+    return (elicitationId, action, content, cardMeta) => {
+      const meta = withApprovalSource("inbox", cardMeta);
       setResponded((prev) => ({
         ...prev,
         [elicitationId]: {

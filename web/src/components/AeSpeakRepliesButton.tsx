@@ -22,6 +22,7 @@ import {
 import { useAeSpeakReplies } from "@/hooks/useAeSpeakReplies";
 import {
   MicWhileSpeakingRow,
+  VoiceMeterRow,
   RowHint,
   ROW_LABEL_CLASS,
   ROW_VALUE_CLASS,
@@ -463,6 +464,7 @@ function SpeakRepliesControl({
           testId="ae-voice-snips"
         />
         <MicWhileSpeakingRow />
+        <VoiceMeterRow />
         <VoiceChoiceRows choices={choices} />
         <DropdownMenuSeparator />
         <div className="flex gap-1.5 px-1 pb-1 pt-0.5" data-testid="ae-speak-actions">

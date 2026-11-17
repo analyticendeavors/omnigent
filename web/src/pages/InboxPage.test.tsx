@@ -350,7 +350,10 @@ describe("InboxPage approval items", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Stub Accept" }));
 
     await waitFor(() =>
-      expect(sessionsApi.approve).toHaveBeenCalledWith("sess_1", "eli_1", { action: "accept" }),
+      expect(sessionsApi.approve).toHaveBeenCalledWith("sess_1", "eli_1", {
+        action: "accept",
+        _meta: { source: "inbox" },
+      }),
     );
     await waitFor(() =>
       expect(screen.getByTestId("approval-card")).toHaveAttribute("data-status", "responded"),
@@ -375,6 +378,7 @@ describe("InboxPage approval items", () => {
       expect(sessionsApi.approve).toHaveBeenCalledWith("child", "eli_auto", {
         action: "accept",
         content: { allow_auto_mode: true },
+        _meta: { source: "inbox" },
       }),
     );
     expect(screen.getByTestId("approval-card")).toHaveAttribute("data-status", "responded");
@@ -466,7 +470,10 @@ describe("InboxPage approval items", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Stub Accept" }));
     await waitFor(() =>
-      expect(sessionsApi.approve).toHaveBeenCalledWith("child", "eli_child", { action: "accept" }),
+      expect(sessionsApi.approve).toHaveBeenCalledWith("child", "eli_child", {
+        action: "accept",
+        _meta: { source: "inbox" },
+      }),
     );
     // The card names the child, since the row it surfaced under is the parent.
     expect(screen.getByTestId("approval-card-requester")).toHaveTextContent("child under parent");

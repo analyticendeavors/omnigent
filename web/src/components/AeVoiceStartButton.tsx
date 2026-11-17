@@ -6,6 +6,7 @@ import { AeHint } from "@/components/AeHint";
 import { ChevronDownIcon, Volume2Icon } from "lucide-react";
 import {
   MicWhileSpeakingRow,
+  VoiceMeterRow,
   SendVoiceLogRow,
   SwitchRow,
   useVoiceChoices,
@@ -43,6 +44,7 @@ function VoiceStartMenuRows({ armed, onToggle }: { armed: boolean; onToggle: () 
       />
       <DropdownMenuSeparator />
       <MicWhileSpeakingRow />
+      <VoiceMeterRow />
       <VoiceChoiceRows choices={choices} />
       <DropdownMenuSeparator />
       <SendVoiceLogRow />

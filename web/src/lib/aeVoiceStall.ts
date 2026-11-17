@@ -108,6 +108,55 @@ export function createStallDetector(): StallDetector {
   };
 }
 
+/**
+ * The stall detector for a take with no level meter (the meter is off): the recognizer's own
+ * events are the only signal. A stall is soundstart or speechstart seen, then STALL_QUIET_MS
+ * with no result after a soundend, speechend or audioend. It never reads audio levels.
+ */
+export interface EventStallDetector {
+  /** soundstart or speechstart: the recognizer heard something. */
+  heard: (now: number) => void;
+  /** soundend, speechend or audioend. */
+  ended: (now: number) => void;
+  /** A result, interim or final. */
+  result: (now: number) => void;
+  /** Milliseconds since the last result when stalled, else null. Fires once. */
+  evaluate: (now: number) => number | null;
+  /** A new take or a fresh recognizer. */
+  reset: (now: number) => void;
+}
+
+export function createEventStallDetector(): EventStallDetector {
+  let heardAt: number | null = null;
+  let endAt: number | null = null;
+  let lastResult = 0;
+  return {
+    heard(now) {
+      heardAt = now;
+      endAt = null;
+    },
+    ended(now) {
+      if (heardAt !== null) endAt = now;
+    },
+    result(now) {
+      lastResult = now;
+      heardAt = null;
+      endAt = null;
+    },
+    evaluate(now) {
+      if (heardAt === null || endAt === null || now - endAt < STALL_QUIET_MS) return null;
+      heardAt = null;
+      endAt = null;
+      return Math.max(0, now - lastResult);
+    },
+    reset(now) {
+      lastResult = now;
+      heardAt = null;
+      endAt = null;
+    },
+  };
+}
+
 /** iOS (every browser there is WebKit) and desktop Safari. Chrome and Edge are not. */
 export function isWebKitSpeech(): boolean {
   try {

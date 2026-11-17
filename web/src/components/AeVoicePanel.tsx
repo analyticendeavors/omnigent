@@ -38,6 +38,8 @@ export interface AeVoicePanelProps {
   micDetail?: string | null;
   /** A yes-or-no card is waiting, even when the mic cannot hear the answer. */
   approvalActive?: boolean;
+  /** Run it or Decline from the panel; with approvalActive the two buttons show in every phase. */
+  onApproval?: (action: "accept" | "decline") => void;
   /** Turn Voice mode off. */
   onEnd: () => void;
   /** Stop the current reply. */
@@ -226,6 +228,7 @@ export function AeVoicePanel({
   caption,
   micDetail,
   approvalActive = false,
+  onApproval,
   onEnd,
   onStop,
   onResume,
@@ -279,6 +282,37 @@ export function AeVoicePanel({
     </Button>
   );
 
+  // A pending yes-or-no card needs an answer even while the line plays, and the sheet covers
+  // the card on a phone: the label (when the phase word is not already it) and two buttons.
+  const approvalStrip =
+    approvalActive && onApproval ? (
+      <div
+        data-testid="ae-voice-approval"
+        className="relative z-10 flex flex-wrap items-center justify-center gap-2"
+      >
+        {key !== "approval" ? (
+          <span className="text-xs font-medium text-amber-500">Waiting for your OK</span>
+        ) : null}
+        <Button
+          type="button"
+          size="sm"
+          data-testid="ae-voice-approval-run"
+          onClick={() => onApproval("accept")}
+        >
+          Run it
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          data-testid="ae-voice-approval-decline"
+          onClick={() => onApproval("decline")}
+        >
+          Decline
+        </Button>
+      </div>
+    ) : null;
+
   if (layout === "sheet") {
     return (
       <div
@@ -319,6 +353,7 @@ export function AeVoicePanel({
         <div className="relative z-10 min-h-10 line-clamp-2 text-sm text-muted-foreground">
           {sub}
         </div>
+        {approvalStrip ? <div className="mt-2">{approvalStrip}</div> : null}
         <div className="mt-3 flex gap-3">
           {onKeyboard ? (
             <Button
@@ -358,6 +393,7 @@ export function AeVoicePanel({
         <div className={cn("text-sm font-medium", tone.text)}>{label}</div>
         {sub ? <div className="truncate text-xs text-muted-foreground">{sub}</div> : null}
       </button>
+      {approvalStrip}
       {endButton}
     </div>
   );

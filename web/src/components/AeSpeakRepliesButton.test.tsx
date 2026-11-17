@@ -249,6 +249,23 @@ describe("AeSpeakRepliesButton", () => {
     expect(window.localStorage.getItem("omnigent:ae-voice-mic-while-speaking")).toBeNull();
   });
 
+  it("has a Level meter row in the speaker menu, default by platform, saved per device, with a hint", async () => {
+    renderButton();
+    const user = await openMenu();
+    const row = screen.getByTestId("ae-voice-meter");
+    expect(row).toHaveAttribute("aria-checked", "true");
+    expect(within(row).getByTestId("ae-hint-voice.meter")).toBeInTheDocument();
+    const hint = AE_SETTING_HINTS["voice.meter"].hint;
+    expect(hint.trim()).not.toBe("");
+    expect(hint.length).toBeLessThanOrEqual(140);
+    expect(hint).toContain("iPhone");
+    await user.click(row);
+    expect(screen.getByTestId("ae-voice-meter")).toHaveAttribute("aria-checked", "false");
+    expect(window.localStorage.getItem("omnigent:ae-voice-meter")).toBe("off");
+    await user.click(screen.getByTestId("ae-voice-meter"));
+    expect(window.localStorage.getItem("omnigent:ae-voice-meter")).toBe("on");
+  });
+
   it("applies Fast answers once effort levels arrive", async () => {
     window.localStorage.setItem("omnigent:ae-speak-replies:c1", "true");
     const view = renderButton({ canSetEffort: false });
@@ -615,12 +632,12 @@ describe("AeSpeakRepliesButton", () => {
     renderButton();
     await openMenu();
     const triggers = document.querySelectorAll("[data-slot=tooltip-trigger]");
-    expect(triggers).toHaveLength(12);
+    expect(triggers).toHaveLength(13);
     for (const el of triggers) {
       const group = el.closest("span.items-center.gap-1\\.5");
       expect(group).not.toBeNull();
       expect(group?.textContent).toMatch(
-        /Voice mode|Speak replies|Fast answers|Send snips|Mic while speaking|Voice|Speed|Microphone|Speaker|Add voice log|Send voice log/,
+        /Voice mode|Speak replies|Fast answers|Send snips|Mic while speaking|Level meter|Voice|Speed|Microphone|Speaker|Add voice log|Send voice log/,
       );
     }
     const actions = screen.getByTestId("ae-speak-actions");

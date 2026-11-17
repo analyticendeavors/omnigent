@@ -35,3 +35,19 @@ export function subscribeVoiceBins(cb: () => void): () => void {
     listeners.delete(cb);
   };
 }
+
+/**
+ * Stand-in bins for a take with no level meter: a smooth bump per bin, tallest in the voice
+ * range, scaled by `level` (0 to 1, driven by recognizer events). `t` is the time in ms.
+ * Returns byte-style values (0 to 255) so it goes through publishVoiceBins like real data.
+ */
+export function syntheticVoiceBins(level: number, t: number): Uint8Array {
+  const out = new Uint8Array(VOICE_BIN_COUNT);
+  const l = Number.isFinite(level) ? Math.min(1, Math.max(0, level)) : 0;
+  for (let i = 0; i < VOICE_BIN_COUNT; i += 1) {
+    const shape = Math.exp(-(((i - 6) / 9) ** 2));
+    const wobble = 0.75 + 0.25 * Math.sin(t / 140 + i * 1.7);
+    out[i] = Math.round(255 * l * shape * wobble);
+  }
+  return out;
+}

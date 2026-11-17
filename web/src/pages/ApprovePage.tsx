@@ -21,6 +21,7 @@ import { CheckIcon, MessageCircleQuestionMark, XIcon } from "lucide-react";
 import { ElicitationMessage } from "@/components/blocks/ElicitationMessage";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { withApprovalSource } from "@/lib/aeApprovalSource";
 import { authenticatedFetch } from "@/lib/identity";
 import { formatPreview } from "@/lib/previewFormat";
 
@@ -89,7 +90,7 @@ export function ApprovePage() {
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action }),
+            body: JSON.stringify({ action, _meta: withApprovalSource("approve_page") }),
           },
         );
         if (!res.ok) {

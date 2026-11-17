@@ -52,6 +52,7 @@ import {
 } from "@/lib/aeVoiceChatVoice";
 import { logVoice, uploadVoiceLog } from "@/lib/aeVoiceLog";
 import { useMicWhileSpeaking, writeMicWhileSpeaking } from "@/lib/aeVoiceMic";
+import { useVoiceMeter, writeVoiceMeter } from "@/lib/aeVoiceMeter";
 
 const MAX_VOICES = 12;
 const VOICE_LIST_RETRIES = 3;
@@ -72,6 +73,7 @@ export function RowHint({
     | "voice.fast_model"
     | "voice.snips"
     | "voice.mic_while_speaking"
+    | "voice.meter"
     | "voice.chat_voice"
     | "voice.voice"
     | "voice.rate"
@@ -176,6 +178,7 @@ export function SwitchRow({
     | "voice.fast"
     | "voice.snips"
     | "voice.mic_while_speaking"
+    | "voice.meter"
     | "voice.start";
   testId: string;
 }) {
@@ -501,6 +504,20 @@ export function MicWhileSpeakingRow() {
       onChange={(next) => writeMicWhileSpeaking(next ? "always" : "wait")}
       hint="voice.mic_while_speaking"
       testId="ae-voice-mic-while-speaking"
+    />
+  );
+}
+
+/** Level meter: a per-device switch (default off on iPhone, where it can take the mic). */
+export function VoiceMeterRow() {
+  const meter = useVoiceMeter();
+  return (
+    <SwitchRow
+      label="Level meter"
+      checked={meter}
+      onChange={writeVoiceMeter}
+      hint="voice.meter"
+      testId="ae-voice-meter"
     />
   );
 }

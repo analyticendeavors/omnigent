@@ -4,7 +4,7 @@
 
 import { type MutableRefObject, useCallback, useEffect, useRef, useState } from "react";
 import { primeVoicePlayback } from "@/lib/aeSpeakReplies";
-import { logVoice, uploadVoiceLog } from "@/lib/aeVoiceLog";
+import { logVoice, uploadVoiceLog, useVoiceLogOnHide } from "@/lib/aeVoiceLog";
 import {
   type AeMicController,
   armVoiceForNextChat,
@@ -57,6 +57,9 @@ export function useAeVoiceStart({
   const [phase, setPhase] = useState<VoicePhase>("off");
   const [micDetail, setMicDetail] = useState<string | null>(null);
   const everListened = useRef(false);
+  // Set by release(): the controller's own stop() may report not-listening at once, and that
+  // is the end of the take, not a mic that failed to start.
+  const released = useRef(false);
   const deafStreak = useRef(0);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -75,6 +78,7 @@ export function useAeVoiceStart({
   // After a submit the module flag stays set: the session is created asynchronously and
   // takeVoiceArm reads it once the id is known.
   const release = useCallback(() => {
+    released.current = true;
     clearTimer();
     clearRetry();
     setArmed(false);
@@ -95,7 +99,7 @@ export function useAeVoiceStart({
 
   const onListening = useCallback(
     (listening: boolean, reason?: "deaf") => {
-      if (!armed) return;
+      if (!armed || released.current) return;
       // A held message that is waiting for the chat keeps its own word on screen.
       const held = (p: VoicePhase) => p === "preparing" || p === "stalled";
       if (listening) {
@@ -150,6 +154,7 @@ export function useAeVoiceStart({
     // Inside the tap, so the browser lets the reply play later.
     primeVoicePlayback();
     armVoiceForNextChat();
+    released.current = false;
     everListened.current = false;
     deafStreak.current = 0;
     setMicDetail(null);
@@ -214,6 +219,8 @@ export function useAeVoiceStart({
     },
     [armed, clearTimer, release],
   );
+
+  useVoiceLogOnHide(armed, () => null);
 
   // Leaving the page must not leave the next chat armed.
   useEffect(

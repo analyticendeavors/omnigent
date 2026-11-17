@@ -27,7 +27,8 @@ import {
   type VoicePhase,
 } from "@/lib/aeVoiceMode";
 import { activeEchoWords, resetEcho, splitEcho } from "@/lib/aeVoiceEcho";
-import { logVoice, uploadVoiceLog } from "@/lib/aeVoiceLog";
+import { withApprovalSource } from "@/lib/aeApprovalSource";
+import { logVoice, uploadVoiceLog, useVoiceLogOnHide } from "@/lib/aeVoiceLog";
 import { useMicWhileSpeaking } from "@/lib/aeVoiceMic";
 import { useChatStore } from "@/store/chatStore";
 
@@ -65,6 +66,8 @@ export interface AeVoiceMode {
   cardActive: boolean;
   /** A yes-or-no card (such as the session limit) waits for a spoken answer; the mic stays live. */
   approvalActive: boolean;
+  /** The panel's Run it / Decline buttons: resolves the pending yes-or-no card. */
+  answerApproval: (action: "accept" | "decline") => void;
   /** Why the mic is unavailable, when Voice mode knows ("" otherwise). */
   micDetail: string | null;
   /** A final sentence arrived; true when Voice mode used it (the draft should not take it). */
@@ -197,6 +200,7 @@ export function useAeVoiceMode({
   // The voice log goes to the server with the chat it belongs to (see uploadVoiceLog).
   const chatIdRef = useRef(chatId);
   chatIdRef.current = chatId;
+  useVoiceLogOnHide(on, () => chatIdRef.current);
 
   const clearGrace = useCallback(() => {
     if (graceTimer.current !== null) clearTimeout(graceTimer.current);
@@ -545,7 +549,9 @@ export function useAeVoiceMode({
       );
       return;
     }
-    void useChatStore.getState().submitApproval(state.id, "accept", state.answers);
+    void useChatStore
+      .getState()
+      .submitApproval(state.id, "accept", state.answers, withApprovalSource("voice"));
   }, []);
 
   const onCardFinal = useCallback(
@@ -673,7 +679,9 @@ export function useAeVoiceMode({
             approvalAnswered.current.add(id);
             logVoice("approval answer", verdict);
             clearGrace();
-            void useChatStore.getState().submitApproval(id, verdict);
+            void useChatStore
+              .getState()
+              .submitApproval(id, verdict, undefined, withApprovalSource("voice"));
           }
         }
         return true;
@@ -710,11 +718,26 @@ export function useAeVoiceMode({
     [on, clearGrace],
   );
 
+  const answerApproval = useCallback(
+    (action: "accept" | "decline") => {
+      const pending = latest.current.approval;
+      if (!pending || approvalAnswered.current.has(pending.id)) return;
+      approvalAnswered.current.add(pending.id);
+      logVoice("approval answer", `${action} panel`);
+      clearGrace();
+      void useChatStore
+        .getState()
+        .submitApproval(pending.id, action, undefined, withApprovalSource("voice_panel"));
+    },
+    [clearGrace],
+  );
+
   return {
     on,
     phase: voice.phase,
     cardActive,
     approvalActive,
+    answerApproval,
     micDetail,
     filterHeard,
     bargeIn,

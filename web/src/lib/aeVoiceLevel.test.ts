@@ -4,6 +4,7 @@ import {
   publishVoiceBins,
   resetVoiceBins,
   subscribeVoiceBins,
+  syntheticVoiceBins,
   VOICE_BIN_COUNT,
 } from "./aeVoiceLevel";
 
@@ -32,5 +33,23 @@ describe("aeVoiceLevel", () => {
     off();
     publishVoiceBins([10]);
     expect(cb).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("syntheticVoiceBins", () => {
+  it("is silent at level 0 and bumps the voice range at level 1, all within bytes", () => {
+    expect(Array.from(syntheticVoiceBins(0, 123)).every((v) => v === 0)).toBe(true);
+    const loud = syntheticVoiceBins(1, 123);
+    expect(loud).toHaveLength(VOICE_BIN_COUNT);
+    expect(Math.max(...loud)).toBeGreaterThan(120);
+    expect(loud[6]).toBeGreaterThan(loud[VOICE_BIN_COUNT - 1]);
+  });
+
+  it("scales with the level, moves with time, and survives a bad level", () => {
+    const quiet = syntheticVoiceBins(0.2, 0);
+    const loud = syntheticVoiceBins(0.8, 0);
+    expect(quiet.reduce((a, b) => a + b, 0)).toBeLessThan(loud.reduce((a, b) => a + b, 0));
+    expect(Array.from(syntheticVoiceBins(0.8, 500))).not.toEqual(Array.from(loud));
+    expect(Array.from(syntheticVoiceBins(Number.NaN, 0)).every((v) => v === 0)).toBe(true);
   });
 });

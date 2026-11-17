@@ -251,6 +251,39 @@ describe("useAeVoiceStart voice log upload", () => {
     expect(reasons().map((r) => r.reason)).toEqual(["mic_deaf"]);
   });
 
+  it("a stop reported synchronously by the release does not upload mic_failed", () => {
+    const { result, mic, submit } = setup();
+    // The controller reports not-listening from inside its own stop(), as a browser can.
+    mic.stop.mockImplementation(() => result.current.onListening(false));
+    act(() => result.current.toggle());
+    act(() => result.current.onFinal("hello"));
+    act(() => void vi.advanceTimersByTime(GRACE_MS));
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(mic.stop).toHaveBeenCalled();
+    expect(reasons()).toEqual([]);
+  });
+
+  it("a stale onListening(false) after the user ended it uploads only the voice_end", () => {
+    const { result, mic } = setup();
+    mic.stop.mockImplementation(() => result.current.onListening(false));
+    act(() => result.current.toggle());
+    act(() => result.current.toggle());
+    expect(reasons().map((r) => r.reason)).toEqual(["voice_end"]);
+  });
+
+  it("arming again after a release listens to the mic once more", async () => {
+    const { result } = setup();
+    act(() => result.current.toggle());
+    act(() => result.current.toggle());
+    // The upload budget is shared: let the voice_end one's minute pass.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    act(() => result.current.toggle());
+    act(() => result.current.onListening(false));
+    expect(reasons().map((r) => r.reason)).toContain("mic_failed");
+  });
+
   it("sends the log when the held message gives up waiting for the chat", () => {
     const { result } = setup({ canSubmit: false });
     act(() => result.current.toggle());

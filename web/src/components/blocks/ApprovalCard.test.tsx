@@ -198,9 +198,14 @@ describe("ApprovalCard — binary approve/reject", () => {
 
     fireEvent.click(rememberButton);
 
-    expect(submitSpy).toHaveBeenCalledWith("elic_cmd_policy", "accept", {
-      execpolicy_amendment: [".venv/bin/python", "-m", "pytest"],
-    });
+    expect(submitSpy).toHaveBeenCalledWith(
+      "elic_cmd_policy",
+      "accept",
+      {
+        execpolicy_amendment: [".venv/bin/python", "-m", "pytest"],
+      },
+      { source: "card" },
+    );
   });
 });
 
@@ -255,9 +260,14 @@ describe("ApprovalCard — approve & switch to auto mode", () => {
     render(<ElicitationCard item={item} />);
     fireEvent.click(screen.getByRole("button", { name: /approve & switch to auto mode/i }));
 
-    expect(submitSpy).toHaveBeenCalledExactlyOnceWith(props.elicitationId, "accept", {
-      allow_auto_mode: true,
-    });
+    expect(submitSpy).toHaveBeenCalledExactlyOnceWith(
+      props.elicitationId,
+      "accept",
+      {
+        allow_auto_mode: true,
+      },
+      { source: "card" },
+    );
   });
 
   it("keeps ordinary approval and rejection separate from the mode switch", () => {
@@ -382,9 +392,14 @@ describe("ApprovalCard — accept & allow all edits", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /accept & allow all edits/i }));
 
-    expect(submitSpy).toHaveBeenCalledWith("elic_edit_click", "accept", {
-      allow_all_edits: true,
-    });
+    expect(submitSpy).toHaveBeenCalledWith(
+      "elic_edit_click",
+      "accept",
+      {
+        allow_all_edits: true,
+      },
+      { source: "card" },
+    );
   });
 
   it("renders the auto-accepting-edits label in the responded state", () => {
@@ -508,9 +523,14 @@ describe("ApprovalCard — approve & don't ask again (persistent allow rule)", (
 
     fireEvent.click(screen.getByTestId("approval-card-remember"));
 
-    expect(submitSpy).toHaveBeenCalledWith("elic_wf_click", "accept", {
-      remember: true,
-    });
+    expect(submitSpy).toHaveBeenCalledWith(
+      "elic_wf_click",
+      "accept",
+      {
+        remember: true,
+      },
+      { source: "card" },
+    );
   });
 
   it("renders the won't-ask-again label in the responded state", () => {
@@ -640,7 +660,12 @@ describe("ApprovalCard — multi-choice options", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Beta" }));
 
-    expect(submitSpy).toHaveBeenCalledWith("elic_pick", "accept", { answer: "Beta" });
+    expect(submitSpy).toHaveBeenCalledWith(
+      "elic_pick",
+      "accept",
+      { answer: "Beta" },
+      { source: "card" },
+    );
   });
 
   it("renders 'Selected: <label>' on the responded card when content carries an answer", () => {
@@ -811,9 +836,14 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
     fireEvent.click(screen.getByLabelText("Vue"));
     fireEvent.click(screen.getByRole("button", { name: /submit/i }));
 
-    expect(submitSpy).toHaveBeenCalledWith("elic_submit", "accept", {
-      "Which framework?": "Vue",
-    });
+    expect(submitSpy).toHaveBeenCalledWith(
+      "elic_submit",
+      "accept",
+      {
+        "Which framework?": "Vue",
+      },
+      { source: "card" },
+    );
   });
 
   it("submits structured question answers keyed by id when present", () => {
@@ -853,9 +883,14 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
     fireEvent.click(screen.getByLabelText("React"));
     fireEvent.click(screen.getByRole("button", { name: /submit/i }));
 
-    expect(submitSpy).toHaveBeenCalledWith("elic_codex_id", "accept", {
-      framework: "React",
-    });
+    expect(submitSpy).toHaveBeenCalledWith(
+      "elic_codex_id",
+      "accept",
+      {
+        framework: "React",
+      },
+      { source: "card" },
+    );
   });
 
   it("labels Codex structured input prompts as Codex prompts", () => {
@@ -975,9 +1010,14 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
     fireEvent.click(screen.getByLabelText("Pretzels"));
     fireEvent.click(screen.getByRole("button", { name: /submit/i }));
 
-    expect(submitSpy).toHaveBeenCalledWith("elic_multi_submit", "accept", {
-      "Pick snacks": ["Popcorn", "Pretzels"],
-    });
+    expect(submitSpy).toHaveBeenCalledWith(
+      "elic_multi_submit",
+      "accept",
+      {
+        "Pick snacks": ["Popcorn", "Pretzels"],
+      },
+      { source: "card" },
+    );
   });
 
   it("prefers the server-stamped askUserQuestion payload over content_preview", () => {
@@ -1130,9 +1170,14 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
     });
     fireEvent.click(screen.getByTestId("ask-user-question-submit"));
 
-    expect(submitSpy).toHaveBeenCalledWith("elic_custom_single", "accept", {
-      "Which framework?": "Solid",
-    });
+    expect(submitSpy).toHaveBeenCalledWith(
+      "elic_custom_single",
+      "accept",
+      {
+        "Which framework?": "Solid",
+      },
+      { source: "card" },
+    );
   });
 
   it("appends custom-text answer to multi-select checkbox selections", () => {
@@ -1163,9 +1208,14 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
     });
     fireEvent.click(screen.getByTestId("ask-user-question-submit"));
 
-    expect(submitSpy).toHaveBeenCalledWith("elic_custom_multi", "accept", {
-      "Pick snacks": ["Popcorn", "Chips"],
-    });
+    expect(submitSpy).toHaveBeenCalledWith(
+      "elic_custom_multi",
+      "accept",
+      {
+        "Pick snacks": ["Popcorn", "Chips"],
+      },
+      { source: "card" },
+    );
   });
 
   it("auto-checks the custom radio when the user starts typing", () => {
@@ -1342,9 +1392,14 @@ describe("ApprovalCard — ExitPlanMode plan review", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /yes, and use auto mode/i }));
 
-    expect(submitSpy).toHaveBeenCalledWith("elic_plan_auto", "accept", {
-      allow_all_edits: true,
-    });
+    expect(submitSpy).toHaveBeenCalledWith(
+      "elic_plan_auto",
+      "accept",
+      {
+        allow_all_edits: true,
+      },
+      { source: "card" },
+    );
   });
 
   it("submits a plain accept for 'Yes, manually approve edits'", () => {
@@ -1367,7 +1422,9 @@ describe("ApprovalCard — ExitPlanMode plan review", () => {
     fireEvent.click(screen.getByRole("button", { name: /yes, manually approve edits/i }));
 
     // Third arg is the content slot — explicitly undefined (no flags).
-    expect(submitSpy).toHaveBeenCalledWith("elic_plan_manual", "accept", undefined);
+    expect(submitSpy).toHaveBeenCalledWith("elic_plan_manual", "accept", undefined, {
+      source: "card",
+    });
   });
 
   it("reveals a feedback textarea and submits decline with the typed feedback", () => {
@@ -1393,9 +1450,14 @@ describe("ApprovalCard — ExitPlanMode plan review", () => {
     fireEvent.change(textarea, { target: { value: "Use a feature flag instead." } });
     fireEvent.click(screen.getByRole("button", { name: /reject plan/i }));
 
-    expect(submitSpy).toHaveBeenCalledWith("elic_plan_reject", "decline", {
-      feedback: "Use a feature flag instead.",
-    });
+    expect(submitSpy).toHaveBeenCalledWith(
+      "elic_plan_reject",
+      "decline",
+      {
+        feedback: "Use a feature flag instead.",
+      },
+      { source: "card" },
+    );
   });
 
   it("submits a plain decline when the feedback is left empty", () => {
@@ -1420,7 +1482,9 @@ describe("ApprovalCard — ExitPlanMode plan review", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /reject plan/i }));
 
-    expect(submitSpy).toHaveBeenCalledWith("elic_plan_reject_bare", "decline", undefined);
+    expect(submitSpy).toHaveBeenCalledWith("elic_plan_reject_bare", "decline", undefined, {
+      source: "card",
+    });
   });
 
   it("renders plan-specific responded labels and echoes rejection feedback", () => {
@@ -1811,9 +1875,14 @@ describe("ApprovalCard — AE single-choice form shows one button per choice", (
     expect(screen.queryByRole("button", { name: /submit|reject/i })).toBeNull();
 
     fireEvent.click(continueBtn);
-    expect(submitSpy).toHaveBeenCalledExactlyOnceWith("elic_confirm", "accept", {
-      "Confirm the operation": "Yes",
-    });
+    expect(submitSpy).toHaveBeenCalledExactlyOnceWith(
+      "elic_confirm",
+      "accept",
+      {
+        "Confirm the operation": "Yes",
+      },
+      { source: "card" },
+    );
   });
 
   const renderChoice = (schema: Record<string, unknown>, submitSpy = vi.fn()) => {
@@ -1858,7 +1927,7 @@ describe("ApprovalCard — AE single-choice form shows one button per choice", (
     const spy = renderChoice(envSchema());
     expect(screen.getByRole("button", { name: "dev" })).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Reject" }));
-    expect(spy).toHaveBeenCalledExactlyOnceWith("elic_c", "decline", undefined);
+    expect(spy).toHaveBeenCalledExactlyOnceWith("elic_c", "decline", undefined, { source: "card" });
   });
 
   it("shows no Reject for a Yes/No confirmation", () => {
@@ -1878,7 +1947,12 @@ describe("ApprovalCard — AE single-choice form shows one button per choice", (
     const dev = screen.getByRole("button", { name: "dev" });
     fireEvent.click(dev);
     fireEvent.click(dev);
-    expect(spy).toHaveBeenCalledExactlyOnceWith("elic_c", "accept", { Env: "dev" });
+    expect(spy).toHaveBeenCalledExactlyOnceWith(
+      "elic_c",
+      "accept",
+      { Env: "dev" },
+      { source: "card" },
+    );
     expect(screen.getByRole("button", { name: "prod" }).hasAttribute("disabled")).toBe(true);
     expect(screen.getByRole("button", { name: "Reject" }).hasAttribute("disabled")).toBe(true);
   });

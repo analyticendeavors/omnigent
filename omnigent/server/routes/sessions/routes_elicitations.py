@@ -59,6 +59,28 @@ from omnigent.stores.permission_store import PermissionStore
 # decision that needs a "waiting for the owner" UI state first.
 ELICITATION_RESOLVE_LEVEL: int = LEVEL_EDIT
 
+# Who resolved a card, as the web client names it in ``_meta.source`` (see
+# web/src/lib/aeApprovalSource.ts). Only these reach the log; anything else is "unknown".
+KNOWN_RESOLVE_SOURCES: frozenset[str] = frozenset(
+    {"card", "voice", "voice_panel", "hotkey", "inbox", "approve_page"}
+)
+
+
+def sanitize_resolve_source(meta: dict[str, Any] | None) -> str:
+    """
+    Return the allowlisted ``_meta.source`` of a resolve body, else ``"unknown"``.
+
+    Never returns a value the client chose freely: an unlisted, missing or non-string source
+    is ``"unknown"``, so nothing from the request body reaches the log.
+
+    :param meta: The body's ``_meta`` dict, e.g. ``{"source": "voice_panel"}``, or ``None``.
+    :returns: A member of :data:`KNOWN_RESOLVE_SOURCES` or ``"unknown"``.
+    """
+    source = meta.get("source") if isinstance(meta, dict) else None
+    if isinstance(source, str) and source in KNOWN_RESOLVE_SOURCES:
+        return source
+    return "unknown"
+
 
 def register_elicitations_routes(
     router: APIRouter,
@@ -131,6 +153,13 @@ def register_elicitations_routes(
             conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
             if conv is None:
                 raise _session_not_found()
+        _logger.info(
+            "elicitation resolve: session=%s elicitation=%s action=%s source=%s",
+            session_id,
+            elicitation_id,
+            body.action,
+            sanitize_resolve_source(body.meta),
+        )
         _resolve_data = {"elicitation_id": elicitation_id, **body.model_dump(exclude_none=True)}
         await _resolve_elicitation(session_id, _resolve_data, runner_router, conversation_store)
         # Apply any policy writes deferred by the relay tool-call ASK gate

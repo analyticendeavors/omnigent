@@ -2,15 +2,20 @@
 
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { showToast } from "@/components/ui/toast";
 import {
   formatVoiceLog,
   logVoice,
   requestVoiceLogInsert,
   resetVoiceLog,
   UPLOAD_MIN_GAP_MS,
+  UPLOAD_TIMEOUT_MS,
   uploadVoiceLog,
   useVoiceLogInsert,
+  useVoiceLogOnHide,
 } from "./aeVoiceLog";
+
+vi.mock("@/components/ui/toast", () => ({ showToast: vi.fn() }));
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -86,14 +91,14 @@ describe("uploadVoiceLog", () => {
     return { url, init, body: JSON.parse(String(init.body)) };
   }
 
-  it("posts the buffer with the reason and chat id, keepalive, as JSON", async () => {
+  it("posts the buffer with the reason and chat id, without keepalive, as JSON", async () => {
     logVoice("mic start", "browser");
     logVoice("final", "hello");
     await expect(uploadVoiceLog("manual", "c1")).resolves.toBe("sent");
     const { url, init, body } = lastBody();
     expect(url).toContain("/v1/ae/voice-log");
     expect(init.method).toBe("POST");
-    expect(init.keepalive).toBe(true);
+    expect(init.keepalive).toBeUndefined();
     expect(new Headers(init.headers).get("Content-Type")).toBe("application/json");
     expect(body.reason).toBe("manual");
     expect(body.chat_id).toBe("c1");
@@ -198,3 +203,143 @@ describe("uploadVoiceLog", () => {
     expect(new TextEncoder().encode(text).length).toBeLessThanOrEqual(60_000);
   });
 });
+
+describe("uploadVoiceLog on a phone", () => {
+  const fetchMock = vi.fn();
+  beforeEach(() => {
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(() => Promise.resolve(new Response("{}", { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.mocked(showToast).mockClear();
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const lastInit = () => fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
+
+  it("an in-page upload is a plain request: no keepalive, with an abort signal", async () => {
+    for (const reason of ["voice_end", "mic_failed", "mic_deaf", "mic_stalled", "manual"] as const) {
+      resetVoiceLog();
+      // oxlint-disable-next-line no-await-in-loop -- one reason per upload
+      await uploadVoiceLog(reason);
+      expect(lastInit().keepalive).toBeUndefined();
+      expect(lastInit().signal).toBeInstanceOf(AbortSignal);
+    }
+  });
+
+  it("keepalive is only used when the caller says the page is going away", async () => {
+    await uploadVoiceLog("mic_paused", null, { keepalive: true });
+    expect(lastInit().keepalive).toBe(true);
+  });
+
+  it("a rejected keepalive request is retried once without keepalive", async () => {
+    fetchMock.mockImplementationOnce(() => Promise.reject(new TypeError("dropped")));
+    await expect(uploadVoiceLog("mic_paused", null, { keepalive: true })).resolves.toBe("sent");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][1].keepalive).toBe(true);
+    expect(fetchMock.mock.calls[1][1].keepalive).toBeUndefined();
+    expect(formatVoiceLog()).toContain("keepalive rejected, retry");
+  });
+
+  it("a request that never answers is aborted after 10 s and the auto budget is released", async () => {
+    fetchMock.mockImplementationOnce(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((_res, rej) => {
+          init.signal?.addEventListener("abort", () => {
+            const e = new Error("aborted");
+            e.name = "AbortError";
+            rej(e);
+          });
+        }),
+    );
+    const first = uploadVoiceLog("mic_failed");
+    await expect(uploadVoiceLog("mic_deaf")).resolves.toBe("throttled");
+    await vi.advanceTimersByTimeAsync(UPLOAD_TIMEOUT_MS);
+    await expect(first).resolves.toBe("failed");
+    // The slot is free again: the next automatic upload goes.
+    await expect(uploadVoiceLog("mic_deaf")).resolves.toBe("sent");
+  });
+
+  it("writes every result into the log buffer with the reason and the error name", async () => {
+    await uploadVoiceLog("mic_failed");
+    await uploadVoiceLog("mic_failed");
+    fetchMock.mockImplementationOnce(() => Promise.reject(new TypeError("offline")));
+    await uploadVoiceLog("manual");
+    fetchMock.mockImplementationOnce(() => Promise.resolve(new Response("{}", { status: 503 })));
+    await uploadVoiceLog("manual");
+    const text = formatVoiceLog();
+    expect(text).toContain("log upload mic_failed sent ok");
+    expect(text).toContain("log upload mic_failed throttled ok");
+    expect(text).toContain("log upload manual failed TypeError");
+    expect(text).toContain("log upload manual failed http503");
+  });
+
+  it("toasts the voice_end result, and nothing for the other reasons", async () => {
+    await uploadVoiceLog("voice_end");
+    expect(showToast).toHaveBeenLastCalledWith("Voice log sent");
+    fetchMock.mockImplementationOnce(() => Promise.reject(new TypeError("offline")));
+    vi.advanceTimersByTime(UPLOAD_MIN_GAP_MS);
+    await uploadVoiceLog("voice_end");
+    expect(showToast).toHaveBeenLastCalledWith("Voice log not sent: network error");
+    await uploadVoiceLog("voice_end");
+    expect(showToast).toHaveBeenLastCalledWith("Voice log sent");
+    await uploadVoiceLog("voice_end");
+    expect(showToast).toHaveBeenLastCalledWith("Voice log not sent: sent a moment ago");
+    vi.mocked(showToast).mockClear();
+    await uploadVoiceLog("mic_failed");
+    await uploadVoiceLog("manual");
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it("names a timeout and a server refusal in the voice_end toast", async () => {
+    fetchMock.mockImplementationOnce(() => {
+      const e = new Error("aborted");
+      e.name = "AbortError";
+      return Promise.reject(e);
+    });
+    await uploadVoiceLog("voice_end");
+    expect(showToast).toHaveBeenLastCalledWith("Voice log not sent: timed out");
+    fetchMock.mockImplementationOnce(() => Promise.resolve(new Response("{}", { status: 429 })));
+    await uploadVoiceLog("voice_end");
+    expect(showToast).toHaveBeenLastCalledWith("Voice log not sent: server answered 429");
+  });
+});
+
+describe("useVoiceLogOnHide", () => {
+  const fetchMock = vi.fn();
+  beforeEach(() => {
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(() => Promise.resolve(new Response("{}", { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  function hide() {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    document.dispatchEvent(new Event("visibilitychange"));
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+  }
+
+  it("sends a keepalive upload with the chat id when the page is hidden or closing", async () => {
+    const { unmount } = renderHook(() => useVoiceLogOnHide(true, () => "c9"));
+    act(() => hide());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.keepalive).toBe(true);
+    expect(JSON.parse(String(init.body)).chat_id).toBe("c9");
+    unmount();
+    act(() => hide());
+    window.dispatchEvent(new Event("pagehide"));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing while voice is not on, and nothing on a page that is shown again", async () => {
+    renderHook(() => useVoiceLogOnHide(false, () => null));
+    act(() => hide());
+    window.dispatchEvent(new Event("pagehide"));
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+

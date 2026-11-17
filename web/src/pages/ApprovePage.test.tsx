@@ -134,7 +134,10 @@ describe("ApprovePage submission", () => {
       .mock.calls.find(([url]) => String(url).includes("/resolve"));
     expect(resolveCall).toBeDefined();
     expect(String(resolveCall![0])).toContain("/v1/sessions/sess_a/elicitations/eli_a/resolve");
-    expect(JSON.parse(String(resolveCall![1]!.body))).toEqual({ action: "accept" });
+    expect(JSON.parse(String(resolveCall![1]!.body))).toEqual({
+      action: "accept",
+      _meta: { source: "approve_page" },
+    });
   });
 
   it("rejects: posts decline and shows the Rejected confirmation", async () => {
@@ -147,7 +150,10 @@ describe("ApprovePage submission", () => {
     const resolveCall = vi
       .mocked(identity.authenticatedFetch)
       .mock.calls.find(([url]) => String(url).includes("/resolve"));
-    expect(JSON.parse(String(resolveCall![1]!.body))).toEqual({ action: "decline" });
+    expect(JSON.parse(String(resolveCall![1]!.body))).toEqual({
+      action: "decline",
+      _meta: { source: "approve_page" },
+    });
   });
 
   it("shows a resolve error when the POST returns a non-ok status", async () => {

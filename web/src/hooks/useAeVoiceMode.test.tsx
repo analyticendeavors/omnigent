@@ -441,9 +441,14 @@ describe("useAeVoiceMode", () => {
       used = result.current.onFinal("option two");
     });
     expect(used).toBe(true);
-    expect(submitApproval).toHaveBeenCalledWith("e1", "accept", {
-      "How should it deploy?": "Let the timer do it",
-    });
+    expect(submitApproval).toHaveBeenCalledWith(
+      "e1",
+      "accept",
+      {
+        "How should it deploy?": "Let the timer do it",
+      },
+      { source: "voice" },
+    );
     expect(submit).not.toHaveBeenCalled();
   });
 
@@ -453,9 +458,14 @@ describe("useAeVoiceMode", () => {
     act(() => void result.current.onFinal("ask me tomorrow"));
     expect(submitApproval).not.toHaveBeenCalled();
     act(() => void vi.advanceTimersByTime(GRACE_MS));
-    expect(submitApproval).toHaveBeenCalledWith("e1", "accept", {
-      "How should it deploy?": "ask me tomorrow",
-    });
+    expect(submitApproval).toHaveBeenCalledWith(
+      "e1",
+      "accept",
+      {
+        "How should it deploy?": "ask me tomorrow",
+      },
+      { source: "voice" },
+    );
   });
 
   it("never answers a card on silence", () => {
@@ -479,9 +489,14 @@ describe("useAeVoiceMode", () => {
     act(() => void result.current.onFinal("three"));
     expect(submitApproval).not.toHaveBeenCalled();
     act(() => void result.current.onFinal("done"));
-    expect(submitApproval).toHaveBeenCalledWith("e1", "accept", {
-      "How should it deploy?": ["Force it", "Hold it"],
-    });
+    expect(submitApproval).toHaveBeenCalledWith(
+      "e1",
+      "accept",
+      {
+        "How should it deploy?": ["Force it", "Hold it"],
+      },
+      { source: "voice" },
+    );
   });
 
   it("stays out of the way when off", () => {
@@ -640,9 +655,14 @@ describe("useAeVoiceMode", () => {
     act(() => void vi.advanceTimersByTime(10_000));
     expect(submitApproval).not.toHaveBeenCalled();
     act(() => void result.current.onFinal("hold it"));
-    expect(submitApproval).toHaveBeenCalledWith("e1", "accept", {
-      "How should it deploy?": "Hold it",
-    });
+    expect(submitApproval).toHaveBeenCalledWith(
+      "e1",
+      "accept",
+      {
+        "How should it deploy?": "Hold it",
+      },
+      { source: "voice" },
+    );
   });
 
   it("a card answered by a click leaves the pending custom answer inert", () => {
@@ -668,9 +688,14 @@ describe("useAeVoiceMode", () => {
       act(() => void result.current.onFinal("one"));
       act(() => void result.current.onFinal("three"));
       act(() => void result.current.onFinal(ending));
-      expect(submitApproval).toHaveBeenCalledWith("e1", "accept", {
-        "How should it deploy?": ["Force it", "Hold it"],
-      });
+      expect(submitApproval).toHaveBeenCalledWith(
+        "e1",
+        "accept",
+        {
+          "How should it deploy?": ["Force it", "Hold it"],
+        },
+        { source: "voice" },
+      );
     },
   );
 
@@ -694,10 +719,15 @@ describe("useAeVoiceMode", () => {
     act(() => void vi.advanceTimersByTime(50));
     expect(synth.texts().at(-1)).toBe("Question. Which branch? One, Main. Two, Dev.");
     act(() => void result.current.onFinal("dev"));
-    expect(submitApproval).toHaveBeenCalledWith("e1", "accept", {
-      "How should it deploy?": "Force it",
-      "Which branch?": "Dev",
-    });
+    expect(submitApproval).toHaveBeenCalledWith(
+      "e1",
+      "accept",
+      {
+        "How should it deploy?": "Force it",
+        "Which branch?": "Dev",
+      },
+      { source: "voice" },
+    );
   });
 
   it("posts the switch when the session's label disagrees with it", () => {
@@ -750,9 +780,14 @@ describe("useAeVoiceMode", () => {
     useChatStore.setState({ blocks: [three] } as never);
     const { result } = mount();
     act(() => void result.current.onFinal("one and three, I'm done"));
-    expect(submitApproval).toHaveBeenCalledWith("e1", "accept", {
-      "How should it deploy?": ["Force it", "Hold it"],
-    });
+    expect(submitApproval).toHaveBeenCalledWith(
+      "e1",
+      "accept",
+      {
+        "How should it deploy?": ["Force it", "Hold it"],
+      },
+      { source: "voice" },
+    );
   });
 
   it("makes the start again when the mic is wanted before its own stop has finished", () => {
@@ -789,9 +824,14 @@ describe("useAeVoiceMode", () => {
     useChatStore.setState({ blocks: [labelled] } as never);
     const { result } = mount();
     act(() => void result.current.onFinal("merge it done"));
-    expect(submitApproval).toHaveBeenCalledWith("e1", "accept", {
-      "What now?": ["Merge it"],
-    });
+    expect(submitApproval).toHaveBeenCalledWith(
+      "e1",
+      "accept",
+      {
+        "What now?": ["Merge it"],
+      },
+      { source: "voice" },
+    );
   });
 
   describe("an approval card without a question", () => {
@@ -824,14 +864,14 @@ describe("useAeVoiceMode", () => {
         used = result.current.onFinal(said);
       });
       expect(used).toBe(true);
-      expect(submitApproval).toHaveBeenCalledWith("a1", "accept");
+      expect(submitApproval).toHaveBeenCalledWith("a1", "accept", undefined, { source: "voice" });
       expect(submit).not.toHaveBeenCalled();
     });
 
     it.each(["decline", "no", "cancel"])("declines when %s is said", (said) => {
       const { result } = mountApproval();
       act(() => void result.current.onFinal(said));
-      expect(submitApproval).toHaveBeenCalledWith("a1", "decline");
+      expect(submitApproval).toHaveBeenCalledWith("a1", "decline", undefined, { source: "voice" });
     });
 
     it("ignores talk that is not an answer and never sends it as a message", () => {
@@ -884,7 +924,7 @@ describe("useAeVoiceMode", () => {
       act(() => void vi.advanceTimersByTime(8100));
       act(() => void result.current.onFinal("run it"));
       expect(submitApproval).toHaveBeenCalledTimes(1);
-      expect(submitApproval).toHaveBeenCalledWith("a2", "accept");
+      expect(submitApproval).toHaveBeenCalledWith("a2", "accept", undefined, { source: "voice" });
     });
 
     it("submits once when the same answer arrives twice", () => {
@@ -945,6 +985,31 @@ describe("useAeVoiceMode", () => {
       expect(result.current.approvalActive).toBe(true);
       expect(getVoiceSnapshot("c1").phase).toBe("unavailable");
       expect(result.current.micDetail).toBe(MIC_DEAF_DETAIL);
+    });
+
+    it("answerApproval resolves the pending card once, with the panel as its source, while the line speaks", () => {
+      const { result } = mountApproval();
+      act(() => setVoiceSpeaking("c1", true));
+      act(() => result.current.answerApproval("accept"));
+      expect(submitApproval).toHaveBeenCalledTimes(1);
+      expect(submitApproval).toHaveBeenCalledWith("a1", "accept", undefined, {
+        source: "voice_panel",
+      });
+      act(() => result.current.answerApproval("decline"));
+      act(() => void result.current.onFinal("run it"));
+      expect(submitApproval).toHaveBeenCalledTimes(1);
+    });
+
+    it("answerApproval declines with the panel as its source and does nothing with no card", () => {
+      const { result } = mountApproval();
+      act(() => result.current.answerApproval("decline"));
+      expect(submitApproval).toHaveBeenCalledWith("a1", "decline", undefined, {
+        source: "voice_panel",
+      });
+      act(() => useChatStore.setState({ blocks: [] } as never));
+      submitApproval.mockClear();
+      act(() => result.current.answerApproval("accept"));
+      expect(submitApproval).not.toHaveBeenCalled();
     });
 
     it("leaves the approval phase when the card is answered", () => {

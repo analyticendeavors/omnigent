@@ -47,6 +47,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useDescendantSession } from "@/hooks/useChildSessions";
+import { withApprovalSource } from "@/lib/aeApprovalSource";
 import { aeChoiceField, aeShortChoiceLabels } from "@/lib/aeChoiceButtons";
 import { parseAeSlotsFull } from "@/lib/aeSlotsFull";
 import {
@@ -271,14 +272,13 @@ export function ApprovalCard({
     onSubmit ??
     ((id, action, content, meta) => {
       const store = useChatStore.getState();
-      // Keep the exact call shape for the main chat (no scope); pass the child
-      // id only when scoped so a side-chat verdict targets the child.
+      // The card is the source of every verdict it submits (the server logs it).
+      const withSource = withApprovalSource("card", meta);
+      // Pass the child id only when scoped so a side-chat verdict targets the child.
       if (scopedConversationId) {
-        void store.submitApproval(id, action, content, meta, scopedConversationId);
-      } else if (meta === undefined) {
-        void store.submitApproval(id, action, content);
+        void store.submitApproval(id, action, content, withSource, scopedConversationId);
       } else {
-        void store.submitApproval(id, action, content, meta);
+        void store.submitApproval(id, action, content, withSource);
       }
     });
   const submitBinary = (action: "accept" | "decline") => {

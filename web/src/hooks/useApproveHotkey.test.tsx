@@ -57,7 +57,7 @@ describe("useApproveHotkey", () => {
     renderHook(() => useApproveHotkey(true));
     press();
     expect(submitApproval).toHaveBeenCalledTimes(1);
-    expect(submitApproval).toHaveBeenCalledWith("own", "accept");
+    expect(submitApproval).toHaveBeenCalledWith("own", "accept", undefined, { source: "hotkey" });
     submitApproval.mockClear();
     blocks = [blocks[1]];
     press();
@@ -90,21 +90,21 @@ describe("useApproveHotkey", () => {
     blocks = [{ ...pending, requestedSchema: { type: "object" } }];
     renderHook(() => useApproveHotkey(true));
     press();
-    expect(submitApproval).toHaveBeenCalledWith("e1", "accept");
+    expect(submitApproval).toHaveBeenCalledWith("e1", "accept", undefined, { source: "hotkey" });
   });
 
   it("Cmd+Enter accepts the pending approval (macOS)", () => {
     blocks = [pending];
     renderHook(() => useApproveHotkey(true));
     press();
-    expect(submitApproval).toHaveBeenCalledWith("e1", "accept");
+    expect(submitApproval).toHaveBeenCalledWith("e1", "accept", undefined, { source: "hotkey" });
   });
 
   it("Ctrl+Enter accepts on Windows/Linux", () => {
     blocks = [pending];
     renderHook(() => useApproveHotkey(false));
     press({ ctrlKey: true });
-    expect(submitApproval).toHaveBeenCalledWith("e1", "accept");
+    expect(submitApproval).toHaveBeenCalledWith("e1", "accept", undefined, { source: "hotkey" });
   });
 
   it("ignores Ctrl+Enter on macOS (only ⌘↵ fires there)", () => {
@@ -122,7 +122,7 @@ describe("useApproveHotkey", () => {
     ];
     renderHook(() => useApproveHotkey(true));
     press();
-    expect(submitApproval).toHaveBeenCalledWith("new", "accept");
+    expect(submitApproval).toHaveBeenCalledWith("new", "accept", undefined, { source: "hotkey" });
   });
 
   it("ignores already-responded prompts", () => {
@@ -214,7 +214,7 @@ describe("useApproveHotkey", () => {
           cancelable: true,
         }),
       );
-      expect(submitApproval).toHaveBeenCalledWith("e1", "accept");
+      expect(submitApproval).toHaveBeenCalledWith("e1", "accept", undefined, { source: "hotkey" });
     } finally {
       box.remove();
     }
@@ -236,7 +236,7 @@ describe("useApproveHotkey", () => {
           cancelable: true,
         }),
       );
-      expect(submitApproval).toHaveBeenCalledWith("e1", "accept");
+      expect(submitApproval).toHaveBeenCalledWith("e1", "accept", undefined, { source: "hotkey" });
     } finally {
       ta.remove();
     }

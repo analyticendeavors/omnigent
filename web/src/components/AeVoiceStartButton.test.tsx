@@ -78,6 +78,7 @@ describe("AeVoiceStartButton", () => {
     expect(within(toggle).getByTestId("ae-hint-voice.start")).toBeInTheDocument();
     for (const id of [
       "ae-voice-mic-while-speaking",
+      "ae-voice-meter",
       "ae-speak-voice-trigger",
       "ae-voice-chat-voice-trigger",
       "ae-speak-rate-trigger",
@@ -96,6 +97,18 @@ describe("AeVoiceStartButton", () => {
     ]) {
       expect(screen.queryByTestId(id), id).toBeNull();
     }
+  });
+
+  it("has a Level meter row in the new-chat voice menu, with a hint, saved per device", async () => {
+    render(<AeVoiceStartButton armed={false} onToggle={() => {}} />);
+    const user = await openMenu();
+    const row = screen.getByTestId("ae-voice-meter");
+    // The test browser is not WebKit, so the default is on.
+    expect(row).toHaveAttribute("aria-checked", "true");
+    expect(within(row).getByTestId("ae-hint-voice.meter")).toBeInTheDocument();
+    await user.click(row);
+    expect(screen.getByTestId("ae-voice-meter")).toHaveAttribute("aria-checked", "false");
+    expect(window.localStorage.getItem("omnigent:ae-voice-meter")).toBe("off");
   });
 
   it("lists the microphone and speaker rows when the browser can choose them", async () => {

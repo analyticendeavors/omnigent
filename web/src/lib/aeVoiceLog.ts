@@ -4,6 +4,7 @@
 // hits trouble or ends, or when the user taps "Send voice log" (uploadVoiceLog, below).
 
 import { useEffect, useRef } from "react";
+import { showToast } from "@/components/ui/toast";
 import { authenticatedFetch } from "./identity";
 import { withBasePath } from "./basePath";
 
@@ -51,17 +52,92 @@ const UPLOAD_MAX_EVENT = 64;
 let lastAutoUpload: number | null = null;
 let autoInFlight = false;
 const encoder = new TextEncoder();
+/** An in-page upload that has not answered by now is given up, so the budget never stays claimed. */
+export const UPLOAD_TIMEOUT_MS = 10_000;
+
+export interface UploadVoiceLogOptions {
+  /**
+   * Let the request outlive the page (pagehide). Only for a page that is going away: iOS WebKit
+   * drops a keepalive request made from a page that stays open, so in-page uploads leave it off.
+   */
+  keepalive?: boolean;
+}
+
+/** One POST with a timeout; a keepalive request that is rejected is retried once without it. */
+async function postVoiceLog(body: string, keepalive: boolean): Promise<Response> {
+  const attempt = async (withKeepalive: boolean): Promise<Response> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
+    try {
+      return await authenticatedFetch(withBasePath("/v1/ae/voice-log"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        signal: controller.signal,
+        ...(withKeepalive ? { keepalive: true } : {}),
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  if (!keepalive) return attempt(false);
+  try {
+    return await attempt(true);
+  } catch {
+    logVoice("log upload", "keepalive rejected, retry");
+    return attempt(false);
+  }
+}
+
+function errName(error: unknown): string {
+  return error instanceof Error && error.name ? error.name : "error";
+}
+
+/** The short reason shown when a voice_end upload did not go. */
+function failureReason(result: "throttled" | "failed", name: string): string {
+  if (result === "throttled") return "sent a moment ago";
+  if (name === "AbortError") return "timed out";
+  return name.startsWith("http") ? `server answered ${name.slice(4)}` : "network error";
+}
 
 /**
  * Sends the last two minutes of the log to the server, best effort: never throws, and a
  * failed or refused send is only a "failed" answer. Automatic reasons share one budget of one
  * upload per UPLOAD_MIN_GAP_MS ("throttled" means one just went or is on its way); the budget
  * is spent only when the server accepted the upload, so a failure can be retried. "manual"
- * (the user tapped Send) skips that budget. keepalive lets it finish while the page closes.
+ * (the user tapped Send) skips that budget. In-page uploads are plain requests (no keepalive, which
+ * iOS drops) with a 10 s timeout; `keepalive` is for a page that is going away. Every result lands
+ * in the log buffer, and a voice_end result is also toasted.
  */
 export async function uploadVoiceLog(
   reason: VoiceLogReason,
   chatId?: string | null,
+  opts?: UploadVoiceLogOptions,
+): Promise<"sent" | "throttled" | "failed"> {
+  let errorName = "ok";
+  const result = await uploadVoiceLogInner(reason, chatId, opts, (n) => {
+    errorName = n;
+  });
+  logVoice("log upload", `${reason} ${result} ${errorName}`);
+  if (reason === "voice_end") {
+    try {
+      showToast(
+        result === "sent"
+          ? "Voice log sent"
+          : `Voice log not sent: ${failureReason(result, errorName)}`,
+      );
+    } catch {
+      // A toast must never break voice.
+    }
+  }
+  return result;
+}
+
+async function uploadVoiceLogInner(
+  reason: VoiceLogReason,
+  chatId: string | null | undefined,
+  opts: UploadVoiceLogOptions | undefined,
+  setError: (name: string) => void,
 ): Promise<"sent" | "throttled" | "failed"> {
   const automatic = reason !== "manual";
   let claimed = false;
@@ -94,16 +170,15 @@ export async function uploadVoiceLog(
       lines = [head, ...lines.slice(Math.ceil((lines.length - 1) / 4) + 1)];
       body = build();
     }
-    const response = await authenticatedFetch(withBasePath("/v1/ae/voice-log"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
-      keepalive: true,
-    });
-    if (!response.ok) return "failed";
+    const response = await postVoiceLog(body, opts?.keepalive === true);
+    if (!response.ok) {
+      setError(`http${response.status}`);
+      return "failed";
+    }
     if (automatic) lastAutoUpload = now;
     return "sent";
-  } catch {
+  } catch (error) {
+    setError(errName(error));
     return "failed";
   } finally {
     if (claimed) autoInFlight = false;
@@ -147,4 +222,30 @@ export function useVoiceLogInsert(value: string, setValue: (next: string) => voi
     window.addEventListener(INSERT_EVENT, onInsert);
     return () => window.removeEventListener(INSERT_EVENT, onInsert);
   }, []);
+}
+
+/**
+ * While `active` (a voice session is on), sends the log when the page is hidden or closing, the
+ * one place a keepalive request is used: the page may be gone before a plain request answers.
+ * It shares the automatic budget, so a backgrounded phone sends at most one a minute.
+ */
+export function useVoiceLogOnHide(active: boolean, chatId: () => string | null | undefined): void {
+  const chatRef = useRef(chatId);
+  chatRef.current = chatId;
+  useEffect(() => {
+    if (!active || typeof document === "undefined") return;
+    const send = () => {
+      logVoice("page hidden");
+      void uploadVoiceLog("mic_paused", chatRef.current(), { keepalive: true });
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") send();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", send);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", send);
+    };
+  }, [active]);
 }

@@ -3832,6 +3832,7 @@ function ComposerImpl(
                   onKeyboard={voiceSheet ? voiceTyping.startTyping : undefined}
                   onRestartMic={voice.restartMic}
                   approvalActive={voice.approvalActive}
+                  onApproval={voice.answerApproval}
                   micStartPath={() => micController.current?.startPath() ?? null}
                 />
               ) : null}
