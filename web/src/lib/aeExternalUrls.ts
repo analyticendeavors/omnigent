@@ -19,6 +19,14 @@
 // encoded characters, and there is no query string, so the link cannot carry
 // parameters to a GitHub endpoint. The worst an extension can do with it is
 // open a GitHub pull request or issue page in a new tab.
+//
+// Dependabot alert pages (2026-11-16): the Admin Center's "Alerts to fix" row
+// offers "Open on GitHub" for a repository's alert list, and for one alert, which
+// were refused ("URL was not provided by the host"). Two more shapes are admitted
+// inside the same pattern, `/security/dependabot` and `/security/dependabot/<n>`,
+// lower case, with the same owner and repo rules, no query and the same optional
+// fragment. Nothing else under `/security/` is (not `/security`, not advisories).
+// The worst an extension can do with them is open a Dependabot page in a new tab.
 
 import { ExtensionHostServiceError } from "@/extensions/services/errors";
 import { isNativeShell } from "@/lib/nativeBridge";
@@ -29,13 +37,16 @@ const FRAGMENT = "(?:#[A-Za-z0-9._~-]{1,256})?";
 
 const GITHUB_LINK = new RegExp(
   `^https://github\\.com/(${OWNER_OR_REPO})/(${OWNER_OR_REPO})/` +
-    `(?:pull/${NUMBER}(?:/(?:files|commits|checks))?|issues/${NUMBER})${FRAGMENT}$`,
+    `(?:pull/${NUMBER}(?:/(?:files|commits|checks))?|issues/${NUMBER}` +
+    `|security/dependabot(?:/${NUMBER})?)${FRAGMENT}$`,
 );
 
 /**
  * True for `https://github.com/<owner>/<repo>/pull/<n>` (optionally followed by
- * `/files`, `/commits` or `/checks`) and `https://github.com/<owner>/<repo>/issues/<n>`,
- * each with an optional `#fragment`, and nothing else.
+ * `/files`, `/commits` or `/checks`), `https://github.com/<owner>/<repo>/issues/<n>`,
+ * `https://github.com/<owner>/<repo>/security/dependabot` and
+ * `https://github.com/<owner>/<repo>/security/dependabot/<n>`, each with an
+ * optional `#fragment`, and nothing else (no other page under `/security/`).
  */
 export function isAeGithubLinkUrl(url: unknown): url is string {
   if (typeof url !== "string") return false;

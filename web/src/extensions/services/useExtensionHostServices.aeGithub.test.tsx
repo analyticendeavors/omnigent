@@ -70,6 +70,8 @@ describe("navigation.openExternal and GitHub links (P25)", () => {
     "https://github.com/analyticendeavors/omnigent-ae/pull/57",
     "https://github.com/analyticendeavors/omnigent-ae/issues/28",
     "https://github.com/omnigent-ai/omnigent/pull/6935/files",
+    "https://github.com/acme/repo/security/dependabot",
+    "https://github.com/acme/repo/security/dependabot/7",
   ])("opens %s without the host handing it out", async (url) => {
     await expect(openExternal()?.({ url }, signal())).resolves.toBeNull();
     // P27: opened without noopener so a block is visible, then the opener cut.
@@ -106,6 +108,12 @@ describe("navigation.openExternal and GitHub links (P25)", () => {
     "https://github.com.evil.example/acme/repo/pull/1",
     "https://github.com/acme/repo/pull/1?tab=files",
     "https://github.com/acme/repo/settings",
+    "https://github.com/acme/repo/security",
+    "https://github.com/acme/repo/security/advisories",
+    "https://github.com/acme/repo/security/dependabot?q=x",
+    "https://github.com/acme/repo/security/dependabot/0",
+    "https://github.com/acme/repo/security/dependabot/1/x",
+    "https://github.com.evil.example/acme/repo/security/dependabot",
     "javascript:alert(1)",
   ])("still refuses %s", async (url) => {
     await expect(openExternal()?.({ url }, signal())).rejects.toMatchObject({
