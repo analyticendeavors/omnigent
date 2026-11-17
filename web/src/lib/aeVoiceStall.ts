@@ -113,6 +113,10 @@ export const EVENT_HEARD_MIN_SOUND_MS = 600;
 /** Speech heard and no result this long after the last sound or speech event is a stall, even
  *  when no soundend, speechend or audioend ever came (a recognizer that hung mid-take). */
 export const EVENT_NO_END_STALL_MS = 6000;
+/** While a speechstart is open (no speechend, soundend or audioend since), the user may still be
+ *  talking: browser takes run with interimResults off, so a long utterance sends no result until
+ *  the pause. The hung-recognizer limit is this longer one for that case. */
+export const EVENT_OPEN_SPEECH_STALL_MS = 20_000;
 
 /**
  * The stall detector for a take with no level meter (the meter is off): the recognizer's own
@@ -120,7 +124,7 @@ export const EVENT_NO_END_STALL_MS = 6000;
  * EVENT_HEARD_MIN_SOUND_MS before its soundend (a cough or a click is not speech). A stall is
  * speech heard and then either STALL_QUIET_MS with no result after a soundend, speechend or
  * audioend, or EVENT_NO_END_STALL_MS with no result after the last sound or speech event when no
- * end event came. It never reads audio levels.
+ * end event came (EVENT_OPEN_SPEECH_STALL_MS while a speechstart is still open). It never reads audio levels.
  */
 export interface EventStallDetector {
   /** speechstart: the recognizer heard speech. */
@@ -137,22 +141,27 @@ export interface EventStallDetector {
   evaluate: (now: number) => number | null;
   /** A new take or a fresh recognizer. */
   reset: (now: number) => void;
+  /** A speechstart is open: no speechend, soundend or audioend since. */
+  speechOpen: () => boolean;
 }
 
 export function createEventStallDetector(): EventStallDetector {
   let heardAt: number | null = null;
   let endAt: number | null = null;
   let soundAt: number | null = null;
+  let speechOpen = false;
   let lastEventAt = 0;
   let lastResult = 0;
   const clear = () => {
     heardAt = null;
     endAt = null;
     soundAt = null;
+    speechOpen = false;
   };
   return {
     speechStart(now) {
       heardAt = now;
+      speechOpen = true;
       endAt = null;
       lastEventAt = now;
     },
@@ -163,6 +172,7 @@ export function createEventStallDetector(): EventStallDetector {
     },
     soundEnd(now) {
       lastEventAt = now;
+      speechOpen = false;
       const started = soundAt;
       soundAt = null;
       if (started !== null && now - started >= EVENT_HEARD_MIN_SOUND_MS) {
@@ -174,6 +184,7 @@ export function createEventStallDetector(): EventStallDetector {
     },
     ended(now) {
       lastEventAt = now;
+      speechOpen = false;
       if (heardAt !== null) endAt = now;
     },
     result(now) {
@@ -183,7 +194,8 @@ export function createEventStallDetector(): EventStallDetector {
     evaluate(now) {
       if (heardAt === null) return null;
       const quietAfterEnd = endAt !== null && now - endAt >= STALL_QUIET_MS;
-      const hungNoEnd = now - lastEventAt >= EVENT_NO_END_STALL_MS;
+      const hungNoEnd =
+        now - lastEventAt >= (speechOpen ? EVENT_OPEN_SPEECH_STALL_MS : EVENT_NO_END_STALL_MS);
       if (!quietAfterEnd && !hungNoEnd) return null;
       clear();
       return Math.max(0, now - lastResult);
@@ -193,6 +205,7 @@ export function createEventStallDetector(): EventStallDetector {
       lastEventAt = now;
       clear();
     },
+    speechOpen: () => speechOpen,
   };
 }
 

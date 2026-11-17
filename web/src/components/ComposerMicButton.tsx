@@ -104,6 +104,8 @@ const MIC_METER_FRESH_MS = 1500;
 // Stall restarts (speech heard, no result) allowed per minute before the take is called deaf.
 const MIC_STALL_MAX_PER_MIN = 3;
 const MIC_STALL_WINDOW_MS = 60_000;
+/** Event-detector restarts (meter off) per minute before they stop until the next result. */
+const MIC_EVENT_RESTART_MAX_PER_MIN = 4;
 // With the level meter off nothing else watches the mic: no recognizer activity (soundstart,
 // speechstart, result) this long after audiostart gets a fresh recognizer, so a capture another
 // app or tab took is reacquired. It is not "deaf": the user may just be quiet. At most this many
@@ -257,6 +259,8 @@ export const ComposerMicButton = ({
   const stallTimesRef = useRef<number[]>([]);
   const idleRecycleTimesRef = useRef<number[]>([]);
   const idleRecycleCappedRef = useRef(false);
+  const eventRestartTimesRef = useRef<number[]>([]);
+  const eventRestartCappedRef = useRef(false);
   // Voice mode's assistant is speaking (or just did): the stall detector is off.
   const assistantAudibleRef = useRef(false);
   const audibleUntilRef = useRef(0);
@@ -373,6 +377,8 @@ export const ComposerMicButton = ({
       lastRecognizerActivityRef.current = Date.now();
       stallRef.current.reset(Date.now());
       eventStallRef.current.reset(Date.now());
+      // A fresh recognizer gets the whole no-audiostart allowance before that check judges it.
+      takeStartRef.current = Date.now();
       try {
         next.start();
       } catch {
@@ -389,6 +395,17 @@ export const ComposerMicButton = ({
       // A stall seen only through recognizer events (meter off) restarts silently, every time:
       // those events are weaker evidence than the meter, so they never call the mic deaf.
       if (fromEvents) {
+        if (eventRestartCappedRef.current) return;
+        const recentEvents = eventRestartTimesRef.current.filter(
+          (t) => now - t < MIC_STALL_WINDOW_MS,
+        );
+        if (recentEvents.length >= MIC_EVENT_RESTART_MAX_PER_MIN) {
+          eventRestartTimesRef.current = recentEvents;
+          eventRestartCappedRef.current = true;
+          logVoice("mic stall restart capped");
+          return;
+        }
+        eventRestartTimesRef.current = [...recentEvents, now];
         if (!silentRestart(true)) reportDeaf("stall restart failed");
         return;
       }
@@ -407,6 +424,8 @@ export const ComposerMicButton = ({
       if (!audioStartSeenRef.current || idleRecycleCappedRef.current) return;
       if (assistantAudibleRef.current || now < audibleUntilRef.current) return;
       if (now - lastRecognizerActivityRef.current < MIC_IDLE_RECYCLE_MS) return;
+      // Open speech is a user still talking; the event stall detector owns that case (20 s).
+      if (eventStallRef.current.speechOpen()) return;
       const recent = idleRecycleTimesRef.current.filter((t) => now - t <= MIC_STALL_WINDOW_MS);
       if (recent.length >= MIC_IDLE_RECYCLE_MAX_PER_MIN) {
         idleRecycleTimesRef.current = recent;
@@ -420,8 +439,6 @@ export const ComposerMicButton = ({
         reportDeaf("idle recycle failed");
         return;
       }
-      // The fresh recognizer gets the whole no-audiostart allowance before that check judges it.
-      takeStartRef.current = now;
     };
 
     const checkLiveness = () => {
@@ -627,6 +644,8 @@ export const ComposerMicButton = ({
         resultSinceStopRef.current = true;
         lastRecognizerActivityRef.current = Date.now();
         idleRecycleCappedRef.current = false;
+        eventRestartTimesRef.current = [];
+        eventRestartCappedRef.current = false;
         stallRef.current.result(Date.now());
         eventStallRef.current.result(Date.now());
         pulseTargetRef.current = 0.65;
@@ -1303,6 +1322,8 @@ export const ComposerMicButton = ({
         stallTimesRef.current = [];
         idleRecycleTimesRef.current = [];
         idleRecycleCappedRef.current = false;
+        eventRestartTimesRef.current = [];
+        eventRestartCappedRef.current = false;
         if (browserStartPendingRef.current) {
           watchPermission();
           armWatchdog();
@@ -1327,6 +1348,8 @@ export const ComposerMicButton = ({
           stallTimesRef.current = [];
           idleRecycleTimesRef.current = [];
           idleRecycleCappedRef.current = false;
+          eventRestartTimesRef.current = [];
+          eventRestartCappedRef.current = false;
           silentStartRef.current = false;
           clearStartWatchdog();
           clearStopWatchdog();

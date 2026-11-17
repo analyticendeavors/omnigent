@@ -312,11 +312,13 @@ describe("ComposerMicButton (level meter off)", () => {
     expect(formatVoiceLog()).not.toContain("mic stalled");
   });
 
-  it("speech heard and then nothing at all stalls after 6 s, with no end event", async () => {
+  it("speech heard and then nothing at all stalls only after 20 s, with no end event", async () => {
     setUserAgent(IOS_UA);
     const { controller, onListeningChange } = await listenVoice();
     act(() => instances[0].handlers.speechstart?.({}));
-    await run(5500);
+    await run(12_000);
+    expect(instances).toHaveLength(1);
+    await run(7500);
     expect(instances).toHaveLength(1);
     await run(1000);
     expect(instances).toHaveLength(2);
@@ -325,23 +327,61 @@ describe("ComposerMicButton (level meter off)", () => {
     expect(controller.current?.isListening()).toBe(true);
   });
 
-  it("event stalls restart silently every time and never call the mic deaf", async () => {
+  async function stallRound() {
+    const latest = instances[instances.length - 1];
+    act(() => {
+      latest.handlers.start?.({});
+      latest.handlers.audiostart?.({});
+      latest.handlers.speechstart?.({});
+    });
+    await run(300);
+    act(() => latest.handlers.speechend?.({}));
+    await run(4000);
+  }
+
+  it("caps event stall restarts at 4 a minute, never calls the mic deaf, and resumes after a result", async () => {
     setUserAgent(IOS_UA);
     const { onListeningChange } = await listenVoice();
-    for (let i = 0; i < 6; i += 1) {
-      const latest = instances[instances.length - 1];
-      act(() => {
-        latest.handlers.start?.({});
-        latest.handlers.audiostart?.({});
-        latest.handlers.speechstart?.({});
-      });
+    for (let i = 0; i < 4; i += 1) {
       // oxlint-disable-next-line no-await-in-loop -- one stall per round
-      await run(6500);
+      await stallRound();
       expect(instances).toHaveLength(i + 2);
     }
+    await stallRound();
+    expect(instances).toHaveLength(5);
+    await stallRound();
+    expect(instances).toHaveLength(5);
     const log = formatVoiceLog();
+    expect(log.match(/mic stall restart capped/g)).toHaveLength(1);
     expect(log).not.toContain("stalled repeatedly");
     expect(log).not.toContain("mic deaf");
+    expect(onListeningChange).not.toHaveBeenCalledWith(false, "deaf");
+    // A result lifts the cap.
+    act(() =>
+      instances[4].handlers.result?.({
+        resultIndex: 0,
+        results: { length: 1, 0: { length: 1, isFinal: false, 0: { transcript: "hi" } } },
+      }),
+    );
+    await stallRound();
+    expect(instances).toHaveLength(6);
+  });
+
+  it("an event stall restart followed by a slow audiostart (4 s) does not report deaf", async () => {
+    setUserAgent(IOS_UA);
+    const { onListeningChange } = await listenVoice();
+    await run(2000);
+    act(() => instances[0].handlers.speechstart?.({}));
+    await run(300);
+    act(() => instances[0].handlers.speechend?.({}));
+    await run(4000);
+    expect(instances).toHaveLength(2);
+    // The fresh recognizer is silent for 4 s, inside its own 5 s no-audiostart window.
+    await run(4000);
+    expect(onListeningChange).not.toHaveBeenCalledWith(false, "deaf");
+    expect(formatVoiceLog()).not.toContain("no audiostart");
+    act(() => instances[1].handlers.audiostart?.({}));
+    await run(1000);
     expect(onListeningChange).not.toHaveBeenCalledWith(false, "deaf");
   });
 

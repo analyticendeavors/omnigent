@@ -3,6 +3,7 @@ import {
   createEventStallDetector,
   EVENT_HEARD_MIN_SOUND_MS,
   EVENT_NO_END_STALL_MS,
+  EVENT_OPEN_SPEECH_STALL_MS,
   createStallDetector,
   isWebKitSpeech,
   MAX_FRAME_MS,
@@ -206,19 +207,38 @@ describe("event stall detector (meter off)", () => {
     expect(d.evaluate(1000 + EVENT_NO_END_STALL_MS + STALL_QUIET_MS)).toBeNull();
   });
 
-  it("speechstart and then nothing stalls, even with no end event", () => {
+  it("speechstart and then nothing stalls after the open-speech limit, with no end event", () => {
     const d = createEventStallDetector();
     d.reset(0);
     d.speechStart(1000);
-    expect(d.evaluate(1000 + EVENT_NO_END_STALL_MS - 1)).toBeNull();
-    expect(d.evaluate(1000 + EVENT_NO_END_STALL_MS)).toBe(1000 + EVENT_NO_END_STALL_MS);
-    expect(d.evaluate(1000 + EVENT_NO_END_STALL_MS + 1000)).toBeNull();
+    expect(d.evaluate(1000 + EVENT_OPEN_SPEECH_STALL_MS - 1)).toBeNull();
+    expect(d.evaluate(1000 + EVENT_OPEN_SPEECH_STALL_MS)).toBe(1000 + EVENT_OPEN_SPEECH_STALL_MS);
+    expect(d.evaluate(1000 + EVENT_OPEN_SPEECH_STALL_MS + 1000)).toBeNull();
+  });
+
+  it("12 s of continuous speech with no events does not stall; 21 s does", () => {
+    const d = createEventStallDetector();
+    d.reset(0);
+    d.speechStart(1000);
+    expect(d.evaluate(13_000)).toBeNull();
+    expect(d.evaluate(20_999)).toBeNull();
+    expect(d.evaluate(21_000)).toBe(21_000);
+  });
+
+  it("a speechend after a long open speech returns to the 3.5 s rule", () => {
+    const d = createEventStallDetector();
+    d.reset(0);
+    d.speechStart(1000);
+    d.ended(13_000);
+    expect(d.evaluate(13_000 + STALL_QUIET_MS - 1)).toBeNull();
+    expect(d.evaluate(13_000 + STALL_QUIET_MS)).toBe(13_000 + STALL_QUIET_MS);
   });
 
   it("the no-end window counts from the last sound or speech event", () => {
     const d = createEventStallDetector();
     d.reset(0);
     d.speechStart(1000);
+    d.ended(2000);
     d.soundStart(5000);
     expect(d.evaluate(5000 + EVENT_NO_END_STALL_MS - 1)).toBeNull();
     expect(d.evaluate(5000 + EVENT_NO_END_STALL_MS)).not.toBeNull();
