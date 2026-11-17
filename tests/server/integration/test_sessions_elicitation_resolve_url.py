@@ -1274,7 +1274,7 @@ async def test_resolve_url_logs_one_line_with_sanitized_source(
 
     lines = [r.getMessage() for r in caplog.records if "elicitation resolve:" in r.getMessage()]
     assert lines == [
-        f"elicitation resolve: session={session_id} elicitation={elicitation_id} "
+        f"elicitation resolve: session={session_id!r} elicitation={elicitation_id!r} "
         "action=decline source=unknown"
     ]
     assert "SECRET" not in caplog.text
@@ -1299,6 +1299,36 @@ async def test_resolve_url_logs_known_source(
     resp = await hook_task
     assert resp.json()["hookSpecificOutput"]["decision"]["behavior"] == "allow"
     assert "action=accept source=voice_panel" in caplog.text
+
+
+async def test_resolve_url_log_line_cannot_be_forged_by_a_newline_in_the_id(
+    client: httpx.AsyncClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """
+    An elicitation id with an encoded newline never reaches the log as a forged record: ids are
+    logged as ``%r`` (escaped, capped at 120 characters), after the resolve succeeded.
+    """
+    import logging
+
+    agent = await create_test_agent(client, "test-resolve-url-log-forge")
+    session_id = await _create_session(client, agent["id"])
+    forged = "x%0AINFO%20omnigent:%20elicitation%20resolve:%20session=forged"
+    with caplog.at_level(logging.INFO):
+        resp = await client.post(
+            f"/v1/sessions/{session_id}/elicitations/{forged}/resolve",
+            json={"action": "accept"},
+        )
+    assert resp.status_code == 202, resp.text
+    messages = [r.getMessage() for r in caplog.records if "elicitation resolve:" in r.getMessage()]
+    # One record, the newline escaped by %r: no raw newline, so no second forged line.
+    assert len(messages) == 1
+    assert "\n" not in messages[0]
+    assert "x\\nINFO" in messages[0]
+    assert not any(
+        line.startswith(("INFO", "elicitation resolve:"))
+        for record in caplog.records
+        for line in record.getMessage().splitlines()[1:]
+    )
 
 
 async def test_resolve_url_cancel_round_trip(client: httpx.AsyncClient) -> None:

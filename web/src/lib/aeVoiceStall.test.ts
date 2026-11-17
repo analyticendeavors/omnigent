@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createEventStallDetector,
+  EVENT_HEARD_MIN_SOUND_MS,
+  EVENT_NO_END_STALL_MS,
   createStallDetector,
   isWebKitSpeech,
   MAX_FRAME_MS,
@@ -163,37 +165,87 @@ describe("isWebKitSpeech", () => {
 });
 
 describe("event stall detector (meter off)", () => {
-  it("fires once: sound heard, sound ended, then STALL_QUIET_MS with no result", () => {
+  it("fires once: speech heard, speech ended, then STALL_QUIET_MS with no result", () => {
     const d = createEventStallDetector();
     d.reset(0);
-    d.heard(1000);
-    expect(d.evaluate(1000 + STALL_QUIET_MS + 5000)).toBeNull();
+    d.speechStart(1000);
     d.ended(2000);
     expect(d.evaluate(2000 + STALL_QUIET_MS - 1)).toBeNull();
     expect(d.evaluate(2000 + STALL_QUIET_MS)).toBe(2000 + STALL_QUIET_MS);
     expect(d.evaluate(2000 + STALL_QUIET_MS + 1000)).toBeNull();
   });
 
-  it("a result clears it, and an end with no sound heard is nothing", () => {
+  it("a soundstart that lasted long enough counts as heard at its soundend", () => {
+    const d = createEventStallDetector();
+    d.reset(0);
+    d.soundStart(1000);
+    d.soundEnd(1000 + EVENT_HEARD_MIN_SOUND_MS);
+    const end = 1000 + EVENT_HEARD_MIN_SOUND_MS;
+    expect(d.evaluate(end + STALL_QUIET_MS - 1)).toBeNull();
+    expect(d.evaluate(end + STALL_QUIET_MS)).toBe(end + STALL_QUIET_MS);
+  });
+
+  it("a cough-like soundstart and soundend with no result never stalls", () => {
+    const d = createEventStallDetector();
+    d.reset(0);
+    d.soundStart(1000);
+    d.soundEnd(1000 + EVENT_HEARD_MIN_SOUND_MS - 1);
+    for (const t of [5000, 20_000, 120_000]) expect(d.evaluate(t)).toBeNull();
+    // Repeated coughs in a long quiet take are no different.
+    for (let i = 0; i < 20; i += 1) {
+      d.soundStart(130_000 + i * 5000);
+      d.soundEnd(130_000 + i * 5000 + 200);
+      expect(d.evaluate(130_000 + i * 5000 + 200 + EVENT_NO_END_STALL_MS)).toBeNull();
+    }
+  });
+
+  it("a soundstart with no soundend yet is not heard", () => {
+    const d = createEventStallDetector();
+    d.reset(0);
+    d.soundStart(1000);
+    expect(d.evaluate(1000 + EVENT_NO_END_STALL_MS + STALL_QUIET_MS)).toBeNull();
+  });
+
+  it("speechstart and then nothing stalls, even with no end event", () => {
+    const d = createEventStallDetector();
+    d.reset(0);
+    d.speechStart(1000);
+    expect(d.evaluate(1000 + EVENT_NO_END_STALL_MS - 1)).toBeNull();
+    expect(d.evaluate(1000 + EVENT_NO_END_STALL_MS)).toBe(1000 + EVENT_NO_END_STALL_MS);
+    expect(d.evaluate(1000 + EVENT_NO_END_STALL_MS + 1000)).toBeNull();
+  });
+
+  it("the no-end window counts from the last sound or speech event", () => {
+    const d = createEventStallDetector();
+    d.reset(0);
+    d.speechStart(1000);
+    d.soundStart(5000);
+    expect(d.evaluate(5000 + EVENT_NO_END_STALL_MS - 1)).toBeNull();
+    expect(d.evaluate(5000 + EVENT_NO_END_STALL_MS)).not.toBeNull();
+  });
+
+  it("a result clears it, and an end with nothing heard is nothing", () => {
     const d = createEventStallDetector();
     d.reset(0);
     d.ended(500);
     expect(d.evaluate(500 + STALL_QUIET_MS + 1)).toBeNull();
-    d.heard(1000);
+    d.speechStart(1000);
     d.ended(2000);
     d.result(3000);
     expect(d.evaluate(2000 + STALL_QUIET_MS + 1)).toBeNull();
+    expect(d.evaluate(1000 + EVENT_NO_END_STALL_MS + 1)).toBeNull();
   });
 
-  it("new sound after an end cancels the pending stall; reset forgets everything", () => {
+  it("new speech after an end cancels the pending quiet stall; reset forgets everything", () => {
     const d = createEventStallDetector();
     d.reset(0);
-    d.heard(1000);
+    d.speechStart(1000);
     d.ended(2000);
-    d.heard(3000);
+    d.speechStart(3000);
     expect(d.evaluate(2000 + STALL_QUIET_MS + 1)).toBeNull();
     d.ended(4000);
     d.reset(5000);
     expect(d.evaluate(4000 + STALL_QUIET_MS + 1)).toBeNull();
+    expect(d.evaluate(60_000)).toBeNull();
   });
 });

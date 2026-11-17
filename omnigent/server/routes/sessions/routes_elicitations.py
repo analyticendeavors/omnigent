@@ -153,15 +153,17 @@ def register_elicitations_routes(
             conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
             if conv is None:
                 raise _session_not_found()
+        _resolve_data = {"elicitation_id": elicitation_id, **body.model_dump(exclude_none=True)}
+        await _resolve_elicitation(session_id, _resolve_data, runner_router, conversation_store)
+        # After the resolve succeeded, with ids as ``%r`` capped at 120 characters: a path id
+        # holding a newline must not forge a second log record.
         _logger.info(
-            "elicitation resolve: session=%s elicitation=%s action=%s source=%s",
+            "elicitation resolve: session=%.120r elicitation=%.120r action=%s source=%s",
             session_id,
             elicitation_id,
             body.action,
             sanitize_resolve_source(body.meta),
         )
-        _resolve_data = {"elicitation_id": elicitation_id, **body.model_dump(exclude_none=True)}
-        await _resolve_elicitation(session_id, _resolve_data, runner_router, conversation_store)
         # Apply any policy writes deferred by the relay tool-call ASK gate
         # (e.g. a cost-budget checkpoint) now that the verdict is in.
         await _apply_pending_policy_ask_writes(

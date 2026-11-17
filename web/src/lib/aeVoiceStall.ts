@@ -108,15 +108,28 @@ export function createStallDetector(): StallDetector {
   };
 }
 
+/** A soundstart counts as speech only when the sound lasted this long before its soundend. */
+export const EVENT_HEARD_MIN_SOUND_MS = 600;
+/** Speech heard and no result this long after the last sound or speech event is a stall, even
+ *  when no soundend, speechend or audioend ever came (a recognizer that hung mid-take). */
+export const EVENT_NO_END_STALL_MS = 6000;
+
 /**
  * The stall detector for a take with no level meter (the meter is off): the recognizer's own
- * events are the only signal. A stall is soundstart or speechstart seen, then STALL_QUIET_MS
- * with no result after a soundend, speechend or audioend. It never reads audio levels.
+ * events are the only signal. "Heard" means a speechstart, or a soundstart that lasted at least
+ * EVENT_HEARD_MIN_SOUND_MS before its soundend (a cough or a click is not speech). A stall is
+ * speech heard and then either STALL_QUIET_MS with no result after a soundend, speechend or
+ * audioend, or EVENT_NO_END_STALL_MS with no result after the last sound or speech event when no
+ * end event came. It never reads audio levels.
  */
 export interface EventStallDetector {
-  /** soundstart or speechstart: the recognizer heard something. */
-  heard: (now: number) => void;
-  /** soundend, speechend or audioend. */
+  /** speechstart: the recognizer heard speech. */
+  speechStart: (now: number) => void;
+  /** soundstart: not speech until it has lasted long enough (see soundEnd). */
+  soundStart: (now: number) => void;
+  /** soundend: a sound that lasted EVENT_HEARD_MIN_SOUND_MS counts as heard. */
+  soundEnd: (now: number) => void;
+  /** speechend or audioend. */
   ended: (now: number) => void;
   /** A result, interim or final. */
   result: (now: number) => void;
@@ -129,30 +142,56 @@ export interface EventStallDetector {
 export function createEventStallDetector(): EventStallDetector {
   let heardAt: number | null = null;
   let endAt: number | null = null;
+  let soundAt: number | null = null;
+  let lastEventAt = 0;
   let lastResult = 0;
+  const clear = () => {
+    heardAt = null;
+    endAt = null;
+    soundAt = null;
+  };
   return {
-    heard(now) {
+    speechStart(now) {
       heardAt = now;
       endAt = null;
+      lastEventAt = now;
+    },
+    soundStart(now) {
+      soundAt = now;
+      endAt = null;
+      lastEventAt = now;
+    },
+    soundEnd(now) {
+      lastEventAt = now;
+      const started = soundAt;
+      soundAt = null;
+      if (started !== null && now - started >= EVENT_HEARD_MIN_SOUND_MS) {
+        heardAt = started;
+        endAt = now;
+      } else if (heardAt !== null) {
+        endAt = now;
+      }
     },
     ended(now) {
+      lastEventAt = now;
       if (heardAt !== null) endAt = now;
     },
     result(now) {
       lastResult = now;
-      heardAt = null;
-      endAt = null;
+      clear();
     },
     evaluate(now) {
-      if (heardAt === null || endAt === null || now - endAt < STALL_QUIET_MS) return null;
-      heardAt = null;
-      endAt = null;
+      if (heardAt === null) return null;
+      const quietAfterEnd = endAt !== null && now - endAt >= STALL_QUIET_MS;
+      const hungNoEnd = now - lastEventAt >= EVENT_NO_END_STALL_MS;
+      if (!quietAfterEnd && !hungNoEnd) return null;
+      clear();
       return Math.max(0, now - lastResult);
     },
     reset(now) {
       lastResult = now;
-      heardAt = null;
-      endAt = null;
+      lastEventAt = now;
+      clear();
     },
   };
 }

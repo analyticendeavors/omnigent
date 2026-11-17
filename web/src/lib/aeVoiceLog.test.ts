@@ -240,6 +240,41 @@ describe("uploadVoiceLog on a phone", () => {
     expect(formatVoiceLog()).toContain("keepalive rejected, retry");
   });
 
+  it("a timed-out keepalive request is not retried", async () => {
+    fetchMock.mockImplementationOnce(() => {
+      const e = new Error("aborted");
+      e.name = "AbortError";
+      return Promise.reject(e);
+    });
+    await expect(uploadVoiceLog("page_hidden", null, { keepalive: true })).resolves.toBe("failed");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("a rejected keepalive request is not retried once the page is hidden", async () => {
+    const spy = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    try {
+      fetchMock.mockImplementationOnce(() => Promise.reject(new TypeError("dropped")));
+      await expect(uploadVoiceLog("page_hidden", null, { keepalive: true })).resolves.toBe(
+        "failed",
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("page_hidden uploads keep their own budget, apart from the automatic one", async () => {
+    await expect(uploadVoiceLog("mic_failed")).resolves.toBe("sent");
+    await expect(uploadVoiceLog("page_hidden", null, { keepalive: true })).resolves.toBe("sent");
+    await expect(uploadVoiceLog("page_hidden", null, { keepalive: true })).resolves.toBe(
+      "throttled",
+    );
+    await expect(uploadVoiceLog("mic_deaf")).resolves.toBe("throttled");
+    vi.advanceTimersByTime(UPLOAD_MIN_GAP_MS);
+    await expect(uploadVoiceLog("page_hidden", null, { keepalive: true })).resolves.toBe("sent");
+    expect(fetchMock.mock.calls.at(-1)?.[1].body).toContain('"reason":"page_hidden"');
+  });
+
   it("a request that never answers is aborted after 10 s and the auto budget is released", async () => {
     fetchMock.mockImplementationOnce(
       (_url: string, init: RequestInit) =>
@@ -282,8 +317,10 @@ describe("uploadVoiceLog on a phone", () => {
     expect(showToast).toHaveBeenLastCalledWith("Voice log not sent: network error");
     await uploadVoiceLog("voice_end");
     expect(showToast).toHaveBeenLastCalledWith("Voice log sent");
-    await uploadVoiceLog("voice_end");
-    expect(showToast).toHaveBeenLastCalledWith("Voice log not sent: sent a moment ago");
+    // Throttled: the failure upload just sent the log, so there is nothing to report.
+    vi.mocked(showToast).mockClear();
+    await expect(uploadVoiceLog("voice_end")).resolves.toBe("throttled");
+    expect(showToast).not.toHaveBeenCalled();
     vi.mocked(showToast).mockClear();
     await uploadVoiceLog("mic_failed");
     await uploadVoiceLog("manual");
@@ -327,6 +364,7 @@ describe("useVoiceLogOnHide", () => {
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     expect(init.keepalive).toBe(true);
     expect(JSON.parse(String(init.body)).chat_id).toBe("c9");
+    expect(JSON.parse(String(init.body)).reason).toBe("page_hidden");
     unmount();
     act(() => hide());
     window.dispatchEvent(new Event("pagehide"));

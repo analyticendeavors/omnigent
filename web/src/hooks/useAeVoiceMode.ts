@@ -152,6 +152,8 @@ export function useAeVoiceMode({
   // Approval answers: the cards already answered by voice, when the recognition of the
   // current utterance began, and the moment before which a heard final is the line's echo.
   const approvalAnswered = useRef<Set<string>>(new Set());
+  /** Approvals whose POST is on its way, so a second answer cannot double-submit. */
+  const approvalInFlight = useRef<Set<string>>(new Set());
   const utteranceStartedAt = useRef<number | null>(null);
   const approvalReadyAt = useRef(0);
   const approvalPlaybackSeen = useRef(false);
@@ -654,6 +656,40 @@ export function useAeVoiceMode({
     [on, bargeIn],
   );
 
+  /**
+   * Submits one approval and marks the id answered only once the POST went through. The store
+   * rolls a failed POST back to a pending card without throwing, so a card that is pending again
+   * after the call is a failure: the id is forgotten and the panel and a spoken answer can retry.
+   */
+  const sendApproval = useCallback(
+    (id: string, action: "accept" | "decline", source: "voice" | "voice_panel") => {
+      if (approvalInFlight.current.has(id)) return;
+      approvalInFlight.current.add(id);
+      void (async () => {
+        let failed: boolean;
+        try {
+          await useChatStore
+            .getState()
+            .submitApproval(id, action, undefined, withApprovalSource(source));
+          const pending = useChatStore
+            .getState()
+            .blocks.find((b) => b.type === "elicitation" && b.elicitationId === id);
+          failed = pending?.type === "elicitation" && pending.status === "pending";
+        } catch {
+          failed = true;
+        }
+        approvalInFlight.current.delete(id);
+        if (failed) {
+          approvalAnswered.current.delete(id);
+          logVoice("approval answer failed");
+        } else {
+          approvalAnswered.current.add(id);
+        }
+      })();
+    },
+    [],
+  );
+
   const onFinal = useCallback(
     (text: string): boolean => {
       if (!on) return false;
@@ -676,12 +712,9 @@ export function useAeVoiceMode({
         if (!now.quiet && clear && !approvalAnswered.current.has(id)) {
           const verdict = matchApprovalReply(text);
           if (verdict !== null) {
-            approvalAnswered.current.add(id);
             logVoice("approval answer", verdict);
             clearGrace();
-            void useChatStore
-              .getState()
-              .submitApproval(id, verdict, undefined, withApprovalSource("voice"));
+            sendApproval(id, verdict, "voice");
           }
         }
         return true;
@@ -700,7 +733,7 @@ export function useAeVoiceMode({
       }, GRACE_MS);
       return false;
     },
-    [on, onCardFinal, clearGrace, send],
+    [on, onCardFinal, clearGrace, send, sendApproval],
   );
 
   const onPartial = useCallback(
@@ -722,14 +755,11 @@ export function useAeVoiceMode({
     (action: "accept" | "decline") => {
       const pending = latest.current.approval;
       if (!pending || approvalAnswered.current.has(pending.id)) return;
-      approvalAnswered.current.add(pending.id);
       logVoice("approval answer", `${action} panel`);
       clearGrace();
-      void useChatStore
-        .getState()
-        .submitApproval(pending.id, action, undefined, withApprovalSource("voice_panel"));
+      sendApproval(pending.id, action, "voice_panel");
     },
-    [clearGrace],
+    [clearGrace, sendApproval],
   );
 
   return {

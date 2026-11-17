@@ -540,10 +540,13 @@ export interface VoiceApproval {
   slotCap: boolean;
 }
 
+/** The registered name of the session-limit policy (`config/server.yaml`). Exact match only. */
+export const AE_SLOT_CAP_POLICY = "ae_slot_cap";
+
 /** The pending session-limit card, or null for any other block. */
 export function approvalOf(block: ElicitationBlock | undefined): VoiceApproval | null {
   if (!block || block.status !== "pending") return null;
-  if (!/slot_cap/.test(block.policyName ?? "")) return null;
+  if (block.policyName !== AE_SLOT_CAP_POLICY) return null;
   const askPayload =
     castAskUserQuestionPayload(block.askUserQuestion) ??
     parseAskUserQuestionPreview(block.contentPreview);

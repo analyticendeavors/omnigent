@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  AE_SLOT_CAP_POLICY,
   approvalOf,
   armVoiceForNextChat,
   customAllowed,
@@ -303,15 +304,21 @@ describe("approvalOf", () => {
     requestedSchema: {},
   };
   it("takes only the session-limit card", () => {
-    expect(approvalOf({ ...base, policyName: "ae_slot_cap" } as never)).toEqual({
+    expect(approvalOf({ ...base, policyName: AE_SLOT_CAP_POLICY } as never)).toEqual({
       id: "a1",
       slotCap: true,
     });
   });
-  it.each([undefined, "", "bash_permission", "write_policy", "web_fetch"])(
-    "never takes a tool-permission card (policy %s)",
-    (policyName) => {
-      expect(approvalOf({ ...base, policyName } as never)).toBeNull();
-    },
-  );
+  it.each([
+    undefined,
+    "",
+    "bash_permission",
+    "write_policy",
+    "web_fetch",
+    "my_slot_cap_lookalike",
+    "slot_cap",
+    "ae_slot_cap_2",
+  ])("never takes a tool-permission card (policy %s)", (policyName) => {
+    expect(approvalOf({ ...base, policyName } as never)).toBeNull();
+  });
 });

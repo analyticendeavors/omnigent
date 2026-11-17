@@ -7,7 +7,7 @@ import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { getMicStream } from "@/lib/aeAudioDevices";
 import { publishMicLevel, resetMicLevel } from "@/lib/aeMicLevel";
 import { publishVoiceBins, resetVoiceBins, syntheticVoiceBins } from "@/lib/aeVoiceLevel";
-import { readVoiceMeter } from "@/lib/aeVoiceMeter";
+import { useVoiceMeter } from "@/lib/aeVoiceMeter";
 import { logVoice } from "@/lib/aeVoiceLog";
 import { createEventStallDetector, createStallDetector, isWebKitSpeech } from "@/lib/aeVoiceStall";
 import { DictationBusyError, DictationSession } from "@/lib/dictation";
@@ -104,6 +104,12 @@ const MIC_METER_FRESH_MS = 1500;
 // Stall restarts (speech heard, no result) allowed per minute before the take is called deaf.
 const MIC_STALL_MAX_PER_MIN = 3;
 const MIC_STALL_WINDOW_MS = 60_000;
+// With the level meter off nothing else watches the mic: no recognizer activity (soundstart,
+// speechstart, result) this long after audiostart gets a fresh recognizer, so a capture another
+// app or tab took is reacquired. It is not "deaf": the user may just be quiet. At most this many
+// idle recycles per minute, then none until the next result.
+const MIC_IDLE_RECYCLE_MS = 10_000;
+const MIC_IDLE_RECYCLE_MAX_PER_MIN = 6;
 // The assistant's own voice reaching the mic is not the user: no stall checks while it plays
 // and for this long after.
 const MIC_STALL_AUDIBLE_TAIL_MS = 1500;
@@ -176,6 +182,8 @@ export const ComposerMicButton = ({
   const serverAvailableRef = useRef(serverAvailable);
   serverAvailableRef.current = serverAvailable;
   const [isListening, setIsListening] = useState(false);
+  // The Level meter setting: turning it on or off mid-take starts or stops the second stream.
+  const meterSetting = useVoiceMeter();
   // Server-path only: the take has started but audio isn't flowing yet (the
   // first take cold-loads the model, up to ~40s). Shows a spinner so the click
   // isn't a dead-looking button until it flips to listening.
@@ -247,6 +255,8 @@ export const ComposerMicButton = ({
   const eventStallRef = useRef(createEventStallDetector());
   const pulseTargetRef = useRef(0);
   const stallTimesRef = useRef<number[]>([]);
+  const idleRecycleTimesRef = useRef<number[]>([]);
+  const idleRecycleCappedRef = useRef(false);
   // Voice mode's assistant is speaking (or just did): the stall detector is off.
   const assistantAudibleRef = useRef(false);
   const audibleUntilRef = useRef(0);
@@ -374,8 +384,14 @@ export const ComposerMicButton = ({
       return true;
     };
 
-    const handleStall = (sinceResultMs: number, now: number) => {
+    const handleStall = (sinceResultMs: number, now: number, fromEvents: boolean) => {
       logVoice("mic stalled", String(sinceResultMs));
+      // A stall seen only through recognizer events (meter off) restarts silently, every time:
+      // those events are weaker evidence than the meter, so they never call the mic deaf.
+      if (fromEvents) {
+        if (!silentRestart(true)) reportDeaf("stall restart failed");
+        return;
+      }
       const recent = stallTimesRef.current.filter((t) => now - t < MIC_STALL_WINDOW_MS);
       if (recent.length >= MIC_STALL_MAX_PER_MIN) {
         stallTimesRef.current = recent;
@@ -384,6 +400,28 @@ export const ComposerMicButton = ({
       }
       stallTimesRef.current = [...recent, now];
       if (!silentRestart(true)) reportDeaf("stall restart failed");
+    };
+
+    // Meter off, recognizer silent since audiostart: start a fresh one in place (no report).
+    const idleRecycle = (now: number) => {
+      if (!audioStartSeenRef.current || idleRecycleCappedRef.current) return;
+      if (assistantAudibleRef.current || now < audibleUntilRef.current) return;
+      if (now - lastRecognizerActivityRef.current < MIC_IDLE_RECYCLE_MS) return;
+      const recent = idleRecycleTimesRef.current.filter((t) => now - t <= MIC_STALL_WINDOW_MS);
+      if (recent.length >= MIC_IDLE_RECYCLE_MAX_PER_MIN) {
+        idleRecycleTimesRef.current = recent;
+        idleRecycleCappedRef.current = true;
+        logVoice("mic idle recycle capped");
+        return;
+      }
+      idleRecycleTimesRef.current = [...recent, now];
+      logVoice("mic idle recycle");
+      if (!silentRestart()) {
+        reportDeaf("idle recycle failed");
+        return;
+      }
+      // The fresh recognizer gets the whole no-audiostart allowance before that check judges it.
+      takeStartRef.current = now;
     };
 
     const checkLiveness = () => {
@@ -410,12 +448,15 @@ export const ComposerMicButton = ({
           ? stallRef.current.evaluate(now)
           : eventStallRef.current.evaluate(now);
         if (stalledFor !== null) {
-          handleStall(stalledFor, now);
+          handleStall(stalledFor, now, !meterOnRef.current);
           return;
         }
       }
       // No meter, no meter-based deaf reasons (track muted, context stalled, analyser zeros).
-      if (!meterOnRef.current) return;
+      if (!meterOnRef.current) {
+        idleRecycle(now);
+        return;
+      }
       // The meter never decides alone: it counts only after the recognizer itself has shown
       // no activity for a while (an early soundstart does not switch the checks off for good).
       if (now - lastRecognizerActivityRef.current < MIC_RECOGNIZER_QUIET_MS) return;
@@ -548,7 +589,7 @@ export const ComposerMicButton = ({
         if (!current()) return;
         logVoice("mic event soundstart");
         pulseTargetRef.current = 0.5;
-        eventStallRef.current.heard(Date.now());
+        eventStallRef.current.soundStart(Date.now());
         recognizerSoundSeenRef.current = true;
         lastRecognizerActivityRef.current = Date.now();
       };
@@ -556,7 +597,7 @@ export const ComposerMicButton = ({
         if (!current()) return;
         logVoice("mic event speechstart");
         pulseTargetRef.current = 0.8;
-        eventStallRef.current.heard(Date.now());
+        eventStallRef.current.speechStart(Date.now());
         recognizerSoundSeenRef.current = true;
         lastRecognizerActivityRef.current = Date.now();
       };
@@ -578,13 +619,14 @@ export const ComposerMicButton = ({
         if (!current()) return;
         logVoice("mic event soundend");
         pulseTargetRef.current = 0;
-        eventStallRef.current.ended(Date.now());
+        eventStallRef.current.soundEnd(Date.now());
       };
       const handleResult = (event: Event) => {
         if (!current()) return;
         recognizerSoundSeenRef.current = true;
         resultSinceStopRef.current = true;
         lastRecognizerActivityRef.current = Date.now();
+        idleRecycleCappedRef.current = false;
         stallRef.current.result(Date.now());
         eventStallRef.current.result(Date.now());
         pulseTargetRef.current = 0.65;
@@ -750,7 +792,7 @@ export const ComposerMicButton = ({
   // hides its audio buffer. Chrome batches the permission to one prompt.
   useEffect(() => {
     if (!isListening) return;
-    const meterOn = readVoiceMeter();
+    const meterOn = meterSetting;
     meterOnRef.current = meterOn;
     logVoice(meterOn ? "meter on" : "meter off");
     if (!meterOn) {
@@ -1007,7 +1049,7 @@ export const ComposerMicButton = ({
         if (el) el.style.transform = `scaleY(${BAR_BASELINE})`;
       }
     };
-  }, [isListening]);
+  }, [isListening, meterSetting]);
 
   // Server-dictation toggle. Start resolves only once the mic + socket
   // handshake are up, so isListening flips exactly when audio flows.
@@ -1259,6 +1301,8 @@ export const ComposerMicButton = ({
         voiceTakeRef.current = true;
         // A new Voice mode take: the stall budget is whole again.
         stallTimesRef.current = [];
+        idleRecycleTimesRef.current = [];
+        idleRecycleCappedRef.current = false;
         if (browserStartPendingRef.current) {
           watchPermission();
           armWatchdog();
@@ -1281,6 +1325,8 @@ export const ComposerMicButton = ({
         if (pathRef.current === "browser") {
           logVoice("mic restart", listeningRef.current ? "while listening" : undefined);
           stallTimesRef.current = [];
+          idleRecycleTimesRef.current = [];
+          idleRecycleCappedRef.current = false;
           silentStartRef.current = false;
           clearStartWatchdog();
           clearStopWatchdog();

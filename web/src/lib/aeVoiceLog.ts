@@ -34,11 +34,13 @@ export function resetVoiceLog(): void {
   entries = [];
   lastAutoUpload = null;
   autoInFlight = false;
+  lastHideUpload = null;
+  hideInFlight = false;
 }
 
 /** Why a log is sent; the server accepts exactly these. */
 export type VoiceLogReason =
-  "mic_failed" | "mic_deaf" | "mic_stalled" | "mic_paused" | "voice_end" | "manual";
+  "mic_failed" | "mic_deaf" | "mic_stalled" | "mic_paused" | "page_hidden" | "voice_end" | "manual";
 
 /** The last two minutes: what "Add voice log to message" shows and what an upload carries. */
 export const VOICE_LOG_WINDOW_MS = 120_000;
@@ -51,6 +53,9 @@ const UPLOAD_MAX_EVENT = 64;
 /** When the last automatic upload was accepted by the server (null: none yet). */
 let lastAutoUpload: number | null = null;
 let autoInFlight = false;
+/** Page-hide uploads keep their own budget, so a backgrounded phone never spends the failure one. */
+let lastHideUpload: number | null = null;
+let hideInFlight = false;
 const encoder = new TextEncoder();
 /** An in-page upload that has not answered by now is given up, so the budget never stays claimed. */
 export const UPLOAD_TIMEOUT_MS = 10_000;
@@ -83,7 +88,10 @@ async function postVoiceLog(body: string, keepalive: boolean): Promise<Response>
   if (!keepalive) return attempt(false);
   try {
     return await attempt(true);
-  } catch {
+  } catch (error) {
+    // A timeout is not a rejected keepalive, and a page that is going away cannot retry.
+    if (errName(error) === "AbortError") throw error;
+    if (typeof document !== "undefined" && document.visibilityState !== "visible") throw error;
     logVoice("log upload", "keepalive rejected, retry");
     return attempt(false);
   }
@@ -94,8 +102,7 @@ function errName(error: unknown): string {
 }
 
 /** The short reason shown when a voice_end upload did not go. */
-function failureReason(result: "throttled" | "failed", name: string): string {
-  if (result === "throttled") return "sent a moment ago";
+function failureReason(name: string): string {
   if (name === "AbortError") return "timed out";
   return name.startsWith("http") ? `server answered ${name.slice(4)}` : "network error";
 }
@@ -119,12 +126,11 @@ export async function uploadVoiceLog(
     errorName = n;
   });
   logVoice("log upload", `${reason} ${result} ${errorName}`);
-  if (reason === "voice_end") {
+  // A throttled End means the failure upload just sent the log: no toast either way.
+  if (reason === "voice_end" && result !== "throttled") {
     try {
       showToast(
-        result === "sent"
-          ? "Voice log sent"
-          : `Voice log not sent: ${failureReason(result, errorName)}`,
+        result === "sent" ? "Voice log sent" : `Voice log not sent: ${failureReason(errorName)}`,
       );
     } catch {
       // A toast must never break voice.
@@ -140,11 +146,18 @@ async function uploadVoiceLogInner(
   setError: (name: string) => void,
 ): Promise<"sent" | "throttled" | "failed"> {
   const automatic = reason !== "manual";
+  const hide = reason === "page_hidden";
   let claimed = false;
   try {
     if (typeof window === "undefined") return "failed";
     const now = Date.now();
-    if (automatic) {
+    if (hide) {
+      if (hideInFlight || (lastHideUpload !== null && now - lastHideUpload < UPLOAD_MIN_GAP_MS)) {
+        return "throttled";
+      }
+      hideInFlight = true;
+      claimed = true;
+    } else if (automatic) {
       if (autoInFlight || (lastAutoUpload !== null && now - lastAutoUpload < UPLOAD_MIN_GAP_MS)) {
         return "throttled";
       }
@@ -175,13 +188,17 @@ async function uploadVoiceLogInner(
       setError(`http${response.status}`);
       return "failed";
     }
-    if (automatic) lastAutoUpload = now;
+    if (hide) lastHideUpload = now;
+    else if (automatic) lastAutoUpload = now;
     return "sent";
   } catch (error) {
     setError(errName(error));
     return "failed";
   } finally {
-    if (claimed) autoInFlight = false;
+    if (claimed) {
+      if (hide) hideInFlight = false;
+      else autoInFlight = false;
+    }
   }
 }
 
@@ -227,7 +244,8 @@ export function useVoiceLogInsert(value: string, setValue: (next: string) => voi
 /**
  * While `active` (a voice session is on), sends the log when the page is hidden or closing, the
  * one place a keepalive request is used: the page may be gone before a plain request answers.
- * It shares the automatic budget, so a backgrounded phone sends at most one a minute.
+ * It has its own budget (reason page_hidden), so a backgrounded phone sends at most one a minute
+ * and never spends the automatic failure budget.
  */
 export function useVoiceLogOnHide(active: boolean, chatId: () => string | null | undefined): void {
   const chatRef = useRef(chatId);
@@ -236,7 +254,7 @@ export function useVoiceLogOnHide(active: boolean, chatId: () => string | null |
     if (!active || typeof document === "undefined") return;
     const send = () => {
       logVoice("page hidden");
-      void uploadVoiceLog("mic_paused", chatRef.current(), { keepalive: true });
+      void uploadVoiceLog("page_hidden", chatRef.current(), { keepalive: true });
     };
     const onVisibility = () => {
       if (document.visibilityState === "hidden") send();

@@ -1000,6 +1000,47 @@ describe("useAeVoiceMode", () => {
       expect(submitApproval).toHaveBeenCalledTimes(1);
     });
 
+    it("a failed POST frees the card: the panel can answer again", async () => {
+      const { result } = mountApproval();
+      // The store rolls a failed POST back to a pending card and resolves; the mock leaves it pending.
+      act(() => result.current.answerApproval("accept"));
+      await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+      expect(formatVoiceLog()).toContain("approval answer failed");
+      act(() => result.current.answerApproval("accept"));
+      expect(submitApproval).toHaveBeenCalledTimes(2);
+    });
+
+    it("a failed POST frees the card: a spoken answer retries", async () => {
+      const { result } = mountApproval();
+      act(() => void result.current.onFinal("run it"));
+      await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+      act(() => void result.current.onFinal("run it"));
+      expect(submitApproval).toHaveBeenCalledTimes(2);
+    });
+
+    it("a rejected POST frees the card too", async () => {
+      const { result } = mountApproval();
+      submitApproval.mockImplementationOnce(() => Promise.reject(new Error("offline")));
+      act(() => result.current.answerApproval("decline"));
+      await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+      expect(formatVoiceLog()).toContain("approval answer failed");
+      act(() => result.current.answerApproval("decline"));
+      expect(submitApproval).toHaveBeenCalledTimes(2);
+    });
+
+    it("a POST that went through keeps the card answered", async () => {
+      const { result } = mountApproval();
+      submitApproval.mockImplementationOnce(() => {
+        useChatStore.setState({ blocks: [{ ...APPROVAL, status: "responded" }] } as never);
+        return Promise.resolve();
+      });
+      act(() => result.current.answerApproval("accept"));
+      await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+      expect(formatVoiceLog()).not.toContain("approval answer failed");
+      act(() => void result.current.onFinal("run it"));
+      expect(submitApproval).toHaveBeenCalledTimes(1);
+    });
+
     it("answerApproval declines with the panel as its source and does nothing with no card", () => {
       const { result } = mountApproval();
       act(() => result.current.answerApproval("decline"));
