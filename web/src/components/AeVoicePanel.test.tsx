@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { publishMicLevel, resetMicLevel } from "@/lib/aeMicLevel";
@@ -276,5 +276,27 @@ describe("AeVoicePanel (stuck start)", () => {
       vi.advanceTimersByTime(5000);
     });
     expect(screen.queryByText("Tap to start the mic")).toBeNull();
+  });
+});
+
+describe("AeVoicePanel (sheet controls)", () => {
+  it("the sheet without an approval shows the keyboard and End as before", async () => {
+    const onKeyboard = vi.fn();
+    const { onEnd } = panel({ layout: "sheet", onKeyboard });
+    expect(screen.queryByTestId("ae-voice-approval")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Type instead" }));
+    expect(onKeyboard).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole("button", { name: "End voice mode" }));
+    expect(onEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it("an undefined onKeyboard hides the keyboard button, with and without an approval", () => {
+    panel({ layout: "sheet" });
+    expect(screen.queryByRole("button", { name: "Type instead" })).toBeNull();
+    expect(screen.getByRole("button", { name: "End voice mode" })).toBeTruthy();
+    cleanup();
+    panel({ layout: "sheet", approvalActive: true, onApproval: vi.fn() });
+    expect(screen.queryByRole("button", { name: "Type instead" })).toBeNull();
+    expect(screen.getByTestId("ae-voice-approval-run")).toBeTruthy();
   });
 });

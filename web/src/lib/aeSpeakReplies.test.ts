@@ -8,6 +8,7 @@ import {
   onVoicesChanged,
   pickDefaultVoice,
   primeVoicePlayback,
+  resetPrimeSpeaking,
   rankVoices,
   registerCloudPrimer,
   setCaptionHandler,
@@ -265,7 +266,14 @@ describe("priming and the mic on WebKit", () => {
   afterEach(() => {
     delete (navigator as { userAgent?: unknown }).userAgent;
     registerCloudPrimer(null);
+    resetPrimeSpeaking();
   });
+
+  /** Speak the silent prime on a WebKit device voice, as a tap does. */
+  function primeDeviceVoice(): void {
+    writeVoiceChoice({ kind: "device", id: "x" });
+    primeVoicePlayback();
+  }
 
   it("WebKit with the cloud voice speaks no silent utterance", () => {
     setUserAgent(IPHONE_UA);
@@ -293,6 +301,7 @@ describe("priming and the mic on WebKit", () => {
 
   it("WebKit mic start waits until the synthesizer stops speaking", () => {
     setUserAgent(IPHONE_UA);
+    primeDeviceVoice();
     synth.speaking = true;
     const go = vi.fn();
     whenSynthIdle(go);
@@ -306,6 +315,7 @@ describe("priming and the mic on WebKit", () => {
 
   it("WebKit mic start gives up at the cap and cancels the synthesizer", () => {
     setUserAgent(IPHONE_UA);
+    primeDeviceVoice();
     synth.speaking = true;
     const go = vi.fn();
     whenSynthIdle(go);
@@ -318,11 +328,44 @@ describe("priming and the mic on WebKit", () => {
 
   it("a cancelled wait never starts", () => {
     setUserAgent(IPHONE_UA);
+    primeDeviceVoice();
     synth.speaking = true;
     const go = vi.fn();
     whenSynthIdle(go)();
     vi.advanceTimersByTime(MIC_SYNTH_WAIT_CAP_MS + 500);
     expect(go).not.toHaveBeenCalled();
+  });
+
+  it("a real reply speaking (no prime) starts at once and is never cancelled", () => {
+    setUserAgent(IPHONE_UA);
+    synth.speaking = true;
+    const go = vi.fn();
+    whenSynthIdle(go);
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(synth.cancelCount).toBe(0);
+  });
+
+  it("after the prime ends, a later real reply is not waited for", () => {
+    setUserAgent(IPHONE_UA);
+    primeDeviceVoice();
+    synth.finishNext();
+    synth.speaking = true;
+    const go = vi.fn();
+    whenSynthIdle(go);
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(synth.cancelCount).toBe(0);
+  });
+
+  it("a real reply that starts during the wait is not cancelled at the cap", () => {
+    setUserAgent(IPHONE_UA);
+    primeDeviceVoice();
+    synth.speaking = true;
+    const go = vi.fn();
+    whenSynthIdle(go);
+    synth.finishNext();
+    vi.advanceTimersByTime(MIC_SYNTH_WAIT_CAP_MS + 100);
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(synth.cancelCount).toBe(0);
   });
 
   it("Chrome and an idle WebKit synthesizer start at once", () => {

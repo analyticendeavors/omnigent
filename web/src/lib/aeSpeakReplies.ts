@@ -225,6 +225,15 @@ export function registerCloudPrimer(primer: (() => void) | null): void {
   cloudPrimer = primer;
 }
 
+/** True from the moment the silent priming utterance is spoken until it ends, errors or is cancelled. */
+let primeSpeaking = false;
+const PRIME_FLAG_MAX_MS = 12_000;
+
+/** Test hook: forget a prime in flight. */
+export function resetPrimeSpeaking(): void {
+  primeSpeaking = false;
+}
+
 /**
  * Unlocks audio for later replies. Call only inside a click or pointer handler:
  * iOS refuses playback that no tap started. Never throws.
@@ -240,6 +249,8 @@ export function primeVoicePlayback(): void {
     if (!isSpeechSupported()) return;
     // WebKit keeps a zero-volume utterance speaking for about 10 s and holds the audio session,
     // so a recognizer started meanwhile hears nothing. The cloud voice never needs it.
+    // Known gap (doc only): this WebKit cloud path also skips the synth unlock, so if the cloud
+    // voice later fails and the device-voice fallback speaks, iOS may need one more tap first.
     if (isWebKitSpeech() && readVoiceChoice()?.kind === "cloud") {
       logVoice("prime skipped synth (webkit cloud)");
       return;
@@ -248,7 +259,24 @@ export function primeVoicePlayback(): void {
     if (synth.speaking) return;
     const utterance = new window.SpeechSynthesisUtterance(" ");
     utterance.volume = 0;
-    synth.speak(utterance);
+    primeSpeaking = true;
+    // The engine may never report the end (iOS can drop it): a safety timer clears the flag so
+    // a later real reply is never mistaken for the prime.
+    const safety = setTimeout(() => {
+      primeSpeaking = false;
+    }, PRIME_FLAG_MAX_MS);
+    const clear = () => {
+      clearTimeout(safety);
+      primeSpeaking = false;
+    };
+    utterance.onend = clear;
+    utterance.onerror = clear;
+    try {
+      synth.speak(utterance);
+    } catch (err) {
+      primeSpeaking = false;
+      throw err;
+    }
   } catch {
     // Priming is best effort.
   }
@@ -260,14 +288,22 @@ export const MIC_SYNTH_WAIT_CAP_MS = 1500;
 
 /**
  * Runs `go` once the device synthesizer is idle. Only WebKit waits (its priming utterance holds
- * the audio session); elsewhere `go` runs at once. At the cap the synthesizer is cancelled and
- * `go` runs. Returns a cancel that drops a pending `go`. Never throws.
+ * the audio session); elsewhere, and whenever a real reply is speaking instead of the prime, `go`
+ * runs at once and nothing is cancelled. At the cap the prime is cancelled and `go` runs. Returns a cancel that drops a pending `go`. Never throws.
  */
 export function whenSynthIdle(go: () => void): () => void {
   let synth: SpeechSynthesis | null = null;
   try {
-    if (isWebKitSpeech() && isSpeechSupported() && window.speechSynthesis.speaking) {
+    // Wait only for the priming utterance, never for a real reply that is speaking.
+    if (
+      primeSpeaking &&
+      isWebKitSpeech() &&
+      isSpeechSupported() &&
+      window.speechSynthesis.speaking
+    ) {
       synth = window.speechSynthesis;
+    } else if (primeSpeaking && isSpeechSupported() && !window.speechSynthesis.speaking) {
+      primeSpeaking = false;
     }
   } catch {
     synth = null;
@@ -288,11 +324,14 @@ export function whenSynthIdle(go: () => void): () => void {
       }
     })();
     const waited = Date.now() - started;
-    if (speaking && waited < MIC_SYNTH_WAIT_CAP_MS) {
+    if (!speaking) primeSpeaking = false;
+    if (primeSpeaking && waited < MIC_SYNTH_WAIT_CAP_MS) {
       timer = setTimeout(tick, MIC_SYNTH_POLL_MS);
       return;
     }
-    if (speaking) {
+    if (primeSpeaking && speaking) {
+      // Only the prime is speaking here (the flag), so a real reply is never cancelled.
+      primeSpeaking = false;
       try {
         synth.cancel();
       } catch {

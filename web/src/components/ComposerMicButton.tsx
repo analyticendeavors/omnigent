@@ -324,6 +324,33 @@ export const ComposerMicButton = ({
     if (livenessTimerRef.current !== null) clearInterval(livenessTimerRef.current);
     livenessTimerRef.current = null;
   }, []);
+  // Drops a pending synth wait (a browser start waiting for the priming utterance) without
+  // touching any take state. Never leaves a live cancel behind. True when one was pending.
+  const dropSynthWait = useCallback((): boolean => {
+    const cancel = synthWaitCancelRef.current;
+    synthWaitCancelRef.current = null;
+    if (!cancel) return false;
+    cancel();
+    return true;
+  }, []);
+  // A user stop (toggle, controller stop, Esc, disabled) while the mic start waits for the
+  // synth: the recognizer was never started, so no end event will come. Drops the wait and
+  // ends the take here. True when a wait was pending.
+  const stopSynthWait = useCallback(
+    (why: string): boolean => {
+      if (!dropSynthWait()) return false;
+      logVoice("mic stop during synth wait", why);
+      clearStartWatchdog();
+      transitionRef.current = false;
+      browserStartPendingRef.current = false;
+      requestedRef.current = false;
+      controllerStartRef.current = false;
+      voiceTakeRef.current = false;
+      silentStartRef.current = false;
+      return true;
+    },
+    [dropSynthWait, clearStartWatchdog],
+  );
   // Server-take guard, deliberately separate from transitionRef: a failed
   // Web Speech attempt fires a late "end" event that resets transitionRef,
   // which must not unlock a second server take mid-handshake.
@@ -861,6 +888,11 @@ export const ComposerMicButton = ({
     // `keepLateFinal` (the stop watchdog): the old recognizer was already stopped, so it is
     // not aborted, and a final result it still delivers within the stop watchdog time is passed on once.
     const replace = (keepLateFinal = false): SpeechRecognitionLike | null => {
+      // A start waiting for the synth belongs to the recognizer being replaced.
+      if (synthWaitCancelRef.current) {
+        synthWaitCancelRef.current();
+        synthWaitCancelRef.current = null;
+      }
       cancelPendingStart?.();
       clearLiveness();
       clearStopWatchdog();
@@ -945,6 +977,8 @@ export const ComposerMicButton = ({
   // cancelled outright (no tail flush) — the take is moot once the
   // composer can't accept text.
   useEffect(() => {
+    // Disabled during the synth wait: the mic must not start into a disabled composer.
+    if (disabled && stopSynthWait("disabled")) return;
     if (!(disabled && isListening)) return;
     if (sessionRef.current) {
       sessionRef.current.cancel();
@@ -960,7 +994,7 @@ export const ComposerMicButton = ({
       // .stop() on an already-stopped recognizer can throw in some
       // browsers; safe to ignore — the end event will reconcile state.
     }
-  }, [disabled, isListening]);
+  }, [disabled, isListening, stopSynthWait]);
 
   // Release the mic if the component unmounts mid-take (e.g. the
   // new-chat dialog closes while dictating).
@@ -1381,6 +1415,8 @@ export const ComposerMicButton = ({
     }
     // Guard against rapid clicks landing before start/end event fires.
     if (transitionRef.current) {
+      // A click during the synth wait is a stop: the mic must not start afterwards.
+      if (stopSynthWait("toggle")) return true;
       if (listeningRef.current) logVoice("mic stop refused");
       return false;
     }
@@ -1408,8 +1444,14 @@ export const ComposerMicButton = ({
         stallRef.current.reset(Date.now());
         eventStallRef.current.reset(Date.now());
         // WebKit: the priming utterance holds the audio session; start once it has ended.
-        synthWaitCancelRef.current = whenSynthIdle(() => {
+        // Never overwrite a live cancel: drop any earlier wait first.
+        dropSynthWait();
+        let waitDone = false;
+        const cancelWait = whenSynthIdle(() => {
+          waitDone = true;
           synthWaitCancelRef.current = null;
+          // A replaced recognizer owns the start now; this one must not start late.
+          if (recognitionRef.current !== recognition) return;
           try {
             stallRef.current.reset(Date.now());
             eventStallRef.current.reset(Date.now());
@@ -1419,6 +1461,8 @@ export const ComposerMicButton = ({
             browserStartPendingRef.current = false;
           }
         });
+        // go() may have run at once (no wait): then there is nothing to cancel later.
+        if (!waitDone) synthWaitCancelRef.current = cancelWait;
       }
     } catch {
       // InvalidStateError from a double-call — drop the guard so the
@@ -1428,7 +1472,7 @@ export const ComposerMicButton = ({
       return false;
     }
     return true;
-  }, [serverAvailable, toggleServer, armStopWatchdog]);
+  }, [serverAvailable, toggleServer, armStopWatchdog, stopSynthWait, dropSynthWait]);
 
   // Voice mode drives the mic through this handle; the button keeps working alone.
   listeningRef.current = isListening;
@@ -1483,6 +1527,7 @@ export const ComposerMicButton = ({
         }
         browserStartPendingRef.current = false;
         logVoice("mic start watchdog");
+        dropSynthWait();
         // A fresh recognizer, so the retry's start() is not refused by one still aborting.
         replaceRecognitionRef.current();
         transitionRef.current = false;
@@ -1535,6 +1580,8 @@ export const ComposerMicButton = ({
           eventRestartTimesRef.current = [];
           eventRestartCappedRef.current = false;
           silentStartRef.current = false;
+          // A start still waiting for the synth is dropped before the new one begins.
+          dropSynthWait();
           clearStartWatchdog();
           clearStopWatchdog();
           clearLiveness();
@@ -1556,6 +1603,8 @@ export const ComposerMicButton = ({
       stop: () => {
         voiceTakeRef.current = false;
         clearLiveness();
+        // Stop while the start waits for the synth: no mic start later.
+        if (stopSynthWait("controller")) return;
         if (listeningRef.current) {
           requestedRef.current = false;
           toggle();
@@ -1586,7 +1635,15 @@ export const ComposerMicButton = ({
     return () => {
       controller.current = null;
     };
-  }, [controller, toggle, clearStartWatchdog, clearStopWatchdog, clearLiveness]);
+  }, [
+    controller,
+    toggle,
+    clearStartWatchdog,
+    clearStopWatchdog,
+    clearLiveness,
+    dropSynthWait,
+    stopSynthWait,
+  ]);
   const prevListening = useRef(isListening);
   useEffect(() => {
     if (isListening) requestedRef.current = false;
@@ -1610,6 +1667,21 @@ export const ComposerMicButton = ({
     undefined,
     onHotkeyBarge,
   );
+
+  // Esc during the synth wait (not yet listening): end the take, no mic start later. Inert
+  // when no wait is pending, so other Esc handlers are untouched.
+  useEffect(() => {
+    if (isListening) return;
+    const handler = (e: globalThis.KeyboardEvent): void => {
+      if (e.key !== "Escape" || !synthWaitCancelRef.current) return;
+      if (stopSynthWait("esc")) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [isListening, stopSynthWait]);
 
   // While listening, Enter commits (end the take, keep the text) and Esc
   // cancels (end the take, discard back to the pre-dictation snapshot). Bound in

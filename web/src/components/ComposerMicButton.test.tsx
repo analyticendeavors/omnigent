@@ -28,6 +28,8 @@ import { getVoiceBins } from "@/lib/aeVoiceLevel";
 import { formatVoiceLog, resetVoiceLog } from "@/lib/aeVoiceLog";
 import { getVoiceSnapshot, resetVoiceStore, setVoiceOn } from "@/lib/aeVoiceMode";
 import { useAeVoiceMode } from "@/hooks/useAeVoiceMode";
+import { MIC_SYNTH_WAIT_CAP_MS, primeVoicePlayback, resetPrimeSpeaking } from "@/lib/aeSpeakReplies";
+import { installFakeSpeech, removeFakeSpeech, type FakeSynth } from "@/test/fakeSpeech";
 import { ComposerMicButton } from "./ComposerMicButton";
 
 // Controllable DictationSession stand-in for the server-mode tests. The
@@ -1688,5 +1690,103 @@ describe("ComposerMicButton (stop and liveness watchdogs)", () => {
     expect(screen.getByTestId("detail").textContent).toBe("Mic went quiet, tap to restart");
     act(() => void vi.advanceTimersByTime(5000));
     expect(startSpy).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("ComposerMicButton (WebKit synth wait)", () => {
+  const IPHONE_UA =
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
+  let synth: FakeSynth;
+
+  function mountVoice() {
+    const controller = { current: null as AeMicController | null };
+    const onListeningChange = vi.fn();
+    const view = render(
+      <ComposerMicButton
+        onTranscript={vi.fn()}
+        controller={controller}
+        onListeningChange={onListeningChange}
+      />,
+    );
+    return { controller, onListeningChange, view };
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    resetVoiceLog();
+    Object.defineProperty(navigator, "userAgent", { configurable: true, value: IPHONE_UA });
+    synth = installFakeSpeech();
+    window.localStorage.clear();
+    // The silent prime is speaking, as right after the Voice mode tap on a device voice.
+    primeVoicePlayback();
+    synth.speaking = true;
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    resetPrimeSpeaking();
+    delete (navigator as { userAgent?: unknown }).userAgent;
+    removeFakeSpeech();
+  });
+
+  it("a controller stop during the wait starts nothing and ends the take", () => {
+    const { controller } = mountVoice();
+    act(() => controller.current?.start());
+    expect(startSpy).not.toHaveBeenCalled();
+    act(() => controller.current?.stop());
+    synth.speaking = false;
+    act(() => void vi.advanceTimersByTime(MIC_SYNTH_WAIT_CAP_MS + 500));
+    expect(startSpy).not.toHaveBeenCalled();
+    expect(formatVoiceLog()).toContain("mic stop during synth wait");
+    // The guards are free: the next start reaches recognition.start().
+    act(() => controller.current?.start());
+    expect(startSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("a button tap during the wait stops: no start later", () => {
+    const { controller } = mountVoice();
+    act(() => controller.current?.start());
+    fireEvent.click(screen.getByRole("button", { name: /Voice dictation/ }));
+    act(() => void vi.advanceTimersByTime(MIC_SYNTH_WAIT_CAP_MS + 500));
+    expect(startSpy).not.toHaveBeenCalled();
+    expect(controller.current?.isListening()).toBe(false);
+  });
+
+  it("Esc during the wait starts nothing", () => {
+    const { controller } = mountVoice();
+    act(() => controller.current?.start());
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    act(() => void vi.advanceTimersByTime(MIC_SYNTH_WAIT_CAP_MS + 500));
+    expect(startSpy).not.toHaveBeenCalled();
+  });
+
+  it("a restart during the wait starts once, on the new recognizer", () => {
+    const { controller } = mountVoice();
+    act(() => controller.current?.start());
+    act(() => controller.current?.restart());
+    expect(instances).toHaveLength(2);
+    expect(startSpy).not.toHaveBeenCalled();
+    synth.speaking = false;
+    act(() => void vi.advanceTimersByTime(MIC_SYNTH_WAIT_CAP_MS + 500));
+    expect(startSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("an unmount during the wait cancels the start", () => {
+    const { controller, view } = mountVoice();
+    act(() => controller.current?.start());
+    view.unmount();
+    synth.speaking = false;
+    act(() => void vi.advanceTimersByTime(MIC_SYNTH_WAIT_CAP_MS + 500));
+    expect(startSpy).not.toHaveBeenCalled();
+  });
+
+  it("a real reply speaking (prime over) lets the mic start at once, with no cancel", () => {
+    synth.finishNext();
+    synth.speaking = true;
+    const { controller } = mountVoice();
+    act(() => controller.current?.start());
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    expect(synth.cancelCount).toBe(0);
   });
 });
