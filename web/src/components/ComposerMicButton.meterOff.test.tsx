@@ -93,10 +93,18 @@ beforeEach(() => {
     constructor() {
       instances.push(this as unknown as (typeof instances)[number] & { own: Handlers });
     }
+    listeners: Record<string, Set<(event: unknown) => void>> = {};
     addEventListener(type: string, handler: (event: unknown) => void) {
-      this.own[type] = handler;
+      const set = (this.listeners[type] ??= new Set());
+      set.add(handler);
+      // `own[type]` fires every listener still attached, like a real recognizer.
+      this.own[type] = (event) => {
+        for (const h of [...set]) h(event);
+      };
     }
-    removeEventListener() {}
+    removeEventListener(type: string, handler: (event: unknown) => void) {
+      this.listeners[type]?.delete(handler);
+    }
   }
   getUserMedia = vi.fn(() => Promise.resolve(new FakeStream()));
   vi.stubGlobal("SpeechRecognition", FakeRecognition);
@@ -225,6 +233,9 @@ describe("ComposerMicButton (level meter off)", () => {
     expect(onListeningChange).not.toHaveBeenCalledWith(false);
     expect(onListeningChange).not.toHaveBeenCalledWith(false, "deaf");
     expect(controller.current?.isListening()).toBe(true);
+    // WebKit: the fresh recognizer starts once the old one has ended.
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    act(() => instances[0].own.end?.({}));
     expect(startSpy).toHaveBeenCalledTimes(2);
     // The fresh recognizer is given the no-audiostart allowance, not judged at once.
     await run(3000);
@@ -517,6 +528,69 @@ describe("ComposerMicButton (level meter off)", () => {
     await listenVoice();
     expect(getUserMedia).not.toHaveBeenCalled();
     expect(formatVoiceLog()).toContain("meter off");
+  });
+});
+
+describe("ComposerMicButton (restart race)", () => {
+  it("on WebKit an idle recycle starts the new recognizer only after the old one fires end", async () => {
+    setUserAgent(IOS_UA);
+    await listenVoice();
+    await run(10_500);
+    expect(instances).toHaveLength(2);
+    expect(instances[0].stop).toHaveBeenCalled();
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    await run(500);
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    act(() => instances[0].own.end?.({}));
+    expect(startSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("on WebKit the new recognizer starts anyway 1500 ms after the stop when end never comes", async () => {
+    setUserAgent(IOS_UA);
+    await listenVoice();
+    await run(10_000);
+    await run(1000);
+    expect(instances).toHaveLength(2);
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    await run(700);
+    expect(startSpy).toHaveBeenCalledTimes(2);
+    expect(formatVoiceLog()).toContain("mic old end wait capped");
+  });
+
+  it("an aborted error right after a silent restart retries once and never pauses Voice mode", async () => {
+    setUserAgent(IOS_UA);
+    const { controller, onListeningChange } = await listenVoice();
+    await run(10_500);
+    act(() => instances[0].own.end?.({}));
+    expect(startSpy).toHaveBeenCalledTimes(2);
+    expect(instances).toHaveLength(2);
+    act(() => {
+      instances[1].own.start?.({});
+      instances[1].own.error?.({ error: "aborted", message: "Another request is started" });
+    });
+    expect(instances).toHaveLength(3);
+    expect(formatVoiceLog()).toContain("mic restart aborted");
+    act(() => instances[1].own.end?.({}));
+    expect(startSpy).toHaveBeenCalledTimes(3);
+    expect(onListeningChange).not.toHaveBeenCalledWith(false);
+    expect(onListeningChange).not.toHaveBeenCalledWith(false, "deaf");
+    expect(controller.current?.isListening()).toBe(true);
+  });
+
+  it("logs the browser's error message with the error", async () => {
+    setUserAgent(CHROME_UA);
+    await listenVoice();
+    act(() => instances[0].own.error?.({ error: "audio-capture", message: "Mic is busy" }));
+    expect(formatVoiceLog()).toContain("audio-capture: Mic is busy");
+  });
+
+  it("on Chrome a restart starts the new recognizer immediately", async () => {
+    setUserAgent(CHROME_UA);
+    writeVoiceMeter(false);
+    await listenVoice();
+    await run(10_500);
+    expect(instances).toHaveLength(2);
+    expect(startSpy).toHaveBeenCalledTimes(2);
   });
 });
 

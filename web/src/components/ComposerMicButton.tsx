@@ -112,6 +112,20 @@ const MIC_EVENT_RESTART_MAX_PER_MIN = 4;
 // app or tab took is reacquired. It is not "deaf": the user may just be quiet. At most this many
 // idle recycles per minute, then none until the next result.
 const MIC_IDLE_RECYCLE_MS = 10_000;
+// WebKit aborts a recognizer started while the old one is still stopping, and its error handler
+// then kills the new one. A restart waits for the old recognizer's `end`, but never longer than this.
+const MIC_OLD_END_WAIT_MS = 1500;
+// An "aborted" error this soon after a silent restart started is that restart failing, not a pause.
+const MIC_RESTART_ABORT_WINDOW_MS = 500;
+// Longest error message kept in the voice log.
+const MIC_ERROR_MESSAGE_MAX = 120;
+
+/** `error` plus the browser's message (truncated), for the voice log. */
+function errorDetail(event: Event): string {
+  const { error, message } = event as SpeechRecognitionErrorEventLike & { message?: string };
+  const text = typeof message === "string" ? message.trim() : "";
+  return text ? `${error}: ${text.slice(0, MIC_ERROR_MESSAGE_MAX)}` : String(error);
+}
 
 /** speechSynthesis speaking/pending, for the voice log: assistant audio can take the mic. */
 function speechSynthesisState(): string {
@@ -339,6 +353,13 @@ export const ComposerMicButton = ({
     // Each recognizer is one generation. A discarded one (restart, watchdog) is detached
     // and its events are ignored entirely: no watchdog clear, no report, no flag change.
     const detachers = new Map<SpeechRecognitionLike, () => void>();
+    // Recognizers that have fired `end` since their last `start`: nothing left to wait for.
+    const endedRecognizers = new WeakSet<SpeechRecognitionLike>();
+    // A silent restart waiting for the old recognizer's end (WebKit); cancelled by replace.
+    let cancelPendingStart: (() => void) | null = null;
+    // When the last silent restart called start(), and whether its one abort retry is spent.
+    let silentRestartAt = 0;
+    let abortRetried = false;
 
     // Tells Voice mode a start never reached listening, at most once per take.
     const failPendingStart = (reason?: "deaf") => {
@@ -369,7 +390,8 @@ export const ComposerMicButton = ({
 
     // A fresh recognizer started in place while the take stays "listening": Voice mode is told
     // nothing, and the transcript already delivered is kept. False when start() threw.
-    const silentRestart = (keepLateFinal = false): boolean => {
+    const silentRestart = (keepLateFinal = false, isRetry = false): boolean => {
+      if (!isRetry) abortRetried = false;
       if (keepLateFinal) {
         // Ask the old recognizer to wrap up: a final it still owes is passed on once.
         try {
@@ -378,7 +400,7 @@ export const ComposerMicButton = ({
           // Nothing to stop.
         }
       }
-      replace(keepLateFinal);
+      const old = replace(keepLateFinal);
       const next = recognitionRef.current;
       if (!next) return false;
       silentStartRef.current = true;
@@ -390,14 +412,47 @@ export const ComposerMicButton = ({
       eventStallRef.current.reset(Date.now());
       // A fresh recognizer gets the whole no-audiostart allowance before that check judges it.
       takeStartRef.current = Date.now();
-      try {
-        next.start();
-      } catch {
-        silentStartRef.current = false;
-        return false;
-      }
-      // If the new recognizer never answers, the no-audiostart check still catches it.
-      armLiveness();
+      const begin = (): boolean => {
+        silentRestartAt = Date.now();
+        try {
+          next.start();
+        } catch {
+          silentStartRef.current = false;
+          return false;
+        }
+        // If the new recognizer never answers, the no-audiostart check still catches it.
+        armLiveness();
+        return true;
+      };
+      if (!old || !isWebKitSpeech() || endedRecognizers.has(old)) return begin();
+      // WebKit: starting now makes the server abort the old recognizer, and that abort lands on
+      // the new one. Wait for the old end (capped), unless the take stopped meanwhile.
+      const go = () => {
+        cancelPendingStart = null;
+        if (recognitionRef.current !== next || disabledRef.current || !listeningRef.current) {
+          silentStartRef.current = false;
+          return;
+        }
+        if (!begin()) reportDeaf("stall restart failed");
+      };
+      const onEnd = () => finish(false);
+      const timer = setTimeout(() => finish(true), MIC_OLD_END_WAIT_MS);
+      let waiting = true;
+      const finish = (capped: boolean) => {
+        if (!waiting) return;
+        waiting = false;
+        old.removeEventListener("end", onEnd);
+        clearTimeout(timer);
+        if (capped) logVoice("mic old end wait capped");
+        go();
+      };
+      old.addEventListener("end", onEnd);
+      cancelPendingStart = () => {
+        waiting = false;
+        old.removeEventListener("end", onEnd);
+        clearTimeout(timer);
+        cancelPendingStart = null;
+      };
       return true;
     };
 
@@ -573,10 +628,27 @@ export const ComposerMicButton = ({
       };
       const handleError = (event: Event) => {
         if (!current() || serverTakeOwnsState()) return;
+        if (
+          (event as SpeechRecognitionErrorEventLike).error === "aborted" &&
+          silentRestartAt > 0 &&
+          Date.now() - silentRestartAt < MIC_RESTART_ABORT_WINDOW_MS
+        ) {
+          // The restart was aborted by the browser: retry once, then call the take deaf.
+          silentRestartAt = 0;
+          logVoice("mic error", errorDetail(event));
+          if (abortRetried) {
+            reportDeaf("stall restart failed");
+            return;
+          }
+          abortRetried = true;
+          logVoice("mic restart aborted", "retrying");
+          if (!silentRestart(false, true)) reportDeaf("stall restart failed");
+          return;
+        }
         if (silentStartRef.current) {
           const failed = (event as SpeechRecognitionErrorEventLike).error;
           if (failed !== "not-allowed" && failed !== "service-not-allowed") {
-            logVoice("mic error", String(failed));
+            logVoice("mic error", errorDetail(event));
             reportDeaf("stall restart failed");
             return;
           }
@@ -591,7 +663,7 @@ export const ComposerMicButton = ({
         // the listening effect, so the hook never sees two false answers for one take.
         failPendingStart();
         const err = (event as SpeechRecognitionErrorEventLike).error;
-        logVoice("mic error", String(err));
+        logVoice("mic error", errorDetail(event));
         // "network" means the recognizer's cloud backend refused us —
         // always the case in Electron/plain Chromium, occasionally a
         // transient blip in real Chrome. Serve THIS take from the server
@@ -700,6 +772,10 @@ export const ComposerMicButton = ({
         }
       };
 
+      const markStarted = () => endedRecognizers.delete(recognition);
+      const markEnded = () => endedRecognizers.add(recognition);
+      recognition.addEventListener("start", markStarted);
+      recognition.addEventListener("end", markEnded);
       recognition.addEventListener("start", handleStart);
       recognition.addEventListener("end", handleEnd);
       recognition.addEventListener("error", handleError);
@@ -729,7 +805,8 @@ export const ComposerMicButton = ({
     // A new instance can start inside the same tap: discard the old one, abort it, build anew.
     // `keepLateFinal` (the stop watchdog): the old recognizer was already stopped, so it is
     // not aborted, and a final result it still delivers within the stop watchdog time is passed on once.
-    const replace = (keepLateFinal = false) => {
+    const replace = (keepLateFinal = false): SpeechRecognitionLike | null => {
+      cancelPendingStart?.();
       clearLiveness();
       clearStopWatchdog();
       const old = recognitionRef.current;
@@ -748,7 +825,7 @@ export const ComposerMicButton = ({
         };
         const logOldError = (event: Event) => {
           dropOldLogs();
-          logVoice("mic old error", String((event as SpeechRecognitionErrorEventLike).error));
+          logVoice("mic old error", errorDetail(event));
         };
         old.addEventListener("end", logOldEnd);
         old.addEventListener("error", logOldError);
@@ -786,12 +863,14 @@ export const ComposerMicButton = ({
         }
       }
       recognitionRef.current = build();
+      return old;
     };
 
     recognitionRef.current = build();
     replaceRecognitionRef.current = replace;
 
     return () => {
+      cancelPendingStart?.();
       const old = recognitionRef.current;
       if (old) {
         detachers.get(old)?.();

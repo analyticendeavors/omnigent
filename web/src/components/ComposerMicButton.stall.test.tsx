@@ -345,6 +345,9 @@ describe("ComposerMicButton (WebKit recycle after a final)", () => {
     expect(onTranscript).toHaveBeenCalledTimes(1);
     expect(onTranscript).toHaveBeenCalledWith("How's");
     expect(instances).toHaveLength(2);
+    // WebKit: the fresh recognizer starts once the old one has ended.
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    act(() => instances[0].handlers.end?.({}));
     expect(startSpy).toHaveBeenCalledTimes(2);
     expect(onListeningChange).not.toHaveBeenCalledWith(false);
     expect(controller.current?.isListening()).toBe(true);
