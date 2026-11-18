@@ -392,6 +392,44 @@ async def test_server_run_compaction_in_progress_has_no_background_key(
     assert "background" not in published[0], published[0]
 
 
+async def test_stale_compaction_start_is_not_inherited(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A start whose compaction lost its end edge is replaced by the next compaction's own.
+
+    Esc or a crash during a harness compaction sends no completed or failed, so the
+    recorded start stays behind. A compaction past the stale window publishes a fresh
+    start, so the page does not drop its spinner as stale (2026-11-18); a repeat inside
+    the window keeps the first start.
+    """
+    from omnigent.server.routes._sessions import helpers
+
+    published: list[dict[str, Any]] = []
+
+    def capture_publish(session_id: str, event: dict[str, Any]) -> None:
+        """Capture session-stream events emitted by the helpers."""
+        published.append(event)
+
+    monkeypatch.setattr(
+        "omnigent.server.routes.sessions.session_stream.publish",
+        capture_publish,
+    )
+    session_id = "conv_stale_start_test"
+    clock = [1_000_000.0]
+    monkeypatch.setattr(helpers.time, "time", lambda: clock[0])
+    try:
+        helpers._publish_compaction_in_progress(session_id, background=True)
+        clock[0] += 60
+        helpers._publish_compaction_in_progress(session_id, background=True)
+        clock[0] += helpers._COMPACTION_START_STALE_S + 1
+        helpers._publish_compaction_in_progress(session_id, background=True)
+    finally:
+        helpers._compaction_started_at.pop(session_id, None)
+    starts = [event["started_at"] for event in published]
+    assert starts[0] == starts[1] == 1_000_000
+    assert starts[2] == int(clock[0])
+
+
 async def test_external_compaction_status_anchors_started_at_to_first_report(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -443,10 +481,12 @@ async def test_external_compaction_status_anchors_started_at_to_first_report(
     )
 
     # A repeated poll of the SAME compaction reuses the recorded anchor. Pin
-    # it to a sentinel so the reuse is observable without sleeping a second.
-    sessions_helpers._compaction_started_at[sid] = 123
+    # it to a sentinel a minute back (inside the stale window) so the reuse is
+    # observable without sleeping a second.
+    sentinel = first_start - 60
+    sessions_helpers._compaction_started_at[sid] = sentinel
     await post("in_progress")
-    assert last_started_at() == 123, (
+    assert last_started_at() == sentinel, (
         "a repeated in_progress must reuse the recorded compaction start, "
         "not re-anchor to the current clock."
     )
