@@ -58,6 +58,7 @@ import type {
 import { userInputElicitationKey } from "@/lib/askUserQuestion";
 import { LIVE_ITEM_PREFIX, PENDING_FILE_PREFIX, structuredErrorFields } from "@/lib/blocks";
 import { BlockStream } from "@/lib/blockStream";
+import { AE_BACKGROUND_COMPACTION_STALE_MS } from "@/lib/aeTokenDefrag";
 import { itemsToBlocks } from "@/lib/itemsToBlocks";
 import { isMessageItem, type ConversationItem, type MessageItem } from "@/lib/conversationItems";
 import { buildBubbles } from "@/lib/renderItems";
@@ -4433,11 +4434,12 @@ async function bindStream(
       // branches that used to live here served the transcript LRU's revisit
       // path, which no longer exists — a revisit finds a live entry and never
       // re-binds.)
-      const allBlocks = [
+      const allBlocksRaw = [
         ...unique,
         ...withoutRebuiltUserInputCards(currentBlocks, unique),
         ...uniquePendingElicitations,
       ];
+      const allBlocks = withoutEndedBackgroundSpinners(allBlocksRaw) ?? allBlocksRaw;
       const hasErrorBlock = allBlocks.some((b) => b.type === "error");
       // Decide the optimistic user bubbles to render after this bind, and
       // (on cold load) keep the per-conversation stash consistent.
@@ -5163,13 +5165,14 @@ async function rehydrateWindowOnReconnect(
         preGapElicitations.pending,
         preGapElicitations.autoResolved,
       ) ?? merged;
+    const settledBlocks =
+      snapshotCompactionSpinners(blocks, s.activeResponse, statusPatch.activeResponse) ?? blocks;
     return {
       ...statusPatch,
       // Same persisted-item evidence as the reconnect path: a rehydrated item
       // can be a send whose POST died in the gap.
       ...reconcileSendDraftWithSnapshot(s, freshItemIds, session),
-      blocks:
-        snapshotCompactionSpinners(blocks, s.activeResponse, statusPatch.activeResponse) ?? blocks,
+      blocks: withoutEndedBackgroundSpinners(settledBlocks) ?? settledBlocks,
       hasMoreHistory: fresh.hasMore,
       oldestItemId: fresh.items[0]?.id ?? null,
       loadingMoreHistory: false,
@@ -5358,6 +5361,7 @@ async function reconcileOnReconnect(
     if (reconciled !== null) nextBlocks = reconciled;
     nextBlocks =
       snapshotCompactionSpinners(nextBlocks, s.activeResponse, patch.activeResponse) ?? nextBlocks;
+    nextBlocks = withoutEndedBackgroundSpinners(nextBlocks) ?? nextBlocks;
     if (nextBlocks !== s.blocks) patch.blocks = nextBlocks;
     return patch;
   });
@@ -6128,21 +6132,52 @@ export function adoptCompactionSpinners(blocks: AnyBlock[], responseId: string):
  * compaction terminal is not replayed.
  *
  * Harness-owned (`background`) spinners survive a turn settle, because that
- * compaction outlives the turn; only `includeBackground` (explicit Stop) removes them.
+ * compaction outlives the turn, unless they are older than
+ * `AE_BACKGROUND_COMPACTION_STALE_MS` (the harness never reported an end);
+ * a stale one goes on any settle, whoever owns it. A spinner with no
+ * `startedAtS` counts as fresh.
  *
- * @returns the remaining blocks, or `null` when the turn owned no spinner.
+ * @returns the remaining blocks, or `null` when nothing is removed.
  */
 export function withoutSettledCompactionSpinners(
   blocks: AnyBlock[],
   responseId: string,
-  opts?: { includeBackground?: boolean },
+  nowMs: number = Date.now(),
 ): AnyBlock[] | null {
-  const owned = (b: AnyBlock) =>
+  const drop = (b: AnyBlock) => {
+    if (b.type !== "compaction_loading") return false;
+    if (b.background !== true) return b.ctx.responseId === responseId;
+    return b.startedAtS !== undefined && nowMs - b.startedAtS * 1000 > AE_BACKGROUND_COMPACTION_STALE_MS;
+  };
+  if (!blocks.some(drop)) return null;
+  return blocks.filter((b) => !drop(b));
+}
+
+/**
+ * Drop background "Compacting…" spinners that a persisted `compaction` marker
+ * proves ended (the completion was missed during a stream gap). A marker whose
+ * time, or a spinner whose start, is unknown still counts: a marker after a
+ * spinner means that compaction finished.
+ *
+ * @returns the remaining blocks, or `null` when nothing is removed.
+ */
+export function withoutEndedBackgroundSpinners(blocks: AnyBlock[]): AnyBlock[] | null {
+  const markers = blocks.filter(
+    (b): b is Extract<AnyBlock, { type: "compaction" }> =>
+      b.type === "compaction" && Boolean(b.ctx.itemId),
+  );
+  if (markers.length === 0) return null;
+  const ended = (b: AnyBlock) =>
     b.type === "compaction_loading" &&
-    b.ctx.responseId === responseId &&
-    (opts?.includeBackground === true || b.background !== true);
-  if (!blocks.some(owned)) return null;
-  return blocks.filter((b) => !owned(b));
+    b.background === true &&
+    markers.some(
+      (m) =>
+        m.ctx.createdAtS === undefined ||
+        b.startedAtS === undefined ||
+        b.startedAtS <= m.ctx.createdAtS,
+    );
+  if (!blocks.some(ended)) return null;
+  return blocks.filter((b) => !ended(b));
 }
 
 /**
@@ -6155,7 +6190,7 @@ export function withoutSettledCompactionSpinners(
  *   snapshot left it unchanged.
  * @returns the rewritten blocks, or `null` when nothing changes.
  */
-function snapshotCompactionSpinners(
+export function snapshotCompactionSpinners(
   blocks: AnyBlock[],
   before: ActiveResponse | null,
   after: ActiveResponse | null | undefined,
@@ -7889,10 +7924,8 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
       // Stopping the turn stops its compaction, and the idle that follows a
       // native stop may name no turn, so the stop itself retires the spinner.
       applyToConversation((s) => {
-        const stopped = s.activeResponse?.responseId;
-        const blocks = stopped ? withoutSettledCompactionSpinners(s.blocks, stopped, { includeBackground: true })
-          : null;
-        return blocks === null ? {} : { blocks };
+        if (!s.blocks.some((b) => b.type === "compaction_loading")) return {};
+        return { blocks: s.blocks.filter((b) => b.type !== "compaction_loading") };
       });
       return;
     case "session_created":

@@ -20,6 +20,7 @@ import type * as IdentityModule from "@/lib/identity";
 
 import { type InfiniteData, QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { AE_BACKGROUND_COMPACTION_STALE_MS } from "@/lib/aeTokenDefrag";
 import { toast } from "sonner";
 import type { Conversation, ConversationsPage } from "@/hooks/useConversations";
 import type {
@@ -85,7 +86,10 @@ import {
   pumpStreamEvents,
   SSE_STALE_RECYCLE_MS,
   setPendingInitialPrompt,
+  snapshotCompactionSpinners,
   startStreamPump,
+  withoutEndedBackgroundSpinners,
+  withoutSettledCompactionSpinners,
   useChatStore,
   type ConversationState,
   type FrameScheduler,
@@ -18203,7 +18207,10 @@ describe("chatStore — compaction spinner follows its turn", () => {
   it("a harness compaction keeps its spinner when the turn ends and a user message arrives mid-compaction", async () => {
     const { sink, controller } = startPump("conv_bg_compact");
     sink.push(turnEvent("response.created", "resp_a"));
-    sink.push(sse("response.compaction.in_progress", { started_at: 1_700_000_000, background: true }));
+    sink.push(sse("response.compaction.in_progress", {
+        started_at: Math.floor(Date.now() / 1000),
+        background: true,
+      }));
     await tick();
     sink.push(turnEvent("response.completed", "resp_a"));
     await tick();
@@ -18240,6 +18247,115 @@ describe("chatStore — compaction spinner follows its turn", () => {
     expect(spinnerIds()).toEqual([]);
 
     controller.abort();
+  });
+
+  const bgSpinner = (responseId: string, startedAtS?: number): AnyBlock => ({
+    type: "compaction_loading",
+    ctx: { agent: null, depth: 0, turn: 0, timestamp: 0, responseId, itemId: null },
+    background: true,
+    ...(startedAtS !== undefined ? { startedAtS } : {}),
+  });
+
+  describe("background spinner staleness and recovery", () => {
+    const NOW_S = 1_700_000_000;
+    const NOW_MS = NOW_S * 1000;
+    const marker = (itemId: string, createdAtS?: number): AnyBlock => ({
+      type: "compaction",
+      ctx: {
+        agent: null,
+        depth: 0,
+        turn: 0,
+        timestamp: 0,
+        responseId: "",
+        itemId,
+        ...(createdAtS !== undefined ? { createdAtS } : {}),
+      },
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("drops a background spinner older than the stale cap on turn settle, keeps a fresh one", () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(NOW_MS);
+      const stale = bgSpinner("resp_a", NOW_S - AE_BACKGROUND_COMPACTION_STALE_MS / 1000 - 1);
+      const fresh = bgSpinner("resp_a", NOW_S - 60);
+      const noStart = bgSpinner("resp_a");
+      useChatStore.setState({
+        conversationId: "conv_bg_stale",
+        activeResponse: { responseId: "resp_a", state: "streaming", error: null },
+        blocks: [stale, fresh, noStart],
+      });
+
+      handleSessionEvent({
+        type: "session_status",
+        conversationId: "conv_bg_stale",
+        status: "idle",
+        responseId: "resp_a",
+      });
+
+      expect(useChatStore.getState().blocks).toEqual([fresh, noStart]);
+    });
+
+    it("snapshotCompactionSpinners settling a turn keeps a fresh background spinner", () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(NOW_MS);
+      const fresh = bgSpinner("resp_a", NOW_S - 60);
+      const plain = spinner("resp_a");
+      const out = snapshotCompactionSpinners(
+        [fresh, plain],
+        { responseId: "resp_a", state: "streaming", error: null },
+        { responseId: "resp_a", state: "completed", error: null },
+      );
+      expect(out).toEqual([fresh]);
+      expect(withoutSettledCompactionSpinners([fresh], "resp_a", NOW_MS)).toBeNull();
+    });
+
+    it("compaction_failed removes a background spinner", () => {
+      useChatStore.setState({
+        conversationId: "conv_bg_failed",
+        blocks: [bgSpinner("resp_a", NOW_S)],
+      });
+      handleSessionEvent({ type: "compaction_failed" });
+      expect(spinnerIds()).toEqual([]);
+    });
+
+    it("a persisted compaction item after a background spinner leaves no loading block", () => {
+      const out = withoutEndedBackgroundSpinners([
+        bgSpinner("resp_a", NOW_S - 300),
+        marker("item_c", NOW_S),
+      ]);
+      expect(out?.map((b) => b.type)).toEqual(["compaction"]);
+      // Unknown times still count: a marker after a spinner means it ended.
+      expect(
+        withoutEndedBackgroundSpinners([bgSpinner("resp_a"), marker("item_c")])?.map((b) => b.type),
+      ).toEqual(["compaction"]);
+    });
+
+    it("keeps a background spinner that started after the persisted marker", () => {
+      expect(
+        withoutEndedBackgroundSpinners([marker("item_c", NOW_S - 600), bgSpinner("resp_a", NOW_S)]),
+      ).toBeNull();
+    });
+
+    it("explicit Stop removes a spinner whose responseId does not match, and with no active turn", () => {
+      useChatStore.setState({
+        conversationId: "conv_bg_stop_mismatch",
+        activeResponse: { responseId: "resp_b", state: "streaming", error: null },
+        blocks: [bgSpinner("", NOW_S), spinner("resp_other")],
+      });
+      handleSessionEvent({ type: "session_interrupted", requestedAt: 1, responseId: "resp_b" });
+      expect(spinnerIds()).toEqual([]);
+
+      useChatStore.setState({
+        conversationId: "conv_bg_stop_null",
+        activeResponse: null,
+        blocks: [bgSpinner("", NOW_S)],
+      });
+      handleSessionEvent({ type: "session_interrupted", requestedAt: 1 });
+      expect(spinnerIds()).toEqual([]);
+    });
   });
 
   it("a server-run (non-background) spinner is still removed when its turn settles", async () => {
