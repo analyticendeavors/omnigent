@@ -11,6 +11,8 @@ import {
   resetPrimeSpeaking,
   rankVoices,
   registerCloudPrimer,
+  registerCloudReleaser,
+  MIC_AUDIO_SETTLE_MS,
   setCaptionHandler,
   readFastAnswersState,
   readFastEnabled,
@@ -366,6 +368,44 @@ describe("priming and the mic on WebKit", () => {
     vi.advanceTimersByTime(MIC_SYNTH_WAIT_CAP_MS + 100);
     expect(go).toHaveBeenCalledTimes(1);
     expect(synth.cancelCount).toBe(0);
+  });
+
+  it("WebKit mic start releases the cloud audio first and waits the settle", () => {
+    setUserAgent(IPHONE_UA);
+    const order: string[] = [];
+    registerCloudReleaser(() => {
+      order.push("release");
+      return MIC_AUDIO_SETTLE_MS;
+    });
+    const go = vi.fn(() => order.push("mic"));
+    whenSynthIdle(go);
+    expect(order).toEqual(["release"]);
+    vi.advanceTimersByTime(MIC_AUDIO_SETTLE_MS - 1);
+    expect(go).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(order).toEqual(["release", "mic"]);
+    registerCloudReleaser(null);
+  });
+
+  it("a cancelled settle never starts the mic", () => {
+    setUserAgent(IPHONE_UA);
+    registerCloudReleaser(() => MIC_AUDIO_SETTLE_MS);
+    const go = vi.fn();
+    whenSynthIdle(go)();
+    vi.advanceTimersByTime(MIC_AUDIO_SETTLE_MS + 500);
+    expect(go).not.toHaveBeenCalled();
+    registerCloudReleaser(null);
+  });
+
+  it("Chrome never calls the cloud release and starts at once", () => {
+    setUserAgent(CHROME_UA);
+    const release = vi.fn(() => MIC_AUDIO_SETTLE_MS);
+    registerCloudReleaser(release);
+    const go = vi.fn();
+    whenSynthIdle(go);
+    expect(release).not.toHaveBeenCalled();
+    expect(go).toHaveBeenCalledTimes(1);
+    registerCloudReleaser(null);
   });
 
   it("Chrome and an idle WebKit synthesizer start at once", () => {

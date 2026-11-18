@@ -2,11 +2,18 @@
 // one server-made mp3 per sentence in order. A sentence the server cannot make is
 // read by the device speaker instead, so an outage still speaks.
 
-import { emitCaption, emitPlaying, type Speaker, type SpeakOptions } from "./aeSpeakReplies";
+import {
+  emitCaption,
+  emitPlaying,
+  MIC_AUDIO_SETTLE_MS,
+  type Speaker,
+  type SpeakOptions,
+} from "./aeSpeakReplies";
 import { splitForSpeech } from "./aeSpeechText";
 import { speakerSinkId } from "./aeAudioDevices";
 import { clearPlaybackBlocked, markPlaybackBlocked } from "./aeVoicePlayback";
 import { logVoice } from "./aeVoiceLog";
+import { isWebKitSpeech } from "./aeVoiceStall";
 import { withBasePath } from "./basePath";
 import { authenticatedFetch } from "./identity";
 
@@ -104,6 +111,22 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
   let audio: HTMLAudioElement | null = null;
   // Releases whatever the run is waiting on (the audio, or the device speaker).
   let release: (() => void) | null = null;
+  // When the element last let go of its source (0 = never), so a mic start can wait out the settle.
+  let releasedAt = 0;
+
+  // Fully lets go of the clip (pause, no source, load) so WebKit frees the audio session.
+  // The element instance stays, so its tap-unlock stays; the next sentence sets src again.
+  const releaseElement = () => {
+    if (!audio) return;
+    try {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+      releasedAt = Date.now();
+    } catch {
+      // Releasing is best effort.
+    }
+  };
 
   const setSpeaking = (next: boolean) => {
     if (isSpeaking === next) return;
@@ -188,6 +211,7 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
       };
       el.onerror = () => {
         logVoice("play error", `media ${el.error?.code}`);
+        if (isWebKitSpeech()) releaseElement();
         finish(false);
       };
       // The audio is really playing now, not just queued or still being made.
@@ -249,15 +273,7 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
       setSpeaking(false);
       emitCaption("");
       // Drained: let go of the last clip. The element stays, so its unlock does too.
-      if (audio) {
-        try {
-          audio.pause();
-          audio.removeAttribute("src");
-          audio.load();
-        } catch {
-          // Releasing is best effort.
-        }
-      }
+      releaseElement();
       return;
     }
     pump();
@@ -299,8 +315,12 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
       clearPlaybackBlocked();
       emitCaption("");
       if (audio) {
-        audio.pause();
-        audio.removeAttribute("src");
+        // A barge-in or cancel: WebKit also needs load() or the element keeps the audio session.
+        if (isWebKitSpeech()) releaseElement();
+        else {
+          audio.pause();
+          audio.removeAttribute("src");
+        }
       }
       fallback.stop();
       setSpeaking(false);
@@ -327,6 +347,14 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
       } catch {
         // Priming is best effort.
       }
+    },
+    // Called just before the mic starts (WebKit): makes sure no clip is held, and returns how many
+    // ms are still left of the settle after the release. Never touches a reply that is speaking.
+    releaseForMic() {
+      if (isSpeaking || !audio || releasedAt === 0) return 0;
+      if (audio.src) releaseElement();
+      logVoice("audio released before mic");
+      return Math.max(0, MIC_AUDIO_SETTLE_MS - (Date.now() - releasedAt));
     },
     speaking: () => isSpeaking,
     retained: () => fallback.retained(),
