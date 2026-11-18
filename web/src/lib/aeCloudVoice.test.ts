@@ -6,10 +6,14 @@ import {
   resetCloudVoicesCache,
 } from "./aeCloudVoice";
 import {
+  MIC_AUDIO_SETTLE_MS,
+  MIC_SYNTH_POLL_MS,
+  registerCloudReleaser,
   setCaptionHandler,
   setPlaybackHandler,
   type Speaker,
   type SpeakOptions,
+  whenSynthIdle,
 } from "./aeSpeakReplies";
 import { clearPlaybackBlocked, isPlaybackBlocked, resumePlayback } from "./aeVoicePlayback";
 
@@ -255,7 +259,11 @@ describe("createCloudSpeaker", () => {
       "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
     const setUa = (ua: string) =>
       Object.defineProperty(navigator, "userAgent", { configurable: true, value: ua });
+    const SAFARI_DESKTOP =
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
     afterEach(() => {
+      vi.useRealTimers();
+      registerCloudReleaser(null);
       delete (navigator as { userAgent?: unknown }).userAgent;
     });
 
@@ -266,21 +274,127 @@ describe("createCloudSpeaker", () => {
       await settle();
     }
 
-    it("WebKit: after play end the source is cleared and load() ran before the mic callback", async () => {
+    it("WebKit: the mic callback runs after the source is cleared and load() ran, through the real releaser", async () => {
       setUa(IPHONE);
       const speaker = createCloudSpeaker(new FakeDevice());
       await playOne(speaker);
       const el = FakeAudio.last;
-      FakeAudio.last?.end();
+      el?.end();
       await settle();
+      expect(el?.loads).toBe(1);
+      registerCloudReleaser(
+        () => speaker.releaseForMic?.() ?? 0,
+        () => speaker.speaking(),
+      );
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      let loadsAtMic = -1;
+      let srcAtMic = "unset";
+      whenSynthIdle(() => {
+        loadsAtMic = el?.loads ?? -1;
+        srcAtMic = el?.src ?? "none";
+      });
+      expect(loadsAtMic).toBe(-1);
+      vi.advanceTimersByTime(MIC_AUDIO_SETTLE_MS);
+      expect(loadsAtMic).toBe(1);
+      expect(srcAtMic).toBe("");
+    });
+
+    it("WebKit: prime() then releaseForMic releases the silent clip and applies the settle", async () => {
+      setUa(IPHONE);
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      const speaker = createCloudSpeaker(new FakeDevice());
+      speaker.prime?.();
+      const el = FakeAudio.last;
+      expect(el?.src).not.toBe("");
+      // The prime is still mid-play at mic start: released now, with the full settle.
+      expect(speaker.releaseForMic?.()).toBe(MIC_AUDIO_SETTLE_MS);
       expect(el?.src).toBe("");
       expect(el?.loads).toBe(1);
-      const order: string[] = [];
-      const loadsAtMic = el?.loads;
-      const left = speaker.releaseForMic?.() ?? -1;
-      order.push(`mic after ${loadsAtMic} load`);
-      expect(left).toBeGreaterThanOrEqual(0);
-      expect(order).toEqual(["mic after 1 load"]);
+      // The prime's own late release finds the element already free.
+      await vi.advanceTimersByTimeAsync(0);
+      expect(el?.loads).toBe(1);
+    });
+
+    it("WebKit: a prime that ended on its own counts as a release for the settle", async () => {
+      setUa(IPHONE);
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      const speaker = createCloudSpeaker(new FakeDevice());
+      speaker.prime?.();
+      const el = FakeAudio.last;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(el?.src).toBe("");
+      expect(el?.loads).toBe(1);
+      expect(speaker.releaseForMic?.()).toBe(MIC_AUDIO_SETTLE_MS);
+      expect(el?.loads).toBe(1);
+    });
+
+    it("WebKit: the settle left is MIC_AUDIO_SETTLE_MS minus the time since the release", async () => {
+      setUa(IPHONE);
+      const speaker = createCloudSpeaker(new FakeDevice());
+      await playOne(speaker);
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      FakeAudio.last?.end();
+      await vi.advanceTimersByTimeAsync(0);
+      vi.advanceTimersByTime(100);
+      expect(speaker.releaseForMic?.()).toBe(MIC_AUDIO_SETTLE_MS - 100);
+      vi.advanceTimersByTime(MIC_AUDIO_SETTLE_MS);
+      expect(speaker.releaseForMic?.()).toBe(0);
+    });
+
+    it("WebKit: a reply that starts during the settle makes the mic wait, then release and settle again", async () => {
+      setUa(IPHONE);
+      const speaker = createCloudSpeaker(new FakeDevice());
+      await playOne(speaker);
+      FakeAudio.last?.end();
+      await settle();
+      registerCloudReleaser(
+        () => speaker.releaseForMic?.() ?? 0,
+        () => speaker.speaking(),
+      );
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      const go = vi.fn();
+      whenSynthIdle(go);
+      vi.advanceTimersByTime(50);
+      speaker.speak("Again.", OPTS);
+      vi.advanceTimersByTime(MIC_AUDIO_SETTLE_MS + 1000);
+      expect(go).not.toHaveBeenCalled();
+      speaker.stop();
+      vi.advanceTimersByTime(MIC_SYNTH_POLL_MS);
+      expect(go).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(MIC_AUDIO_SETTLE_MS);
+      expect(go).toHaveBeenCalledTimes(1);
+    });
+
+    it("WebKit: cancelling while the mic waits for a reply never starts it", async () => {
+      setUa(IPHONE);
+      const speaker = createCloudSpeaker(new FakeDevice());
+      await playOne(speaker);
+      FakeAudio.last?.end();
+      await settle();
+      registerCloudReleaser(
+        () => speaker.releaseForMic?.() ?? 0,
+        () => speaker.speaking(),
+      );
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      const go = vi.fn();
+      const cancel = whenSynthIdle(go);
+      speaker.speak("Again.", OPTS);
+      vi.advanceTimersByTime(MIC_AUDIO_SETTLE_MS);
+      cancel();
+      speaker.stop();
+      vi.advanceTimersByTime(MIC_SYNTH_POLL_MS + MIC_AUDIO_SETTLE_MS + 500);
+      expect(go).not.toHaveBeenCalled();
+    });
+
+    it("desktop Safari: a barge-in stop clears the source and calls load()", async () => {
+      setUa(SAFARI_DESKTOP);
+      const speaker = createCloudSpeaker(new FakeDevice());
+      await playOne(speaker);
+      const el = FakeAudio.last;
+      speaker.stop();
+      expect(el?.src).toBe("");
+      expect(el?.loads).toBe(1);
+      expect(speaker.releaseForMic?.()).toBeGreaterThan(0);
     });
 
     it("WebKit: a barge-in stop clears the source and calls load()", async () => {

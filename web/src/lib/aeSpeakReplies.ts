@@ -226,10 +226,19 @@ export function registerCloudPrimer(primer: (() => void) | null): void {
 }
 
 let cloudReleaser: (() => number) | null = null;
+let cloudSpeaking: (() => boolean) | null = null;
 
-/** The cloud speaker's mic-start release: frees its audio element and returns the settle ms left. */
-export function registerCloudReleaser(releaser: (() => number) | null): void {
+/**
+ * The cloud speaker's mic-start release: frees its audio element and returns the settle ms left.
+ * `speaking` tells whether a real reply is playing, so a reply that starts during the settle is
+ * waited out instead of the mic starting over it.
+ */
+export function registerCloudReleaser(
+  releaser: (() => number) | null,
+  speaking: (() => boolean) | null = null,
+): void {
   cloudReleaser = releaser;
+  cloudSpeaking = speaking;
 }
 
 /** On WebKit, how long after the cloud audio element is released the recognizer may start. */
@@ -302,24 +311,52 @@ export const MIC_SYNTH_WAIT_CAP_MS = 1500;
  * runs at once and nothing is cancelled. At the cap the prime is cancelled and `go` runs. Returns a cancel that drops a pending `go`. Never throws.
  */
 export function whenSynthIdle(go: () => void): () => void {
+  let cancelled = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let inner: (() => void) | null = null;
+  const realReplySpeaking = (): boolean => {
+    try {
+      return cloudSpeaking?.() ?? false;
+    } catch {
+      return false;
+    }
+  };
   // WebKit: the cloud audio element must have let go of the audio session before the mic starts.
-  let settleMs = 0;
-  try {
-    if (isWebKitSpeech()) settleMs = cloudReleaser?.() ?? 0;
-  } catch {
-    settleMs = 0;
-  }
-  if (settleMs > 0) {
-    let inner: (() => void) | null = null;
-    const settle = setTimeout(() => {
-      inner = whenSynthIdleNow(go);
-    }, settleMs);
-    return () => {
-      clearTimeout(settle);
-      inner?.();
-    };
-  }
-  return whenSynthIdleNow(go);
+  const begin = () => {
+    timer = null;
+    if (cancelled) return;
+    let settleMs = 0;
+    try {
+      if (isWebKitSpeech()) settleMs = cloudReleaser?.() ?? 0;
+    } catch {
+      settleMs = 0;
+    }
+    if (settleMs > 0) timer = setTimeout(settleDone, settleMs);
+    else inner = whenSynthIdleNow(go);
+  };
+  // A reply that started during the settle owns the element: wait for it, then release again.
+  const settleDone = () => {
+    timer = null;
+    if (cancelled) return;
+    if (realReplySpeaking()) {
+      timer = setTimeout(waitForReply, MIC_SYNTH_POLL_MS);
+      return;
+    }
+    inner = whenSynthIdleNow(go);
+  };
+  const waitForReply = () => {
+    timer = null;
+    if (cancelled) return;
+    if (realReplySpeaking()) timer = setTimeout(waitForReply, MIC_SYNTH_POLL_MS);
+    else begin();
+  };
+  begin();
+  return () => {
+    cancelled = true;
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    inner?.();
+  };
 }
 
 function whenSynthIdleNow(go: () => void): () => void {
