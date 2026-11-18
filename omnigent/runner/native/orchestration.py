@@ -9052,6 +9052,16 @@ async def _auto_create_claude_terminal(
     claude_terminal_env = build_native_claude_terminal_env(
         claude_config, account_name=claude_account
     )
+    # A child session compacts earlier than its parent (AE patch).
+    from omnigent.runner.ae_child_compact_window import apply_child_auto_compact_window
+
+    apply_child_auto_compact_window(
+        claude_terminal_env,
+        parent_session_id=(
+            session_init.snapshot.parent_session_id if session_init is not None else None
+        ),
+        inherited_env=os.environ,
+    )
     # Name the account before the first render, so usage readers do not wait for the shim.
     await asyncio.to_thread(write_launch_account, bridge_dir, claude_terminal_env)
 
