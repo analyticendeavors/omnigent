@@ -3,7 +3,7 @@
 // can take the mic from the recognizer. Off means no getUserMedia or AudioContext for the
 // meter, the ring and bars driven by recognizer events, and the stall check on those events.
 import type { AeMicController } from "@/lib/aeVoiceMode";
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getMicLevel, resetMicLevel } from "@/lib/aeMicLevel";
 import { getVoiceBins, resetVoiceBins } from "@/lib/aeVoiceLevel";
@@ -143,7 +143,7 @@ afterEach(() => {
 async function listenVoice() {
   const controller = { current: null as AeMicController | null };
   const onListeningChange = vi.fn();
-  render(
+  const view = render(
     <ComposerMicButton
       onTranscript={vi.fn()}
       controller={controller}
@@ -156,7 +156,7 @@ async function listenVoice() {
     instances[0].own.audiostart?.({});
     await vi.advanceTimersByTimeAsync(0);
   });
-  return { controller, onListeningChange };
+  return { controller, onListeningChange, view };
 }
 
 /** Animation frames every 100 ms for `ms` of fake time. */
@@ -591,6 +591,99 @@ describe("ComposerMicButton (restart race)", () => {
     await run(10_500);
     expect(instances).toHaveLength(2);
     expect(startSpy).toHaveBeenCalledTimes(2);
+  });
+});
+
+/** A WebKit idle recycle is under way: instances[1] waits for instances[0] to end. */
+async function pendingRestart() {
+  setUserAgent(IOS_UA);
+  const listening = await listenVoice();
+  await run(10_500);
+  expect(instances).toHaveLength(2);
+  expect(startSpy).toHaveBeenCalledTimes(1);
+  return listening;
+}
+
+describe("ComposerMicButton (stop during the old end wait)", () => {
+  it("the button stop ends the take and never starts the new recognizer", async () => {
+    const { onListeningChange, view } = await pendingRestart();
+    act(() => {
+      fireEvent.click(view.getByRole("button"));
+    });
+    expect(onListeningChange).toHaveBeenCalledWith(false);
+    act(() => instances[0].own.end?.({}));
+    await run(5000);
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("Esc discards the take and never starts the new recognizer", async () => {
+    const { onListeningChange } = await pendingRestart();
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(onListeningChange).toHaveBeenCalledWith(false);
+    act(() => instances[0].own.end?.({}));
+    await run(5000);
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("controller.stop ends the take at once, without the stop watchdog", async () => {
+    const { controller, onListeningChange } = await pendingRestart();
+    act(() => controller.current?.stop());
+    expect(onListeningChange).toHaveBeenCalledWith(false);
+    expect(controller.current?.isListening()).toBe(false);
+    act(() => instances[0].own.end?.({}));
+    await run(5000);
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    expect(formatVoiceLog()).not.toContain("mic stop watchdog");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("an unmount during the wait leaves no timer behind", async () => {
+    const { view } = await pendingRestart();
+    view.unmount();
+    // Only the old recognizer's late-final timer (self-expiring) may remain; no wait timer starts.
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(startSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("a second restart during a pending start waits on the real old recognizer", async () => {
+    await pendingRestart();
+    // The pending recognizer reports a final: another recycle replaces it before it ever started.
+    act(() =>
+      instances[1].own.result?.({
+        resultIndex: 0,
+        results: { length: 1, 0: { length: 1, isFinal: true, 0: { transcript: "hi" } } },
+      }),
+    );
+    expect(instances).toHaveLength(3);
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    // The never-started recognizer is not waited on: the real one ends and the newest starts.
+    act(() => instances[0].own.end?.({}));
+    expect(startSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("a late end after the cap is ignored", async () => {
+    await pendingRestart();
+    await run(1500);
+    expect(startSpy).toHaveBeenCalledTimes(2);
+    act(() => instances[0].own.end?.({}));
+    expect(startSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("on Chrome an aborted error right after a restart still reports a deaf take", async () => {
+    setUserAgent(CHROME_UA);
+    writeVoiceMeter(false);
+    const { onListeningChange } = await listenVoice();
+    await run(10_500);
+    expect(instances).toHaveLength(2);
+    expect(startSpy).toHaveBeenCalledTimes(2);
+    act(() => instances[1].own.error?.({ error: "aborted", message: "x" }));
+    expect(formatVoiceLog()).not.toContain("mic restart aborted");
+    expect(onListeningChange).toHaveBeenCalledWith(false, "deaf");
   });
 });
 

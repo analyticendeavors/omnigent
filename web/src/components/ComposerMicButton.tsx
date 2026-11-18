@@ -291,6 +291,8 @@ export const ComposerMicButton = ({
   const audibleUntilRef = useRef(0);
   // The next `start` event belongs to a recognizer we swapped in ourselves: no snapshot.
   const silentStartRef = useRef(false);
+  // Ends a take whose restart still waits for the old recognizer's end; set by the recognizer effect.
+  const userStopRef = useRef<() => boolean>(() => false);
   // The next listening change was made by us (a deaf replace or a forced restart): Voice mode
   // was told another way, or needs no word.
   const quietStopRef = useRef(false);
@@ -360,6 +362,30 @@ export const ComposerMicButton = ({
     // When the last silent restart called start(), and whether its one abort retry is spent.
     let silentRestartAt = 0;
     let abortRetried = false;
+    // Recognizers a restart built but has not started yet (still waiting on the old end), and
+    // the real recognizer each one waits on: a second restart waits on that one, not on a
+    // recognizer that can never fire end.
+    const neverStarted = new WeakSet<SpeechRecognitionLike>();
+    const waitingOn = new WeakMap<SpeechRecognitionLike, SpeechRecognitionLike | null>();
+
+    // The user (toggle, Esc, controller.stop, disable) ended the take while a restart still
+    // waits for the old end. The new recognizer was never started, so no end event will come:
+    // end the take here, as a normal stop would. False when nothing was pending.
+    const userStop = (): boolean => {
+      silentRestartAt = 0;
+      if (!cancelPendingStart) return false;
+      logVoice("mic stop during restart wait");
+      cancelPendingStart();
+      silentStartRef.current = false;
+      clearLiveness();
+      clearStopWatchdog();
+      voiceTakeRef.current = false;
+      transitionRef.current = false;
+      listeningRef.current = false;
+      setIsListening(false);
+      return true;
+    };
+    userStopRef.current = userStop;
 
     // Tells Voice mode a start never reached listening, at most once per take.
     const failPendingStart = (reason?: "deaf") => {
@@ -390,8 +416,7 @@ export const ComposerMicButton = ({
 
     // A fresh recognizer started in place while the take stays "listening": Voice mode is told
     // nothing, and the transcript already delivered is kept. False when start() threw.
-    const silentRestart = (keepLateFinal = false, isRetry = false): boolean => {
-      if (!isRetry) abortRetried = false;
+    const silentRestart = (keepLateFinal = false): boolean => {
       if (keepLateFinal) {
         // Ask the old recognizer to wrap up: a final it still owes is passed on once.
         try {
@@ -400,9 +425,14 @@ export const ComposerMicButton = ({
           // Nothing to stop.
         }
       }
-      const old = replace(keepLateFinal);
+      const wasVoiceTake = voiceTakeRef.current;
+      const replaced = replace(keepLateFinal);
       const next = recognitionRef.current;
       if (!next) return false;
+      // A replaced recognizer that never started has no end to wait for: wait on the real one
+      // it was itself waiting on.
+      let old: SpeechRecognitionLike | null = replaced;
+      while (old && neverStarted.has(old)) old = waitingOn.get(old) ?? null;
       silentStartRef.current = true;
       startSeenRef.current = false;
       audioStartSeenRef.current = false;
@@ -413,6 +443,8 @@ export const ComposerMicButton = ({
       // A fresh recognizer gets the whole no-audiostart allowance before that check judges it.
       takeStartRef.current = Date.now();
       const begin = (): boolean => {
+        neverStarted.delete(next);
+        waitingOn.delete(next);
         silentRestartAt = Date.now();
         try {
           next.start();
@@ -427,29 +459,39 @@ export const ComposerMicButton = ({
       if (!old || !isWebKitSpeech() || endedRecognizers.has(old)) return begin();
       // WebKit: starting now makes the server abort the old recognizer, and that abort lands on
       // the new one. Wait for the old end (capped), unless the take stopped meanwhile.
+      neverStarted.add(next);
+      waitingOn.set(next, old);
       const go = () => {
         cancelPendingStart = null;
-        if (recognitionRef.current !== next || disabledRef.current || !listeningRef.current) {
+        if (
+          recognitionRef.current !== next ||
+          disabledRef.current ||
+          !listeningRef.current ||
+          discardingRef.current ||
+          transitionRef.current ||
+          (wasVoiceTake && !voiceTakeRef.current)
+        ) {
           silentStartRef.current = false;
           return;
         }
         if (!begin()) reportDeaf("stall restart failed");
       };
+      const waitOn = old;
       const onEnd = () => finish(false);
       const timer = setTimeout(() => finish(true), MIC_OLD_END_WAIT_MS);
       let waiting = true;
       const finish = (capped: boolean) => {
         if (!waiting) return;
         waiting = false;
-        old.removeEventListener("end", onEnd);
+        waitOn.removeEventListener("end", onEnd);
         clearTimeout(timer);
         if (capped) logVoice("mic old end wait capped");
         go();
       };
-      old.addEventListener("end", onEnd);
+      waitOn.addEventListener("end", onEnd);
       cancelPendingStart = () => {
         waiting = false;
-        old.removeEventListener("end", onEnd);
+        waitOn.removeEventListener("end", onEnd);
         clearTimeout(timer);
         cancelPendingStart = null;
       };
@@ -602,7 +644,12 @@ export const ComposerMicButton = ({
         setIsListening(true);
         // Snapshot point: let the parent record the text so Esc can revert to it.
         if (silentStartRef.current) silentStartRef.current = false;
-        else onVoiceStartRef.current?.();
+        else {
+          // A new take gets its own single abort retry.
+          abortRetried = false;
+          silentRestartAt = 0;
+          onVoiceStartRef.current?.();
+        }
       };
       const handleEnd = () => {
         if (!current() || serverTakeOwnsState()) return;
@@ -630,6 +677,10 @@ export const ComposerMicButton = ({
         if (!current() || serverTakeOwnsState()) return;
         if (
           (event as SpeechRecognitionErrorEventLike).error === "aborted" &&
+          isWebKitSpeech() &&
+          listeningRef.current &&
+          !disabledRef.current &&
+          !discardingRef.current &&
           silentRestartAt > 0 &&
           Date.now() - silentRestartAt < MIC_RESTART_ABORT_WINDOW_MS
         ) {
@@ -642,7 +693,7 @@ export const ComposerMicButton = ({
           }
           abortRetried = true;
           logVoice("mic restart aborted", "retrying");
-          if (!silentRestart(false, true)) reportDeaf("stall restart failed");
+          if (!silentRestart(false)) reportDeaf("stall restart failed");
           return;
         }
         if (silentStartRef.current) {
@@ -735,6 +786,7 @@ export const ComposerMicButton = ({
         eventRestartCappedRef.current = false;
         stallRef.current.result(Date.now());
         eventStallRef.current.result(Date.now());
+        silentRestartAt = 0;
         pulseTargetRef.current = 0.65;
         // Drop late events that arrive after the composer went disabled, or after
         // an Esc discard the parent has already reverted.
@@ -821,6 +873,7 @@ export const ComposerMicButton = ({
         };
         const logOldEnd = () => {
           dropOldLogs();
+          endedRecognizers.add(old);
           logVoice("mic old end");
         };
         const logOldError = (event: Event) => {
@@ -871,6 +924,7 @@ export const ComposerMicButton = ({
 
     return () => {
       cancelPendingStart?.();
+      userStopRef.current = () => false;
       const old = recognitionRef.current;
       if (old) {
         detachers.get(old)?.();
@@ -896,6 +950,7 @@ export const ComposerMicButton = ({
       onInterimRef.current?.("");
       return;
     }
+    if (userStopRef.current()) return;
     try {
       recognitionRef.current?.stop();
     } catch {
@@ -1326,11 +1381,14 @@ export const ComposerMicButton = ({
     }
     const recognition = recognitionRef.current;
     if (!recognition) return false;
+    // A stop while a restart waits for the old end: the new recognizer never started.
+    if (listeningRef.current && userStopRef.current()) return true;
     transitionRef.current = true;
     // The Web Speech path has no server start to consume the controller's flag.
     controllerStartRef.current = false;
     try {
       if (listeningRef.current) {
+        userStopRef.current();
         logVoice("mic stop");
         recognition.stop();
         armStopWatchdog();
@@ -1565,7 +1623,7 @@ export const ComposerMicButton = ({
           serverBusyRef.current = false;
           session.cancel();
           setIsListening(false);
-        } else {
+        } else if (!userStopRef.current()) {
           try {
             recognitionRef.current?.stop();
           } catch {
