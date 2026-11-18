@@ -111,6 +111,16 @@ const MIC_EVENT_RESTART_MAX_PER_MIN = 4;
 // app or tab took is reacquired. It is not "deaf": the user may just be quiet. At most this many
 // idle recycles per minute, then none until the next result.
 const MIC_IDLE_RECYCLE_MS = 10_000;
+
+/** speechSynthesis speaking/pending, for the voice log: assistant audio can take the mic. */
+function speechSynthesisState(): string {
+  try {
+    const synth = window.speechSynthesis;
+    return synth ? `speaking=${synth.speaking} pending=${synth.pending}` : "speechSynthesis none";
+  } catch {
+    return "speechSynthesis unreadable";
+  }
+}
 const MIC_IDLE_RECYCLE_MAX_PER_MIN = 6;
 // The assistant's own voice reaching the mic is not the user: no stall checks while it plays
 // and for this long after.
@@ -434,8 +444,9 @@ export const ComposerMicButton = ({
         return;
       }
       idleRecycleTimesRef.current = [...recent, now];
-      logVoice("mic idle recycle");
-      if (!silentRestart()) {
+      logVoice("mic idle recycle", speechSynthesisState());
+      // stop, not abort: an utterance still being recognized gets its final delivered late.
+      if (!silentRestart(true)) {
         reportDeaf("idle recycle failed");
         return;
       }
@@ -514,7 +525,10 @@ export const ComposerMicButton = ({
       const recognition = new Ctor();
       // Keep listening until the user clicks stop — no auto-stop on silence.
       recognition.continuous = true;
-      recognition.interimResults = false;
+      // WebKit sends speechstart/soundstart only from partial hypotheses, so with interim results
+      // off a take looks silent to the idle recycle until the final. Interim results only count
+      // as recognizer activity; handleResult appends finals alone.
+      recognition.interimResults = isWebKitSpeech();
       recognition.lang = lang;
       const current = () => recognitionRef.current === recognition;
 
@@ -721,6 +735,18 @@ export const ComposerMicButton = ({
       if (old) {
         detachers.get(old)?.();
         detachers.delete(old);
+        // A detached recognizer's end and error stay in the log, so a take that died quietly
+        // is visible afterwards.
+        const logOldEnd = () => {
+          old.removeEventListener("end", logOldEnd);
+          logVoice("mic old end");
+        };
+        const logOldError = (event: Event) => {
+          old.removeEventListener("error", logOldError);
+          logVoice("mic old error", String((event as SpeechRecognitionErrorEventLike).error));
+        };
+        old.addEventListener("end", logOldEnd);
+        old.addEventListener("error", logOldError);
         if (keepLateFinal) {
           let lateDone = false;
           const onLate = (event: Event) => {
@@ -1225,7 +1251,7 @@ export const ComposerMicButton = ({
         recognition.stop();
         armStopWatchdog();
       } else {
-        logVoice("mic start browser");
+        logVoice("mic start browser", speechSynthesisState());
         startSeenRef.current = false;
         audioStartSeenRef.current = false;
         recognizerSoundSeenRef.current = false;
