@@ -3363,12 +3363,12 @@ def register_core_routes(
                     f"Session not found: {source_id!r}",
                     code=ErrorCode.NOT_FOUND,
                 )
+        ae_side_chat_archive.refuse_side_chat_of_archived(source, body.side_chat)
         if source.agent_id is None:
             raise OmnigentError(
                 "Source session has no agent binding — cannot fork.",
                 code=ErrorCode.INVALID_INPUT,
             )
-        ae_side_chat_archive.refuse_side_chat_of_archived(source, body.side_chat)
 
         from omnigent.server.routes.sandbox_inference import (
             actual_harness,
@@ -3867,6 +3867,14 @@ def register_core_routes(
         if permission_store is not None and user_id is not None:
             await asyncio.to_thread(permission_store.ensure_user, user_id)
             await asyncio.to_thread(permission_store.grant, user_id, new_conv.id, LEVEL_OWNER)
+        if body.side_chat:
+            await ae_side_chat_archive.archive_side_chat_if_source_archived(
+                new_conv.id,
+                source_id,
+                conversation_store,
+                runner_router,
+                getattr(request.app.state, "host_registry", None),
+            )
         # Push the forked session to this user's other open tabs — but NOT a
         # side chat: it surfaces only as a Workspace-rail tab, never a sidebar
         # row, so announcing it would leak it into every open sidebar (the

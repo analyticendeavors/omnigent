@@ -30,6 +30,8 @@ _logger = logging.getLogger(__name__)
 
 SIDE_CHAT_ARCHIVED_WITH_LABEL_KEY = "ae.side_chat.archived_with"
 
+_ARCHIVED_SOURCE_MESSAGE = "This chat is archived. Unarchive it to open a side chat."
+
 # Side chats of side chats are legal; the cap keeps a corrupt cycle finite.
 _MAX_DEPTH = 8
 
@@ -114,13 +116,66 @@ def refuse_side_chat_of_archived(source: Any, side_chat: bool) -> None:
     """
     if side_chat and getattr(source, "archived", False):
         raise OmnigentError(
-            "This chat is archived. Unarchive it to open a side chat.",
+            _ARCHIVED_SOURCE_MESSAGE,
             code=ErrorCode.INVALID_INPUT,
         )
 
 
+async def archive_side_chat_if_source_archived(
+    side_id: str,
+    source_id: str,
+    conversation_store: Any,
+    runner_router: Any,
+    host_registry: Any,
+) -> None:
+    """Close the race between opening a side chat and archiving its source.
+
+    Runs after the fork row is committed. The archive cascade reads the side
+    chats only after the archive commits, so either it already sees this fork,
+    or this re-read sees the source archived; then the new side chat is archived
+    under the same root (so Undo restores it), stopped like the others, and the
+    request is refused as the pre-check would have refused it. Added 2026-11-18.
+
+    :param side_id: The side chat just created.
+    :param source_id: Its source session.
+    :param conversation_store: The conversation store.
+    :param runner_router: Runner router for the deferred stop, or ``None``.
+    :param host_registry: Host registry for the deferred stop, or ``None``.
+    :raises OmnigentError: When the source is archived by now.
+    """
+    from omnigent.server.routes._sessions.orchestration import _spawn_archive_stop
+
+    source = await asyncio.to_thread(conversation_store.get_conversation, source_id)
+    if source is None or not source.archived:
+        return
+    root_id = source.labels.get(SIDE_CHAT_ARCHIVED_WITH_LABEL_KEY) or source_id
+    if await asyncio.to_thread(_archive_one, conversation_store, side_id, root_id, None) == (
+        "archived"
+    ):
+        _spawn_archive_stop(
+            side_id, conversation_store, runner_router, host_registry, delete_worktree=False
+        )
+    raise OmnigentError(_ARCHIVED_SOURCE_MESSAGE, code=ErrorCode.INVALID_INPUT)
+
+
 def _owned(owns: OwnerCheck | None, side_id: str) -> bool:
     return owns is None or owns(side_id)
+
+
+def _load_owned(conversation_store: Any, side_id: str, owns: OwnerCheck | None) -> Any:
+    """The side chat row when it exists and the caller owns it, else ``None``.
+
+    A failed read or ownership check also gives ``None``: the walk descends only
+    below a node whose ownership was established, never past an unknown one.
+    """
+    try:
+        conv = conversation_store.get_conversation(side_id)
+        if conv is None or not _owned(owns, side_id):
+            return None
+    except Exception:  # unknown owner: prune rather than guess
+        _logger.warning("Side chat %s lookup or ownership check failed", side_id, exc_info=True)
+        return None
+    return conv
 
 
 def _archive_one(
@@ -132,8 +187,8 @@ def _archive_one(
         ``"present"`` (already archived: keep walking, change nothing) or
         ``"archived"``.
     """
-    conv = conversation_store.get_conversation(side_id)
-    if conv is None or not _owned(owns, side_id):
+    conv = _load_owned(conversation_store, side_id, owns)
+    if conv is None:
         return "skip"
     if conv.archived:
         return "present"
@@ -191,6 +246,7 @@ async def cascade_archive(
     seen = {session_id}
     level = [session_id]
     undone = False
+    halted = False
     for _depth in range(_MAX_DEPTH):
         next_level: list[str] = []
         for parent_id in level:
@@ -204,9 +260,21 @@ async def cascade_archive(
                     continue
                 seen.add(side_id)
                 try:
-                    if not await asyncio.to_thread(_root_archived, conversation_store, session_id):
-                        undone = True
-                        break
+                    root_still_archived = await asyncio.to_thread(
+                        _root_archived, conversation_store, session_id
+                    )
+                except Exception:  # cannot tell whether an Undo landed: stop here
+                    _logger.warning(
+                        "Root re-read failed for %s; stopping the side chat walk",
+                        session_id,
+                        exc_info=True,
+                    )
+                    halted = True
+                    break
+                if not root_still_archived:
+                    undone = True
+                    break
+                try:
                     outcome = await asyncio.to_thread(
                         _archive_one, conversation_store, side_id, session_id, owns
                     )
@@ -223,13 +291,13 @@ async def cascade_archive(
                         )
                         archived.append(side_id)
                 except Exception:  # best effort per side chat
-                    # Still walk its children (each is checked on its own), so one
-                    # failed write never leaves nested side chats running.
+                    # Ownership was established (a failed check returns "skip"), so a
+                    # failed write still walks its children, each checked on its own.
                     _logger.warning("Archiving side chat %s failed", side_id, exc_info=True)
                 next_level.append(side_id)
-            if undone:
+            if undone or halted:
                 break
-        if undone or not next_level:
+        if undone or halted or not next_level:
             break
         level = next_level
     try:
@@ -251,8 +319,8 @@ def _restore_one(
     :returns: ``"skip"`` (missing or not owned: prune), ``"present"`` (not ours:
         keep walking) or ``"restored"``.
     """
-    conv = conversation_store.get_conversation(side_id)
-    if conv is None or not _owned(owns, side_id):
+    conv = _load_owned(conversation_store, side_id, owns)
+    if conv is None:
         return "skip"
     if not conv.archived or conv.labels.get(SIDE_CHAT_ARCHIVED_WITH_LABEL_KEY) != root_id:
         return "present"
