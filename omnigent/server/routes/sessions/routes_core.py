@@ -188,6 +188,7 @@ from omnigent.server.routes._sessions.orchestration import (
     _validate_session_model_selection,
     ensure_runner_connected,
 )
+from omnigent.server.routes.sessions import ae_side_chat_archive
 from omnigent.server.routes.sessions.ae_bypass_switch import (
     SwitchOutcome,
     relaunch_unconfirmed,
@@ -2871,6 +2872,12 @@ def register_core_routes(
                 getattr(request.app.state, "host_registry", None),
                 delete_worktree=body.delete_worktree,
             )
+            await ae_side_chat_archive.cascade_archive(
+                session_id,
+                conversation_store,
+                runner_router,
+                getattr(request.app.state, "host_registry", None),
+            )
         elif body.archived is False:
             # Unarchive (including Undo, which re-PATCHes archived=false within
             # the pill's window): cancel a still-pending archive stop so the
@@ -2878,6 +2885,8 @@ def register_core_routes(
             # decided to keep. Same-replica fast path; the deferred stop's
             # archived-flag re-check covers a cross-replica Undo.
             _cancel_pending_archive_stop(session_id)
+            await ae_side_chat_archive.cascade_unarchive(session_id, conversation_store)
+            await ae_side_chat_archive.clear_archived_with(session_id, conversation_store)
         # The runner applies native settings live. Silent startup metadata
         # writes skip both recovery and forwarding to avoid recursive launches.
         live_forward = not body.silent
