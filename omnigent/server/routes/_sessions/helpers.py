@@ -1744,6 +1744,9 @@ def _publish_input_consumed(
 # started_at lets clients anchor their elapsed counter to the true start,
 # even across a page reload (the live stream has no replay).
 _compaction_started_at: WorkspaceScopedCache[str, int] = WorkspaceScopedCache()
+#: A recorded compaction start older than this (seconds) lost its end edge;
+#: matches the page's 15-minute background compaction cap.
+_COMPACTION_START_STALE_S = 900
 
 
 def _publish_compaction_in_progress(session_id: str, *, background: bool = False) -> None:
@@ -1752,7 +1755,8 @@ def _publish_compaction_in_progress(session_id: str, *, background: bool = False
 
     Repeated calls while the same compaction runs reuse the ``started_at``
     recorded on the first call; ``completed``/``failed`` clear it so the
-    next compaction starts a fresh clock.
+    next compaction starts a fresh clock. A start older than
+    :data:`_COMPACTION_START_STALE_S` is replaced, since its end was lost.
 
     :param session_id: Session/conversation identifier,
         e.g. ``"conv_abc123"``.
@@ -1760,7 +1764,14 @@ def _publish_compaction_in_progress(session_id: str, *, background: bool = False
         and it can outlive the turn; adds ``"background": True`` so clients
         keep the spinner through turn ends.
     """
-    started_at = _compaction_started_at.setdefault(session_id, int(time.time()))
+    now = int(time.time())
+    started_at = _compaction_started_at.get(session_id)
+    if started_at is None or now - started_at > _COMPACTION_START_STALE_S:
+        # A harness that never sent completed or failed (Esc, a crash) left an
+        # old start behind; the next compaction must not inherit it, or the
+        # page drops its spinner as stale (2026-11-18).
+        started_at = now
+        _compaction_started_at[session_id] = started_at
     payload: dict[str, object] = {
         "type": "response.compaction.in_progress",
         "started_at": started_at,
