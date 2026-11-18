@@ -2877,6 +2877,9 @@ def register_core_routes(
                 conversation_store,
                 runner_router,
                 getattr(request.app.state, "host_registry", None),
+                ae_side_chat_archive.make_owner_check(
+                    user_id, permission_store, conversation_store
+                ),
             )
         elif body.archived is False:
             # Unarchive (including Undo, which re-PATCHes archived=false within
@@ -2885,7 +2888,13 @@ def register_core_routes(
             # decided to keep. Same-replica fast path; the deferred stop's
             # archived-flag re-check covers a cross-replica Undo.
             _cancel_pending_archive_stop(session_id)
-            await ae_side_chat_archive.cascade_unarchive(session_id, conversation_store)
+            await ae_side_chat_archive.cascade_unarchive(
+                session_id,
+                conversation_store,
+                ae_side_chat_archive.make_owner_check(
+                    user_id, permission_store, conversation_store
+                ),
+            )
             await ae_side_chat_archive.clear_archived_with(session_id, conversation_store)
         # The runner applies native settings live. Silent startup metadata
         # writes skip both recovery and forwarding to avoid recursive launches.

@@ -10337,11 +10337,20 @@ def _reject_server_reserved_label_seed(labels: dict[str, str] | None) -> None:
         return
     from omnigent.onboarding.claude_accounts import CLAUDE_ACCOUNT_LABEL_KEY
     from omnigent.server.routes._host_worktree import WORKTREE_ROOT_LABEL_KEY
+    from omnigent.server.routes.sessions.ae_side_chat_archive import (
+        SIDE_CHAT_ARCHIVED_WITH_LABEL_KEY,
+    )
     from omnigent.stores.conversation_store import SIDE_CHAT_SOURCE_LABEL_KEY
 
     if SIDE_CHAT_SOURCE_LABEL_KEY in labels:
         raise OmnigentError(
             f"label {SIDE_CHAT_SOURCE_LABEL_KEY!r} is server-internal"
+            " and cannot be set by clients",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    if SIDE_CHAT_ARCHIVED_WITH_LABEL_KEY in labels:
+        raise OmnigentError(
+            f"label {SIDE_CHAT_ARCHIVED_WITH_LABEL_KEY!r} is server-internal"
             " and cannot be set by clients",
             code=ErrorCode.INVALID_INPUT,
         )
