@@ -117,8 +117,14 @@ export function aeLiveMarkerStamps(blocks: readonly AnyBlock[]): Map<string, num
 /** Compaction reports only its start and finish, so progress is a time estimate. */
 export const AE_DEFRAG_TAU_MS = 40_000;
 
-/** Past this, a run with no finish or failure is given up (a dropped stream). */
-export const AE_DEFRAG_STALE_MS = 15 * 60_000;
+/**
+ * Past this, a run with no finish or failure is given up (a dropped stream).
+ * Also the age at which a harness-owned background "Compacting…" spinner is
+ * dropped on the next turn settle, when the harness never reported an end
+ * (Esc during an auto-compaction, a crash, a failed OpenCode compaction).
+ */
+export const AE_BACKGROUND_COMPACTION_STALE_MS = 15 * 60_000;
+export const AE_DEFRAG_STALE_MS = AE_BACKGROUND_COMPACTION_STALE_MS;
 
 /** Eases toward 97%, so the last pills wait for the real finish. */
 export function aeDefragEstimate(elapsedMs: number, tauMs = AE_DEFRAG_TAU_MS): number {
