@@ -3,7 +3,7 @@
 // borders and the product's muted palette, no gradients or shadows.
 
 import { KeyboardIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { AeVoiceRing } from "@/components/AeVoiceRing";
 import { Button } from "@/components/ui/button";
 import { useMicLevel } from "@/lib/aeMicLevel";
@@ -284,14 +284,17 @@ export function AeVoicePanel({
 
   // A pending yes-or-no card needs an answer even while the line plays, and the sheet covers
   // the card on a phone: the label (when the phase word is not already it) and two buttons.
-  const approvalStrip =
+  // `extras` (the sheet's keyboard and End) join the same row, so a phone shows one row.
+  const approvalStrip = (extras?: ReactNode) =>
     approvalActive && onApproval ? (
       <div
         data-testid="ae-voice-approval"
         className="relative z-10 flex flex-wrap items-center justify-center gap-2"
       >
         {key !== "approval" ? (
-          <span className="text-xs font-medium text-amber-500">Waiting for your OK</span>
+          <span className={cn("text-xs font-medium text-amber-500", extras && "w-full")}>
+            Waiting for your OK
+          </span>
         ) : null}
         <Button
           type="button"
@@ -310,8 +313,27 @@ export function AeVoicePanel({
         >
           Decline
         </Button>
+        {extras}
       </div>
     ) : null;
+
+  const sheetControls = (
+    <>
+      {onKeyboard ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label="Type instead"
+          onClick={onKeyboard}
+        >
+          <KeyboardIcon className="size-4" />
+        </Button>
+      ) : null}
+      {endButton}
+    </>
+  );
+  const sheetRow = approvalStrip(sheetControls);
 
   if (layout === "sheet") {
     return (
@@ -353,21 +375,11 @@ export function AeVoicePanel({
         <div className="relative z-10 min-h-10 line-clamp-2 text-sm text-muted-foreground">
           {sub}
         </div>
-        {approvalStrip ? <div className="mt-2">{approvalStrip}</div> : null}
-        <div className="mt-3 flex gap-3">
-          {onKeyboard ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label="Type instead"
-              onClick={onKeyboard}
-            >
-              <KeyboardIcon className="size-4" />
-            </Button>
-          ) : null}
-          {endButton}
-        </div>
+        {sheetRow ? (
+          <div className="mt-3">{sheetRow}</div>
+        ) : (
+          <div className="mt-3 flex gap-3">{sheetControls}</div>
+        )}
       </div>
     );
   }
@@ -393,7 +405,7 @@ export function AeVoicePanel({
         <div className={cn("text-sm font-medium", tone.text)}>{label}</div>
         {sub ? <div className="truncate text-xs text-muted-foreground">{sub}</div> : null}
       </button>
-      {approvalStrip}
+      {approvalStrip()}
       {endButton}
     </div>
   );

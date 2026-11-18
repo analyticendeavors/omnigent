@@ -4,6 +4,7 @@
 
 import { splitForSpeech } from "./aeSpeechText";
 import { logVoice } from "./aeVoiceLog";
+import { isWebKitSpeech } from "./aeVoiceStall";
 import { clearPlaybackBlocked, markPlaybackBlocked } from "./aeVoicePlayback";
 
 export const WORKING_CUE_TEXT = "Working on it.";
@@ -237,6 +238,12 @@ export function primeVoicePlayback(): void {
   }
   try {
     if (!isSpeechSupported()) return;
+    // WebKit keeps a zero-volume utterance speaking for about 10 s and holds the audio session,
+    // so a recognizer started meanwhile hears nothing. The cloud voice never needs it.
+    if (isWebKitSpeech() && readVoiceChoice()?.kind === "cloud") {
+      logVoice("prime skipped synth (webkit cloud)");
+      return;
+    }
     const synth = window.speechSynthesis;
     if (synth.speaking) return;
     const utterance = new window.SpeechSynthesisUtterance(" ");
@@ -245,6 +252,61 @@ export function primeVoicePlayback(): void {
   } catch {
     // Priming is best effort.
   }
+}
+
+/** How often, and for how long, a WebKit mic start waits for the priming utterance to end. */
+export const MIC_SYNTH_POLL_MS = 100;
+export const MIC_SYNTH_WAIT_CAP_MS = 1500;
+
+/**
+ * Runs `go` once the device synthesizer is idle. Only WebKit waits (its priming utterance holds
+ * the audio session); elsewhere `go` runs at once. At the cap the synthesizer is cancelled and
+ * `go` runs. Returns a cancel that drops a pending `go`. Never throws.
+ */
+export function whenSynthIdle(go: () => void): () => void {
+  let synth: SpeechSynthesis | null = null;
+  try {
+    if (isWebKitSpeech() && isSpeechSupported() && window.speechSynthesis.speaking) {
+      synth = window.speechSynthesis;
+    }
+  } catch {
+    synth = null;
+  }
+  if (!synth) {
+    go();
+    return () => {};
+  }
+  const started = Date.now();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const tick = () => {
+    timer = null;
+    const speaking = ((): boolean => {
+      try {
+        return synth.speaking;
+      } catch {
+        return false;
+      }
+    })();
+    const waited = Date.now() - started;
+    if (speaking && waited < MIC_SYNTH_WAIT_CAP_MS) {
+      timer = setTimeout(tick, MIC_SYNTH_POLL_MS);
+      return;
+    }
+    if (speaking) {
+      try {
+        synth.cancel();
+      } catch {
+        // Best effort.
+      }
+    }
+    logVoice("mic waited for synth", `${waited} ms`);
+    go();
+  };
+  timer = setTimeout(tick, MIC_SYNTH_POLL_MS);
+  return () => {
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+  };
 }
 
 /** Unlocks the cloud voices' audio element only; call inside a tap. Never throws. */

@@ -9,6 +9,7 @@ import { publishMicLevel, resetMicLevel } from "@/lib/aeMicLevel";
 import { publishVoiceBins, resetVoiceBins, syntheticVoiceBins } from "@/lib/aeVoiceLevel";
 import { useVoiceMeter } from "@/lib/aeVoiceMeter";
 import { logVoice } from "@/lib/aeVoiceLog";
+import { whenSynthIdle } from "@/lib/aeSpeakReplies";
 import { createEventStallDetector, createStallDetector, isWebKitSpeech } from "@/lib/aeVoiceStall";
 import { DictationBusyError, DictationSession } from "@/lib/dictation";
 import { isElectronShell } from "@/lib/nativeBridge";
@@ -247,6 +248,8 @@ export const ComposerMicButton = ({
   // Prevents rapid double-clicks from calling recognition.start() twice,
   // which throws InvalidStateError in Chrome.
   const transitionRef = useRef(false);
+  // Cancels a WebKit mic start that waits for the priming utterance to end.
+  const synthWaitCancelRef = useRef<(() => void) | null>(null);
   // Browser-path start bookkeeping for Voice mode: whether the current take ever fired
   // `start`, whether a Web Speech start is still waiting on its first event, the watchdog
   // that gives up on it, and an `end` still owed by a recognizer we aborted ourselves.
@@ -965,6 +968,8 @@ export const ComposerMicButton = ({
     () => () => {
       sessionRef.current?.cancel();
       sessionRef.current = null;
+      synthWaitCancelRef.current?.();
+      synthWaitCancelRef.current = null;
       if (startWatchdogRef.current !== null) clearTimeout(startWatchdogRef.current);
       if (stopWatchdogRef.current !== null) clearTimeout(stopWatchdogRef.current);
       if (livenessTimerRef.current !== null) clearInterval(livenessTimerRef.current);
@@ -1402,7 +1407,18 @@ export const ComposerMicButton = ({
         silentStartRef.current = false;
         stallRef.current.reset(Date.now());
         eventStallRef.current.reset(Date.now());
-        recognition.start();
+        // WebKit: the priming utterance holds the audio session; start once it has ended.
+        synthWaitCancelRef.current = whenSynthIdle(() => {
+          synthWaitCancelRef.current = null;
+          try {
+            stallRef.current.reset(Date.now());
+            eventStallRef.current.reset(Date.now());
+            recognition.start();
+          } catch {
+            transitionRef.current = false;
+            browserStartPendingRef.current = false;
+          }
+        });
       }
     } catch {
       // InvalidStateError from a double-call — drop the guard so the

@@ -316,7 +316,12 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
         void Promise.resolve(el.play())
           .then(() => {
             // A real sentence may have taken the element over since the tap.
-            if (el.src === SILENT_WAV) el.pause();
+            // Release the element so WebKit lets go of the audio session for the mic.
+            if (el.src === SILENT_WAV) {
+              el.pause();
+              el.removeAttribute("src");
+              el.load();
+            }
           })
           .catch(() => {});
       } catch {

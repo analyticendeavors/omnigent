@@ -521,6 +521,9 @@ describe("cloud playback refused by the browser", () => {
     const el = FakeAudio.last as FakeAudio;
     expect(el.played[0]).toMatch(/^data:audio\/wav;base64,UklGR/);
     expect(el.pauses).toBe(1);
+    // Released afterwards, so WebKit lets go of the audio session for the mic.
+    expect(el.src).toBe("");
+    expect(el.loads).toBe(1);
     speaker.speak(sentence("a"), OPTS);
     const src = el.src;
     speaker.prime?.();

@@ -81,6 +81,22 @@ describe("AeVoicePanel", () => {
     expect(screen.queryByTestId("ae-voice-approval")).toBeNull();
   });
 
+  it("the sheet puts Run it, Decline, keyboard and End in one row", () => {
+    panel({
+      layout: "sheet",
+      phase: "approval",
+      approvalActive: true,
+      onApproval: vi.fn(),
+      onKeyboard: vi.fn(),
+    });
+    const row = screen.getByTestId("ae-voice-approval");
+    expect(row.className).toContain("flex");
+    const names = Array.from(row.querySelectorAll("button")).map(
+      (b) => b.getAttribute("aria-label") ?? b.textContent,
+    );
+    expect(names).toEqual(["Run it", "Decline", "Type instead", "End voice mode"]);
+  });
+
   it("renders nothing when Voice mode is off", () => {
     panel({ phase: "off" });
     expect(screen.queryByTestId("ae-voice-panel")).toBeNull();

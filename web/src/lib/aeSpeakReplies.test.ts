@@ -17,6 +17,8 @@ import {
   readSpeakReplies,
   readVoiceChoice,
   voiceLabel,
+  whenSynthIdle,
+  MIC_SYNTH_WAIT_CAP_MS,
   writeFastAnswersState,
   writeFastEnabled,
   writeRate,
@@ -247,6 +249,93 @@ describe("priming playback", () => {
     });
     removeFakeSpeech();
     expect(() => primeVoicePlayback()).not.toThrow();
+  });
+});
+
+const IPHONE_UA =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
+const CHROME_UA =
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
+
+function setUserAgent(ua: string): void {
+  Object.defineProperty(navigator, "userAgent", { configurable: true, value: ua });
+}
+
+describe("priming and the mic on WebKit", () => {
+  afterEach(() => {
+    delete (navigator as { userAgent?: unknown }).userAgent;
+    registerCloudPrimer(null);
+  });
+
+  it("WebKit with the cloud voice speaks no silent utterance", () => {
+    setUserAgent(IPHONE_UA);
+    writeVoiceChoice({ kind: "cloud", id: "v1" });
+    const cloud = vi.fn();
+    registerCloudPrimer(cloud);
+    primeVoicePlayback();
+    expect(cloud).toHaveBeenCalledTimes(1);
+    expect(synth.spokenTexts).toEqual([]);
+  });
+
+  it("WebKit with the device voice still primes", () => {
+    setUserAgent(IPHONE_UA);
+    writeVoiceChoice({ kind: "device", id: "x" });
+    primeVoicePlayback();
+    expect(synth.spokenTexts).toEqual([" "]);
+  });
+
+  it("Chrome with the cloud voice is unchanged", () => {
+    setUserAgent(CHROME_UA);
+    writeVoiceChoice({ kind: "cloud", id: "v1" });
+    primeVoicePlayback();
+    expect(synth.spokenTexts).toEqual([" "]);
+  });
+
+  it("WebKit mic start waits until the synthesizer stops speaking", () => {
+    setUserAgent(IPHONE_UA);
+    synth.speaking = true;
+    const go = vi.fn();
+    whenSynthIdle(go);
+    vi.advanceTimersByTime(300);
+    expect(go).not.toHaveBeenCalled();
+    synth.speaking = false;
+    vi.advanceTimersByTime(100);
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(synth.cancelCount).toBe(0);
+  });
+
+  it("WebKit mic start gives up at the cap and cancels the synthesizer", () => {
+    setUserAgent(IPHONE_UA);
+    synth.speaking = true;
+    const go = vi.fn();
+    whenSynthIdle(go);
+    vi.advanceTimersByTime(MIC_SYNTH_WAIT_CAP_MS - 100);
+    expect(go).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(100);
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(synth.cancelCount).toBe(1);
+  });
+
+  it("a cancelled wait never starts", () => {
+    setUserAgent(IPHONE_UA);
+    synth.speaking = true;
+    const go = vi.fn();
+    whenSynthIdle(go)();
+    vi.advanceTimersByTime(MIC_SYNTH_WAIT_CAP_MS + 500);
+    expect(go).not.toHaveBeenCalled();
+  });
+
+  it("Chrome and an idle WebKit synthesizer start at once", () => {
+    setUserAgent(CHROME_UA);
+    synth.speaking = true;
+    const a = vi.fn();
+    whenSynthIdle(a);
+    expect(a).toHaveBeenCalledTimes(1);
+    setUserAgent(IPHONE_UA);
+    synth.speaking = false;
+    const b = vi.fn();
+    whenSynthIdle(b);
+    expect(b).toHaveBeenCalledTimes(1);
   });
 });
 
