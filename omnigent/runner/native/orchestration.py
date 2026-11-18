@@ -8084,6 +8084,10 @@ class _ClaudeSessionLaunchMetadata:
     #: The session's parent (``parent_session_id``), set for a family child; read from
     #: the init envelope or, when launch carries none, the fetched snapshot (AE patch).
     parent_session_id: str | None = None
+    #: The session is a family child: a parent id, or an ``ae.orch`` label naming its
+    #: lead (family children made by ``create_session`` set no parent id). Same rule as
+    #: the family view, ``ae_roles.is_family_child``.
+    is_family_child: bool = False
 
 
 def _claude_launch_metadata_from_envelope(
@@ -8091,6 +8095,7 @@ def _claude_launch_metadata_from_envelope(
 ) -> _ClaudeSessionLaunchMetadata:
     """Project Claude launch metadata without server callbacks."""
     from omnigent.harnesses.claude_native.ae_launch_account import ACCOUNT_LIVE_LABEL
+    from omnigent.inner.ae_roles import is_family_child
     from omnigent.onboarding.claude_accounts import CLAUDE_ACCOUNT_LABEL_KEY
     from omnigent.runner.subagent_routing import routing_class_from_snapshot
     from omnigent.stores.conversation_store import (
@@ -8120,6 +8125,7 @@ def _claude_launch_metadata_from_envelope(
         claude_account=snapshot.labels.get(CLAUDE_ACCOUNT_LABEL_KEY),
         live_claude_account=snapshot.labels.get(ACCOUNT_LIVE_LABEL),
         parent_session_id=snapshot.parent_session_id or None,
+        is_family_child=is_family_child(snapshot.labels, snapshot.parent_session_id),
     )
 
 
@@ -8129,6 +8135,7 @@ async def _load_legacy_claude_launch_metadata(
 ) -> _ClaudeSessionLaunchMetadata:
     """Fetch Claude launch metadata for servers predating the init envelope."""
     from omnigent.harnesses.claude_native.ae_launch_account import ACCOUNT_LIVE_LABEL
+    from omnigent.inner.ae_roles import is_family_child
     from omnigent.onboarding.claude_accounts import CLAUDE_ACCOUNT_LABEL_KEY
     from omnigent.runner.subagent_routing import routing_class_from_snapshot
     from omnigent.stores.conversation_store import (
@@ -8192,6 +8199,7 @@ async def _load_legacy_claude_launch_metadata(
         claude_account=labels.get(CLAUDE_ACCOUNT_LABEL_KEY),
         live_claude_account=labels.get(ACCOUNT_LIVE_LABEL),
         parent_session_id=parent_session_id if isinstance(parent_session_id, str) else None,
+        is_family_child=is_family_child(labels, parent_session_id),
     )
     permission_mode = _claude_launch_permission_mode(metadata.terminal_launch_args)
     _logger.info(
@@ -9063,7 +9071,7 @@ async def _auto_create_claude_terminal(
 
     apply_child_auto_compact_window(
         claude_terminal_env,
-        parent_session_id=launch_metadata.parent_session_id,
+        is_family_child=launch_metadata.is_family_child,
         inherited_env=os.environ,
     )
     # Name the account before the first render, so usage readers do not wait for the shim.

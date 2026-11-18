@@ -1,8 +1,9 @@
 """Give a child Claude session a smaller auto-compact window than its parent.
 
 Parent and standalone sessions use the user's ``autoCompactWindow`` setting in
-Claude Code's settings. A child session (one with a parent session, made by
-another session in a family) gets :data:`CHILD_AUTO_COMPACT_WINDOW` through
+Claude Code's settings. A child session (made by another session in a family; decided by
+:func:`omnigent.inner.ae_roles.is_family_child`, the rule the family view uses)
+gets :data:`CHILD_AUTO_COMPACT_WINDOW` through
 ``CLAUDE_CODE_AUTO_COMPACT_WINDOW`` so it compacts earlier. The variable
 outranks the setting, so a parent never gets it.
 """
@@ -19,21 +20,21 @@ CHILD_AUTO_COMPACT_WINDOW = "250000"
 def apply_child_auto_compact_window(
     env: MutableMapping[str, str],
     *,
-    parent_session_id: str | None,
+    is_family_child: bool,
     inherited_env: Mapping[str, str],
 ) -> None:
     """
     Set the child auto-compact window in a launch env, in place.
 
-    Does nothing for a session without a parent, and never replaces a value the
+    Does nothing for a lead or standalone session, and never replaces a value the
     launch env or the runner env it inherits already carries.
 
     :param env: The Claude pane's launch env overrides, changed in place.
-    :param parent_session_id: The session's parent, e.g. ``"conv_abc123"``, or
-        ``None`` for a parent or standalone session.
+    :param is_family_child: Whether the session is a family child, from a parent
+        session id or an ``ae.orch`` label (see ``ae_roles.is_family_child``).
     :param inherited_env: The runner environment the pane inherits.
     """
-    if not parent_session_id:
+    if not is_family_child:
         return
     if AUTO_COMPACT_WINDOW_ENV in env or AUTO_COMPACT_WINDOW_ENV in inherited_env:
         return

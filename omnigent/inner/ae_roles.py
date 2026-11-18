@@ -301,19 +301,31 @@ def _agent_lookup(store: ConversationStore) -> Callable[[str], str | None]:
     return lookup
 
 
-def _is_child(conv: Conversation) -> bool:
+def is_family_child(labels: object, parent_session_id: object = None) -> bool:
     """True for a session with a parent or an ``ae.orch`` label holding a session id.
 
     A fork (``omnigent.fork.source_id``, no parent) copies its source's labels
-    but is a top-level session, so it is never a child.
+    but is a top-level session, so it is never a child. ``ae.orch`` of ``"1"``
+    marks a standalone handoff chat or an unknown orchestrator, which leads its
+    own family. The family view and the child auto-compact window both decide
+    with this one rule.
+
+    :param labels: The session's labels, e.g. ``{"ae.orch": "conv_lead"}``; any
+        non-dict reads as no labels.
+    :param parent_session_id: The session's parent id, or ``None``.
     """
-    if getattr(conv, "parent_conversation_id", None):
+    if parent_session_id:
         return True
-    labels = conv.labels if isinstance(conv.labels, dict) else {}
-    if labels.get(FORK_SOURCE_LABEL):
+    label_map = labels if isinstance(labels, dict) else {}
+    if label_map.get(FORK_SOURCE_LABEL):
         return False
-    orch = labels.get(ORCH_LABEL)
+    orch = label_map.get(ORCH_LABEL)
     return isinstance(orch, str) and orch.strip() not in ("", "1")
+
+
+def _is_child(conv: Conversation) -> bool:
+    """True when *conv* is a family child (see :func:`is_family_child`)."""
+    return is_family_child(conv.labels, getattr(conv, "parent_conversation_id", None))
 
 
 def with_roles(

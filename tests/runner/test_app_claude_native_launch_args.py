@@ -1505,11 +1505,29 @@ async def test_auto_create_claude_terminal_rejects_missing_env_chdir_target(
 
 
 @pytest.mark.parametrize(
-    "init_parent,snapshot_parent,expected",
+    "init_parent,snapshot_parent,labels,expected",
     [
-        pytest.param("conv_p", None, "250000", id="envelope-parent"),
-        pytest.param(None, "conv_p", "250000", id="ensure-path-snapshot-parent"),
-        pytest.param(None, None, None, id="no-parent-anywhere"),
+        pytest.param("conv_p", None, {}, "250000", id="envelope-parent"),
+        pytest.param(None, "conv_p", {}, "250000", id="ensure-path-snapshot-parent"),
+        pytest.param(None, None, {}, None, id="no-parent-anywhere"),
+        pytest.param("", None, {"ae.orch": "conv_lead"}, "250000", id="envelope-orch-label"),
+        pytest.param(None, None, {"ae.orch": "conv_lead"}, "250000", id="ensure-path-orch-label"),
+        pytest.param("", None, {"ae.orch": "1"}, None, id="envelope-standalone-orch-one"),
+        pytest.param(None, None, {"ae.orch": "1"}, None, id="ensure-path-standalone-orch-one"),
+        pytest.param(
+            "",
+            None,
+            {"ae.orch": "conv_lead", "omnigent.fork.source_id": "conv_src"},
+            None,
+            id="envelope-fork-with-orch-label",
+        ),
+        pytest.param(
+            None,
+            None,
+            {"ae.orch": "conv_lead", "omnigent.fork.source_id": "conv_src"},
+            None,
+            id="ensure-path-fork-with-orch-label",
+        ),
     ],
 )
 async def test_auto_create_claude_terminal_caps_only_a_child_sessions_compact_window(
@@ -1517,10 +1535,14 @@ async def test_auto_create_claude_terminal_caps_only_a_child_sessions_compact_wi
     monkeypatch: pytest.MonkeyPatch,
     init_parent: str | None,
     snapshot_parent: str | None,
+    labels: dict[str, str],
     expected: str | None,
 ) -> None:
     """
-    A child's launch env carries the auto-compact window; a parent's does not.
+    A child's launch env carries the auto-compact window; a lead's does not.
+
+    A family child made by ``create_session`` has no parent id, only an
+    ``ae.orch`` label naming its lead; a fork copies that label but is no child.
 
     The explicit ensure route (first turn, idle-pane recovery, resume, account
     relaunch) passes no init envelope, so the parent there comes from the
@@ -1529,6 +1551,7 @@ async def test_auto_create_claude_terminal_caps_only_a_child_sessions_compact_wi
     :param init_parent: ``parent_session_id`` in the init envelope; ``None`` runs the
         ensure path with no envelope at all.
     :param snapshot_parent: ``parent_session_id`` the session snapshot answers with.
+    :param labels: The session's labels in the envelope and in the snapshot answer.
     :param expected: The ``CLAUDE_CODE_AUTO_COMPACT_WINDOW`` the pane env should carry.
     """
     from unittest.mock import AsyncMock, Mock
@@ -1553,11 +1576,12 @@ async def test_auto_create_claude_terminal_caps_only_a_child_sessions_compact_wi
     monkeypatch.setattr(ae_launch_account, "write_launch_account", stop_after_env)
 
     def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"parent_session_id": snapshot_parent})
+        return httpx.Response(200, json={"parent_session_id": snapshot_parent, "labels": labels})
 
     session_id = "conv_child_compact"
     session_init = _claude_auto_create_session_init(session_id, bridge_dir)
     session_init.snapshot.parent_session_id = init_parent
+    session_init.snapshot.labels = dict(labels)
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(handler), base_url="http://runner"
     ) as client:
@@ -1574,3 +1598,34 @@ async def test_auto_create_claude_terminal_caps_only_a_child_sessions_compact_wi
 
     assert len(seen) == 1
     assert seen[0].get("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == expected
+
+
+@pytest.mark.parametrize(
+    "labels,parent,expected",
+    [
+        pytest.param({}, None, False, id="lead"),
+        pytest.param({"ae.orch": "conv_lead"}, None, True, id="orch-label"),
+        pytest.param({"ae.orch": "1"}, None, False, id="standalone"),
+        pytest.param({"ae.orch": "conv_lead"}, "conv_p", True, id="parent-and-label"),
+        pytest.param(
+            {"ae.orch": "conv_lead", "omnigent.fork.source_id": "c"}, None, False, id="fork"
+        ),
+    ],
+)
+async def test_legacy_launch_metadata_reads_the_family_child_flag(
+    labels: dict[str, str], parent: str | None, expected: bool
+) -> None:
+    """The snapshot-fetch loader projects ``is_family_child`` from labels and parent."""
+    import httpx
+
+    from omnigent.runner.native import orchestration
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"parent_session_id": parent, "labels": labels})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://runner"
+    ) as client:
+        metadata = await orchestration._load_legacy_claude_launch_metadata(client, "conv_x")
+
+    assert metadata.is_family_child is expected
