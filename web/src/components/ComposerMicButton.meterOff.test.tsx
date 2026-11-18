@@ -17,7 +17,12 @@ const IOS_UA =
 const CHROME_UA =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
-let instances: { handlers: Handlers }[];
+let instances: {
+  own: Handlers;
+  stop: ReturnType<typeof vi.fn>;
+  abort: ReturnType<typeof vi.fn>;
+  interimResults: boolean;
+}[];
 let startSpy: ReturnType<typeof vi.fn>;
 let frames: (() => void)[];
 let getUserMedia: ReturnType<typeof vi.fn>;
@@ -75,7 +80,7 @@ beforeEach(() => {
     abort = vi.fn();
     own: Handlers = {};
     constructor() {
-      instances.push({ handlers: this.own });
+      instances.push(this as unknown as (typeof instances)[number] & { own: Handlers });
     }
     addEventListener(type: string, handler: (event: unknown) => void) {
       this.own[type] = handler;
@@ -128,8 +133,8 @@ async function listenVoice() {
   );
   act(() => controller.current?.start());
   await act(async () => {
-    instances[0].handlers.start?.({});
-    instances[0].handlers.audiostart?.({});
+    instances[0].own.start?.({});
+    instances[0].own.audiostart?.({});
     await vi.advanceTimersByTimeAsync(0);
   });
   return { controller, onListeningChange };
@@ -166,13 +171,13 @@ describe("ComposerMicButton (level meter off)", () => {
     await listenVoice();
     await run(300);
     expect(binsSum()).toBe(0);
-    act(() => instances[0].handlers.speechstart?.({}));
+    act(() => instances[0].own.speechstart?.({}));
     await run(500);
     expect(binsSum()).toBeGreaterThan(0);
     expect(getMicLevel()).toBeGreaterThan(0.2);
     act(() => {
-      instances[0].handlers.speechend?.({});
-      instances[0].handlers.soundend?.({});
+      instances[0].own.speechend?.({});
+      instances[0].own.soundend?.({});
     });
     await run(3000);
     expect(getMicLevel()).toBeLessThan(0.05);
@@ -184,8 +189,8 @@ describe("ComposerMicButton (level meter off)", () => {
     for (let i = 0; i < 6; i += 1) {
       // oxlint-disable-next-line no-await-in-loop -- one beat of fake time per round
       await run(4000);
-      act(() => instances[0].handlers.soundstart?.({}));
-      act(() => instances[0].handlers.soundend?.({}));
+      act(() => instances[0].own.soundstart?.({}));
+      act(() => instances[0].own.soundend?.({}));
     }
     expect(instances).toHaveLength(1);
     expect(onListeningChange).not.toHaveBeenCalledWith(false, "deaf");
@@ -215,12 +220,78 @@ describe("ComposerMicButton (level meter off)", () => {
     expect(onListeningChange).not.toHaveBeenCalledWith(false, "deaf");
   });
 
+  it("with no events at all for 10 s the idle recycle stops the old recognizer instead of aborting it", async () => {
+    setUserAgent(IOS_UA);
+    vi.stubGlobal("speechSynthesis", { speaking: false, pending: false });
+    await listenVoice();
+    await run(10_500);
+    expect(instances).toHaveLength(2);
+    expect(instances[0].stop).toHaveBeenCalled();
+    expect(instances[0].abort).not.toHaveBeenCalled();
+    expect(formatVoiceLog()).toContain("mic idle recycle");
+    expect(formatVoiceLog()).toContain("speaking=");
+  });
+
+  it("on WebKit a take with only start and audiostart, then interim results, keeps its recognizer until the final at 12 s", async () => {
+    setUserAgent(IOS_UA);
+    const onTranscript = vi.fn();
+    const controller = { current: null as AeMicController | null };
+    render(
+      <ComposerMicButton
+        onTranscript={onTranscript}
+        controller={controller}
+        onListeningChange={vi.fn()}
+      />,
+    );
+    act(() => controller.current?.start());
+    expect(instances[0].interimResults).toBe(true);
+    await act(async () => {
+      instances[0].own.start?.({});
+      instances[0].own.audiostart?.({});
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const interim = (text: string) =>
+      act(() =>
+        instances[0].own.result?.({
+          resultIndex: 0,
+          results: { length: 1, 0: { length: 1, isFinal: false, 0: { transcript: text } } },
+        }),
+      );
+    await run(6000);
+    interim("hello");
+    await run(5000);
+    interim("hello there");
+    await run(1000);
+    expect(instances).toHaveLength(1);
+    expect(instances[0].abort).not.toHaveBeenCalled();
+    expect(instances[0].stop).not.toHaveBeenCalled();
+    expect(onTranscript).not.toHaveBeenCalled();
+    act(() =>
+      instances[0].own.result?.({
+        resultIndex: 0,
+        results: {
+          length: 1,
+          0: { length: 1, isFinal: true, 0: { transcript: "hello there friend" } },
+        },
+      }),
+    );
+    expect(onTranscript).toHaveBeenCalledTimes(1);
+    expect(onTranscript).toHaveBeenCalledWith("hello there friend");
+    expect(formatVoiceLog()).not.toContain("mic idle recycle");
+  });
+
+  it("on Chrome the recognizer keeps interim results off", async () => {
+    setUserAgent(CHROME_UA);
+    await listenVoice();
+    expect(instances[0].interimResults).toBe(false);
+  });
+
   it("any recognizer activity restarts the 10 s idle wait", async () => {
     setUserAgent(IOS_UA);
     await listenVoice();
     await run(8000);
-    act(() => instances[0].handlers.soundstart?.({}));
-    act(() => instances[0].handlers.soundend?.({}));
+    act(() => instances[0].own.soundstart?.({}));
+    act(() => instances[0].own.soundend?.({}));
     await run(8000);
     expect(instances).toHaveLength(1);
   });
@@ -231,8 +302,8 @@ describe("ComposerMicButton (level meter off)", () => {
     let seen = 1;
     const reviveLatest = () => {
       const latest = instances[instances.length - 1];
-      latest.handlers.start?.({});
-      latest.handlers.audiostart?.({});
+      latest.own.start?.({});
+      latest.own.audiostart?.({});
     };
     // Half-second beats keep every recycle exactly 10 s after the audiostart that followed the last.
     for (let beat = 0; beat < 180; beat += 1) {
@@ -251,7 +322,7 @@ describe("ComposerMicButton (level meter off)", () => {
     expect(log.match(/mic idle recycle(?! capped)/g)).toHaveLength(6);
     // A result lifts the cap.
     act(() =>
-      instances[6].handlers.result?.({
+      instances[6].own.result?.({
         resultIndex: 0,
         results: { length: 1, 0: { length: 1, isFinal: false, 0: { transcript: "hi" } } },
       }),
@@ -263,9 +334,9 @@ describe("ComposerMicButton (level meter off)", () => {
   it("calls a stall from recognizer events: sound heard, then 3.5 s with no result after it ends", async () => {
     setUserAgent(IOS_UA);
     const { controller, onListeningChange } = await listenVoice();
-    act(() => instances[0].handlers.soundstart?.({}));
+    act(() => instances[0].own.soundstart?.({}));
     await run(1000);
-    act(() => instances[0].handlers.soundend?.({}));
+    act(() => instances[0].own.soundend?.({}));
     await run(3000);
     expect(instances).toHaveLength(1);
     await run(1500);
@@ -278,12 +349,12 @@ describe("ComposerMicButton (level meter off)", () => {
   it("a result before the quiet window ends means no stall, and no sound means none either", async () => {
     setUserAgent(IOS_UA);
     await listenVoice();
-    act(() => instances[0].handlers.speechstart?.({}));
+    act(() => instances[0].own.speechstart?.({}));
     await run(500);
-    act(() => instances[0].handlers.speechend?.({}));
+    act(() => instances[0].own.speechend?.({}));
     await run(2000);
     act(() =>
-      instances[0].handlers.result?.({
+      instances[0].own.result?.({
         resultIndex: 0,
         results: { length: 1, 0: { length: 1, isFinal: false, 0: { transcript: "hi" } } },
       }),
@@ -301,10 +372,10 @@ describe("ComposerMicButton (level meter off)", () => {
     setUserAgent(IOS_UA);
     await listenVoice();
     for (let i = 0; i < 3; i += 1) {
-      act(() => instances[0].handlers.soundstart?.({}));
+      act(() => instances[0].own.soundstart?.({}));
       // oxlint-disable-next-line no-await-in-loop -- one beat of fake time per round
       await run(300);
-      act(() => instances[0].handlers.soundend?.({}));
+      act(() => instances[0].own.soundend?.({}));
       // oxlint-disable-next-line no-await-in-loop -- one beat of fake time per round
       await run(5000);
     }
@@ -315,7 +386,7 @@ describe("ComposerMicButton (level meter off)", () => {
   it("speech heard and then nothing at all stalls only after 20 s, with no end event", async () => {
     setUserAgent(IOS_UA);
     const { controller, onListeningChange } = await listenVoice();
-    act(() => instances[0].handlers.speechstart?.({}));
+    act(() => instances[0].own.speechstart?.({}));
     await run(12_000);
     expect(instances).toHaveLength(1);
     await run(7500);
@@ -330,12 +401,12 @@ describe("ComposerMicButton (level meter off)", () => {
   async function stallRound() {
     const latest = instances[instances.length - 1];
     act(() => {
-      latest.handlers.start?.({});
-      latest.handlers.audiostart?.({});
-      latest.handlers.speechstart?.({});
+      latest.own.start?.({});
+      latest.own.audiostart?.({});
+      latest.own.speechstart?.({});
     });
     await run(300);
-    act(() => latest.handlers.speechend?.({}));
+    act(() => latest.own.speechend?.({}));
     await run(4000);
   }
 
@@ -358,7 +429,7 @@ describe("ComposerMicButton (level meter off)", () => {
     expect(onListeningChange).not.toHaveBeenCalledWith(false, "deaf");
     // A result lifts the cap.
     act(() =>
-      instances[4].handlers.result?.({
+      instances[4].own.result?.({
         resultIndex: 0,
         results: { length: 1, 0: { length: 1, isFinal: false, 0: { transcript: "hi" } } },
       }),
@@ -371,16 +442,16 @@ describe("ComposerMicButton (level meter off)", () => {
     setUserAgent(IOS_UA);
     const { onListeningChange } = await listenVoice();
     await run(2000);
-    act(() => instances[0].handlers.speechstart?.({}));
+    act(() => instances[0].own.speechstart?.({}));
     await run(300);
-    act(() => instances[0].handlers.speechend?.({}));
+    act(() => instances[0].own.speechend?.({}));
     await run(4000);
     expect(instances).toHaveLength(2);
     // The fresh recognizer is silent for 4 s, inside its own 5 s no-audiostart window.
     await run(4000);
     expect(onListeningChange).not.toHaveBeenCalledWith(false, "deaf");
     expect(formatVoiceLog()).not.toContain("no audiostart");
-    act(() => instances[1].handlers.audiostart?.({}));
+    act(() => instances[1].own.audiostart?.({}));
     await run(1000);
     expect(onListeningChange).not.toHaveBeenCalledWith(false, "deaf");
   });
