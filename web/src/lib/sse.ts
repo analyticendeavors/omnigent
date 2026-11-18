@@ -515,6 +515,7 @@ export function parseEvent(rawType: string, data: Record<string, unknown>): Stre
     return {
       type: "compaction_in_progress",
       ...(typeof startedAt === "number" ? { startedAtS: startedAt } : {}),
+      ...(data.background === true ? { background: true } : {}),
     } satisfies CompactionInProgress;
   }
   if (eventType === "response.compaction.completed") {

@@ -359,6 +359,37 @@ async def test_external_compaction_status_publishes_compaction_sse(
         assert "total_tokens" not in published[0][1], (
             f"completed from the hook path must omit total_tokens; got {published[0][1]!r}."
         )
+    # The terminal harness owns this compaction and it can outlive the turn,
+    # so in_progress is flagged background; the other edges carry no flag.
+    if status == "in_progress":
+        assert published[0][1].get("background") is True, (
+            f"harness in_progress must carry background=True; got {published[0][1]!r}."
+        )
+    else:
+        assert "background" not in published[0][1]
+
+
+async def test_server_run_compaction_in_progress_has_no_background_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A server-run compaction's in_progress payload carries no background key."""
+    from omnigent.server.routes._sessions import helpers
+
+    published: list[dict[str, Any]] = []
+
+    def capture_publish(session_id: str, event: dict[str, Any]) -> None:
+        """Capture session-stream events emitted by the helpers."""
+        published.append(event)
+
+    monkeypatch.setattr(
+        "omnigent.server.routes.sessions.session_stream.publish",
+        capture_publish,
+    )
+    helpers._publish_compaction_in_progress("conv_server_run_bg_test")
+    helpers._publish_compaction_completed("conv_server_run_bg_test", None)
+    assert len(published) == 2
+    assert published[0]["type"] == "response.compaction.in_progress"
+    assert "background" not in published[0], published[0]
 
 
 async def test_external_compaction_status_anchors_started_at_to_first_report(

@@ -575,6 +575,11 @@ export interface CompactionInProgressBlock {
    * when the emitter doesn't track it (fall back to client receive time).
    */
   startedAtS?: number;
+  /**
+   * Harness-owned compaction: it outlives the turn, so a turn settle keeps
+   * this spinner; only completed, failed, or an explicit Stop clears it.
+   */
+  background?: true;
 }
 
 /** Conversation compaction finished. Emitted from `response.compaction.completed`. */

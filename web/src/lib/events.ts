@@ -465,6 +465,11 @@ export interface ErrorEvent {
 export interface CompactionInProgress {
   type: "compaction_in_progress";
   /**
+   * Harness-owned compaction: it outlives the turn and is cleared only by
+   * completed, failed, or an explicit Stop.
+   */
+  background?: boolean;
+  /**
    * Unix epoch seconds when the server first saw this compaction in
    * progress. Stable across the repeated progress events a long compaction
    * emits, so the elapsed counter can anchor to the true start — including

@@ -443,6 +443,16 @@ describe("parseEvent — response.compaction.in_progress", () => {
     expect(ev).toEqual({ type: "compaction_in_progress", startedAtS: 1_700_000_123 });
   });
 
+  it("parses background:true and omits it otherwise", () => {
+    expect(parseEvent("response.compaction.in_progress", { background: true })).toEqual({
+      type: "compaction_in_progress",
+      background: true,
+    });
+    expect(parseEvent("response.compaction.in_progress", { background: false })).toEqual({
+      type: "compaction_in_progress",
+    });
+  });
+
   it("omits startedAtS when the emitter does not track a start", () => {
     const ev = parseEvent("response.compaction.in_progress", {});
     expect(ev).toEqual({ type: "compaction_in_progress" });
