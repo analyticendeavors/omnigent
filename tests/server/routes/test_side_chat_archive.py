@@ -383,3 +383,61 @@ async def test_side_chat_stops_never_delete_the_worktree(
         await _patch(client, parent.id, True)
         await _drain()
     assert seen[side.id] is False
+
+
+async def test_a_failed_side_chat_still_lets_the_walk_reach_its_children(
+    client: httpx.AsyncClient,
+    store_and_agent: tuple[SqlAlchemyConversationStore, str],
+) -> None:
+    store, agent_id = store_and_agent
+    root = store.create_conversation(agent_id=agent_id)
+    side = _side_chat(store, root.id)
+    nested = _side_chat(store, side.id)
+    real_archive = ae_side_chat_archive._archive_one
+    real_restore = ae_side_chat_archive._restore_one
+
+    def archive_fails_on_side(store_, side_id, *rest):
+        if side_id == side.id:
+            raise RuntimeError("store blip")
+        return real_archive(store_, side_id, *rest)
+
+    def restore_fails_on_side(store_, side_id, *rest):
+        if side_id == side.id:
+            raise RuntimeError("store blip")
+        return real_restore(store_, side_id, *rest)
+
+    with patch.object(sessions_facade, "_ARCHIVE_STOP_UNDO_GRACE_S", 30.0):
+        with patch.object(ae_side_chat_archive, "_archive_one", archive_fails_on_side):
+            await _patch(client, root.id, True)
+        assert _row(store, side.id).archived is False
+        assert _row(store, nested.id).archived is True
+        assert _row(store, nested.id).labels.get(MARKER) == root.id
+        with patch.object(ae_side_chat_archive, "_restore_one", restore_fails_on_side):
+            await _patch(client, root.id, False)
+        await _drain()
+    assert _row(store, nested.id).archived is False
+    assert MARKER not in _row(store, nested.id).labels
+
+
+async def test_a_side_chat_of_an_archived_session_is_refused(
+    client: httpx.AsyncClient,
+    store_and_agent: tuple[SqlAlchemyConversationStore, str],
+) -> None:
+    store, agent_id = store_and_agent
+    parent = store.create_conversation(agent_id=agent_id)
+    store.update_conversation_with_changes(parent.id, archived=True)
+    response = await client.post(f"/v1/sessions/{parent.id}/fork", json={"side_chat": True})
+    assert response.status_code == 400, response.text
+    assert "Unarchive it to open a side chat" in response.text
+    assert ae_side_chat_archive.side_chat_ids(store, parent.id) == []
+
+
+def test_the_refusal_applies_only_to_side_chats_of_archived_sessions(
+    store_and_agent: tuple[SqlAlchemyConversationStore, str],
+) -> None:
+    store, agent_id = store_and_agent
+    live = store.create_conversation(agent_id=agent_id)
+    gone = store.create_conversation(agent_id=agent_id)
+    store.update_conversation_with_changes(gone.id, archived=True)
+    ae_side_chat_archive.refuse_side_chat_of_archived(_row(store, live.id), True)
+    ae_side_chat_archive.refuse_side_chat_of_archived(_row(store, gone.id), False)

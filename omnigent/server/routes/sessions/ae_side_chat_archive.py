@@ -23,6 +23,7 @@ from typing import Any
 from sqlalchemy import select
 
 from omnigent.db.db_models import SqlConversationLabel, current_workspace_id
+from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.stores.conversation_store import SIDE_CHAT_SOURCE_LABEL_KEY
 
 _logger = logging.getLogger(__name__)
@@ -98,6 +99,24 @@ def make_owner_check(
         )
 
     return owns
+
+
+def refuse_side_chat_of_archived(source: Any, side_chat: bool) -> None:
+    """Refuse a side chat forked from an archived session.
+
+    Added 2026-11-18: the archive cascade runs only when the source is archived,
+    so a side chat opened later would keep running unseen with nothing to stop
+    it. Unarchiving the source first keeps it under the cascade.
+
+    :param source: The source conversation row.
+    :param side_chat: Whether the fork request asks for a side chat.
+    :raises OmnigentError: When a side chat is asked of an archived source.
+    """
+    if side_chat and getattr(source, "archived", False):
+        raise OmnigentError(
+            "This chat is archived. Unarchive it to open a side chat.",
+            code=ErrorCode.INVALID_INPUT,
+        )
 
 
 def _owned(owns: OwnerCheck | None, side_id: str) -> bool:
@@ -204,8 +223,9 @@ async def cascade_archive(
                         )
                         archived.append(side_id)
                 except Exception:  # best effort per side chat
+                    # Still walk its children (each is checked on its own), so one
+                    # failed write never leaves nested side chats running.
                     _logger.warning("Archiving side chat %s failed", side_id, exc_info=True)
-                    continue
                 next_level.append(side_id)
             if undone:
                 break
@@ -287,8 +307,8 @@ async def cascade_unarchive(
                         facade._cancel_pending_archive_stop(side_id)
                         restored.append(side_id)
                 except Exception:  # best effort per side chat
+                    # Still walk its children, as the archive walk does.
                     _logger.warning("Restoring side chat %s failed", side_id, exc_info=True)
-                    continue
                 next_level.append(side_id)
         if not next_level:
             break

@@ -3368,6 +3368,7 @@ def register_core_routes(
                 "Source session has no agent binding — cannot fork.",
                 code=ErrorCode.INVALID_INPUT,
             )
+        ae_side_chat_archive.refuse_side_chat_of_archived(source, body.side_chat)
 
         from omnigent.server.routes.sandbox_inference import (
             actual_harness,
