@@ -86,8 +86,9 @@ const METER_MAX_REACQUIRES = 3;
 const METER_RETRY_MS = 1000;
 // A browser stop that gets no `end` in this long is given up on: the recognizer is replaced.
 const MIC_STOP_WATCHDOG_MS = 4000;
-// After a stop watchdog replaced the recognizer, a final result from the old one still counts this long.
-const MIC_LATE_FINAL_MS = 1000;
+// After a stop watchdog or idle recycle replaced the recognizer, a final result from the old one
+// still counts this long: the same time the browser gets to finish a stop.
+const MIC_LATE_FINAL_MS = MIC_STOP_WATCHDOG_MS;
 // Voice mode liveness: a take that listens but hears nothing is replaced. Checked this often.
 const MIC_LIVENESS_TICK_MS = 500;
 // No audiostart, soundstart, speechstart or result this long after the take started (a slow
@@ -727,7 +728,7 @@ export const ComposerMicButton = ({
     // WebKit stays in Aborting until the old recognizer's end, so start() on it throws.
     // A new instance can start inside the same tap: discard the old one, abort it, build anew.
     // `keepLateFinal` (the stop watchdog): the old recognizer was already stopped, so it is
-    // not aborted, and a final result it still delivers within a second is passed on once.
+    // not aborted, and a final result it still delivers within the stop watchdog time is passed on once.
     const replace = (keepLateFinal = false) => {
       clearLiveness();
       clearStopWatchdog();
@@ -737,12 +738,16 @@ export const ComposerMicButton = ({
         detachers.delete(old);
         // A detached recognizer's end and error stay in the log, so a take that died quietly
         // is visible afterwards.
-        const logOldEnd = () => {
+        const dropOldLogs = () => {
           old.removeEventListener("end", logOldEnd);
+          old.removeEventListener("error", logOldError);
+        };
+        const logOldEnd = () => {
+          dropOldLogs();
           logVoice("mic old end");
         };
         const logOldError = (event: Event) => {
-          old.removeEventListener("error", logOldError);
+          dropOldLogs();
           logVoice("mic old error", String((event as SpeechRecognitionErrorEventLike).error));
         };
         old.addEventListener("end", logOldEnd);

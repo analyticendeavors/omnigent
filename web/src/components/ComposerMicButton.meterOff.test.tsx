@@ -61,6 +61,17 @@ class FakeCtx {
   }
 }
 
+/** Like WebKit: a recognizer with interimResults off never reports an interim result. */
+function emitInterim(instance: (typeof instances)[number], text: string) {
+  if (!instance.interimResults) return;
+  act(() =>
+    instance.own.result?.({
+      resultIndex: 0,
+      results: { length: 1, 0: { length: 1, isFinal: false, 0: { transcript: text } } },
+    }),
+  );
+}
+
 function setUserAgent(ua: string) {
   Object.defineProperty(navigator, "userAgent", { configurable: true, value: ua });
 }
@@ -250,13 +261,7 @@ describe("ComposerMicButton (level meter off)", () => {
       instances[0].own.audiostart?.({});
       await vi.advanceTimersByTimeAsync(0);
     });
-    const interim = (text: string) =>
-      act(() =>
-        instances[0].own.result?.({
-          resultIndex: 0,
-          results: { length: 1, 0: { length: 1, isFinal: false, 0: { transcript: text } } },
-        }),
-      );
+    const interim = (text: string) => emitInterim(instances[0], text);
     await run(6000);
     interim("hello");
     await run(5000);
@@ -278,6 +283,40 @@ describe("ComposerMicButton (level meter off)", () => {
     expect(onTranscript).toHaveBeenCalledTimes(1);
     expect(onTranscript).toHaveBeenCalledWith("hello there friend");
     expect(formatVoiceLog()).not.toContain("mic idle recycle");
+  });
+
+  it("an idle recycle mid-utterance still delivers the old recognizer's final from 2 s later, once", async () => {
+    setUserAgent(IOS_UA);
+    const onTranscript = vi.fn();
+    const controller = { current: null as AeMicController | null };
+    render(
+      <ComposerMicButton
+        onTranscript={onTranscript}
+        controller={controller}
+        onListeningChange={vi.fn()}
+      />,
+    );
+    act(() => controller.current?.start());
+    await act(async () => {
+      instances[0].own.start?.({});
+      instances[0].own.audiostart?.({});
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await run(500);
+    emitInterim(instances[0], "hello");
+    await run(10_500);
+    expect(instances).toHaveLength(2);
+    expect(instances[0].stop).toHaveBeenCalled();
+    expect(onTranscript).not.toHaveBeenCalled();
+    await run(2000);
+    const final = {
+      resultIndex: 0,
+      results: { length: 1, 0: { length: 1, isFinal: true, 0: { transcript: "hello there" } } },
+    };
+    act(() => instances[0].own.result?.(final));
+    act(() => instances[0].own.result?.(final));
+    expect(onTranscript).toHaveBeenCalledTimes(1);
+    expect(onTranscript).toHaveBeenCalledWith("hello there");
   });
 
   it("on Chrome the recognizer keeps interim results off", async () => {
@@ -321,12 +360,7 @@ describe("ComposerMicButton (level meter off)", () => {
     expect(log.match(/mic idle recycle capped/g)).toHaveLength(1);
     expect(log.match(/mic idle recycle(?! capped)/g)).toHaveLength(6);
     // A result lifts the cap.
-    act(() =>
-      instances[6].own.result?.({
-        resultIndex: 0,
-        results: { length: 1, 0: { length: 1, isFinal: false, 0: { transcript: "hi" } } },
-      }),
-    );
+    emitInterim(instances[6], "hi");
     await run(11_000);
     expect(instances).toHaveLength(8);
   });
@@ -353,12 +387,7 @@ describe("ComposerMicButton (level meter off)", () => {
     await run(500);
     act(() => instances[0].own.speechend?.({}));
     await run(2000);
-    act(() =>
-      instances[0].own.result?.({
-        resultIndex: 0,
-        results: { length: 1, 0: { length: 1, isFinal: false, 0: { transcript: "hi" } } },
-      }),
-    );
+    emitInterim(instances[0], "hi");
     await run(6000);
     expect(instances).toHaveLength(1);
     cleanup();
@@ -428,12 +457,7 @@ describe("ComposerMicButton (level meter off)", () => {
     expect(log).not.toContain("mic deaf");
     expect(onListeningChange).not.toHaveBeenCalledWith(false, "deaf");
     // A result lifts the cap.
-    act(() =>
-      instances[4].own.result?.({
-        resultIndex: 0,
-        results: { length: 1, 0: { length: 1, isFinal: false, 0: { transcript: "hi" } } },
-      }),
-    );
+    emitInterim(instances[4], "hi");
     await stallRound();
     expect(instances).toHaveLength(6);
   });
