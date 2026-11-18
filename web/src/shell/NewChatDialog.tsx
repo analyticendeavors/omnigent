@@ -339,6 +339,7 @@ import { SkillPills } from "@/components/SkillPills";
 import { ComposerMicButton } from "@/components/ComposerMicButton";
 import { AeVoicePanel } from "@/components/AeVoicePanel";
 import { AeVoiceStartButton } from "@/components/AeVoiceStartButton";
+import { COMPOSER_TIGHT_MIC_CLASS, COMPOSER_TIGHTER_WRAPPER_CLASS } from "@/lib/aeComposerTight";
 import { useAeVoiceStart } from "@/hooks/useAeVoiceStart";
 import { type AeMicController, setVoiceOn, takeVoiceArm } from "@/lib/aeVoiceMode";
 import type { CostControlMode } from "@/components/CostRoutingControl";
@@ -7023,7 +7024,9 @@ export function NewChatLandingScreen() {
                 ),
                 trailing: (
                   <>
-                    <AeSessionPresetPill sessionId={null} disabled={creating} />
+                    <span className={COMPOSER_TIGHTER_WRAPPER_CLASS}>
+                      <AeSessionPresetPill sessionId={null} disabled={creating} />
+                    </span>
                     <div className="flex min-w-0 items-center rounded-lg">
                       {/* One trigger combines the harness glyph with model / effort;
                     the selected entry's submenu owns run configuration. */}
@@ -7087,7 +7090,7 @@ export function NewChatLandingScreen() {
                       className="size-8 md:size-7"
                     />
                     <ComposerMicButton
-                      className="size-8 md:size-7"
+                      className={cn("size-8 md:size-7", COMPOSER_TIGHT_MIC_CLASS)}
                       enableHotkey
                       controller={newChatMic}
                       onListeningChange={voiceStart.onListening}
