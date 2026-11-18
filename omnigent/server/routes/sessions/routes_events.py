@@ -2166,7 +2166,9 @@ def register_events_routes(
                     code=ErrorCode.INVALID_INPUT,
                 )
             if compaction_status == "in_progress":
-                _publish_compaction_in_progress(session_id)
+                # The terminal harness owns this compaction and always
+                # brackets it with completed or failed; it can outlive the turn.
+                _publish_compaction_in_progress(session_id, background=True)
             elif compaction_status == "completed":
                 _publish_compaction_completed(session_id, None)
             else:

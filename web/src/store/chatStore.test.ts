@@ -18200,6 +18200,60 @@ describe("chatStore — compaction spinner follows its turn", () => {
     controller.abort();
   });
 
+  it("a harness compaction keeps its spinner when the turn ends and a user message arrives mid-compaction", async () => {
+    const { sink, controller } = startPump("conv_bg_compact");
+    sink.push(turnEvent("response.created", "resp_a"));
+    sink.push(sse("response.compaction.in_progress", { started_at: 1_700_000_000, background: true }));
+    await tick();
+    sink.push(turnEvent("response.completed", "resp_a"));
+    await tick();
+    expect(useChatStore.getState().activeResponse?.state).toBe("completed");
+    expect(spinnerIds()).toEqual(["resp_a"]);
+
+    sink.push(turnEvent("response.created", "resp_b"));
+    sink.push(turnEvent("response.completed", "resp_b"));
+    await tick();
+    expect(spinnerIds().length).toBe(1);
+
+    sink.push(sse("response.compaction.completed", {}));
+    await tick();
+    const blocks = useChatStore.getState().blocks;
+    expect(blocks.some((b) => b.type === "compaction")).toBe(true);
+    const bubbles = buildBubbles(blocks, useChatStore.getState().activeResponse);
+    expect(bubbles.some((b) => b.kind === "compaction_loading")).toBe(false);
+    expect(bubbles.some((b) => b.kind === "compaction")).toBe(true);
+
+    controller.abort();
+  });
+
+  it("an explicit Stop removes a harness compaction's spinner", async () => {
+    const { sink, controller } = startPump("conv_bg_compact_stop");
+    sink.push(turnEvent("response.created", "resp_a"));
+    sink.push(sse("response.compaction.in_progress", { background: true }));
+    await tick();
+    expect(spinnerIds()).toEqual(["resp_a"]);
+
+    sink.push(
+      sse("session.interrupted", { data: { requested_at: 1, response_id: "resp_a" } }),
+    );
+    await tick();
+    expect(spinnerIds()).toEqual([]);
+
+    controller.abort();
+  });
+
+  it("a server-run (non-background) spinner is still removed when its turn settles", async () => {
+    const { sink, controller } = startPump("conv_nonbg_compact");
+    sink.push(turnEvent("response.created", "resp_a"));
+    sink.push(sse("response.compaction.in_progress", {}));
+    await tick();
+    sink.push(turnEvent("response.completed", "resp_a"));
+    await tick();
+    expect(spinnerIds()).toEqual([]);
+
+    controller.abort();
+  });
+
   it("keeps a spinner published after its turn settled when that terminal repeats", async () => {
     const { sink, controller } = startPump("conv_turn_repeat");
     sink.push(turnEvent("response.created", "resp_done"));

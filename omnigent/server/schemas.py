@@ -4556,10 +4556,14 @@ class CompactionInProgressEvent(_SSEEventBase):
         events for the same compaction, so clients can anchor an elapsed
         counter to the true start — including after a page reload. ``None``
         when the emitter does not track it.
+    :param background: ``True`` when a terminal harness owns the compaction;
+        it can outlive the turn, so clients keep the indicator through turn
+        ends until completed or failed arrives. Omitted otherwise.
     """
 
     type: Literal["response.compaction.in_progress"]
     started_at: int | None = None
+    background: bool | None = None
 
 
 class CompactionCompletedEvent(_SSEEventBase):

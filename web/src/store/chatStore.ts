@@ -6127,13 +6127,20 @@ export function adoptCompactionSpinners(blocks: AnyBlock[], responseId: string):
  * Remove "Compacting…" spinners owned by the just-settled turn; a lost
  * compaction terminal is not replayed.
  *
+ * Harness-owned (`background`) spinners survive a turn settle, because that
+ * compaction outlives the turn; only `includeBackground` (explicit Stop) removes them.
+ *
  * @returns the remaining blocks, or `null` when the turn owned no spinner.
  */
 export function withoutSettledCompactionSpinners(
   blocks: AnyBlock[],
   responseId: string,
+  opts?: { includeBackground?: boolean },
 ): AnyBlock[] | null {
-  const owned = (b: AnyBlock) => b.type === "compaction_loading" && b.ctx.responseId === responseId;
+  const owned = (b: AnyBlock) =>
+    b.type === "compaction_loading" &&
+    b.ctx.responseId === responseId &&
+    (opts?.includeBackground === true || b.background !== true);
   if (!blocks.some(owned)) return null;
   return blocks.filter((b) => !owned(b));
 }
@@ -7883,7 +7890,8 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
       // native stop may name no turn, so the stop itself retires the spinner.
       applyToConversation((s) => {
         const stopped = s.activeResponse?.responseId;
-        const blocks = stopped ? withoutSettledCompactionSpinners(s.blocks, stopped) : null;
+        const blocks = stopped ? withoutSettledCompactionSpinners(s.blocks, stopped, { includeBackground: true })
+          : null;
         return blocks === null ? {} : { blocks };
       });
       return;

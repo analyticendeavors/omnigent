@@ -804,6 +804,7 @@ function* processEvent(state: ReducerState, event: StreamEvent): Generator<AnyBl
         type: "compaction_loading",
         ctx: ctx(state),
         ...(event.startedAtS !== undefined ? { startedAtS: event.startedAtS } : {}),
+        ...(event.background === true ? { background: true as const } : {}),
       } satisfies CompactionInProgressBlock;
       return;
     }

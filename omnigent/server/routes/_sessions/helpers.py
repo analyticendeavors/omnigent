@@ -1746,7 +1746,7 @@ def _publish_input_consumed(
 _compaction_started_at: WorkspaceScopedCache[str, int] = WorkspaceScopedCache()
 
 
-def _publish_compaction_in_progress(session_id: str) -> None:
+def _publish_compaction_in_progress(session_id: str, *, background: bool = False) -> None:
     """
     Publish the standard compaction progress event to a session stream.
 
@@ -1756,12 +1756,18 @@ def _publish_compaction_in_progress(session_id: str) -> None:
 
     :param session_id: Session/conversation identifier,
         e.g. ``"conv_abc123"``.
+    :param background: ``True`` when a terminal harness owns the compaction
+        and it can outlive the turn; adds ``"background": True`` so clients
+        keep the spinner through turn ends.
     """
     started_at = _compaction_started_at.setdefault(session_id, int(time.time()))
-    session_stream.publish(
-        session_id,
-        {"type": "response.compaction.in_progress", "started_at": started_at},
-    )
+    payload: dict[str, object] = {
+        "type": "response.compaction.in_progress",
+        "started_at": started_at,
+    }
+    if background:
+        payload["background"] = True
+    session_stream.publish(session_id, payload)
 
 
 def _publish_compaction_completed(session_id: str, total_tokens: int | None) -> None:
