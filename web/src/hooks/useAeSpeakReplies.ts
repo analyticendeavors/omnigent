@@ -50,7 +50,10 @@ function getCloud(): Speaker {
 
 // primeVoicePlayback (lib/aeSpeakReplies.ts) reaches the cloud speaker through this.
 registerCloudPrimer(() => getCloud().prime?.());
-registerCloudReleaser(() => getCloud().releaseForMic?.() ?? 0);
+registerCloudReleaser(
+  () => getCloud().releaseForMic?.() ?? 0,
+  () => getCloud().speaking(),
+);
 
 /** One speaker face over both: `speak` goes to the voice's engine, `stop` to both. */
 function getSpeaker(): Speaker {

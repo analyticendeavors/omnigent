@@ -116,15 +116,17 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
 
   // Fully lets go of the clip (pause, no source, load) so WebKit frees the audio session.
   // The element instance stays, so its tap-unlock stays; the next sentence sets src again.
-  const releaseElement = () => {
-    if (!audio) return;
+  const releaseElement = (): boolean => {
+    if (!audio) return false;
     try {
       audio.pause();
       audio.removeAttribute("src");
       audio.load();
       releasedAt = Date.now();
+      return true;
     } catch {
       // Releasing is best effort.
+      return false;
     }
   };
 
@@ -337,11 +339,7 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
           .then(() => {
             // A real sentence may have taken the element over since the tap.
             // Release the element so WebKit lets go of the audio session for the mic.
-            if (el.src === SILENT_WAV) {
-              el.pause();
-              el.removeAttribute("src");
-              el.load();
-            }
+            if (el.src === SILENT_WAV) releaseElement();
           })
           .catch(() => {});
       } catch {
@@ -351,9 +349,10 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
     // Called just before the mic starts (WebKit): makes sure no clip is held, and returns how many
     // ms are still left of the settle after the release. Never touches a reply that is speaking.
     releaseForMic() {
-      if (isSpeaking || !audio || releasedAt === 0) return 0;
-      if (audio.src) releaseElement();
-      logVoice("audio released before mic");
+      if (isSpeaking || !audio) return 0;
+      // Also frees the prime's silent clip when it is still playing at mic start.
+      if (audio.src && releaseElement()) logVoice("audio released before mic");
+      if (releasedAt === 0) return 0;
       return Math.max(0, MIC_AUDIO_SETTLE_MS - (Date.now() - releasedAt));
     },
     speaking: () => isSpeaking,
