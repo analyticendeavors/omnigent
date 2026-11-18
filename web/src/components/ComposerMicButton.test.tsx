@@ -1480,7 +1480,7 @@ describe("ComposerMicButton (stop and liveness watchdogs)", () => {
     expect(startSpy).toHaveBeenCalledTimes(2);
   });
 
-  it("a final that arrives from the old recognizer within 1 s of the watchdog is still delivered once", () => {
+  it("a final that arrives from the old recognizer within 3.9 s of the watchdog is still delivered once", () => {
     const onTranscript = vi.fn();
     const controller = { current: null as AeMicController | null };
     render(<ComposerMicButton onTranscript={onTranscript} controller={controller} />);
@@ -1499,7 +1499,7 @@ describe("ComposerMicButton (stop and liveness watchdogs)", () => {
     expect(onTranscript).toHaveBeenCalledTimes(1);
   });
 
-  it("a final after the 1 s late window is dropped", () => {
+  it("a final after the 4 s late window is dropped", () => {
     const onTranscript = vi.fn();
     const controller = { current: null as AeMicController | null };
     render(<ComposerMicButton onTranscript={onTranscript} controller={controller} />);
@@ -1508,7 +1508,7 @@ describe("ComposerMicButton (stop and liveness watchdogs)", () => {
     act(() => handlers.audiostart?.({}));
     act(() => controller.current?.stop());
     act(() => void vi.advanceTimersByTime(4000));
-    act(() => void vi.advanceTimersByTime(1100));
+    act(() => void vi.advanceTimersByTime(4100));
     act(() => instances[0].handlers.result?.(resultEvent("too late")));
     expect(onTranscript).not.toHaveBeenCalled();
   });
