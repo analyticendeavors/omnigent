@@ -248,6 +248,91 @@ describe("createCloudSpeaker", () => {
     expect(el?.played).toHaveLength(2);
   });
 
+  describe("release before the mic", () => {
+    const IPHONE =
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
+    const CHROME =
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
+    const setUa = (ua: string) =>
+      Object.defineProperty(navigator, "userAgent", { configurable: true, value: ua });
+    afterEach(() => {
+      delete (navigator as { userAgent?: unknown }).userAgent;
+    });
+
+    async function playOne(speaker: ReturnType<typeof createCloudSpeaker>) {
+      speaker.speak("Hello there.", OPTS);
+      await settle();
+      pending[0].resolve(mp3());
+      await settle();
+    }
+
+    it("WebKit: after play end the source is cleared and load() ran before the mic callback", async () => {
+      setUa(IPHONE);
+      const speaker = createCloudSpeaker(new FakeDevice());
+      await playOne(speaker);
+      const el = FakeAudio.last;
+      FakeAudio.last?.end();
+      await settle();
+      expect(el?.src).toBe("");
+      expect(el?.loads).toBe(1);
+      const order: string[] = [];
+      const loadsAtMic = el?.loads;
+      const left = speaker.releaseForMic?.() ?? -1;
+      order.push(`mic after ${loadsAtMic} load`);
+      expect(left).toBeGreaterThanOrEqual(0);
+      expect(order).toEqual(["mic after 1 load"]);
+    });
+
+    it("WebKit: a barge-in stop clears the source and calls load()", async () => {
+      setUa(IPHONE);
+      const speaker = createCloudSpeaker(new FakeDevice());
+      await playOne(speaker);
+      const el = FakeAudio.last;
+      speaker.stop();
+      expect(el?.src).toBe("");
+      expect(el?.loads).toBe(1);
+      expect(speaker.releaseForMic?.()).toBeGreaterThan(0);
+    });
+
+    it("WebKit: a play error releases the element", async () => {
+      setUa(IPHONE);
+      const speaker = createCloudSpeaker(new FakeDevice());
+      await playOne(speaker);
+      const el = FakeAudio.last;
+      el?.onerror?.();
+      await settle();
+      expect(el?.loads).toBeGreaterThanOrEqual(1);
+      expect(el?.src).toBe("");
+    });
+
+    it("Chrome: a stop does not call load()", async () => {
+      setUa(CHROME);
+      const speaker = createCloudSpeaker(new FakeDevice());
+      await playOne(speaker);
+      const el = FakeAudio.last;
+      speaker.stop();
+      expect(el?.loads).toBe(0);
+    });
+
+    it("never releases a reply that is still speaking, and the next sentence plays again", async () => {
+      setUa(IPHONE);
+      const speaker = createCloudSpeaker(new FakeDevice());
+      await playOne(speaker);
+      const el = FakeAudio.last;
+      expect(speaker.releaseForMic?.()).toBe(0);
+      expect(el?.loads).toBe(0);
+      el?.end();
+      await settle();
+      speaker.speak("Again.", OPTS);
+      await settle();
+      pending[1].resolve(mp3());
+      await settle();
+      expect(FakeAudio.last).toBe(el);
+      expect(el?.played).toHaveLength(2);
+      expect(el?.src).not.toBe("");
+    });
+  });
+
   it("sends the text, voice and rate as JSON", async () => {
     const speaker = createCloudSpeaker(new FakeDevice());
     speaker.speak("Hello there.", { ...OPTS, rate: 1.25 });

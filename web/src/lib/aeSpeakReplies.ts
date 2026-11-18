@@ -225,6 +225,16 @@ export function registerCloudPrimer(primer: (() => void) | null): void {
   cloudPrimer = primer;
 }
 
+let cloudReleaser: (() => number) | null = null;
+
+/** The cloud speaker's mic-start release: frees its audio element and returns the settle ms left. */
+export function registerCloudReleaser(releaser: (() => number) | null): void {
+  cloudReleaser = releaser;
+}
+
+/** On WebKit, how long after the cloud audio element is released the recognizer may start. */
+export const MIC_AUDIO_SETTLE_MS = 150;
+
 /** True from the moment the silent priming utterance is spoken until it ends, errors or is cancelled. */
 let primeSpeaking = false;
 const PRIME_FLAG_MAX_MS = 12_000;
@@ -292,6 +302,27 @@ export const MIC_SYNTH_WAIT_CAP_MS = 1500;
  * runs at once and nothing is cancelled. At the cap the prime is cancelled and `go` runs. Returns a cancel that drops a pending `go`. Never throws.
  */
 export function whenSynthIdle(go: () => void): () => void {
+  // WebKit: the cloud audio element must have let go of the audio session before the mic starts.
+  let settleMs = 0;
+  try {
+    if (isWebKitSpeech()) settleMs = cloudReleaser?.() ?? 0;
+  } catch {
+    settleMs = 0;
+  }
+  if (settleMs > 0) {
+    let inner: (() => void) | null = null;
+    const settle = setTimeout(() => {
+      inner = whenSynthIdleNow(go);
+    }, settleMs);
+    return () => {
+      clearTimeout(settle);
+      inner?.();
+    };
+  }
+  return whenSynthIdleNow(go);
+}
+
+function whenSynthIdleNow(go: () => void): () => void {
   let synth: SpeechSynthesis | null = null;
   try {
     // Wait only for the priming utterance, never for a real reply that is speaking.
@@ -363,6 +394,8 @@ export interface Speaker {
   stop: () => void;
   /** Unlocks playback inside a tap (the cloud speaker's audio element). */
   prime?: () => void;
+  /** WebKit: frees the audio element before the mic starts; returns the settle ms still to wait. */
+  releaseForMic?: () => number;
   speaking: () => boolean;
   subscribe: (cb: () => void) => () => void;
   /** Utterances queued and not yet ended; the speaker keeps them referenced. */
