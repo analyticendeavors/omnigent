@@ -738,7 +738,10 @@ describe("AeSpeakRepliesButton", () => {
             ),
           );
         }
-        calls.push({ url: String(url), body: String(init?.body) });
+        // Only the speech request is under test; any other request (a voice-log upload from an
+        // earlier test that settles late) is not a second read.
+        if (String(url).endsWith("/v1/ae/tts"))
+          calls.push({ url: String(url), body: String(init?.body) });
         return new Promise<Response>(() => {});
       }),
     );
