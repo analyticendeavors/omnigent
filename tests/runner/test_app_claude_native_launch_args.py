@@ -1502,3 +1502,75 @@ async def test_auto_create_claude_terminal_rejects_missing_env_chdir_target(
     assert sorted(path.name for path in workspace.iterdir()) == []
     assert not (Path.cwd() / config_dir).exists()
     registry.launch_required_terminal.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "init_parent,snapshot_parent,expected",
+    [
+        pytest.param("conv_p", None, "250000", id="envelope-parent"),
+        pytest.param(None, "conv_p", "250000", id="ensure-path-snapshot-parent"),
+        pytest.param(None, None, None, id="no-parent-anywhere"),
+    ],
+)
+async def test_auto_create_claude_terminal_caps_only_a_child_sessions_compact_window(
+    bridge_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    init_parent: str | None,
+    snapshot_parent: str | None,
+    expected: str | None,
+) -> None:
+    """
+    A child's launch env carries the auto-compact window; a parent's does not.
+
+    The explicit ensure route (first turn, idle-pane recovery, resume, account
+    relaunch) passes no init envelope, so the parent there comes from the
+    fetched session snapshot.
+
+    :param init_parent: ``parent_session_id`` in the init envelope; ``None`` runs the
+        ensure path with no envelope at all.
+    :param snapshot_parent: ``parent_session_id`` the session snapshot answers with.
+    :param expected: The ``CLAUDE_CODE_AUTO_COMPACT_WINDOW`` the pane env should carry.
+    """
+    from unittest.mock import AsyncMock, Mock
+
+    import httpx
+
+    from omnigent.harnesses.claude_native import ae_launch_account, diagnostics
+    from omnigent.runner.native import orchestration
+    from omnigent.runner.resource_registry import SessionResourceRegistry
+
+    monkeypatch.delenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW", raising=False)
+    monkeypatch.setattr("omnigent.inference_config.load_runtime_inference_config", dict)
+    monkeypatch.setattr("omnigent.config.load_effective_config", dict)
+    monkeypatch.setattr(orchestration, "resolve_cli_binary", lambda _: None)
+    monkeypatch.setattr(diagnostics, "ClaudeDebugLogFollower", lambda _: Mock())
+    seen: list[dict[str, str]] = []
+
+    def stop_after_env(_bridge: Path, env: dict[str, str]) -> None:
+        seen.append(dict(env))
+        raise RuntimeError("stop after env")
+
+    monkeypatch.setattr(ae_launch_account, "write_launch_account", stop_after_env)
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"parent_session_id": snapshot_parent})
+
+    session_id = "conv_child_compact"
+    session_init = _claude_auto_create_session_init(session_id, bridge_dir)
+    session_init.snapshot.parent_session_id = init_parent
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://runner"
+    ) as client:
+        with pytest.raises(RuntimeError, match="stop after env"):
+            await orchestration._auto_create_claude_terminal(
+                session_id,
+                Mock(spec=SessionResourceRegistry),
+                Mock(),
+                server_client=client,
+                session_init=session_init if init_parent is not None else None,
+                auth_token_factory=lambda: None,
+                resolve_launch_config=AsyncMock(return_value=None),
+            )
+
+    assert len(seen) == 1
+    assert seen[0].get("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == expected

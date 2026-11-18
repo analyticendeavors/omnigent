@@ -8081,6 +8081,9 @@ class _ClaudeSessionLaunchMetadata:
     #: session carries a routing decision — a web create routes the model
     #: before the pane launches — so no prompt is ever held and replayed.
     turn_routing: bool = False
+    #: The session's parent (``parent_session_id``), set for a family child; read from
+    #: the init envelope or, when launch carries none, the fetched snapshot (AE patch).
+    parent_session_id: str | None = None
 
 
 def _claude_launch_metadata_from_envelope(
@@ -8116,6 +8119,7 @@ def _claude_launch_metadata_from_envelope(
         fork_carry_history=snapshot.labels.get(FORK_CARRY_HISTORY_LABEL_KEY) == "1",
         claude_account=snapshot.labels.get(CLAUDE_ACCOUNT_LABEL_KEY),
         live_claude_account=snapshot.labels.get(ACCOUNT_LIVE_LABEL),
+        parent_session_id=snapshot.parent_session_id or None,
     )
 
 
@@ -8152,6 +8156,7 @@ async def _load_legacy_claude_launch_metadata(
     model_override = snapshot.get("model_override")
     launch_args = snapshot.get("terminal_launch_args")
     external_session_id = snapshot.get("external_session_id")
+    parent_session_id = snapshot.get("parent_session_id") or None
     labels = snapshot.get("labels")
     labels = labels if isinstance(labels, dict) else {}
     fork_source = labels.get(FORK_SOURCE_EXTERNAL_SESSION_LABEL_KEY)
@@ -8186,6 +8191,7 @@ async def _load_legacy_claude_launch_metadata(
         fork_carry_history=labels.get(FORK_CARRY_HISTORY_LABEL_KEY) == "1",
         claude_account=labels.get(CLAUDE_ACCOUNT_LABEL_KEY),
         live_claude_account=labels.get(ACCOUNT_LIVE_LABEL),
+        parent_session_id=parent_session_id if isinstance(parent_session_id, str) else None,
     )
     permission_mode = _claude_launch_permission_mode(metadata.terminal_launch_args)
     _logger.info(
@@ -9057,9 +9063,7 @@ async def _auto_create_claude_terminal(
 
     apply_child_auto_compact_window(
         claude_terminal_env,
-        parent_session_id=(
-            session_init.snapshot.parent_session_id if session_init is not None else None
-        ),
+        parent_session_id=launch_metadata.parent_session_id,
         inherited_env=os.environ,
     )
     # Name the account before the first render, so usage readers do not wait for the shim.
