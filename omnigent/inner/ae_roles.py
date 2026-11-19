@@ -105,9 +105,6 @@ BALANCED: dict[str, Any] = {
 }
 SOLO = "solo"
 HELPER_KEY = "ae_helper"
-#: Set beside :data:`HELPER_KEY` when the judge is available to the helper's owner: the
-#: helper notice then also carries :data:`_JUDGE_LINE`.
-HELPER_JUDGE_KEY = "ae_helper_judge"
 HELPER_NOTICE = (
     "You are a helper session started by a lead session. Do the task you were given and "
     "report back to it; do not start other sessions or bring in other agents. Use your own "
@@ -226,8 +223,6 @@ def resolve_roles(conv: Conversation, store: ConversationStore) -> dict[str, Any
     roles = _own_helpers(roles) if _legacy_solo(conv) else roles
     roles = ae_reviewers.resolve_agents(roles, _agent_lookup(store))
     roles = ae_reviewers.attach_personas(roles, ae_reviewers.persona_lookup(_owner(conv, store)))
-    if _judge_available(_owner(conv, store)):
-        roles = {**roles, "judge": True}
     return {**roles, "current": _current_ids()}
 
 
@@ -339,10 +334,7 @@ def with_roles(
     :func:`effective_mode`).
     """
     if _is_child(conv):
-        helper: dict[str, object] = {HELPER_KEY: True}
-        if _judge_available(_owner(conv, store)):
-            helper[HELPER_JUDGE_KEY] = True
-        return helper
+        return {HELPER_KEY: True}
     try:
         roles = resolve_roles(conv, store)
     except Exception:  # noqa: BLE001 (the notice must never break a message)
@@ -598,39 +590,13 @@ def _advisor_line(roles: dict[str, Any]) -> str | None:
     )
 
 
-def _judge_available(owner: str) -> bool:
-    """Whether ``ask_judge`` is shown to this owner: the same answer as ``GET /v1/ae/decision``."""
-    try:
-        from ae_omni_policies import decision_status
-
-        return decision_status.reason(owner) is None
-    except Exception:  # noqa: BLE001 (a missing or broken judge must never block a turn)
-        return False
-
-
-_JUDGE_LINE = (
-    "Decision-1 judge: for every small choice with clear options (which approach, which file "
-    "or step first, scoped or full tests, retry or change tack, fix more or ask for review, "
-    "ask the user or go on, ready to hand off), call ask_judge, then act on its answer unless "
-    "it says low_confidence. Gather the open choices and ask up to five in one call, each "
-    "with a neutral context line saying what it is about; a call takes about half a second. "
-    'Load it once at the start: ToolSearch query "select:mcp__ae__ask_judge" (Codex: call it '
-    "directly). No names, paths or quoted text; if it errors or is missing, decide yourself."
-)
-
-
 def _tools(roles: dict[str, Any]) -> str:
-    """The Agent tool sentence for the lead, plus how to name a role on each start.
-
-    When the server set the ``judge`` flag, the ask_judge line rides on the same line (the
-    block stays under its line budget).
-    """
+    """The Agent tool sentence for the lead, plus how to name a role on each start."""
     session = roles.get("lead_session")
     base = _TOOLS_OTHER if isinstance(session, dict) and session.get("claude") is False else _TOOLS
     # Native subagents apply under "own" too; create_session does not.
     named = [_SUBAGENT_ROLE] if helpers_of(roles) == OWN else [_SESSION_ROLE, _SUBAGENT_ROLE]
-    extra = [_JUDGE_LINE] if roles.get("judge") is True else []
-    return " ".join([base, *named, _REPORT_REVIEW, *extra])
+    return " ".join([base, *named, _REPORT_REVIEW])
 
 
 def render_roles(roles: object) -> str | None:
@@ -722,8 +688,6 @@ def append_roles(text: str | None, metadata: Any) -> str | None:
     :data:`HELPER_NOTICE` alone.
     """
     if isinstance(metadata, dict) and metadata.get(HELPER_KEY) is True:
-        if metadata.get(HELPER_JUDGE_KEY) is True:
-            return f"{HELPER_NOTICE} {_JUDGE_LINE}"
         return HELPER_NOTICE
     block = render_roles(metadata.get("ae_roles")) if isinstance(metadata, dict) else None
     if text and block:
