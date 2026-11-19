@@ -7,6 +7,7 @@ import { ChevronDownIcon, Volume2Icon } from "lucide-react";
 import {
   MicWhileSpeakingRow,
   VoiceMeterRow,
+  VoiceServerSttRow,
   SendVoiceLogRow,
   SwitchRow,
   useVoiceChoices,
@@ -45,6 +46,7 @@ function VoiceStartMenuRows({ armed, onToggle }: { armed: boolean; onToggle: () 
       <DropdownMenuSeparator />
       <MicWhileSpeakingRow />
       <VoiceMeterRow />
+      <VoiceServerSttRow />
       <VoiceChoiceRows choices={choices} />
       <DropdownMenuSeparator />
       <SendVoiceLogRow />

@@ -53,6 +53,8 @@ import {
 import { logVoice, uploadVoiceLog } from "@/lib/aeVoiceLog";
 import { useMicWhileSpeaking, writeMicWhileSpeaking } from "@/lib/aeVoiceMic";
 import { useVoiceMeter, writeVoiceMeter } from "@/lib/aeVoiceMeter";
+import { isIosDevice, useVoiceServerStt, writeVoiceServerStt } from "@/lib/aeVoiceServerStt";
+import { useServerInfo } from "@/lib/CapabilitiesContext";
 
 const MAX_VOICES = 12;
 const VOICE_LIST_RETRIES = 3;
@@ -74,6 +76,7 @@ export function RowHint({
     | "voice.snips"
     | "voice.mic_while_speaking"
     | "voice.meter"
+    | "voice.server_stt"
     | "voice.chat_voice"
     | "voice.voice"
     | "voice.rate"
@@ -179,6 +182,7 @@ export function SwitchRow({
     | "voice.snips"
     | "voice.mic_while_speaking"
     | "voice.meter"
+    | "voice.server_stt"
     | "voice.start";
   testId: string;
 }) {
@@ -518,6 +522,26 @@ export function VoiceMeterRow() {
       onChange={writeVoiceMeter}
       hint="voice.meter"
       testId="ae-voice-meter"
+    />
+  );
+}
+
+/**
+ * Transcribe on the box: a per-device switch, shown only on iPhone and iPad when the server has
+ * dictation. Default on there: Apple's recognizer goes deaf after a spoken reply on iOS 18.
+ */
+export function VoiceServerSttRow() {
+  const serverInfo = useServerInfo();
+  const on = useVoiceServerStt();
+  const available = serverInfo !== "loading" && serverInfo.dictation_available;
+  if (!available || !isIosDevice()) return null;
+  return (
+    <SwitchRow
+      label="Transcribe on the box"
+      checked={on}
+      onChange={writeVoiceServerStt}
+      hint="voice.server_stt"
+      testId="ae-voice-server-stt"
     />
   );
 }

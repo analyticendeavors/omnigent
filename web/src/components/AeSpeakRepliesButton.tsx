@@ -23,6 +23,7 @@ import { useAeSpeakReplies } from "@/hooks/useAeSpeakReplies";
 import {
   MicWhileSpeakingRow,
   VoiceMeterRow,
+  VoiceServerSttRow,
   RowHint,
   ROW_LABEL_CLASS,
   ROW_VALUE_CLASS,
@@ -32,6 +33,7 @@ import {
   VoiceChoiceRows,
 } from "@/components/AeVoiceMenuRows";
 import { holdVoiceAudioSession } from "@/lib/aeAudioSession";
+import { unlockVoiceAudioContext } from "@/lib/aeVoiceServerStt";
 import { logVoice, requestVoiceLogInsert } from "@/lib/aeVoiceLog";
 import {
   clearVoiceModelState,
@@ -337,6 +339,7 @@ function SpeakRepliesControl({
     if (next) {
       primeVoicePlayback();
       holdVoiceAudioSession();
+      unlockVoiceAudioContext();
     }
     if (next && !on) toggleSpeak(true);
     setVoiceOn(chatId, next);
@@ -469,6 +472,7 @@ function SpeakRepliesControl({
         />
         <MicWhileSpeakingRow />
         <VoiceMeterRow />
+        <VoiceServerSttRow />
         <VoiceChoiceRows choices={choices} />
         <DropdownMenuSeparator />
         <div className="flex gap-1.5 px-1 pb-1 pt-0.5" data-testid="ae-speak-actions">

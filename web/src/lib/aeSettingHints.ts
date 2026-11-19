@@ -275,6 +275,11 @@ export const AE_SETTING_HINTS = {
     hint: "Draws live mic levels. On iPhone it can stop the mic hearing you, so it is off there. Default: off on iPhone, on elsewhere. Per device.",
     source: "tooltip",
   },
+  "voice.server_stt": {
+    label: "Transcribe on the box",
+    hint: "On iPhone, the box turns your voice into text. Turn off to use Apple's recognizer.",
+    source: "tooltip",
+  },
   "voice.voice": {
     label: "Voice",
     hint: "Natural voices come from the server when it has them; others are this device's. Saved per device. Default: first natural voice, else best.",

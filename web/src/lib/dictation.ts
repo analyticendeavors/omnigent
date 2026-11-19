@@ -15,6 +15,8 @@
 // handshake, as with those sockets.
 
 import { getMicStream } from "@/lib/aeAudioDevices";
+import { logVoice } from "@/lib/aeVoiceLog";
+import { getSharedVoiceAudioContext, isIosDevice } from "@/lib/aeVoiceServerStt";
 import { getOmnigentHostConfig, resolveWebSocketUrl } from "@/lib/host";
 import { modalHostId } from "@/lib/sessionHost";
 
@@ -58,7 +60,22 @@ export interface DictationSessionEvents {
   onFinal: (text: string) => void;
   /** Fatal error after start. The session has already cleaned itself up. */
   onError: (message: string) => void;
+  /** Peak level (0..1) of each 100 ms chunk, for a meter that must not open a second capture. */
+  onLevel?: (level: number) => void;
+  /** The deaf check fired: the take heard only silence (or a muted track) for too long. */
+  onDeaf?: (reason: "silent" | "muted") => void;
 }
+
+export interface DictationStartOptions {
+  /** Watch the take for silence or a muted track and report it through `onDeaf`. */
+  deafCheck?: boolean;
+}
+
+/** All-zero audio, or a muted track, for this long means the take is deaf. */
+export const DEAF_SILENT_MS = 4_000;
+const DEAF_TICK_MS = 500;
+/** How long start() waits for a resumed AudioContext to run before going on. */
+const CTX_RESUME_CAP_MS = 500;
 
 /**
  * The server was reachable but at its concurrent-take cap (WS close 1013).
@@ -116,6 +133,22 @@ const FLUSH_TIMEOUT_MS = 250;
 const WS_CLOSE_TRY_AGAIN_LATER = 1013;
 
 const TARGET_RATE = 16_000;
+
+/** Wait for a context's resume(), but never longer than the cap (iOS may leave it pending). */
+async function resumeCapped(ctx: AudioContext): Promise<void> {
+  try {
+    await Promise.race([
+      Promise.resolve(ctx.resume?.()),
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, CTX_RESUME_CAP_MS);
+      }),
+    ]);
+  } catch {
+    // Best effort: the state is logged by the caller.
+  }
+}
+
+const workletReady = new WeakSet<AudioContext>();
 
 // AudioWorklet processor, inlined as a Blob module so no separate asset has
 // to survive the Vite build. Linear-interpolation downsample from the
@@ -199,6 +232,18 @@ export class DictationSession {
   private stopResolve: ((tail: string) => void) | null = null;
   private flushResolve: (() => void) | null = null;
   private closed = false;
+  private readonly shared: boolean;
+  private readonly graph: AudioNode[];
+  private readonly createdAt = Date.now();
+  // Take stats, logged at stop.
+  private partials = 0;
+  private finals = 0;
+  private samplesSent = 0;
+  private peak = 0;
+  private firstSoundAt: number | null = null;
+  private lastSoundAt = Date.now();
+  private mutedSince: number | null = null;
+  private deafTimer: ReturnType<typeof setInterval> | null = null;
 
   private constructor(
     events: DictationSessionEvents,
@@ -206,12 +251,29 @@ export class DictationSession {
     mediaStream: MediaStream,
     audioContext: AudioContext,
     workletNode: AudioWorkletNode,
+    shared: boolean,
+    graph: AudioNode[],
+    deafCheck: boolean,
   ) {
     this.events = events;
     this.ws = ws;
     this.mediaStream = mediaStream;
     this.audioContext = audioContext;
     this.workletNode = workletNode;
+    this.shared = shared;
+    this.graph = graph;
+    for (const track of mediaStream.getTracks()) {
+      track.addEventListener?.("mute", () => {
+        logVoice("dictation track mute");
+        if (this.mutedSince === null) this.mutedSince = Date.now();
+      });
+      track.addEventListener?.("unmute", () => {
+        logVoice("dictation track unmute");
+        this.mutedSince = null;
+      });
+      if (track.muted) this.mutedSince = Date.now();
+    }
+    if (deafCheck) this.deafTimer = setInterval(() => this.checkDeaf(), DEAF_TICK_MS);
 
     workletNode.port.onmessage = (msg: MessageEvent<Int16Array<ArrayBuffer> | null>) => {
       if (msg.data === null) {
@@ -220,15 +282,20 @@ export class DictationSession {
         this.flushResolve = null;
         return;
       }
+      this.noteChunk(msg.data);
       if (ws.readyState === WebSocket.OPEN) ws.send(msg.data.buffer);
     };
     ws.onmessage = (msg) => {
       if (typeof msg.data !== "string") return;
       const event = parseDictationEvent(msg.data);
       if (event === null) return;
-      if (event.type === "partial") this.events.onPartial(event.text);
-      else if (event.type === "final") this.events.onFinal(event.text);
-      else if (event.type === "stopped") this.resolveStop(event.text);
+      if (event.type === "partial") {
+        this.partials += 1;
+        this.events.onPartial(event.text);
+      } else if (event.type === "final") {
+        this.finals += 1;
+        this.events.onFinal(event.text);
+      } else if (event.type === "stopped") this.resolveStop(event.text);
       else if (event.type === "error") this.fail(event.message);
     };
     ws.onclose = () => {
@@ -245,19 +312,27 @@ export class DictationSession {
    * denied, the socket fails, the server is at capacity
    * ({@link DictationBusyError}), or the engine never comes up.
    */
-  static async start(events: DictationSessionEvents): Promise<DictationSession> {
+  static async start(
+    events: DictationSessionEvents,
+    options: DictationStartOptions = {},
+  ): Promise<DictationSession> {
+    const t0 = Date.now();
     const mediaStream = await getMicStream({
       channelCount: 1,
       echoCancellation: true,
       noiseSuppression: true,
     });
+    logVoice("dictation mic", `${Date.now() - t0} ms`);
 
     let ws: WebSocket | null = null;
     let audioContext: AudioContext | null = null;
+    let shared = false;
     try {
+      const wsAt = Date.now();
       ws = new WebSocket(buildDictationUrl());
       ws.binaryType = "arraybuffer";
       await waitForReady(ws);
+      logVoice("dictation ws ready", `${Date.now() - wsAt} ms`);
       // Detect a close during the async audio-graph setup below: the
       // handler-swap in the constructor would otherwise never see it and
       // start() would resolve a dead session that silently drops audio.
@@ -267,15 +342,35 @@ export class DictationSession {
       };
       ws.addEventListener("close", markClosed);
 
-      // Ask for the target rate directly — Chrome/Firefox resample the
-      // capture for us and the worklet's downsampler becomes a no-op.
-      // Some platforms reject the hint; the worklet handles any rate.
-      try {
-        audioContext = new AudioContext({ sampleRate: TARGET_RATE });
-      } catch {
+      const ios = isIosDevice();
+      // On iOS a Voice tap made one context; reuse it (a new one made now, outside the tap,
+      // would start suspended).
+      const tapContext = ios ? getSharedVoiceAudioContext() : null;
+      if (tapContext) {
+        audioContext = tapContext;
+        shared = true;
+      } else if (ios) {
+        // iOS runs at its native rate; the worklet downsamples. The rate hint is not asked for.
         audioContext = new AudioContext();
+      } else {
+        // Ask for the target rate directly — Chrome/Firefox resample the
+        // capture for us and the worklet's downsampler becomes a no-op.
+        // Some platforms reject the hint; the worklet handles any rate.
+        try {
+          audioContext = new AudioContext({ sampleRate: TARGET_RATE });
+        } catch {
+          audioContext = new AudioContext();
+        }
       }
-      await audioContext.audioWorklet.addModule(workletUrl());
+      await resumeCapped(audioContext);
+      logVoice(
+        "dictation ctx",
+        `${audioContext.state} ${audioContext.sampleRate} Hz${shared ? " shared" : ""}`,
+      );
+      if (!workletReady.has(audioContext)) {
+        await audioContext.audioWorklet.addModule(workletUrl());
+        workletReady.add(audioContext);
+      }
       const source = audioContext.createMediaStreamSource(mediaStream);
       const node = new AudioWorkletNode(audioContext, "omnigent-pcm16-downsampler");
       // The worklet only renders while it reaches the destination; route
@@ -290,13 +385,71 @@ export class DictationSession {
       if (closedDuringSetup || ws.readyState !== WebSocket.OPEN) {
         throw new Error("dictation connection closed during setup");
       }
-      return new DictationSession(events, ws, mediaStream, audioContext, node);
+      return new DictationSession(
+        events,
+        ws,
+        mediaStream,
+        audioContext,
+        node,
+        shared,
+        [source, node, mute],
+        options.deafCheck === true,
+      );
     } catch (error) {
       for (const track of mediaStream.getTracks()) track.stop();
-      if (audioContext && audioContext.state !== "closed") void audioContext.close();
+      if (audioContext && !shared && audioContext.state !== "closed") void audioContext.close();
       ws?.close();
       throw error;
     }
+  }
+
+  /** The take's microphone stream, for anything that must not open a second capture. */
+  get stream(): MediaStream {
+    return this.mediaStream;
+  }
+
+  /** Counts a worklet chunk: seconds sent, peak level, and the first and latest non-zero audio. */
+  private noteChunk(chunk: Int16Array): void {
+    this.samplesSent += chunk.length;
+    let peak = 0;
+    for (let i = 0; i < chunk.length; i += 1) {
+      const v = Math.abs(chunk[i]);
+      if (v > peak) peak = v;
+    }
+    if (peak > 0) {
+      const now = Date.now();
+      if (this.firstSoundAt === null) {
+        this.firstSoundAt = now;
+        logVoice("dictation first sound", `${now - this.createdAt} ms`);
+      }
+      this.lastSoundAt = now;
+      if (peak > this.peak) this.peak = peak;
+    }
+    this.events.onLevel?.(peak / 0x8000);
+  }
+
+  private checkDeaf(): void {
+    if (this.closed) return;
+    const now = Date.now();
+    let reason: "silent" | "muted" | null = null;
+    if (this.mutedSince !== null && now - this.mutedSince >= DEAF_SILENT_MS) reason = "muted";
+    else if (now - this.lastSoundAt >= DEAF_SILENT_MS) reason = "silent";
+    if (reason === null) return;
+    this.clearDeafTimer();
+    logVoice("dictation deaf", reason);
+    this.events.onDeaf?.(reason);
+  }
+
+  private clearDeafTimer(): void {
+    if (this.deafTimer !== null) clearInterval(this.deafTimer);
+    this.deafTimer = null;
+  }
+
+  private logStats(): void {
+    logVoice(
+      "dictation take",
+      `partials=${this.partials} finals=${this.finals} sent=${(this.samplesSent / TARGET_RATE).toFixed(1)}s peak=${(this.peak / 0x8000).toFixed(3)}`,
+    );
   }
 
   /**
@@ -306,7 +459,9 @@ export class DictationSession {
    */
   async stop(): Promise<string> {
     if (this.closed) return "";
+    this.clearDeafTimer();
     await this.flushWorklet();
+    this.logStats();
     this.teardownAudio();
     if (this.ws.readyState !== WebSocket.OPEN) {
       this.closed = true;
@@ -321,6 +476,8 @@ export class DictationSession {
 
   /** Immediate teardown without waiting for the tail (unmount, disable). */
   cancel(): void {
+    this.clearDeafTimer();
+    this.logStats();
     this.teardownAudio();
     this.closed = true;
     this.ws.close();
@@ -350,6 +507,7 @@ export class DictationSession {
 
   private fail(message: string): void {
     this.closed = true;
+    this.clearDeafTimer();
     this.teardownAudio();
     this.ws.close();
     this.events.onError(message);
@@ -357,7 +515,20 @@ export class DictationSession {
 
   private teardownAudio(): void {
     for (const track of this.mediaStream.getTracks()) track.stop();
-    if (this.audioContext.state !== "closed") void this.audioContext.close();
+    if (this.shared) {
+      // The tap-unlocked context outlives the take: unplug this take's graph and park it.
+      for (const node of this.graph) {
+        try {
+          node.disconnect();
+        } catch {
+          // Already disconnected.
+        }
+      }
+      if (this.audioContext.state === "running")
+        void Promise.resolve(this.audioContext.suspend?.()).catch(() => {});
+    } else if (this.audioContext.state !== "closed") {
+      void this.audioContext.close();
+    }
   }
 }
 

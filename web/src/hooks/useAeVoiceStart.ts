@@ -4,6 +4,7 @@
 
 import { type MutableRefObject, useCallback, useEffect, useRef, useState } from "react";
 import { primeVoicePlayback } from "@/lib/aeSpeakReplies";
+import { unlockVoiceAudioContext } from "@/lib/aeVoiceServerStt";
 import { logVoice, uploadVoiceLog, useVoiceLogOnHide } from "@/lib/aeVoiceLog";
 import {
   type AeMicController,
@@ -153,6 +154,7 @@ export function useAeVoiceStart({
     }
     // Inside the tap, so the browser lets the reply play later.
     primeVoicePlayback();
+    unlockVoiceAudioContext();
     armVoiceForNextChat();
     released.current = false;
     everListened.current = false;
@@ -168,6 +170,8 @@ export function useAeVoiceStart({
   const restart = useCallback(() => {
     // A fresh recognizer inside the tap: a start that is stuck (iOS) ignores a second start().
     const c = controller.current;
+    // The paused panel's tap: unlock the shared audio context for the server recognizer.
+    unlockVoiceAudioContext();
     deafStreak.current = 0;
     clearRetry();
     setMicDetail(null);

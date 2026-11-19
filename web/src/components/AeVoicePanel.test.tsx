@@ -292,6 +292,18 @@ describe("AeVoicePanel (sheet controls)", () => {
     expect(onEnd).toHaveBeenCalledTimes(1);
   });
 
+  it("the sheet's keyboard and End share one centered row at one height", () => {
+    panel({ layout: "sheet", onKeyboard: vi.fn() });
+    const keyboard = screen.getByRole("button", { name: "Type instead" });
+    const end = screen.getByRole("button", { name: "End voice mode" });
+    expect(keyboard.parentElement).toBe(end.parentElement);
+    expect(keyboard.parentElement?.className).toContain("items-center");
+    expect(keyboard.className).toContain("self-center");
+    // icon-sm (size-7) matches the small End button (h-7).
+    expect(keyboard.className).toContain("size-7");
+    expect(end.className).toContain("h-7");
+  });
+
   it("an undefined onKeyboard hides the keyboard button, with and without an approval", () => {
     panel({ layout: "sheet" });
     expect(screen.queryByRole("button", { name: "Type instead" })).toBeNull();
@@ -321,8 +333,10 @@ describe("AeVoicePanel approval row alignment", () => {
     expect(screen.getByTestId("ae-voice-approval-run").className).toContain("h-7");
   });
 
-  it("keeps the full-size keyboard button when no approval is pending", () => {
+  it("uses the same small keyboard button when no approval is pending", () => {
     panel({ layout: "sheet", phase: "listening", onKeyboard: vi.fn() });
-    expect(screen.getByLabelText("Type instead").className).toContain("size-10");
+    const keyboard = screen.getByLabelText("Type instead");
+    expect(keyboard.className).toContain("size-7");
+    expect(keyboard.className).not.toContain("size-10");
   });
 });

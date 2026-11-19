@@ -8,6 +8,7 @@ import { getMicStream } from "@/lib/aeAudioDevices";
 import { publishMicLevel, resetMicLevel } from "@/lib/aeMicLevel";
 import { publishVoiceBins, resetVoiceBins, syntheticVoiceBins } from "@/lib/aeVoiceLevel";
 import { useVoiceMeter } from "@/lib/aeVoiceMeter";
+import { useVoiceServerStt } from "@/lib/aeVoiceServerStt";
 import { logVoice } from "@/lib/aeVoiceLog";
 import {
   assertVoiceAudioSession,
@@ -220,6 +221,8 @@ export const ComposerMicButton = ({
   const [isListening, setIsListening] = useState(false);
   // The Level meter setting: turning it on or off mid-take starts or stops the second stream.
   const meterSetting = useVoiceMeter();
+  // iPhone and iPad: Voice mode starts use the server recognizer (Apple's goes deaf after a reply).
+  const voiceServerSetting = useVoiceServerStt();
   // Server-path only: the take has started but audio isn't flowing yet (the
   // first take cold-loads the model, up to ~40s). Shows a spinner so the click
   // isn't a dead-looking button until it flips to listening.
@@ -237,6 +240,12 @@ export const ComposerMicButton = ({
   const withdrawRef = useRef(false);
   // Set by the controller's start so the server start knows the withdraw flag is its own.
   const controllerStartRef = useRef(false);
+  // The live server take is a Voice mode take on the server recognizer (iPhone, iPad).
+  const voiceServerTakeRef = useRef(false);
+  // A quiet restart of that take (the deaf check) is connecting.
+  const serverRestartingRef = useRef(false);
+  // How many quiet restarts this Voice mode start has used; one is allowed.
+  const serverDeafRestartsRef = useRef(0);
   const onListeningChangeRef = useRef(onListeningChange);
   onListeningChangeRef.current = onListeningChange;
   // Synced refs so the mount-time listeners call the latest callbacks.
@@ -317,6 +326,9 @@ export const ComposerMicButton = ({
   // Which path the controller's start would take right now.
   const pathRef = useRef<"browser" | "server">("browser");
   pathRef.current = !Ctor || (serverAvailable && isElectronShell()) ? "server" : "browser";
+  // True when a Voice mode (controller) start goes to the server recognizer on this device.
+  const voiceServerRef = useRef(false);
+  voiceServerRef.current = serverAvailable && voiceServerSetting;
   // Swaps the recognizer for a fresh one (set by the mount effect).
   const replaceRecognitionRef = useRef<(keepLateFinal?: boolean) => void>(() => {});
   const clearStartWatchdog = useCallback(() => {
@@ -1070,7 +1082,9 @@ export const ComposerMicButton = ({
   // hides its audio buffer. Chrome batches the permission to one prompt.
   useEffect(() => {
     if (!isListening) return;
-    const meterOn = meterSetting;
+    // A server take of Voice mode on iOS has no second capture: the newest one wins there and
+    // would take the mic from the take. Its own chunk levels drive the bars instead.
+    const meterOn = meterSetting && !voiceServerTakeRef.current;
     meterOnRef.current = meterOn;
     logVoice(meterOn ? "meter on" : "meter off");
     if (!meterOn) {
@@ -1329,6 +1343,39 @@ export const ComposerMicButton = ({
     };
   }, [isListening, meterSetting]);
 
+  // The server take heard only silence (or a muted track): restart it quietly once, then tell
+  // Voice mode the take is deaf so its own retry and "tap to listen" paths take over.
+  const handleServerDeaf = useCallback((reason: "silent" | "muted") => {
+    const session = sessionRef.current;
+    if (!session || !voiceServerTakeRef.current) return;
+    sessionRef.current = null;
+    session.cancel();
+    // Words spoken but not finalized are kept, as on a crash.
+    const pending = interimRef.current.trim();
+    interimRef.current = "";
+    if (pending && !disabledRef.current && !discardingRef.current) {
+      onTranscriptRef.current(pending);
+    } else {
+      onInterimRef.current?.("");
+    }
+    if (serverDeafRestartsRef.current < 1) {
+      serverDeafRestartsRef.current += 1;
+      logVoice("server deaf restart", reason);
+      serverRestartingRef.current = true;
+      void toggleServerRef.current();
+      return;
+    }
+    logVoice("server deaf", reason);
+    voiceServerTakeRef.current = false;
+    voiceTakeRef.current = false;
+    quietStopRef.current = true;
+    listeningRef.current = false;
+    setIsListening(false);
+    requestedRef.current = false;
+    controllerStartRef.current = false;
+    onListeningChangeRef.current?.(false, "deaf");
+  }, []);
+
   // Server-dictation toggle. Start resolves only once the mic + socket
   // handshake are up, so isListening flips exactly when audio flows.
   const toggleServer = useCallback(async () => {
@@ -1354,44 +1401,59 @@ export const ComposerMicButton = ({
       discardingRef.current = false;
       // A manual click or the shortcut owns this start: a withdraw left over from an
       // earlier Voice mode start must not cancel it.
-      if (!controllerStartRef.current) withdrawRef.current = false;
+      const quiet = serverRestartingRef.current;
+      if (!quiet) {
+        if (!controllerStartRef.current) withdrawRef.current = false;
+        // Only a Voice mode start on a device that uses the server for it gets the deaf check.
+        voiceServerTakeRef.current = controllerStartRef.current && voiceServerRef.current;
+      }
       controllerStartRef.current = false;
       interimRef.current = "";
       setConnecting(true);
-      onVoiceStartRef.current?.();
-      const next = await DictationSession.start({
-        onPartial: (text) => {
-          // Drop late partials after an Esc discard — they'd repopulate the
-          // composer the parent just reverted.
-          if (!disabledRef.current && !discardingRef.current) {
-            interimRef.current = text;
-            onInterimRef.current?.(text);
-          }
+      if (!quiet) onVoiceStartRef.current?.();
+      const next = await DictationSession.start(
+        {
+          onPartial: (text) => {
+            // Drop late partials after an Esc discard — they'd repopulate the
+            // composer the parent just reverted.
+            if (!disabledRef.current && !discardingRef.current) {
+              interimRef.current = text;
+              onInterimRef.current?.(text);
+            }
+          },
+          onFinal: (text) => {
+            interimRef.current = "";
+            const trimmed = text.trim();
+            if (trimmed && !disabledRef.current && !discardingRef.current) {
+              onTranscriptRef.current(trimmed);
+            }
+          },
+          onError: () => {
+            sessionRef.current = null;
+            // Preserve anything spoken but not yet finalized: pin the pending
+            // partial as a final rather than blanking it, so a crash mid-take
+            // doesn't discard the user's words.
+            const pending = interimRef.current.trim();
+            interimRef.current = "";
+            if (pending && !disabledRef.current && !discardingRef.current) {
+              onTranscriptRef.current(pending);
+            } else {
+              onInterimRef.current?.("");
+            }
+            reportError("Voice input failed. Please try again.");
+            setIsListening(false);
+            requestedRef.current = false;
+          },
+          onLevel: (level) => {
+            // The bars and ring of a take that has no second capture follow the chunk levels.
+            if (voiceServerTakeRef.current) {
+              pulseTargetRef.current = Math.max(pulseTargetRef.current, Math.min(1, level * 4));
+            }
+          },
+          onDeaf: (reason) => handleServerDeaf(reason),
         },
-        onFinal: (text) => {
-          interimRef.current = "";
-          const trimmed = text.trim();
-          if (trimmed && !disabledRef.current && !discardingRef.current) {
-            onTranscriptRef.current(trimmed);
-          }
-        },
-        onError: () => {
-          sessionRef.current = null;
-          // Preserve anything spoken but not yet finalized: pin the pending
-          // partial as a final rather than blanking it, so a crash mid-take
-          // doesn't discard the user's words.
-          const pending = interimRef.current.trim();
-          interimRef.current = "";
-          if (pending && !disabledRef.current && !discardingRef.current) {
-            onTranscriptRef.current(pending);
-          } else {
-            onInterimRef.current?.("");
-          }
-          reportError("Voice input failed. Please try again.");
-          setIsListening(false);
-          requestedRef.current = false;
-        },
-      });
+        { deafCheck: voiceServerTakeRef.current },
+      );
       if (withdrawRef.current) {
         // Voice mode stopped the mic while it was still connecting: drop the stream at once.
         withdrawRef.current = false;
@@ -1404,6 +1466,7 @@ export const ComposerMicButton = ({
       }
     } catch (startError) {
       logVoice("mic error", `${(startError as Error)?.name}: ${(startError as Error)?.message}`);
+      if (serverRestartingRef.current) quietStopRef.current = true;
       requestedRef.current = false;
       onListeningChangeRef.current?.(false);
       reportError(
@@ -1419,8 +1482,9 @@ export const ComposerMicButton = ({
     // clears the handshake spinner on both success and failure.
     setConnecting(false);
     withdrawRef.current = false;
+    serverRestartingRef.current = false;
     serverBusyRef.current = false;
-  }, [reportError]);
+  }, [reportError, handleServerDeaf]);
   toggleServerRef.current = toggleServer;
 
   // A browser stop that gets no `end`: swap the recognizer and call the take over.
@@ -1463,7 +1527,9 @@ export const ComposerMicButton = ({
     // to the server — a visible ~1s "fail then recover" on every first take.
     // When the server can serve, go straight to it and skip the doomed attempt.
     // (Real browsers keep Web Speech primary; it genuinely works there.)
-    if (pathRef.current === "server") {
+    // A Voice mode start on iPhone or iPad also goes straight to the server: Apple's
+    // recognizer goes deaf after a spoken reply. Manual mic taps keep the browser path.
+    if (pathRef.current === "server" || (voiceServerRef.current && controllerStartRef.current)) {
       if (!serverAvailable) return false;
       void toggleServer();
       return true;
@@ -1482,6 +1548,7 @@ export const ComposerMicButton = ({
     transitionRef.current = true;
     // The Web Speech path has no server start to consume the controller's flag.
     controllerStartRef.current = false;
+    voiceServerTakeRef.current = false;
     try {
       if (listeningRef.current) {
         userStopRef.current();
@@ -1620,6 +1687,7 @@ export const ComposerMicButton = ({
       if (listeningRef.current || requestedRef.current) return;
       requestedRef.current = true;
       controllerStartRef.current = true;
+      serverDeafRestartsRef.current = 0;
       if (toggle()) {
         // A new start replaces any earlier withdrawn one.
         withdrawRef.current = false;
@@ -1643,13 +1711,17 @@ export const ComposerMicButton = ({
     };
     controller.current = {
       start,
-      startPath: () => (serverBusyRef.current || sessionRef.current ? "server" : pathRef.current),
+      startPath: () =>
+        serverBusyRef.current || sessionRef.current || voiceServerRef.current
+          ? "server"
+          : pathRef.current,
       // A tap on a stuck "starting": discard the pending browser start, then start again
       // inside the tap. A server start still connecting is never withdrawn: it is healthy.
       restart: () => {
         if (serverBusyRef.current || sessionRef.current) return;
-        if (listeningRef.current && pathRef.current !== "browser") return;
-        if (pathRef.current === "browser") {
+        const browserPath = pathRef.current === "browser" && !voiceServerRef.current;
+        if (listeningRef.current && !browserPath) return;
+        if (browserPath) {
           logVoice("mic restart", listeningRef.current ? "while listening" : undefined);
           stallTimesRef.current = [];
           idleRecycleTimesRef.current = [];
@@ -1684,7 +1756,9 @@ export const ComposerMicButton = ({
         if (stopSynthWait("controller")) return;
         if (listeningRef.current) {
           requestedRef.current = false;
-          toggle();
+          // A quiet deaf restart still connecting: drop its stream the moment it arrives.
+          if (serverRestartingRef.current) withdrawRef.current = true;
+          else toggle();
         } else if (requestedRef.current) {
           // Still connecting: cancel the start, or drop the stream the moment it connects.
           requestedRef.current = false;

@@ -35,6 +35,7 @@ import { activeEchoWords, resetEcho, splitEcho } from "@/lib/aeVoiceEcho";
 import { withApprovalSource } from "@/lib/aeApprovalSource";
 import { logVoice, uploadVoiceLog, useVoiceLogOnHide } from "@/lib/aeVoiceLog";
 import { useMicWhileSpeaking } from "@/lib/aeVoiceMic";
+import { unlockVoiceAudioContext } from "@/lib/aeVoiceServerStt";
 import { useChatStore } from "@/store/chatStore";
 
 /** If the chat never shows a turn after a send, stop waiting for it. */
@@ -540,6 +541,7 @@ export function useAeVoiceMode({
 
   const restartMic = useCallback(() => {
     // A tap is a fresh start: the retry budget is whole again.
+    unlockVoiceAudioContext();
     deafStreak.current = 0;
     failures.current = 0;
     if (retryTimer.current !== null) clearTimeout(retryTimer.current);

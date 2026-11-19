@@ -317,16 +317,15 @@ export function AeVoicePanel({
       </div>
     ) : null;
 
-  // In the approval row the keyboard button matches the h-7 text buttons beside it.
-  const inApprovalRow = approvalActive && Boolean(onApproval);
+  // The keyboard button matches the h-7 End button beside it, in the approval row and out of it.
   const sheetControls = (
     <>
       {onKeyboard ? (
         <Button
           type="button"
           variant="ghost"
-          size={inApprovalRow ? "icon-sm" : "icon"}
-          className={cn(inApprovalRow && "self-center text-muted-foreground hover:text-foreground")}
+          size="icon-sm"
+          className="self-center text-muted-foreground hover:text-foreground"
           aria-label="Type instead"
           onClick={onKeyboard}
         >
@@ -381,7 +380,7 @@ export function AeVoicePanel({
         {sheetRow ? (
           <div className="mt-3">{sheetRow}</div>
         ) : (
-          <div className="mt-3 flex gap-3">{sheetControls}</div>
+          <div className="mt-3 flex items-center gap-3">{sheetControls}</div>
         )}
       </div>
     );
