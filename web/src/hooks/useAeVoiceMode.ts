@@ -2,6 +2,11 @@
 // grace sends the draft, the mic is muted from send until the reply has been spoken,
 // and a pending question card is read aloud and answered by voice.
 
+import {
+  enterVoiceAudioSession,
+  leaveVoiceAudioSession,
+  releaseVoiceAudioHold,
+} from "@/lib/aeAudioSession";
 import { type MutableRefObject, useCallback, useEffect, useRef, useState } from "react";
 import {
   APPROVAL_TAIL_MS,
@@ -208,6 +213,17 @@ export function useAeVoiceMode({
     if (graceTimer.current !== null) clearTimeout(graceTimer.current);
     graceTimer.current = null;
   }, []);
+
+  // This mounted chat's Voice mode holds the audio session (a count, so two Voice chats or a
+  // remount never restore it early). A start tap's hold (new-chat Voice button, Voice switch)
+  // is released only after this chat has entered, so the count never reaches zero between them.
+  // Reading a snapshot enters nothing; only a chat whose Voice runs here does.
+  useEffect(() => {
+    if (!on || chatId === null) return;
+    enterVoiceAudioSession();
+    releaseVoiceAudioHold();
+    return () => leaveVoiceAudioSession();
+  }, [on, chatId]);
 
   // Another chat: nothing started for the old one may fire for the new one.
   useEffect(

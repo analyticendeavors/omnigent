@@ -9,7 +9,7 @@ import {
   parseAskUserQuestionPreview,
 } from "./askUserQuestion";
 import { notePlayback } from "./aeVoiceEcho";
-import { enterVoiceAudioSession, leaveVoiceAudioSession } from "./aeAudioSession";
+import { holdVoiceAudioSession, releaseVoiceAudioHold } from "./aeAudioSession";
 import { logVoice } from "./aeVoiceLog";
 import { withBasePath } from "./basePath";
 import type { AnyBlock, ElicitationBlock } from "./blocks";
@@ -112,8 +112,6 @@ export function getVoiceSnapshot(chatId: string | null): VoiceSnapshot {
   let state = states.get(chatId);
   if (!state) {
     const on = readVoiceMode(chatId);
-    // A chat reopened with Voice mode still on needs the audio session pinned too.
-    if (on) enterVoiceAudioSession();
     state = { ...OFF, on, phase: on ? "starting" : "off" };
     states.set(chatId, state);
   }
@@ -190,8 +188,6 @@ export function syncVoiceLabel(chatId: string, labelOn: boolean): void {
 
 export function setVoiceOn(chatId: string, on: boolean): void {
   logVoice(on ? "voice on" : "voice off");
-  if (on) enterVoiceAudioSession();
-  else leaveVoiceAudioSession();
   writeVoiceMode(chatId, on);
   patch(chatId, { on, phase: on ? "starting" : "off", barged: false });
   void postVoiceLabel(chatId, on);
@@ -234,12 +230,15 @@ let voiceArmed = false;
 
 export function armVoiceForNextChat(): void {
   voiceArmed = true;
-  enterVoiceAudioSession();
+  // The audio session is held for the chat the page creates; its Voice hook adopts the hold.
+  holdVoiceAudioSession();
 }
 
 export function disarmVoiceForNextChat(): void {
+  // After takeVoiceArm the flag is already clear and the created chat owns the hold.
+  if (!voiceArmed) return;
   voiceArmed = false;
-  leaveVoiceAudioSession();
+  releaseVoiceAudioHold();
 }
 
 /** True once when the flag was armed; clears it. */

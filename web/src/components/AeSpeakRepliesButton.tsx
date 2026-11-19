@@ -31,6 +31,7 @@ import {
   useVoiceChoices,
   VoiceChoiceRows,
 } from "@/components/AeVoiceMenuRows";
+import { holdVoiceAudioSession } from "@/lib/aeAudioSession";
 import { logVoice, requestVoiceLogInsert } from "@/lib/aeVoiceLog";
 import {
   clearVoiceModelState,
@@ -333,7 +334,10 @@ function SpeakRepliesControl({
   // Voice mode needs Speak replies, so turning it on turns that on too.
   const toggleVoice = (next: boolean) => {
     // Inside the tap: iOS refuses later playback unless a tap started audio.
-    if (next) primeVoicePlayback();
+    if (next) {
+      primeVoicePlayback();
+      holdVoiceAudioSession();
+    }
     if (next && !on) toggleSpeak(true);
     setVoiceOn(chatId, next);
   };

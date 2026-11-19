@@ -1,16 +1,19 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   assertVoiceAudioSession,
   audioSessionType,
   enterVoiceAudioSession,
   leaveVoiceAudioSession,
+  PENDING_HOLD_MS,
   resetAudioSessionState,
 } from "./aeAudioSession";
 import { formatVoiceLog, resetVoiceLog } from "./aeVoiceLog";
 import {
   armVoiceForNextChat,
   disarmVoiceForNextChat,
+  getVoiceSnapshot,
   resetVoiceStore,
+  takeVoiceArm,
   setVoiceOn,
 } from "./aeVoiceMode";
 
@@ -67,7 +70,6 @@ describe("audio session pinning", () => {
     setUa(IOS_UA);
     setSession("ambient");
     enterVoiceAudioSession();
-    enterVoiceAudioSession();
     leaveVoiceAudioSession();
     expect(session().type).toBe("ambient");
   });
@@ -102,16 +104,54 @@ describe("audio session pinning", () => {
     expect(audioSessionType()).toBe("none");
   });
 
-  it("follows Voice mode on and off, and the new-chat arm", () => {
+  it("restores only when the last holder leaves (two Voice chats)", () => {
     setUa(IOS_UA);
     setSession("auto");
-    setVoiceOn("c1", true);
+    enterVoiceAudioSession();
+    enterVoiceAudioSession();
+    leaveVoiceAudioSession();
     expect(session().type).toBe("play-and-record");
+    session().type = "playback";
+    assertVoiceAudioSession();
+    expect(session().type).toBe("play-and-record");
+    leaveVoiceAudioSession();
+    expect(session().type).toBe("auto");
+  });
+
+  it("setVoiceOn and a plain snapshot read never touch the session", () => {
+    setUa(IOS_UA);
+    setSession("auto");
+    window.localStorage.setItem("ae.voiceMode.c9", "1");
+    getVoiceSnapshot("c9");
+    getVoiceSnapshot("c1");
+    setVoiceOn("c1", true);
     setVoiceOn("c1", false);
     expect(session().type).toBe("auto");
+    expect(formatVoiceLog()).not.toContain("audio session");
+  });
+
+  it("the arm holds the session; disarm before a chat exists releases it", () => {
+    setUa(IOS_UA);
+    setSession("auto");
     armVoiceForNextChat();
     expect(session().type).toBe("play-and-record");
     disarmVoiceForNextChat();
     expect(session().type).toBe("auto");
+  });
+
+  it("a taken arm keeps its hold through the page's unmount disarm, and expires if unadopted", () => {
+    vi.useFakeTimers();
+    try {
+      setUa(IOS_UA);
+      setSession("auto");
+      armVoiceForNextChat();
+      takeVoiceArm();
+      disarmVoiceForNextChat();
+      expect(session().type).toBe("play-and-record");
+      vi.advanceTimersByTime(PENDING_HOLD_MS + 1);
+      expect(session().type).toBe("auto");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
