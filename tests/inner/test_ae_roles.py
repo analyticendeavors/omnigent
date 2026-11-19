@@ -1320,3 +1320,100 @@ def test_resolve_roles_sets_the_judge_flag_server_side(
 
     monkeypatch.setattr(decision_status, "reason", boom)
     assert "judge" not in resolve_roles(conversation(labels), owner_store())
+
+
+# ── the reminder after a session's first prompt ──────────────────────────
+
+
+def _brief_roles(preset: dict[str, Any], **extra: Any) -> dict[str, Any]:
+    return {
+        "preset": preset,
+        "custom": False,
+        "current": CURRENT,
+        "personas": PERSONAS,
+        "judge": True,
+        "brief": True,
+        **extra,
+    }
+
+
+def test_the_reminder_is_much_shorter_and_keeps_every_rule() -> None:
+    preset = _with_reviewers(SONNET_MEDIUM, CODEX, SECURITY)
+    full = render_roles({**_brief_roles(preset), "brief": False}) or ""
+    short = render_roles(_brief_roles(preset)) or ""
+    assert len(short) < len(full) * 0.6
+    # roles with model and effort, reviewer set, the security trigger and the skip rule
+    for fragment in (
+        "Planner: opus, high.",
+        "Builder: sonnet, medium.",
+        "Helper: haiku, low.",
+        "1. sonnet, medium.",
+        'harness "codex"',
+        f'run only when the diff touches "{_TRIGGERS}"',
+        "Reviewer 3 only when the diff is risky as listed; otherwise skip and say so.",
+        "Fix checks and verifying one finding: reviewer 1 only.",
+        "without asking",
+        "never an existing session",
+        "report_review",
+        "select:mcp__ae__ask_judge",
+        "low_confidence",
+        "set_session_model",
+        "then ask the user",
+        "Step down for mechanical work: on.",
+        "START ON:",
+    ):
+        assert fragment in short, fragment
+    # the persona instructions travel once, in the first message
+    assert "Review security only." not in short
+    assert "Persona instructions: copy word for word from this chat's first message." in short
+    assert "Review security only." in full
+
+
+def test_the_reminder_for_an_ask_first_preset_asks_before_a_model_change() -> None:
+    preset = {**BALANCED, "rules": {**BALANCED["rules"], "raise_or_lower": "ask"}}
+    short = render_roles(_brief_roles(preset)) or ""
+    assert "ask the user first" in short
+    assert "at once" not in short
+
+
+def test_the_auto_paragraph_shrinks_in_the_reminder() -> None:
+    meta = {
+        "ae_team": {"mode": "auto", "members": []},
+        "ae_roles": _brief_roles(BALANCED),
+    }
+    short = render_team_notice(meta) or ""
+    assert short.startswith("Auto collaboration: you lead and give one answer.")
+    full = render_team_notice({**meta, "ae_roles": {**meta["ae_roles"], "brief": False}}) or ""
+    assert full.startswith("Auto collaboration is enabled for this message.")
+    assert len(short) < len(full) * 0.5
+
+
+def _store_with_messages(*roles: str) -> Mock:
+    store = owner_store("owner@example.com")
+    items = [Mock(data=Mock(role=role)) for role in roles]
+    store.list_items.return_value = Mock(data=items)
+    return store
+
+
+@pytest.mark.parametrize(
+    ("roles", "brief"),
+    [
+        ((), False),
+        (("user",), False),
+        (("user", "assistant"), False),
+        (("user", "assistant", "user"), True),
+        (("user", "assistant", "user", "assistant", "user"), True),
+    ],
+)
+def test_the_notice_shrinks_only_after_the_first_user_message(
+    prefs: dict[str, Any], roles: tuple[str, ...], brief: bool
+) -> None:
+    notice = team_notice(conversation(), _store_with_messages(*roles))
+    assert notice["ae_roles"].get("brief", False) is brief
+
+
+def test_an_unreadable_history_sends_the_full_notice(prefs: dict[str, Any]) -> None:
+    store = owner_store("owner@example.com")
+    store.list_items.side_effect = RuntimeError("db down")
+    notice = team_notice(conversation(), store)
+    assert "brief" not in notice["ae_roles"]

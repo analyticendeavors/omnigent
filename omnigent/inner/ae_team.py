@@ -75,6 +75,12 @@ def _render_team(metadata: Any) -> str | None:
     if not isinstance(metadata, dict) or not isinstance(metadata.get("ae_team"), dict):
         return None
     roster = metadata["ae_team"]
+    roles = metadata.get("ae_roles")
+    if roster.get("mode") == "auto" and isinstance(roles, dict) and roles.get("brief") is True:
+        return (
+            "Auto collaboration: you lead and give one answer. Smallest useful group; use only "
+            "configured, reachable agents; never claim a collaborator you did not invoke."
+        )
     if roster.get("mode") == "auto":
         return (
             "Auto collaboration is enabled for this message. You are the lead and give one "

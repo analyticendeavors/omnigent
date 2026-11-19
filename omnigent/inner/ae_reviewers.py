@@ -144,7 +144,9 @@ def resolve_agents(roles: dict[str, Any], lookup: Callable[[str], str | None]) -
     return resolved
 
 
-def _agent(slot: dict[str, object], *, brief: bool = False, role: str = "reviewer") -> str:
+def _agent(
+    slot: dict[str, object], *, brief: bool = False, role: str = "reviewer", terse: bool = False
+) -> str:
     """An agent slot: who it is and how to start it, with only the arguments it fixes."""
     agent = _text(slot.get("agent"), 128)
     model = _text(slot.get("model"), 128)
@@ -164,6 +166,11 @@ def _agent(slot: dict[str, object], *, brief: bool = False, role: str = "reviewe
             title = ", a title naming the review round, and workspace the repo under review"
         else:
             title = ", a title naming the task, and workspace the task's repo"
+        if terse:
+            joined = ", ".join(args)
+            return (
+                f"{_agent_name(slot)} (fresh session: create_session {joined}, title, workspace)"
+            )
         if brief:
             return f"{_agent_name(slot)} (fresh session: create_session {', '.join(args)}{title})"
         return (
@@ -171,6 +178,8 @@ def _agent(slot: dict[str, object], *, brief: bool = False, role: str = "reviewe
             f"{'review' if role == 'reviewer' else 'task'}: create_session with "
             f"{', '.join(args)}{title}{default})"
         )
+    if terse:
+        return f"{_agent_name(slot)} (fresh child session: sys_session_create {', '.join(args)})"
     if brief:
         return f"{_agent_name(slot)} (fresh child session: sys_session_create {', '.join(args)})"
     return (
@@ -200,7 +209,7 @@ def _quote(value: object, limit: int) -> str:
     return f'"{clean}"' if clean else ""
 
 
-def _scope(slot: dict[str, object]) -> str:
+def _scope(slot: dict[str, object], *, terse: bool = False) -> str:
     """What a slot's persona adds to its listing; empty for a slot without one."""
     persona = _persona_of(slot)
     if persona is None:
@@ -210,7 +219,7 @@ def _scope(slot: dict[str, object]) -> str:
         return ""
     name = _quote(persona.get("name"), 40) or '"Persona"'
     purpose = _quote(persona.get("purpose"), _LINE_MAX)
-    out = f"{name}: {purpose}" if purpose else name
+    out = f"{name}: {purpose}" if purpose and not terse else name
     if _is_risky(slot):
         trigger = _quote(persona.get("trigger"), _LINE_MAX)
         out += (
@@ -221,9 +230,14 @@ def _scope(slot: dict[str, object]) -> str:
     return out
 
 
-def _slot_text(slot: dict[str, object], model_text: ModelText, current: object) -> str:
-    base = _agent(slot) if _is_agent(slot) else _claude(slot, model_text, current)
-    scope = _scope(slot)
+def _slot_text(
+    slot: dict[str, object], model_text: ModelText, current: object, *, terse: bool = False
+) -> str:
+    if _is_agent(slot):
+        base = _agent(slot, terse=True) if terse else _agent(slot)
+    else:
+        base = model_text(slot, current) + ("" if terse else " (native subagent)")
+    scope = _scope(slot, terse=terse)
     return f"{base}, {scope}" if scope else base
 
 
@@ -333,14 +347,29 @@ def worker_text(
     return _agent(setting, brief=brief, role=role)
 
 
+def _persona_tail(usable: list[dict[str, object]], brief: bool) -> list[str]:
+    """The persona instruction block, or in a reminder one line pointing at the first message."""
+    if not brief:
+        return _persona_block(usable)
+    if any(_persona_of(slot) and _persona_of(slot).get("instructions") for slot in usable):
+        return ["  Persona instructions: copy word for word from this chat's first message."]
+    return []
+
+
 def reviewer_lines(
     setting: object,
     rules: object,
     current: object,
     model_text: ModelText,
     personas: object = None,
+    *,
+    brief: bool = False,
 ) -> list[str]:
     """The notice lines for *setting*: one line for one reviewer, three for two or more.
+
+    With *brief* (the reminder after a session's first prompt) the review rules are worded
+    in fewer words and the persona instructions are replaced by a pointer to the first
+    message, which carried them word for word.
 
     :param setting: The preset's ``roles.reviewer`` value.
     :param rules: The preset's rules (``review_merge``, ``reviewer_unavailable``, ``helpers``).
@@ -360,9 +389,9 @@ def reviewer_lines(
         if usable and _scope(usable[0]):
             one += f", {_scope(usable[0])}"
         note = f" ({skip_note})" if skip_note else ""
-        return [f"- {_LABEL}: {one}{note}.", *_persona_block(usable)]
+        return [f"- {_LABEL}: {one}{note}.", *_persona_tail(usable, brief)]
     listed = " ".join(
-        f"{index}. {_slot_text(slot, model_text, current)}."
+        f"{index}. {_slot_text(slot, model_text, current, terse=brief)}."
         for index, slot in enumerate(usable, start=1)
     )
     lists = (
@@ -386,6 +415,35 @@ def reviewer_lines(
         if risky
         else ""
     )
+    if brief:
+        brief_unavailable = (
+            "A reviewer that cannot start: ask the user first."
+            if rules.get("reviewer_unavailable") == "ask"
+            else "One that cannot start: skip it and say so."
+        )
+        if skip_note:
+            brief_unavailable += f" {skip_note[0].upper()}{skip_note[1:]}."
+        brief_risky = (
+            f" Reviewer{'s' if len(risky) > 1 else ''} {' and '.join(map(str, risky))} "
+            "only when the diff is risky as listed; otherwise skip and say so."
+            if risky
+            else ""
+        )
+        brief_lists = (
+            "each reviewer's list first"
+            if rules.get("review_merge") == "separate"
+            else "each reviewer's list under it"
+        )
+        return [
+            f"- Reviewers: {listed}",
+            "  Run all at once when the work is done, without asking (replaces /dual-review), "
+            "same diff and brief, none sees another's findings, never an existing session. "
+            "One verdict: dedupe, agreements, one-line reason per disagreement, "
+            f"rank by severity, {brief_lists}. "
+            f"Fix checks and verifying one finding: reviewer 1 only. {brief_unavailable}"
+            f"{brief_risky}",
+            *_persona_tail(usable, brief),
+        ]
     return [
         f"- {_LABEL_MANY}: {listed}",
         "  These reviewers replace the /dual-review offer; run them when the work is done, "

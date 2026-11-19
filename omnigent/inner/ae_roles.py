@@ -349,7 +349,31 @@ def with_roles(
         _logger.warning("ae roles: could not resolve the preset; using Balanced", exc_info=True)
         roles = {"preset": _summary(BALANCED), "custom": False}
     roles = {**roles, "lead_session": _lead_session(conv)}
+    if _after_first_prompt(conv, store):
+        roles["brief"] = True
     return {**effective_mode(notice, roles), "ae_roles": roles}
+
+
+#: User messages a session holds before its notice shrinks to the reminder. The message
+#: being delivered may or may not be stored yet, so the second prompt can still read as
+#: the first; the full text then goes out twice at most.
+BRIEF_AFTER_USER_MESSAGES = 2
+
+
+def _after_first_prompt(conv: Conversation, store: ConversationStore) -> bool:
+    """Whether the full notice already went out: the session holds earlier user messages.
+
+    Any failure reads as "no", so the full text is sent rather than a reminder alone.
+    """
+    try:
+        items = store.list_items(conv.id, limit=40, order="asc", type="message").data
+        users = 0
+        for item in items:
+            if getattr(item.data, "role", None) == "user":
+                users += 1
+        return users >= BRIEF_AFTER_USER_MESSAGES
+    except Exception:  # noqa: BLE001 (the notice must never break a message)
+        return False
 
 
 def _lead_session(conv: Conversation) -> dict[str, object]:
@@ -521,12 +545,14 @@ _CHANGE_TAIL = (
 )
 
 
-def _rules(rules: object) -> str:
+def _rules(rules: object, *, brief: bool = False) -> str:
     rules = rules if isinstance(rules, dict) else {}
     down = "on" if rules.get("lead_steps_down") is True else "off"
     raises = rules.get("auto_raises")
     raises = raises if isinstance(raises, int) and not isinstance(raises, bool) else 0
     mode = rules.get("raise_or_lower")
+    if brief:
+        return _rules_brief(mode, down, raises)
     if mode == "off":
         return (
             "Model changes: do not raise a helper or lower yourself; set_session_model refuses. "
@@ -543,6 +569,26 @@ def _rules(rules: object) -> str:
             "except going back to the model you started on."
         )
     return f"{change} Step down for mechanical work: {down}. {_CHANGE_TAIL}"
+
+
+def _rules_brief(mode: object, down: str, raises: int) -> str:
+    """The model change rules for the reminder."""
+    if mode == "off":
+        return (
+            "Model changes: none (set_session_model refuses). "
+            f"Step down for mechanical work: {down}."
+        )
+    if mode == "tell":
+        change = (
+            f"set_session_model raises a helper or lowers you, at once up to "
+            f"{raises} raise{'' if raises == 1 else 's'} per helper, then ask the user"
+        )
+    else:
+        change = "set_session_model raises a helper or lowers you: ask the user first"
+    return (
+        f"Model changes: {change}. Step down for mechanical work: {down}. A subagent "
+        "cannot switch: restart it a tier up. A START ON: line not yet applied: switch yourself."
+    )
 
 
 _TOOLS = (
@@ -619,6 +665,17 @@ _JUDGE_LINE = (
 )
 
 
+_JUDGE_BRIEF = (
+    'ask_judge (ToolSearch "select:mcp__ae__ask_judge"; Codex calls it directly) for small '
+    "choices: up to five per call, neutral context, no names, paths or quotes; act unless "
+    "low_confidence; if it fails, decide yourself."
+)
+_TOOLS_BRIEF = (
+    "Subagent descriptions start with the role; create_session takes `role` only. After the "
+    "final review call report_review (reviewers run, findings returned, fixed)."
+)
+
+
 def _tools(roles: dict[str, Any]) -> str:
     """The Agent tool sentence for the lead, plus how to name a role on each start.
 
@@ -627,6 +684,10 @@ def _tools(roles: dict[str, Any]) -> str:
     """
     session = roles.get("lead_session")
     base = _TOOLS_OTHER if isinstance(session, dict) and session.get("claude") is False else _TOOLS
+    if roles.get("brief") is True:
+        named = [] if helpers_of(roles) != OWN else ["Native subagents only (no create_session)."]
+        extra = [_JUDGE_BRIEF] if roles.get("judge") is True else []
+        return " ".join([_TOOLS_BRIEF, *named, *extra])
     # Native subagents apply under "own" too; create_session does not.
     named = [_SUBAGENT_ROLE] if helpers_of(roles) == OWN else [_SESSION_ROLE, _SUBAGENT_ROLE]
     extra = [_JUDGE_LINE] if roles.get("judge") is True else []
@@ -692,15 +753,23 @@ def render_roles(roles: object) -> str | None:
     if roles.get("custom") is True:
         title += " (customized for this session)"
     setting = preset.get("roles") if isinstance(preset.get("roles"), dict) else {}
+    brief = roles.get("brief") is True
     lines = [
         f"Roles preset: {title}. Name a role for each helper you start and give a native "
         f"subagent that role's model and effort. {tools}"
+        if not brief
+        else f"Roles ({title}): name a role for each helper; use its model and effort. {tools}"
     ]
     lines.append(_lead_line(setting.get("lead"), roles.get("lead_session"), current))
     for role in ROLES[1:]:
         if role == "reviewer":
             lines += ae_reviewers.reviewer_lines(
-                setting.get(role), preset.get("rules"), current, _model, roles.get("personas")
+                setting.get(role),
+                preset.get("rules"),
+                current,
+                _model,
+                roles.get("personas"),
+                brief=brief,
             )
             continue
         shown = (
@@ -710,8 +779,9 @@ def render_roles(roles: object) -> str | None:
                 role, setting.get(role), preset.get("rules"), current, _model
             )
         )
-        lines.append(f"- {_ROLE_LABELS[role]}: {shown}.")
-    lines.append(_rules(preset.get("rules")))
+        label = _ROLE_LABELS[role].split(" (")[0] if brief else _ROLE_LABELS[role]
+        lines.append(f"- {label}: {shown}.")
+    lines.append(_rules(preset.get("rules"), brief=brief))
     return "\n".join(lines)
 
 
