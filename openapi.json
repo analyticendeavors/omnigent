@@ -1232,6 +1232,19 @@
       "CompactionInProgressEvent": {
         "description": "Conversation history is being compacted.\n\nEmitted by `omnigent/runtime/compaction.py` while a\ncompaction step runs so clients can render a \"summarizing\nhistory\u2026\" indicator. Wire shape matches `compaction.py:765`.\n\nA long compaction is announced repeatedly (once per status poll), so\nclients must treat every event carrying the same `started_at` as one\ncompaction \u2014 refreshing their indicator rather than stacking another.",
         "properties": {
+          "background": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "`True` when a terminal harness owns the compaction; it can outlive the turn, so clients keep the indicator through turn ends until completed or failed arrives. Omitted otherwise.",
+            "title": "Background"
+          },
           "sequence_number": {
             "anyOf": [
               {
