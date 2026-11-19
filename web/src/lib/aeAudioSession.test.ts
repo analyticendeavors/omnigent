@@ -6,8 +6,10 @@ import {
   leaveVoiceAudioSession,
   markSessionMayBeInactive,
   PENDING_HOLD_MS,
+  onLateReactivationStream,
   reactivateAudioSessionForMic,
   reactivationPending,
+  REACTIVATE_HARD_CAP_MS,
   REACTIVATE_TIMEOUT_MS,
   resetAudioSessionState,
 } from "./aeAudioSession";
@@ -241,6 +243,71 @@ describe("reactivating the audio session for the mic", () => {
     expect(formatVoiceLog()).toContain("audio session state active");
   });
 
+  it("keeps a mark set while the reactivation is in flight", async () => {
+    setUa(IOS_UA);
+    let release: (v: unknown) => void = () => {};
+    gum.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    markSessionMayBeInactive();
+    const done = reactivateAudioSessionForMic();
+    markSessionMayBeInactive();
+    release({ getTracks: () => [new Track()] });
+    expect(await done).toBe(true);
+    expect(reactivationPending()).toBe(true);
+  });
+
+  it("keeps waiting past the soft timeout for a stream that settles in time", async () => {
+    vi.useFakeTimers();
+    setUa(IOS_UA);
+    gum.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(() => resolve({ getTracks: () => [new Track()] }), 3000);
+        }),
+    );
+    markSessionMayBeInactive();
+    let resolved = false;
+    const done = reactivateAudioSessionForMic().then((v) => {
+      resolved = true;
+      return v;
+    });
+    await vi.advanceTimersByTimeAsync(REACTIVATE_TIMEOUT_MS + 100);
+    expect(resolved).toBe(false);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(await done).toBe(true);
+    expect(reactivationPending()).toBe(false);
+  });
+
+  it("signals one restart when the stream arrives after the hard cap", async () => {
+    vi.useFakeTimers();
+    setUa(IOS_UA);
+    let release: (v: unknown) => void = () => {};
+    const late = new Track();
+    gum.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const listener = vi.fn();
+    const off = onLateReactivationStream(listener);
+    markSessionMayBeInactive();
+    const done = reactivateAudioSessionForMic();
+    await vi.advanceTimersByTimeAsync(REACTIVATE_HARD_CAP_MS);
+    expect(await done).toBe(false);
+    expect(listener).not.toHaveBeenCalled();
+    release({ getTracks: () => [late] });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(late.stop).toHaveBeenCalled();
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(formatVoiceLog()).toContain("reactivate late stream, restarting mic");
+    off();
+  });
+
   it("gives up after the timeout, keeps the flag and stops a late stream", async () => {
     vi.useFakeTimers();
     setUa(IOS_UA);
@@ -254,7 +321,7 @@ describe("reactivating the audio session for the mic", () => {
     );
     markSessionMayBeInactive();
     const done = reactivateAudioSessionForMic();
-    await vi.advanceTimersByTimeAsync(REACTIVATE_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(REACTIVATE_HARD_CAP_MS);
     expect(await done).toBe(false);
     expect(reactivationPending()).toBe(true);
     expect(formatVoiceLog()).toContain("reactivate failed timeout");

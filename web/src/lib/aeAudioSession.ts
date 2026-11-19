@@ -135,12 +135,31 @@ export function resetAudioSessionState(): void {
 // right before the start puts the session back.
 let sessionMayBeInactive = false;
 let stateListenerInstalled = false;
-/** The longest a reactivation may take before the recognizer starts anyway. */
+// Counts marks, so a reactivation clears only the mark it started under.
+let markCount = 0;
+/** A reactivation slower than this is logged; the start still waits for the stream to settle. */
 export const REACTIVATE_TIMEOUT_MS = 1500;
+/**
+ * The longest the start waits for the throwaway stream to settle. A stream that arrives after
+ * the recognizer started becomes the newest capture on iOS and steals its input, so the wait
+ * is long; only past this cap does the start go ahead.
+ */
+export const REACTIVATE_HARD_CAP_MS = 5000;
+
+const lateStreamListeners = new Set<() => void>();
+/**
+ * Called when the throwaway stream arrives after the hard cap (the recognizer already started
+ * and may now be deaf): the mic button swaps in a fresh recognizer. Returns an unsubscribe.
+ */
+export function onLateReactivationStream(listener: () => void): () => void {
+  lateStreamListeners.add(listener);
+  return () => lateStreamListeners.delete(listener);
+}
 
 /** A long clip just ended: the next mic start needs a reactivation first. */
 export function markSessionMayBeInactive(): void {
   sessionMayBeInactive = true;
+  markCount += 1;
 }
 
 /** Whether the next mic start will reactivate the audio session first. */
@@ -179,17 +198,33 @@ export async function reactivateAudioSessionForMic(): Promise<boolean> {
   watchSessionState();
   logVoice(`audio session state before reactivate ${audioSessionState()}`);
   const t0 = Date.now();
+  const markAtStart = markCount;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let slowTimer: ReturnType<typeof setTimeout> | null = null;
+  let capped = false;
   try {
     const open = getMicStream(micConstraint() ?? true).then((stream) => {
       stream.getTracks().forEach((track) => track.stop());
+      if (capped) {
+        // The recognizer started meanwhile and this stream just took its input.
+        logVoice("reactivate late stream, restarting mic");
+        for (const listener of [...lateStreamListeners]) listener();
+      }
     });
     const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error("timeout")), REACTIVATE_TIMEOUT_MS);
+      timer = setTimeout(() => {
+        capped = true;
+        reject(new Error("timeout"));
+      }, REACTIVATE_HARD_CAP_MS);
     });
-    // A stream that arrives after the timeout is still stopped by the handler above.
+    slowTimer = setTimeout(
+      () => logVoice("reactivate slow", "still waiting"),
+      REACTIVATE_TIMEOUT_MS,
+    );
+    // A stream that arrives after the cap is stopped by the handler above.
     await Promise.race([open, timeout]);
-    sessionMayBeInactive = false;
+    // A clip that ended during the call set a newer mark: keep it.
+    if (markCount === markAtStart) sessionMayBeInactive = false;
     logVoice("reactivate ok", `${Date.now() - t0} ms`);
     return true;
   } catch (err) {
@@ -198,5 +233,6 @@ export async function reactivateAudioSessionForMic(): Promise<boolean> {
     return false;
   } finally {
     if (timer !== null) clearTimeout(timer);
+    if (slowTimer !== null) clearTimeout(slowTimer);
   }
 }

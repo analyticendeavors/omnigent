@@ -14,6 +14,7 @@ import {
   audioSessionState,
   audioSessionType,
   reactivateAudioSessionForMic,
+  onLateReactivationStream,
   reactivationPending,
 } from "@/lib/aeAudioSession";
 import { whenSynthIdle } from "@/lib/aeSpeakReplies";
@@ -475,14 +476,15 @@ export const ComposerMicButton = ({
       audioStartSeenRef.current = false;
       recognizerSoundSeenRef.current = false;
       lastRecognizerActivityRef.current = Date.now();
-      stallRef.current.reset(Date.now());
-      eventStallRef.current.reset(Date.now());
-      // A fresh recognizer gets the whole no-audiostart allowance before that check judges it.
-      takeStartRef.current = Date.now();
       const startNext = (): boolean => {
         neverStarted.delete(next);
         waitingOn.delete(next);
         silentRestartAt = Date.now();
+        // The stall clocks and the no-audiostart allowance run from the real start, so a
+        // reactivation or old-end wait does not shorten them.
+        stallRef.current.reset(Date.now());
+        eventStallRef.current.reset(Date.now());
+        takeStartRef.current = Date.now();
         try {
           next.start();
         } catch {
@@ -504,9 +506,19 @@ export const ComposerMicButton = ({
       const begin = (): boolean => {
         if (!reactivationPending()) return startNext();
         // A long clip may have deactivated the iOS audio session: reactivate, then start.
+        // userStop and replace cancel through cancelPendingStart, as for the old-end wait.
+        let cancelled = false;
+        const cancel = () => {
+          cancelled = true;
+          if (cancelPendingStart === cancel) cancelPendingStart = null;
+        };
+        cancelPendingStart = cancel;
         void reactivateAudioSessionForMic().then(() => {
+          if (cancelled) return;
+          if (cancelPendingStart === cancel) cancelPendingStart = null;
           if (!stillLive()) {
-            silentStartRef.current = false;
+            // Only reset when no newer restart owns the flag.
+            if (recognitionRef.current === next) silentStartRef.current = false;
             return;
           }
           if (!startNext()) reportDeaf("stall restart failed");
@@ -984,7 +996,23 @@ export const ComposerMicButton = ({
     recognitionRef.current = build();
     replaceRecognitionRef.current = replace;
 
+    // The reactivation stream arrived after the start went ahead anyway: it took the
+    // recognizer's input, so swap in a fresh one. Not for a stopped, disabled or discarded take.
+    const offLateStream = onLateReactivationStream(() => {
+      if (
+        !recognitionRef.current ||
+        disabledRef.current ||
+        discardingRef.current ||
+        !listeningRef.current ||
+        transitionRef.current
+      ) {
+        return;
+      }
+      if (!silentRestart(true)) reportDeaf("stall restart failed");
+    });
+
     return () => {
+      offLateStream();
       cancelPendingStart?.();
       userStopRef.current = () => false;
       const old = recognitionRef.current;
@@ -1463,7 +1491,7 @@ export const ComposerMicButton = ({
       } else {
         logVoice(
           "mic start browser",
-          `${speechSynthesisState()} audioSession=${audioSessionType()} sessionState=${audioSessionState()} reactivated=${reactivationPending() ? "yes" : "no"}`,
+          `${speechSynthesisState()} audioSession=${audioSessionType()} sessionState=${audioSessionState()} reactivatePending=${reactivationPending() ? "yes" : "no"}`,
         );
         startSeenRef.current = false;
         audioStartSeenRef.current = false;

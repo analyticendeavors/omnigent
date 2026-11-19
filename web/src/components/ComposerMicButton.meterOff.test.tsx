@@ -446,6 +446,7 @@ describe("ComposerMicButton (level meter off)", () => {
 
   async function stallRound() {
     const latest = instances[instances.length - 1];
+    const before = instances.length;
     act(() => {
       latest.own.start?.({});
       latest.own.audiostart?.({});
@@ -454,6 +455,8 @@ describe("ComposerMicButton (level meter off)", () => {
     await run(300);
     act(() => latest.own.speechend?.({}));
     await run(4000);
+    // WebKit starts the swapped-in recognizer once the old one has ended.
+    if (instances.length > before) act(() => latest.own.end?.({}));
   }
 
   it("caps event stall restarts at 4 a minute, never calls the mic deaf, and resumes after a result", async () => {

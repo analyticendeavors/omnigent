@@ -3,7 +3,11 @@
 import type { AeMicController } from "@/lib/aeVoiceMode";
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { markSessionMayBeInactive, resetAudioSessionState } from "@/lib/aeAudioSession";
+import {
+  REACTIVATE_HARD_CAP_MS,
+  markSessionMayBeInactive,
+  resetAudioSessionState,
+} from "@/lib/aeAudioSession";
 import { formatVoiceLog, resetVoiceLog } from "@/lib/aeVoiceLog";
 import { ComposerMicButton } from "./ComposerMicButton";
 
@@ -427,7 +431,7 @@ describe("ComposerMicButton (audio session reactivation before start)", () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(startSpy).toHaveBeenCalledTimes(1);
-    expect(formatVoiceLog()).toContain("reactivated=yes");
+    expect(formatVoiceLog()).toContain("reactivatePending=yes");
     expect(formatVoiceLog()).toContain("reactivate ok");
   });
 
@@ -439,7 +443,7 @@ describe("ComposerMicButton (audio session reactivation before start)", () => {
       await vi.advanceTimersByTimeAsync(10);
     });
     expect(startSpy).toHaveBeenCalledTimes(1);
-    expect(formatVoiceLog()).toContain("reactivated=no");
+    expect(formatVoiceLog()).toContain("reactivatePending=no");
   });
 
   it("does not start when the take was stopped during the await", async () => {
@@ -456,5 +460,181 @@ describe("ComposerMicButton (audio session reactivation before start)", () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(startSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("ComposerMicButton (silent restart awaiting the reactivation)", () => {
+  const IPHONE =
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.7 Mobile/15E148 Safari/604.1";
+
+  let release: (() => void)[];
+  beforeEach(() => {
+    resetAudioSessionState();
+    release = [];
+  });
+  afterEach(() => resetAudioSessionState());
+
+  /** Listening on WebKit; a final then recycles and the restart waits on the held reactivation. */
+  async function restartAwaitingReactivation(disabled = false) {
+    setUserAgent(IPHONE);
+    const controller = { current: null as AeMicController | null };
+    const onListeningChange = vi.fn();
+    const props = {
+      onTranscript: vi.fn(),
+      onVoiceStart: vi.fn(),
+      controller,
+      onListeningChange,
+    };
+    const view = render(<ComposerMicButton {...props} disabled={disabled} />);
+    act(() => controller.current?.start());
+    await act(async () => {
+      instances[0].handlers.start?.({});
+      instances[0].handlers.audiostart?.({});
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    markSessionMayBeInactive();
+    (navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release.push(() => resolve(new FakeStream()));
+        }),
+    );
+    act(() => instances[0].handlers.result?.(resultEvent("Hello")));
+    await act(async () => {
+      instances[0].handlers.end?.({});
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(instances).toHaveLength(2);
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    expect(release).toHaveLength(1);
+    return { controller, view, props };
+  }
+
+  it("Esc during the await ends the take and never starts", async () => {
+    const { controller } = await restartAwaitingReactivation();
+    expect(controller.current?.isListening()).toBe(true);
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(controller.current?.isListening()).toBe(false);
+    await act(async () => {
+      release[0]();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    expect(controller.current?.isListening()).toBe(false);
+  });
+
+  it("a controller stop during the await resets the take and never starts", async () => {
+    const { controller } = await restartAwaitingReactivation();
+    act(() => controller.current?.stop());
+    expect(controller.current?.isListening()).toBe(false);
+    await act(async () => {
+      release[0]();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    expect(controller.current?.isListening()).toBe(false);
+  });
+
+  it("disabled during the await ends the take and never starts", async () => {
+    const { controller, view, props } = await restartAwaitingReactivation();
+    view.rerender(<ComposerMicButton {...props} disabled />);
+    expect(controller.current?.isListening()).toBe(false);
+    await act(async () => {
+      release[0]();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    expect(controller.current?.isListening()).toBe(false);
+  });
+
+  it("a second restart during the await keeps listening and starts the newer recognizer once", async () => {
+    const { controller } = await restartAwaitingReactivation();
+    // A stall swap while the first restart awaits: the first never starts.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10);
+    });
+    act(() => instances[1].handlers.result?.(resultEvent("again")));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    // The fake keeps one handler per event, so the old end is not seen: the capped wait ends.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(release).toHaveLength(2);
+    await act(async () => {
+      for (const r of release) r();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(controller.current?.isListening()).toBe(true);
+    // The first restart's recognizer never starts; only the newest does (plus the first take's own start).
+    expect(instances).toHaveLength(3);
+    expect(startSpy).toHaveBeenCalledTimes(2);
+  });
+
+  async function startPastHardCap() {
+    setUserAgent(IPHONE);
+    markSessionMayBeInactive();
+    const controller = { current: null as AeMicController | null };
+    render(
+      <ComposerMicButton
+        onTranscript={vi.fn()}
+        onVoiceStart={vi.fn()}
+        controller={controller}
+        onListeningChange={vi.fn()}
+      />,
+    );
+    (navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release.push(() => resolve(new FakeStream()));
+        }),
+    );
+    act(() => controller.current?.start());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    // Still waiting at 3 s: the recognizer has not started.
+    expect(startSpy).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(REACTIVATE_HARD_CAP_MS);
+    });
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    return controller;
+  }
+
+  it("a stream arriving after the hard cap swaps in one fresh recognizer", async () => {
+    const controller = await startPastHardCap();
+    await act(async () => {
+      instances[0].handlers.start?.({});
+      instances[0].handlers.audiostart?.({});
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      release[0]();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(formatVoiceLog()).toContain("reactivate late stream, restarting mic");
+    expect(instances).toHaveLength(2);
+    expect(controller.current?.isListening()).toBe(true);
+  });
+
+  it("no restart for a late stream when the take was stopped", async () => {
+    const controller = await startPastHardCap();
+    await act(async () => {
+      instances[0].handlers.start?.({});
+      instances[0].handlers.audiostart?.({});
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    act(() => controller.current?.stop());
+    await act(async () => {
+      instances[0].handlers.end?.({});
+      release[0]();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    expect(controller.current?.isListening()).toBe(false);
   });
 });
