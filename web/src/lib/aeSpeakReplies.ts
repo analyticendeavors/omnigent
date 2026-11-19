@@ -141,7 +141,6 @@ const SILENT_IOS_VOICE_NAMES = new Set([
 ]);
 
 export function isSilentIosVoice(voice: SpeechSynthesisVoice): boolean {
-  if (voice.voiceURI?.startsWith("com.apple.speech.synthesis.voice.")) return true;
   return SILENT_IOS_VOICE_NAMES.has(voice.name.trim().toLowerCase());
 }
 
