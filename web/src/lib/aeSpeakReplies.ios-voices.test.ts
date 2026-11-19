@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { isSilentIosVoice, listVoices } from "./aeSpeakReplies";
+import { dedupeIosVoices, isSilentIosVoice, listVoices } from "./aeSpeakReplies";
 
 const v = (name: string, voiceURI: string) => ({ name, voiceURI, lang: "en-US" }) as SpeechSynthesisVoice;
 const voices = [
@@ -31,5 +31,14 @@ describe("silent iOS voices", () => {
     expect(listVoices().map((x) => x.name)).toEqual(["Samantha", "Alex"]);
     stub("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
     expect(listVoices()).toHaveLength(4);
+  });
+});
+
+describe("duplicate iOS voices", () => {
+  it("keeps the best quality copy of a name", () => {
+    const compact = v("Samantha", "com.apple.voice.compact.en-US.Samantha");
+    const enhanced = v("Samantha", "com.apple.voice.enhanced.en-US.Samantha");
+    const daniel = v("Daniel", "com.apple.voice.compact.en-GB.Daniel");
+    expect(dedupeIosVoices([compact, daniel, enhanced])).toEqual([daniel, enhanced]);
   });
 });

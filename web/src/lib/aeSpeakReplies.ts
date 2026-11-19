@@ -124,7 +124,7 @@ export function listVoices(): SpeechSynthesisVoice[] {
   if (!isSpeechSupported()) return [];
   try {
     const voices = window.speechSynthesis.getVoices();
-    return isIosDevice() ? voices.filter((v) => !isSilentIosVoice(v)) : voices;
+    return isIosDevice() ? dedupeIosVoices(voices.filter((v) => !isSilentIosVoice(v))) : voices;
   } catch {
     return [];
   }
@@ -142,6 +142,28 @@ const SILENT_IOS_VOICE_NAMES = new Set([
 
 export function isSilentIosVoice(voice: SpeechSynthesisVoice): boolean {
   return SILENT_IOS_VOICE_NAMES.has(voice.name.trim().toLowerCase());
+}
+
+function iosVoiceQuality(voice: SpeechSynthesisVoice): number {
+  const uri = voice.voiceURI ?? "";
+  if (/\.premium\./i.test(uri)) return 2;
+  if (/\.enhanced\./i.test(uri)) return 1;
+  return 0;
+}
+
+/**
+ * iOS lists a voice once per installed quality (compact, enhanced, premium)
+ * under the same name. Keep one entry per name and language, the best quality.
+ */
+export function dedupeIosVoices(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice[] {
+  const best = new Map<string, SpeechSynthesisVoice>();
+  for (const v of voices) {
+    const key = `${v.name.trim().toLowerCase()}|${v.lang}`;
+    const held = best.get(key);
+    if (!held || iosVoiceQuality(v) > iosVoiceQuality(held)) best.set(key, v);
+  }
+  const keep = new Set(best.values());
+  return voices.filter((v) => keep.has(v));
 }
 
 /** Voices load late in Chrome and Edge; the callback fires when the list changes. */
