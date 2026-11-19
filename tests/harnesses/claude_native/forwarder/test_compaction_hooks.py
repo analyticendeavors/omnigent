@@ -722,3 +722,91 @@ def test_pending_compaction_trigger_round_trips_through_state(tmp_path: Path) ->
     assert forwarder._read_compaction_state(bridge_dir).pending == forwarder._PendingCompaction(
         seq=1, trigger="auto"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("trigger", "expect_armed"),
+    [("auto", False), ("manual", True)],
+)
+async def test_refused_compact_arms_dismissal_only_for_manual_token(
+    tmp_path: Path, trigger: str, expect_armed: bool
+) -> None:
+    """
+    A refused ``/compact`` arms the spinner dismissal only for a manual token.
+
+    An ``auto`` pending token is Claude's background precompute: it raised no
+    spinner, so arming a dismissal would post a spurious ``failed``. A manual
+    token did raise the spinner and keeps the existing behaviour.
+    """
+    bridge_dir = tmp_path / "bridge"
+    bridge_dir.mkdir()
+    transcript_path = tmp_path / "session.jsonl"
+    transcript_path.write_text(
+        "\n".join(
+            json.dumps(record)
+            for record in (
+                {
+                    "type": "user",
+                    "uuid": "compact-cmd",
+                    "message": {
+                        "role": "user",
+                        "content": (
+                            "<command-name>/compact</command-name>\n"
+                            "<command-message>compact</command-message>\n"
+                            "<command-args></command-args>"
+                        ),
+                    },
+                },
+                {
+                    "type": "system",
+                    "subtype": "local_command",
+                    "uuid": "compact-stdout",
+                    "isMeta": False,
+                    "content": (
+                        "<local-command-stdout>Not enough messages to compact."
+                        "</local-command-stdout>"
+                    ),
+                },
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    await forwarder._note_precompact(
+        bridge_dir, claude_session_id="claude-1", transcript_path=None, trigger=trigger
+    )
+    state = forwarder.TranscriptForwardState(
+        transcript_path=transcript_path,
+        line_cursor=0,
+        byte_offset=0,
+        cursor_fingerprint=forwarder._jsonl_cursor_fingerprint(transcript_path, 0),
+    )
+    posted: list[dict[str, object]] = []
+
+    def _handle_request(request: httpx.Request) -> httpx.Response:
+        """
+        Record every forwarder POST body.
+
+        :param request: Outbound HTTP request from the forwarder.
+        :returns: HTTP 202 for the mock Omnigent endpoint.
+        """
+        posted.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(202, json={})
+
+    dedupe = forwarder._ForwardDedupeState()
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(_handle_request), base_url="http://test"
+    ) as client:
+        await forwarder._forward_available_items(
+            client=client,
+            session_id="conv_refused",
+            bridge_dir=bridge_dir,
+            agent_name="claude-native-ui",
+            state=state,
+            retry_tracker=forwarder._PostRetryTracker(),
+            dedupe=dedupe,
+        )
+
+    assert dedupe.pending_compaction_dismiss_seq == (1 if expect_armed else None)
+    assert not [b for b in posted if b.get("type") == "external_compaction_status"]

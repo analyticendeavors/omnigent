@@ -2469,8 +2469,8 @@ def build_hook_settings(
         # ``PreCompact`` is translated into a
         # ``response.compaction.in_progress`` SSE (the web UI's
         # "Compacting conversation…" spinner); an auto one posts no
-        # status but still mints the pending boundary token. The matching completion
-        # signal is ``SessionStart`` with ``source == "compact"`` (no
+        # status but still mints the pending boundary token. The matching
+        # completion signal is ``SessionStart`` with ``source == "compact"`` (no
         # dedicated PreCompact-done hook exists), already wired above.
         "PreCompact": [{"hooks": [hook]}],
         # ``MessageDisplay`` fires per streamed assistant-text chunk.
