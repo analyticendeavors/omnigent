@@ -2564,6 +2564,33 @@ def test_read_transcript_items_since_parses_interruption_queued_prompt(tmp_path:
     assert current_response_id == items[5].response_id
 
 
+@pytest.mark.parametrize(
+    ("raw_trigger", "expected"),
+    [("auto", "auto"), ("manual", "manual"), ("", None), (None, None), ("weird", None), (7, None)],
+)
+def test_precompact_trigger_parsing(
+    tmp_path: Path, raw_trigger: object, expected: str | None
+) -> None:
+    """
+    A ``PreCompact`` record keeps only the known ``auto`` and ``manual`` triggers.
+
+    Empty, missing, non-string and unknown values parse to ``None`` so callers
+    never branch on a value Claude Code might add later.
+    """
+    bridge_dir = tmp_path / "bridge"
+    bridge_dir.mkdir()
+    payload: dict[str, object] = {"hook_event_name": "PreCompact"}
+    if raw_trigger is not None:
+        payload["trigger"] = raw_trigger
+    (bridge_dir / "hooks.jsonl").write_text(
+        json.dumps({"payload": payload}) + "\n", encoding="utf-8"
+    )
+
+    result = read_hook_events_from_offset(bridge_dir, 0, start_event_count=0)
+
+    assert [record.trigger for record in result.records] == [expected]
+
+
 def test_read_hook_events_from_offset_skips_existing_prefix(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

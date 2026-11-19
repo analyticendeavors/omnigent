@@ -543,12 +543,18 @@ class _PendingCompaction:
         correlation with wildcard semantics.
     :param seen_at: Unix timestamp the ``PreCompact`` was observed, e.g.
         ``1779922393.2``. Diagnostic only.
+    :param trigger: ``PreCompact`` trigger the token was minted from, e.g.
+        ``"auto"`` or ``"manual"``; ``None`` when unknown. An ``auto`` token
+        may sit unused for hours (Claude's background precompute is never
+        applied), so it must not arm a spinner dismissal on a refused manual
+        ``/compact``.
     """
 
     seq: int
     claude_session_id: str | None = None
     transcript_path: str | None = None
     seen_at: float | None = None
+    trigger: str | None = None
 
 
 @dataclass(frozen=True)
@@ -4141,8 +4147,8 @@ async def _forward_available_status_events(
                             extra={"session_id": session_id},
                         )
                 if record.event_name == "PreCompact":
-                    # Every ``PreCompact`` (manual or auto) mints a durable pending token that the
-                    # completion signal (transcript ``isCompactSummary`` or
+                    # Every ``PreCompact`` (manual or auto) mints a durable
+                    # pending token that the completion signal (transcript ``isCompactSummary`` or
                     # this hook's ``SessionStart source=compact``) consumes,
                     # so exactly one boundary persists per compaction. Keyed
                     # by ``event_cursor`` so the pre-items prescan (which may
@@ -4157,6 +4163,7 @@ async def _forward_available_status_events(
                             else None
                         ),
                         event_cursor=record.event_cursor,
+                        trigger=record.trigger,
                     )
                 elif compaction_status == "completed":
                     # Secondary, best-effort persist. The transcript's
@@ -4886,7 +4893,10 @@ async def _forward_available_items(
         # forwards below as a ``slash_command`` bubble carrying the text.
         if item.is_compact_noop:
             refused = _read_compaction_state(bridge_dir).pending
-            if refused is not None:
+            # An ``auto`` token is Claude's background precompute: it raised
+            # no spinner, so a refused manual ``/compact`` has nothing of its
+            # own to dismiss and must not post a spurious ``failed``.
+            if refused is not None and refused.trigger != "auto":
                 dedupe.pending_compaction_dismiss_seq = refused.seq
         if skip_user_messages and item.item_type == "message" and item.data.get("role") == "user":
             seen_source_ids.append(item.source_id)
@@ -5199,6 +5209,7 @@ async def _prescan_precompact_edges(
                 str(record.transcript_path) if record.transcript_path is not None else None
             ),
             event_cursor=record.event_cursor,
+            trigger=record.trigger,
         )
 
 
@@ -6734,11 +6745,13 @@ def _read_compaction_state(bridge_dir: Path) -> CompactionForwardState:
             sid = pending_raw.get("claude_session_id")
             tpath = pending_raw.get("transcript_path")
             seen_at = pending_raw.get("seen_at")
+            ptrigger = pending_raw.get("trigger")
             pending = _PendingCompaction(
                 seq=seq,
                 claude_session_id=sid if isinstance(sid, str) else None,
                 transcript_path=tpath if isinstance(tpath, str) else None,
                 seen_at=seen_at if isinstance(seen_at, (int, float)) else None,
+                trigger=ptrigger if isinstance(ptrigger, str) else None,
             )
     return CompactionForwardState(
         pending=pending,
@@ -6775,6 +6788,8 @@ def _write_compaction_state(bridge_dir: Path, state: CompactionForwardState) -> 
             pending_payload["transcript_path"] = state.pending.transcript_path
         if state.pending.seen_at is not None:
             pending_payload["seen_at"] = state.pending.seen_at
+        if state.pending.trigger is not None:
+            pending_payload["trigger"] = state.pending.trigger
         payload["pending"] = pending_payload
     _write_json_atomic(bridge_dir / _COMPACTION_STATE_FILE, payload)
 
@@ -6785,6 +6800,7 @@ async def _note_precompact(
     claude_session_id: str | None,
     transcript_path: str | None,
     event_cursor: int | None = None,
+    trigger: str | None = None,
 ) -> None:
     """
     Record that a ``PreCompact`` fired, minting a fresh pending token.
@@ -6809,6 +6825,8 @@ async def _note_precompact(
     :param transcript_path: Claude transcript path from the hook, or ``None``.
     :param event_cursor: Hook ``event_cursor`` of this ``PreCompact`` record,
         or ``None`` to always mint (no idempotency key).
+    :param trigger: ``PreCompact`` trigger from the hook (``"auto"`` or
+        ``"manual"``), or ``None`` when absent.
     :returns: None.
     """
 
@@ -6827,6 +6845,7 @@ async def _note_precompact(
                     claude_session_id=claude_session_id,
                     transcript_path=transcript_path,
                     seen_at=time.time(),
+                    trigger=trigger,
                 ),
                 last_seq=next_seq,
                 persisted_seqs=state.persisted_seqs,

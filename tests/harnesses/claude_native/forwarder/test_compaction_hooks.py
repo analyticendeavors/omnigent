@@ -493,8 +493,11 @@ async def test_auto_precompact_posts_no_status_but_mints_token_and_persists_once
                 if state.pending is not None:
                     break
             state = forwarder._read_compaction_state(bridge_dir)
+            # Settle: a late status post (a regression) would land within a few polls.
+            await asyncio.sleep(0.2)
             # The token is minted even though no status was posted.
             assert state.pending is not None
+            assert state.pending.trigger == "auto"
             assert state.last_seq == 1
             assert not any(
                 r["body"].get("type") == "external_compaction_status"
@@ -578,3 +581,144 @@ async def test_manual_precompact_still_posts_in_progress_and_mints_token(
         "data": {"status": "in_progress"},
     }
     assert forwarder._read_compaction_state(bridge_dir).pending is not None
+
+
+async def _run_forwarder_until_settled(
+    bridge_dir: Path, session_id: str, persist_mock: AsyncMock
+) -> list[dict[str, object]]:
+    """
+    Run the forwarder over the hooks already written, then return posted statuses.
+
+    :param bridge_dir: Bridge directory holding the hook records.
+    :param session_id: Omnigent session id to forward into.
+    :param persist_mock: Mock standing in for ``_persist_native_compaction_item``.
+    :returns: The ``data["status"]`` values of every posted compaction status, in order.
+    """
+    server, thread, base_url = _start_recording_server()
+    with patch(
+        "omnigent.harnesses.claude_native.forwarder._persist_native_compaction_item",
+        persist_mock,
+    ):
+        task = asyncio.create_task(
+            forwarder.forward_claude_transcript_to_session(
+                base_url=base_url,
+                headers={},
+                session_id=session_id,
+                bridge_dir=bridge_dir,
+                agent_name="claude-native-ui",
+                start_at_end=False,
+                poll_interval_s=0.01,
+            )
+        )
+        try:
+            await asyncio.sleep(0.5)
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5.0)
+    return [
+        r["body"]["data"]["status"]
+        for r in list(server.requests.queue)
+        if r["body"].get("type") == "external_compaction_status"
+    ]
+
+
+def _write_session_start(bridge_dir: Path, transcript_path: Path) -> None:
+    """
+    Record a plain ``SessionStart`` so the forwarder learns the transcript path.
+
+    :param bridge_dir: Bridge directory.
+    :param transcript_path: Empty transcript file path.
+    :returns: None.
+    """
+    transcript_path.write_text("", encoding="utf-8")
+    record_hook_event(
+        bridge_dir,
+        {
+            "hook_event_name": "SessionStart",
+            "session_id": "claude-session",
+            "transcript_path": str(transcript_path),
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_synchronous_auto_compaction_in_one_poll_persists_once(tmp_path: Path) -> None:
+    """
+    ``PreCompact`` auto plus ``SessionStart source=compact`` in one poll persists once.
+
+    When Claude compacts synchronously at the window, both hooks can land in
+    the same poll. The auto ``PreCompact`` posts no ``in_progress``, the
+    ``SessionStart`` posts ``completed``, and exactly one boundary persists.
+    """
+    bridge_dir = tmp_path / "bridge"
+    _write_session_start(bridge_dir, tmp_path / "session.jsonl")
+    record_hook_event(
+        bridge_dir,
+        {"hook_event_name": "PreCompact", "trigger": "auto", "session_id": "claude-session"},
+    )
+    record_hook_event(
+        bridge_dir,
+        {"hook_event_name": "SessionStart", "source": "compact", "session_id": "claude-session"},
+    )
+    persist_mock = AsyncMock(return_value=None)
+
+    statuses = await _run_forwarder_until_settled(bridge_dir, "conv_sync_auto", persist_mock)
+
+    assert statuses == ["completed"]
+    persist_mock.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_auto_token_then_manual_compact_yields_one_boundary(tmp_path: Path) -> None:
+    """
+    An unused auto token followed by a manual ``/compact`` is one compaction.
+
+    The manual ``PreCompact`` supersedes the stale auto token, so the strip
+    shows one ``in_progress`` and one ``completed`` and a single boundary
+    persists.
+    """
+    bridge_dir = tmp_path / "bridge"
+    _write_session_start(bridge_dir, tmp_path / "session.jsonl")
+    record_hook_event(
+        bridge_dir,
+        {"hook_event_name": "PreCompact", "trigger": "auto", "session_id": "claude-session"},
+    )
+    record_hook_event(
+        bridge_dir,
+        {"hook_event_name": "PreCompact", "trigger": "manual", "session_id": "claude-session"},
+    )
+    record_hook_event(
+        bridge_dir,
+        {"hook_event_name": "SessionStart", "source": "compact", "session_id": "claude-session"},
+    )
+    persist_mock = AsyncMock(return_value=None)
+
+    statuses = await _run_forwarder_until_settled(bridge_dir, "conv_auto_manual", persist_mock)
+
+    assert statuses == ["in_progress", "completed"]
+    persist_mock.assert_called_once()
+
+
+def test_pending_compaction_trigger_round_trips_through_state(tmp_path: Path) -> None:
+    """
+    The pending token keeps its trigger across the durable state file.
+
+    The refusal path reads the token back from disk, so a lost trigger would
+    re-arm the spurious dismissal for an auto token.
+    """
+    bridge_dir = tmp_path / "bridge"
+    forwarder._write_compaction_state(
+        bridge_dir,
+        forwarder.CompactionForwardState(
+            pending=forwarder._PendingCompaction(seq=1, trigger="auto"),
+            last_seq=1,
+        ),
+    )
+
+    assert forwarder._read_compaction_state(bridge_dir).pending == forwarder._PendingCompaction(
+        seq=1, trigger="auto"
+    )

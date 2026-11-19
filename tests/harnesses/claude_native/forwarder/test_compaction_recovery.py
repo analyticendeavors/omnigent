@@ -349,6 +349,40 @@ async def test_missing_compact_session_start_still_persists_from_transcript(
 
 
 @pytest.mark.asyncio
+async def test_auto_precompact_then_transcript_summary_persists_once(tmp_path: Path) -> None:
+    """
+    An auto ``PreCompact`` token plus a transcript summary persists one boundary.
+
+    No ``SessionStart source=compact`` hook fires; the transcript's
+    ``isCompactSummary`` record alone consumes the auto token, and a second
+    delivery of the same summary does not persist again.
+    """
+    bridge_dir = tmp_path / "bridge"
+    bridge_dir.mkdir()
+    await forwarder._note_precompact(
+        bridge_dir, claude_session_id="claude-1", transcript_path=None, trigger="auto"
+    )
+
+    persist = _persist_mock()
+    with patch(
+        "omnigent.harnesses.claude_native.forwarder._persist_native_compaction_item", persist
+    ):
+        for _ in range(2):
+            await forwarder._handle_compact_summary_item(
+                AsyncMock(),
+                session_id="conv_auto_summary",
+                bridge_dir=bridge_dir,
+                item=_compact_summary_item("auto summary"),
+                retry_tracker=forwarder._PostRetryTracker(),
+            )
+
+    persist.assert_called_once()
+    state = forwarder._read_compaction_state(bridge_dir)
+    assert state.pending is None
+    assert 1 in state.persisted_seqs
+
+
+@pytest.mark.asyncio
 async def test_normal_hook_after_transcript_does_not_double_persist(tmp_path: Path) -> None:
     """
     The completion hook does not re-persist a boundary the transcript wrote.

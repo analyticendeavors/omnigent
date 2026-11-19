@@ -2463,12 +2463,13 @@ def build_hook_settings(
             {"matcher": "EnterWorktree|ExitWorktree", "hooks": [hook]},
         ],
         # ``PreCompact`` fires right before Claude compacts its own
-        # context — for both a manual ``/compact`` (web-UI button or
-        # typed) and an automatic context-overflow compaction. The
-        # forwarder translates it into a
-        # ``response.compaction.in_progress`` SSE so the web UI shows
-        # its "Compacting conversation…" spinner while Claude runs the
-        # real compaction in the terminal. The matching completion
+        # context — for a manual ``/compact`` (web-UI button or typed)
+        # and also, with ``trigger=auto``, when Claude starts
+        # precomputing a summary in the background. Only a non-auto
+        # ``PreCompact`` is translated into a
+        # ``response.compaction.in_progress`` SSE (the web UI's
+        # "Compacting conversation…" spinner); an auto one posts no
+        # status but still mints the pending boundary token. The matching completion
         # signal is ``SessionStart`` with ``source == "compact"`` (no
         # dedicated PreCompact-done hook exists), already wired above.
         "PreCompact": [{"hooks": [hook]}],
@@ -4022,7 +4023,9 @@ def _hook_record_from_jsonl_record(record: _JsonlRecord) -> ClaudeHookRecord:
         else None,
         source=raw_source if isinstance(raw_source, str) and raw_source else None,
         trigger=(
-            raw_trigger if event_name == "PreCompact" and isinstance(raw_trigger, str) else None
+            raw_trigger
+            if event_name == "PreCompact" and raw_trigger in ("auto", "manual")
+            else None
         ),
         claude_session_id=(
             raw_claude_session_id
