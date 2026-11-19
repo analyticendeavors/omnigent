@@ -9,6 +9,7 @@ import {
   parseAskUserQuestionPreview,
 } from "./askUserQuestion";
 import { notePlayback } from "./aeVoiceEcho";
+import { enterVoiceAudioSession, leaveVoiceAudioSession } from "./aeAudioSession";
 import { logVoice } from "./aeVoiceLog";
 import { withBasePath } from "./basePath";
 import type { AnyBlock, ElicitationBlock } from "./blocks";
@@ -111,6 +112,8 @@ export function getVoiceSnapshot(chatId: string | null): VoiceSnapshot {
   let state = states.get(chatId);
   if (!state) {
     const on = readVoiceMode(chatId);
+    // A chat reopened with Voice mode still on needs the audio session pinned too.
+    if (on) enterVoiceAudioSession();
     state = { ...OFF, on, phase: on ? "starting" : "off" };
     states.set(chatId, state);
   }
@@ -187,6 +190,8 @@ export function syncVoiceLabel(chatId: string, labelOn: boolean): void {
 
 export function setVoiceOn(chatId: string, on: boolean): void {
   logVoice(on ? "voice on" : "voice off");
+  if (on) enterVoiceAudioSession();
+  else leaveVoiceAudioSession();
   writeVoiceMode(chatId, on);
   patch(chatId, { on, phase: on ? "starting" : "off", barged: false });
   void postVoiceLabel(chatId, on);
@@ -229,10 +234,12 @@ let voiceArmed = false;
 
 export function armVoiceForNextChat(): void {
   voiceArmed = true;
+  enterVoiceAudioSession();
 }
 
 export function disarmVoiceForNextChat(): void {
   voiceArmed = false;
+  leaveVoiceAudioSession();
 }
 
 /** True once when the flag was armed; clears it. */

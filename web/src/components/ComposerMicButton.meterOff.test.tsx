@@ -5,6 +5,11 @@
 import type { AeMicController } from "@/lib/aeVoiceMode";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  enterVoiceAudioSession,
+  leaveVoiceAudioSession,
+  resetAudioSessionState,
+} from "@/lib/aeAudioSession";
 import { getMicLevel, resetMicLevel } from "@/lib/aeMicLevel";
 import { getVoiceBins, resetVoiceBins } from "@/lib/aeVoiceLevel";
 import { formatVoiceLog, resetVoiceLog } from "@/lib/aeVoiceLog";
@@ -131,6 +136,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  resetAudioSessionState();
   cleanup();
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -528,6 +534,33 @@ describe("ComposerMicButton (level meter off)", () => {
     await listenVoice();
     expect(getUserMedia).not.toHaveBeenCalled();
     expect(formatVoiceLog()).toContain("meter off");
+  });
+});
+
+describe("ComposerMicButton (audio session)", () => {
+  it("on WebKit with Voice mode on, pins play-and-record before the mic starts and logs it", async () => {
+    setUserAgent(IOS_UA);
+    const audioSession = { type: "auto" };
+    Object.defineProperty(navigator, "audioSession", { configurable: true, value: audioSession });
+    enterVoiceAudioSession();
+    audioSession.type = "playback";
+    await listenVoice();
+    expect(audioSession.type).toBe("play-and-record");
+    expect(formatVoiceLog()).toContain("audioSession=playback");
+    leaveVoiceAudioSession();
+    delete (navigator as { audioSession?: unknown }).audioSession;
+  });
+
+  it("on Chrome never touches audioSession", async () => {
+    setUserAgent(CHROME_UA);
+    const audioSession = { type: "playback" };
+    Object.defineProperty(navigator, "audioSession", { configurable: true, value: audioSession });
+    enterVoiceAudioSession();
+    await listenVoice();
+    expect(audioSession.type).toBe("playback");
+    expect(formatVoiceLog()).toContain("audioSession=none");
+    leaveVoiceAudioSession();
+    delete (navigator as { audioSession?: unknown }).audioSession;
   });
 });
 

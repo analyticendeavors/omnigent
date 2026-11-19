@@ -9,6 +9,7 @@ import { publishMicLevel, resetMicLevel } from "@/lib/aeMicLevel";
 import { publishVoiceBins, resetVoiceBins, syntheticVoiceBins } from "@/lib/aeVoiceLevel";
 import { useVoiceMeter } from "@/lib/aeVoiceMeter";
 import { logVoice } from "@/lib/aeVoiceLog";
+import { assertVoiceAudioSession, audioSessionType } from "@/lib/aeAudioSession";
 import { whenSynthIdle } from "@/lib/aeSpeakReplies";
 import { createEventStallDetector, createStallDetector, isWebKitSpeech } from "@/lib/aeVoiceStall";
 import { DictationBusyError, DictationSession } from "@/lib/dictation";
@@ -1434,7 +1435,10 @@ export const ComposerMicButton = ({
         recognition.stop();
         armStopWatchdog();
       } else {
-        logVoice("mic start browser", speechSynthesisState());
+        logVoice(
+          "mic start browser",
+          `${speechSynthesisState()} audioSession=${audioSessionType()}`,
+        );
         startSeenRef.current = false;
         audioStartSeenRef.current = false;
         recognizerSoundSeenRef.current = false;
@@ -1455,6 +1459,7 @@ export const ComposerMicButton = ({
           try {
             stallRef.current.reset(Date.now());
             eventStallRef.current.reset(Date.now());
+            assertVoiceAudioSession();
             recognition.start();
           } catch {
             transitionRef.current = false;

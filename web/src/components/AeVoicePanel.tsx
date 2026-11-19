@@ -192,7 +192,7 @@ function words(
     case "starting":
       return { label: "Starting the mic", sub: "" };
     case "listening":
-      return { label: "Listening", sub: heard.trim() || "Say something" };
+      return { label: "Listening", sub: heard.trim() ? "" : "Say something" };
     case "paused":
       return { label: "Mic stopped", sub: "Tap the mic to listen again" };
     case "unavailable":
@@ -209,7 +209,7 @@ function words(
     case "approval":
       return { label: "Waiting for your OK", sub: "Say run it, or decline" };
     case "preparing":
-      return { label: "Getting the chat ready", sub: heard.trim() || "Your message is held" };
+      return { label: "Getting the chat ready", sub: "Your message is held" };
     case "stalled":
       return { label: "Chat not ready", sub: "Your message was not sent. Press Start session." };
     case "blocked":

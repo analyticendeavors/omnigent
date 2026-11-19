@@ -113,9 +113,11 @@ describe("AeVoicePanel", () => {
     });
   }
 
-  it("listening shows what was heard, and unavailable shows the detail", () => {
+  it("listening does not repeat the heard text (the composer holds it), and unavailable shows the detail", () => {
     const { rerender, onEnd, onStop, onResume } = panel({ heard: "open the file" });
-    expect(screen.getByTestId("ae-voice-panel")).toHaveTextContent("open the file");
+    const root = screen.getByTestId("ae-voice-panel");
+    expect(root).not.toHaveTextContent("open the file");
+    expect(root).not.toHaveTextContent("Say something");
     rerender(
       <AeVoicePanel
         layout="bar"

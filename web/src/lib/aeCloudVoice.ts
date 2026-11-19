@@ -13,6 +13,7 @@ import { splitForSpeech } from "./aeSpeechText";
 import { speakerSinkId } from "./aeAudioDevices";
 import { clearPlaybackBlocked, markPlaybackBlocked } from "./aeVoicePlayback";
 import { logVoice } from "./aeVoiceLog";
+import { assertVoiceAudioSession } from "./aeAudioSession";
 import { isWebKitSpeech } from "./aeVoiceStall";
 import { withBasePath } from "./basePath";
 import { authenticatedFetch } from "./identity";
@@ -133,7 +134,10 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
   const setSpeaking = (next: boolean) => {
     if (isSpeaking === next) return;
     isSpeaking = next;
-    if (!next) emitPlaying(false);
+    if (!next) {
+      emitPlaying(false);
+      assertVoiceAudioSession();
+    }
     listeners.forEach((cb) => cb());
   };
 
