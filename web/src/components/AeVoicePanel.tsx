@@ -317,13 +317,16 @@ export function AeVoicePanel({
       </div>
     ) : null;
 
+  // In the approval row the keyboard button matches the h-7 text buttons beside it.
+  const inApprovalRow = approvalActive && Boolean(onApproval);
   const sheetControls = (
     <>
       {onKeyboard ? (
         <Button
           type="button"
           variant="ghost"
-          size="icon"
+          size={inApprovalRow ? "icon-sm" : "icon"}
+          className={cn(inApprovalRow && "self-center text-muted-foreground hover:text-foreground")}
           aria-label="Type instead"
           onClick={onKeyboard}
         >

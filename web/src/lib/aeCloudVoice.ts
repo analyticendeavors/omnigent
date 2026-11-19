@@ -13,10 +13,13 @@ import { splitForSpeech } from "./aeSpeechText";
 import { speakerSinkId } from "./aeAudioDevices";
 import { clearPlaybackBlocked, markPlaybackBlocked } from "./aeVoicePlayback";
 import { logVoice } from "./aeVoiceLog";
-import { assertVoiceAudioSession } from "./aeAudioSession";
+import { assertVoiceAudioSession, markSessionMayBeInactive } from "./aeAudioSession";
 import { isWebKitSpeech } from "./aeVoiceStall";
 import { withBasePath } from "./basePath";
 import { authenticatedFetch } from "./identity";
+
+/** WebKit deactivates the iOS audio session when a clip longer than this ends. */
+const LONG_CLIP_SECONDS = 0.95;
 
 export interface CloudVoice {
   id: string;
@@ -213,6 +216,11 @@ export function createCloudSpeaker(fallback: Speaker): Speaker {
       release = () => finish(true);
       el.onended = () => {
         logVoice("play end");
+        // WebKit deactivates the iOS audio session when a clip longer than this ends.
+        if (isWebKitSpeech() && el.duration > LONG_CLIP_SECONDS) {
+          markSessionMayBeInactive();
+          logVoice(`play end dur=${el.duration.toFixed(2)}`);
+        }
         finish(true);
       };
       el.onerror = () => {

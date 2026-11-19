@@ -302,3 +302,27 @@ describe("AeVoicePanel (sheet controls)", () => {
     expect(screen.getByTestId("ae-voice-approval-run")).toBeTruthy();
   });
 });
+
+describe("AeVoicePanel approval row alignment", () => {
+  it("the keyboard button is the same height as the text buttons and centered", () => {
+    panel({
+      layout: "sheet",
+      phase: "approval",
+      approvalActive: true,
+      onApproval: vi.fn(),
+      onKeyboard: vi.fn(),
+    });
+    const row = screen.getByTestId("ae-voice-approval");
+    expect(row.className).toContain("items-center");
+    const keyboard = screen.getByLabelText("Type instead");
+    expect(keyboard.className).toContain("size-7");
+    expect(keyboard.className).toContain("self-center");
+    expect(keyboard.className).not.toContain("size-10");
+    expect(screen.getByTestId("ae-voice-approval-run").className).toContain("h-7");
+  });
+
+  it("keeps the full-size keyboard button when no approval is pending", () => {
+    panel({ layout: "sheet", phase: "listening", onKeyboard: vi.fn() });
+    expect(screen.getByLabelText("Type instead").className).toContain("size-10");
+  });
+});

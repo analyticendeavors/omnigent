@@ -9,7 +9,13 @@ import { publishMicLevel, resetMicLevel } from "@/lib/aeMicLevel";
 import { publishVoiceBins, resetVoiceBins, syntheticVoiceBins } from "@/lib/aeVoiceLevel";
 import { useVoiceMeter } from "@/lib/aeVoiceMeter";
 import { logVoice } from "@/lib/aeVoiceLog";
-import { assertVoiceAudioSession, audioSessionType } from "@/lib/aeAudioSession";
+import {
+  assertVoiceAudioSession,
+  audioSessionState,
+  audioSessionType,
+  reactivateAudioSessionForMic,
+  reactivationPending,
+} from "@/lib/aeAudioSession";
 import { whenSynthIdle } from "@/lib/aeSpeakReplies";
 import { createEventStallDetector, createStallDetector, isWebKitSpeech } from "@/lib/aeVoiceStall";
 import { DictationBusyError, DictationSession } from "@/lib/dictation";
@@ -473,7 +479,7 @@ export const ComposerMicButton = ({
       eventStallRef.current.reset(Date.now());
       // A fresh recognizer gets the whole no-audiostart allowance before that check judges it.
       takeStartRef.current = Date.now();
-      const begin = (): boolean => {
+      const startNext = (): boolean => {
         neverStarted.delete(next);
         waitingOn.delete(next);
         silentRestartAt = Date.now();
@@ -485,6 +491,26 @@ export const ComposerMicButton = ({
         }
         // If the new recognizer never answers, the no-audiostart check still catches it.
         armLiveness();
+        return true;
+      };
+      // True while this restart is still the live one (checked again after an await).
+      const stillLive = (): boolean =>
+        recognitionRef.current === next &&
+        !disabledRef.current &&
+        listeningRef.current &&
+        !discardingRef.current &&
+        !transitionRef.current &&
+        !(wasVoiceTake && !voiceTakeRef.current);
+      const begin = (): boolean => {
+        if (!reactivationPending()) return startNext();
+        // A long clip may have deactivated the iOS audio session: reactivate, then start.
+        void reactivateAudioSessionForMic().then(() => {
+          if (!stillLive()) {
+            silentStartRef.current = false;
+            return;
+          }
+          if (!startNext()) reportDeaf("stall restart failed");
+        });
         return true;
       };
       if (!old || !isWebKitSpeech() || endedRecognizers.has(old)) return begin();
@@ -1437,7 +1463,7 @@ export const ComposerMicButton = ({
       } else {
         logVoice(
           "mic start browser",
-          `${speechSynthesisState()} audioSession=${audioSessionType()}`,
+          `${speechSynthesisState()} audioSession=${audioSessionType()} sessionState=${audioSessionState()} reactivated=${reactivationPending() ? "yes" : "no"}`,
         );
         startSeenRef.current = false;
         audioStartSeenRef.current = false;
@@ -1456,15 +1482,33 @@ export const ComposerMicButton = ({
           synthWaitCancelRef.current = null;
           // A replaced recognizer owns the start now; this one must not start late.
           if (recognitionRef.current !== recognition) return;
-          try {
-            stallRef.current.reset(Date.now());
-            eventStallRef.current.reset(Date.now());
-            assertVoiceAudioSession();
-            recognition.start();
-          } catch {
-            transitionRef.current = false;
-            browserStartPendingRef.current = false;
+          const startNow = () => {
+            try {
+              stallRef.current.reset(Date.now());
+              eventStallRef.current.reset(Date.now());
+              assertVoiceAudioSession();
+              recognition.start();
+            } catch {
+              transitionRef.current = false;
+              browserStartPendingRef.current = false;
+            }
+          };
+          if (!reactivationPending()) {
+            startNow();
+            return;
           }
+          // A long clip may have deactivated the iOS audio session: put it back first. A stop
+          // during the await cancels through the same ref a synth wait uses.
+          let stoppedDuringAwait = false;
+          synthWaitCancelRef.current = () => {
+            stoppedDuringAwait = true;
+          };
+          void reactivateAudioSessionForMic().then(() => {
+            if (stoppedDuringAwait) return;
+            synthWaitCancelRef.current = null;
+            if (recognitionRef.current !== recognition) return;
+            startNow();
+          });
         });
         // go() may have run at once (no wait): then there is nothing to cancel later.
         if (!waitDone) synthWaitCancelRef.current = cancelWait;

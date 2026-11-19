@@ -4,7 +4,11 @@ import {
   audioSessionType,
   enterVoiceAudioSession,
   leaveVoiceAudioSession,
+  markSessionMayBeInactive,
   PENDING_HOLD_MS,
+  reactivateAudioSessionForMic,
+  reactivationPending,
+  REACTIVATE_TIMEOUT_MS,
   resetAudioSessionState,
 } from "./aeAudioSession";
 import { formatVoiceLog, resetVoiceLog } from "./aeVoiceLog";
@@ -153,5 +157,118 @@ describe("audio session pinning", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("reactivating the audio session for the mic", () => {
+  class Track {
+    stop = vi.fn();
+  }
+  let tracks: Track[];
+  let gum: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    tracks = [];
+    gum = vi.fn(() => {
+      const t = new Track();
+      tracks.push(t);
+      return Promise.resolve({ getTracks: () => [t] });
+    });
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: gum,
+        enumerateDevices: vi.fn().mockResolvedValue([]),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      },
+    });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    delete (navigator as { mediaDevices?: unknown }).mediaDevices;
+  });
+
+  it("does nothing while the flag is clear", async () => {
+    setUa(IOS_UA);
+    expect(await reactivateAudioSessionForMic()).toBe(false);
+    expect(gum).not.toHaveBeenCalled();
+  });
+
+  it("does nothing off WebKit even when the flag is set", async () => {
+    setUa(CHROME_UA);
+    markSessionMayBeInactive();
+    expect(reactivationPending()).toBe(false);
+    expect(await reactivateAudioSessionForMic()).toBe(false);
+    expect(gum).not.toHaveBeenCalled();
+  });
+
+  it("opens a mic stream, stops every track, clears the flag and logs", async () => {
+    setUa(IOS_UA);
+    setSession("play-and-record");
+    markSessionMayBeInactive();
+    expect(reactivationPending()).toBe(true);
+    expect(await reactivateAudioSessionForMic()).toBe(true);
+    expect(gum).toHaveBeenCalledTimes(1);
+    expect(tracks).toHaveLength(1);
+    expect(tracks[0].stop).toHaveBeenCalledTimes(1);
+    expect(reactivationPending()).toBe(false);
+    expect(formatVoiceLog()).toContain("reactivate ok");
+    // Clear flag: a second call does not open another stream.
+    await reactivateAudioSessionForMic();
+    expect(gum).toHaveBeenCalledTimes(1);
+  });
+
+  it("logs the audio session state changes once a reactivation has run", async () => {
+    setUa(IOS_UA);
+    const listeners: (() => void)[] = [];
+    Object.defineProperty(navigator, "audioSession", {
+      configurable: true,
+      writable: true,
+      value: {
+        type: "play-and-record",
+        state: "inactive",
+        addEventListener: (_: string, cb: () => void) => listeners.push(cb),
+      },
+    });
+    markSessionMayBeInactive();
+    await reactivateAudioSessionForMic();
+    expect(listeners).toHaveLength(1);
+    markSessionMayBeInactive();
+    await reactivateAudioSessionForMic();
+    expect(listeners).toHaveLength(1);
+    (navigator as unknown as { audioSession: { state: string } }).audioSession.state = "active";
+    listeners[0]();
+    expect(formatVoiceLog()).toContain("audio session state active");
+  });
+
+  it("gives up after the timeout, keeps the flag and stops a late stream", async () => {
+    vi.useFakeTimers();
+    setUa(IOS_UA);
+    let release: (v: unknown) => void = () => {};
+    const late = new Track();
+    gum.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    markSessionMayBeInactive();
+    const done = reactivateAudioSessionForMic();
+    await vi.advanceTimersByTimeAsync(REACTIVATE_TIMEOUT_MS);
+    expect(await done).toBe(false);
+    expect(reactivationPending()).toBe(true);
+    expect(formatVoiceLog()).toContain("reactivate failed timeout");
+    release({ getTracks: () => [late] });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(late.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("logs a refusal and carries on", async () => {
+    setUa(IOS_UA);
+    gum.mockRejectedValueOnce(new Error("denied"));
+    markSessionMayBeInactive();
+    expect(await reactivateAudioSessionForMic()).toBe(false);
+    expect(formatVoiceLog()).toContain("reactivate failed denied");
+    expect(reactivationPending()).toBe(true);
   });
 });

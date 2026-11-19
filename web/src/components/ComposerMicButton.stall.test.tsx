@@ -3,6 +3,7 @@
 import type { AeMicController } from "@/lib/aeVoiceMode";
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { markSessionMayBeInactive, resetAudioSessionState } from "@/lib/aeAudioSession";
 import { formatVoiceLog, resetVoiceLog } from "@/lib/aeVoiceLog";
 import { ComposerMicButton } from "./ComposerMicButton";
 
@@ -378,5 +379,82 @@ describe("ComposerMicButton (WebKit recycle after a final)", () => {
     expect(instances).toHaveLength(1);
     expect(startSpy).toHaveBeenCalledTimes(1);
     expect(formatVoiceLog()).not.toContain("mic recycle after final");
+  });
+});
+
+describe("ComposerMicButton (audio session reactivation before start)", () => {
+  const IPHONE =
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.7 Mobile/15E148 Safari/604.1";
+
+  let release: (() => void) | null;
+  beforeEach(() => {
+    resetAudioSessionState();
+    release = null;
+    // The first stream request is held until the test releases it.
+    (navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve(new FakeStream());
+        }),
+    );
+  });
+  afterEach(() => resetAudioSessionState());
+
+  function mount() {
+    const controller = { current: null as AeMicController | null };
+    render(
+      <ComposerMicButton
+        onTranscript={vi.fn()}
+        onVoiceStart={vi.fn()}
+        controller={controller}
+        onListeningChange={vi.fn()}
+      />,
+    );
+    return controller;
+  }
+
+  it("awaits the reactivation before recognition.start()", async () => {
+    setUserAgent(IPHONE);
+    markSessionMayBeInactive();
+    const controller = mount();
+    act(() => controller.current?.start());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10);
+    });
+    expect(startSpy).not.toHaveBeenCalled();
+    await act(async () => {
+      release?.();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    expect(formatVoiceLog()).toContain("reactivated=yes");
+    expect(formatVoiceLog()).toContain("reactivate ok");
+  });
+
+  it("starts at once when no long clip played", async () => {
+    setUserAgent(IPHONE);
+    const controller = mount();
+    act(() => controller.current?.start());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10);
+    });
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    expect(formatVoiceLog()).toContain("reactivated=no");
+  });
+
+  it("does not start when the take was stopped during the await", async () => {
+    setUserAgent(IPHONE);
+    markSessionMayBeInactive();
+    const controller = mount();
+    act(() => controller.current?.start());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10);
+    });
+    act(() => controller.current?.stop());
+    await act(async () => {
+      release?.();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(startSpy).not.toHaveBeenCalled();
   });
 });

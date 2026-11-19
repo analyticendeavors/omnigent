@@ -4,11 +4,14 @@
 // "No speech detected". While Voice mode is on, the session is pinned to "play-and-record".
 // WebKit only, feature-detected, and a no-op everywhere else. Nothing here throws.
 
+import { getMicStream, micConstraint } from "./aeAudioDevices";
 import { logVoice } from "./aeVoiceLog";
 import { isWebKitSpeech } from "./aeVoiceStall";
 
 interface AudioSessionLike {
   type: string;
+  state?: string;
+  addEventListener?: (type: "statechange", listener: () => void) => void;
 }
 
 const VOICE_TYPE = "play-and-record";
@@ -122,4 +125,78 @@ export function resetAudioSessionState(): void {
   pendingHold = false;
   if (pendingTimer !== null) clearTimeout(pendingTimer);
   pendingTimer = null;
+  sessionMayBeInactive = false;
+  stateListenerInstalled = false;
+}
+
+// iOS 18 WebKit sets the audio session inactive when an <audio> clip longer than about 0.95 s
+// ends, and webkitSpeechRecognition never reactivates it, so the next recognizer start hears
+// nothing. Every resolved getUserMedia({ audio }) reactivates it, so a throwaway mic stream
+// right before the start puts the session back.
+let sessionMayBeInactive = false;
+let stateListenerInstalled = false;
+/** The longest a reactivation may take before the recognizer starts anyway. */
+export const REACTIVATE_TIMEOUT_MS = 1500;
+
+/** A long clip just ended: the next mic start needs a reactivation first. */
+export function markSessionMayBeInactive(): void {
+  sessionMayBeInactive = true;
+}
+
+/** Whether the next mic start will reactivate the audio session first. */
+export function reactivationPending(): boolean {
+  return sessionMayBeInactive && isWebKitSpeech();
+}
+
+/** The Audio Session API state ("active", "inactive", ...), or "none" where it is missing. */
+export function audioSessionState(): string {
+  const session = getSession();
+  if (!session || typeof session.state !== "string") return "none";
+  return session.state;
+}
+
+function watchSessionState(): void {
+  if (stateListenerInstalled) return;
+  const session = getSession();
+  if (!session || typeof session.addEventListener !== "function") return;
+  stateListenerInstalled = true;
+  try {
+    session.addEventListener("statechange", () => {
+      logVoice(`audio session state ${audioSessionState()}`);
+    });
+  } catch {
+    // Observation only.
+  }
+}
+
+/**
+ * Before a WebKit recognizer start: when a long clip may have deactivated the audio session,
+ * open a throwaway mic stream and stop its tracks at once. Never throws; a timeout or a refusal
+ * is logged and the start goes on.
+ */
+export async function reactivateAudioSessionForMic(): Promise<boolean> {
+  if (!sessionMayBeInactive || !isWebKitSpeech()) return false;
+  watchSessionState();
+  logVoice(`audio session state before reactivate ${audioSessionState()}`);
+  const t0 = Date.now();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const open = getMicStream(micConstraint() ?? true).then((stream) => {
+      stream.getTracks().forEach((track) => track.stop());
+    });
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("timeout")), REACTIVATE_TIMEOUT_MS);
+    });
+    // A stream that arrives after the timeout is still stopped by the handler above.
+    await Promise.race([open, timeout]);
+    sessionMayBeInactive = false;
+    logVoice("reactivate ok", `${Date.now() - t0} ms`);
+    return true;
+  } catch (err) {
+    const msg = (err as { message?: string; name?: string } | null)?.message ?? "error";
+    logVoice(`reactivate failed ${msg}`);
+    return false;
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+  }
 }

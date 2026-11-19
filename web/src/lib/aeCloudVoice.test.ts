@@ -15,6 +15,7 @@ import {
   type SpeakOptions,
   whenSynthIdle,
 } from "./aeSpeakReplies";
+import { reactivationPending, resetAudioSessionState } from "./aeAudioSession";
 import { clearPlaybackBlocked, isPlaybackBlocked, resumePlayback } from "./aeVoicePlayback";
 
 const OPTS: SpeakOptions = { voiceURI: null, rate: 1, cloudVoiceId: "en-US-AvaMultilingualNeural" };
@@ -727,5 +728,48 @@ describe("cloud playback refused by the browser", () => {
     const src = el.src;
     speaker.prime?.();
     expect(el.src).toBe(src);
+  });
+});
+
+describe("marking the iOS audio session after a clip", () => {
+  const IOS_UA =
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.7 Mobile/15E148 Safari/604.1";
+  let originalUa: PropertyDescriptor | undefined;
+  beforeEach(() => {
+    originalUa = Object.getOwnPropertyDescriptor(navigator, "userAgent");
+    Object.defineProperty(navigator, "userAgent", { configurable: true, value: IOS_UA });
+    resetAudioSessionState();
+  });
+  afterEach(() => {
+    if (originalUa) Object.defineProperty(navigator, "userAgent", originalUa);
+    else delete (navigator as { userAgent?: unknown }).userAgent;
+    resetAudioSessionState();
+  });
+
+  async function playClip(duration: number, stopFirst = false) {
+    const speaker = createCloudSpeaker(new FakeDevice());
+    speaker.speak("Hello there.", OPTS);
+    await settle();
+    pending[0].resolve(mp3());
+    await settle();
+    const el = FakeAudio.last as FakeAudio & { duration: number };
+    el.duration = duration;
+    if (stopFirst) speaker.stop();
+    else el.end();
+  }
+
+  it("marks the session after a clip longer than 0.95 s ends", async () => {
+    await playClip(2.4);
+    expect(reactivationPending()).toBe(true);
+  });
+
+  it("does not mark after a short clip", async () => {
+    await playClip(0.6);
+    expect(reactivationPending()).toBe(false);
+  });
+
+  it("does not mark when playback is stopped", async () => {
+    await playClip(2.4, true);
+    expect(reactivationPending()).toBe(false);
   });
 });
