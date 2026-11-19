@@ -91,6 +91,20 @@ export function unlockVoiceAudioContext(): void {
   }
 }
 
+/**
+ * Resumes the tap-unlocked context when one exists, without making one. For a Voice mode start
+ * with no gesture (auto-arm, chat switch): a context made outside a tap would start suspended.
+ */
+export function resumeVoiceAudioContext(): void {
+  const ctx = getSharedVoiceAudioContext();
+  if (!ctx || ctx.state === "running") return;
+  try {
+    void Promise.resolve(ctx.resume?.()).catch(() => {});
+  } catch {
+    // Best effort; DictationSession logs a context that is still not running.
+  }
+}
+
 /** Test seam: forget the shared context. */
 export function resetSharedVoiceAudioContext(): void {
   sharedCtx = null;

@@ -241,7 +241,6 @@ export class DictationSession {
   private samplesSent = 0;
   private peak = 0;
   private firstSoundAt: number | null = null;
-  private lastSoundAt = Date.now();
   private mutedSince: number | null = null;
   private deafTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -351,6 +350,8 @@ export class DictationSession {
         shared = true;
       } else if (ios) {
         // iOS runs at its native rate; the worklet downsamples. The rate hint is not asked for.
+        // No Voice tap made a context (an auto-arm or chat switch): this one may stay suspended.
+        logVoice("dictation ctx not unlocked", "no shared context, making one");
         audioContext = new AudioContext();
       } else {
         // Ask for the target rate directly — Chrome/Firefox resample the
@@ -363,6 +364,9 @@ export class DictationSession {
         }
       }
       await resumeCapped(audioContext);
+      if (ios && audioContext.state !== "running") {
+        logVoice("dictation ctx not unlocked", audioContext.state);
+      }
       logVoice(
         "dictation ctx",
         `${audioContext.state} ${audioContext.sampleRate} Hz${shared ? " shared" : ""}`,
@@ -422,7 +426,6 @@ export class DictationSession {
         this.firstSoundAt = now;
         logVoice("dictation first sound", `${now - this.createdAt} ms`);
       }
-      this.lastSoundAt = now;
       if (peak > this.peak) this.peak = peak;
     }
     this.events.onLevel?.(peak / 0x8000);
@@ -433,7 +436,14 @@ export class DictationSession {
     const now = Date.now();
     let reason: "silent" | "muted" | null = null;
     if (this.mutedSince !== null && now - this.mutedSince >= DEAF_SILENT_MS) reason = "muted";
-    else if (now - this.lastSoundAt >= DEAF_SILENT_MS) reason = "silent";
+    else if (this.firstSoundAt === null && now - this.createdAt >= DEAF_SILENT_MS) {
+      // Deaf only while no non-zero sample has ever arrived (this also covers a context that is
+      // not running at the check). iOS voice processing can send runs of exact zeros in a quiet
+      // room, so a take that heard anything is never deaf for its lifetime.
+      reason = "silent";
+      if (this.audioContext.state !== "running")
+        logVoice("dictation deaf ctx", this.audioContext.state);
+    }
     if (reason === null) return;
     this.clearDeafTimer();
     logVoice("dictation deaf", reason);

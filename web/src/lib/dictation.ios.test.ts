@@ -200,7 +200,7 @@ describe("DictationSession on iOS", () => {
 });
 
 describe("DictationSession deaf check", () => {
-  it("reports silence after the constant, but not while sound arrives", async () => {
+  it("reports a take that never heard a non-zero sample", async () => {
     setUserAgent(IOS_UA);
     vi.useFakeTimers();
     const ev = events();
@@ -208,14 +208,52 @@ describe("DictationSession deaf check", () => {
     await vi.advanceTimersByTimeAsync(0);
     const session = await p;
     const port = nodes[0].port;
-    // Sound at 3 s keeps the take alive past 4 s.
-    await vi.advanceTimersByTimeAsync(3000);
-    port.onmessage?.(chunk(0, 5, 0));
-    await vi.advanceTimersByTimeAsync(DEAF_SILENT_MS - 1000);
+    const tick = setInterval(() => port.onmessage?.(chunk(0, 0, 0)), 100);
+    await vi.advanceTimersByTimeAsync(DEAF_SILENT_MS - 600);
     expect(ev.onDeaf).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(1200);
+    clearInterval(tick);
     expect(ev.onDeaf).toHaveBeenCalledWith("silent");
     expect(ev.onDeaf).toHaveBeenCalledTimes(1);
+    session.cancel();
+  });
+
+  it("is never deaf once any non-zero sample arrived, even tiny ones then long zeros", async () => {
+    setUserAgent(IOS_UA);
+    vi.useFakeTimers();
+    const ev = events();
+    const p = DictationSession.start(ev, { deafCheck: true });
+    await vi.advanceTimersByTimeAsync(0);
+    const session = await p;
+    const port = nodes[0].port;
+    await vi.advanceTimersByTimeAsync(1000);
+    port.onmessage?.(chunk(0, 1, 0));
+    // A quiet room: exact zeros for far longer than the deaf window.
+    const tick = setInterval(() => port.onmessage?.(chunk(0, 0, 0)), 100);
+    await vi.advanceTimersByTimeAsync(DEAF_SILENT_MS * 3);
+    clearInterval(tick);
+    expect(ev.onDeaf).not.toHaveBeenCalled();
+    session.cancel();
+  });
+
+  it("reports a context that is not running at the check", async () => {
+    setUserAgent(IOS_UA);
+    vi.useFakeTimers();
+    const ev = events();
+    const p = DictationSession.start(ev, { deafCheck: true });
+    await vi.advanceTimersByTimeAsync(0);
+    const session = await p;
+    contexts[0].state = "suspended";
+    await vi.advanceTimersByTimeAsync(DEAF_SILENT_MS + 600);
+    expect(ev.onDeaf).toHaveBeenCalledWith("silent");
+    expect(formatVoiceLog()).toContain("dictation deaf ctx");
+    session.cancel();
+  });
+
+  it("logs when no tap made the shared context", async () => {
+    setUserAgent(IOS_UA);
+    const session = await DictationSession.start(events());
+    expect(formatVoiceLog()).toContain("dictation ctx not unlocked");
     session.cancel();
   });
 

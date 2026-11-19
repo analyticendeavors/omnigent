@@ -868,6 +868,15 @@ describe("useAeVoiceMode", () => {
       expect(submit).not.toHaveBeenCalled();
     });
 
+    it("accepts a punctuated server-recognizer final and sends no message after it", () => {
+      const { result } = mountApproval();
+      act(() => void result.current.onFinal("Run it."));
+      expect(submitApproval).toHaveBeenCalledTimes(1);
+      expect(submitApproval).toHaveBeenCalledWith("a1", "accept", undefined, { source: "voice" });
+      act(() => void vi.advanceTimersByTime(5000));
+      expect(submit).not.toHaveBeenCalled();
+    });
+
     it.each(["decline", "no", "cancel"])("declines when %s is said", (said) => {
       const { result } = mountApproval();
       act(() => void result.current.onFinal(said));

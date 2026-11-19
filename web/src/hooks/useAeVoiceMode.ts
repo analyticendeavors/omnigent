@@ -35,7 +35,7 @@ import { activeEchoWords, resetEcho, splitEcho } from "@/lib/aeVoiceEcho";
 import { withApprovalSource } from "@/lib/aeApprovalSource";
 import { logVoice, uploadVoiceLog, useVoiceLogOnHide } from "@/lib/aeVoiceLog";
 import { useMicWhileSpeaking } from "@/lib/aeVoiceMic";
-import { unlockVoiceAudioContext } from "@/lib/aeVoiceServerStt";
+import { resumeVoiceAudioContext, unlockVoiceAudioContext } from "@/lib/aeVoiceServerStt";
 import { useChatStore } from "@/store/chatStore";
 
 /** If the chat never shows a turn after a send, stop waiting for it. */
@@ -306,6 +306,8 @@ export function useAeVoiceMode({
       controller.current?.stop();
       onListeningRef.current(false);
     }, MIC_START_NET_MS);
+    // No tap here (auto-arm, chat switch): wake the context a tap made earlier, if any.
+    resumeVoiceAudioContext();
     mic.start();
   }, [controller, clearNet]);
 

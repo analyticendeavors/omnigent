@@ -71,6 +71,8 @@ beforeEach(() => {
   frames = [];
   binValue = QUIET;
   originalUa = Object.getOwnPropertyDescriptor(navigator, "userAgent");
+  // These tests cover the browser path on iOS; the server path has its own file.
+  window.localStorage.setItem("omnigent:ae-voice-server-stt", "off");
   class FakeRecognition {
     continuous = false;
     interimResults = false;
@@ -111,6 +113,7 @@ afterEach(() => {
   cleanup();
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  window.localStorage.removeItem("omnigent:ae-voice-server-stt");
   delete (navigator as { mediaDevices?: unknown }).mediaDevices;
   if (originalUa) Object.defineProperty(navigator, "userAgent", originalUa);
   else delete (navigator as { userAgent?: unknown }).userAgent;

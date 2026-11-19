@@ -1717,6 +1717,7 @@ describe("ComposerMicButton (WebKit synth wait)", () => {
     Object.defineProperty(navigator, "userAgent", { configurable: true, value: IPHONE_UA });
     synth = installFakeSpeech();
     window.localStorage.clear();
+    window.localStorage.setItem("omnigent:ae-voice-server-stt", "off");
     // The silent prime is speaking, as right after the Voice mode tap on a device voice.
     primeVoicePlayback();
     synth.speaking = true;

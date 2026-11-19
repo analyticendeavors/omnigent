@@ -8,7 +8,7 @@ import { getMicStream } from "@/lib/aeAudioDevices";
 import { publishMicLevel, resetMicLevel } from "@/lib/aeMicLevel";
 import { publishVoiceBins, resetVoiceBins, syntheticVoiceBins } from "@/lib/aeVoiceLevel";
 import { useVoiceMeter } from "@/lib/aeVoiceMeter";
-import { useVoiceServerStt } from "@/lib/aeVoiceServerStt";
+import { isIosDevice, useVoiceServerStt } from "@/lib/aeVoiceServerStt";
 import { logVoice } from "@/lib/aeVoiceLog";
 import {
   assertVoiceAudioSession,
@@ -328,7 +328,10 @@ export const ComposerMicButton = ({
   pathRef.current = !Ctor || (serverAvailable && isElectronShell()) ? "server" : "browser";
   // True when a Voice mode (controller) start goes to the server recognizer on this device.
   const voiceServerRef = useRef(false);
-  voiceServerRef.current = serverAvailable && voiceServerSetting;
+  // While GET /v1/info is still loading, a Voice tap on iOS goes to the server anyway: the
+  // browser recognizer there is the deaf path, and a failed server start already falls back.
+  voiceServerRef.current =
+    (serverAvailable || (serverInfo === "loading" && isIosDevice())) && voiceServerSetting;
   // Swaps the recognizer for a fresh one (set by the mount effect).
   const replaceRecognitionRef = useRef<(keepLateFinal?: boolean) => void>(() => {});
   const clearStartWatchdog = useCallback(() => {
@@ -1065,6 +1068,13 @@ export const ComposerMicButton = ({
 
   // Release the mic if the component unmounts mid-take (e.g. the
   // new-chat dialog closes while dictating).
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   useEffect(
     () => () => {
       sessionRef.current?.cancel();
@@ -1454,6 +1464,13 @@ export const ComposerMicButton = ({
         },
         { deafCheck: voiceServerTakeRef.current },
       );
+      if (!mountedRef.current) {
+        // Unmounted while the handshake ran (a first take or a quiet restart): nothing is left
+        // to own this session, so close it and release the mic.
+        logVoice("dictation start after unmount, cancelled");
+        next.cancel();
+        return;
+      }
       if (withdrawRef.current) {
         // Voice mode stopped the mic while it was still connecting: drop the stream at once.
         withdrawRef.current = false;
@@ -1530,7 +1547,8 @@ export const ComposerMicButton = ({
     // A Voice mode start on iPhone or iPad also goes straight to the server: Apple's
     // recognizer goes deaf after a spoken reply. Manual mic taps keep the browser path.
     if (pathRef.current === "server" || (voiceServerRef.current && controllerStartRef.current)) {
-      if (!serverAvailable) return false;
+      const serverUsable = pathRef.current === "server" ? serverAvailable : voiceServerRef.current;
+      if (!serverUsable) return false;
       void toggleServer();
       return true;
     }
@@ -1685,9 +1703,17 @@ export const ComposerMicButton = ({
 
     const start = () => {
       if (listeningRef.current || requestedRef.current) return;
+      serverDeafRestartsRef.current = 0;
+      if (serverRestartingRef.current && withdrawRef.current) {
+        // A stop withdrew the quiet restart that is still connecting, and now a start came:
+        // keep that connection as the new take instead of cancelling it.
+        requestedRef.current = true;
+        withdrawRef.current = false;
+        voiceTakeRef.current = true;
+        return;
+      }
       requestedRef.current = true;
       controllerStartRef.current = true;
-      serverDeafRestartsRef.current = 0;
       if (toggle()) {
         // A new start replaces any earlier withdrawn one.
         withdrawRef.current = false;
@@ -1757,8 +1783,13 @@ export const ComposerMicButton = ({
         if (listeningRef.current) {
           requestedRef.current = false;
           // A quiet deaf restart still connecting: drop its stream the moment it arrives.
-          if (serverRestartingRef.current) withdrawRef.current = true;
-          else toggle();
+          if (serverRestartingRef.current) {
+            withdrawRef.current = true;
+            // The old take is already gone: the mic is stopped now, so a start right after
+            // this stop is not swallowed by a stale "listening".
+            listeningRef.current = false;
+            setIsListening(false);
+          } else toggle();
         } else if (requestedRef.current) {
           // Still connecting: cancel the start, or drop the stream the moment it connects.
           requestedRef.current = false;

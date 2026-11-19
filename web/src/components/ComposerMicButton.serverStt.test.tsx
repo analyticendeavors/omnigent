@@ -81,11 +81,11 @@ afterEach(() => {
   else delete (navigator as { userAgent?: unknown }).userAgent;
 });
 
-function setup() {
+function setup(info: ServerInfo | "loading" = INFO) {
   const controller = { current: null as AeMicController | null };
   const onListeningChange = vi.fn();
   const view = render(
-    <CapabilitiesContext.Provider value={INFO}>
+    <CapabilitiesContext.Provider value={info as ServerInfo}>
       <ComposerMicButton
         onTranscript={vi.fn()}
         controller={controller}
@@ -166,5 +166,150 @@ describe("ComposerMicButton (Voice mode on the server recognizer, iOS)", () => {
     expect(onListeningChange).toHaveBeenCalledTimes(2); // listening(true), then deaf
     expect(formatVoiceLog()).toContain("server deaf");
     expect(controller.current?.isListening()).toBe(false);
+  });
+
+  it("routes a Voice start on iOS to the server while serverInfo is loading", async () => {
+    setUserAgent(IOS_UA);
+    const { controller } = setup("loading");
+    expect(controller.current?.startPath()).toBe("server");
+    await act(async () => controller.current?.start());
+    expect(sessionStartMock).toHaveBeenCalledTimes(1);
+    expect(startSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps the browser path while loading when the setting is off", async () => {
+    setUserAgent(IOS_UA);
+    window.localStorage.setItem(VOICE_SERVER_STT_KEY, "off");
+    const { controller } = setup("loading");
+    expect(controller.current?.startPath()).toBe("browser");
+  });
+
+  it("resets the deaf restart budget on the next controller start", async () => {
+    setUserAgent(IOS_UA);
+    const { controller } = setup();
+    await act(async () => controller.current?.start());
+    await act(async () => sessionEvents?.onDeaf?.("silent"));
+    expect(sessionStartMock).toHaveBeenCalledTimes(2);
+    await act(async () => sessionEvents?.onDeaf?.("silent"));
+    expect(controller.current?.isListening()).toBe(false);
+    await act(async () => controller.current?.start());
+    expect(sessionStartMock).toHaveBeenCalledTimes(3);
+    // The new take gets its quiet restart again.
+    await act(async () => sessionEvents?.onDeaf?.("silent"));
+    expect(sessionStartMock).toHaveBeenCalledTimes(4);
+    expect(formatVoiceLog()).toContain("server deaf restart");
+  });
+
+  describe("a quiet deaf restart that is still connecting", () => {
+    function slowRestart() {
+      let release: () => void = () => {};
+      let calls = 0;
+      sessionStartMock = vi.fn(async (events: DictationSessionEvents) => {
+        sessionEvents = events;
+        calls += 1;
+        if (calls === 2) {
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        }
+        return { stop: vi.fn(async () => ""), cancel: cancelMock };
+      });
+      return () => release();
+    }
+
+    it("a stop during the connect drops the stream and ends the take", async () => {
+      setUserAgent(IOS_UA);
+      const release = slowRestart();
+      const { controller, onListeningChange } = setup();
+      await act(async () => controller.current?.start());
+      await act(async () => {
+        void sessionEvents?.onDeaf?.("silent");
+      });
+      cancelMock.mockClear();
+      act(() => controller.current?.stop());
+      expect(controller.current?.isListening()).toBe(false);
+      await act(async () => release());
+      expect(cancelMock).toHaveBeenCalledTimes(1);
+      expect(controller.current?.isListening()).toBe(false);
+      expect(onListeningChange).toHaveBeenCalledWith(false);
+    });
+
+    it("a start right after that stop is not swallowed and keeps the connection", async () => {
+      setUserAgent(IOS_UA);
+      const release = slowRestart();
+      const { controller } = setup();
+      await act(async () => controller.current?.start());
+      await act(async () => {
+        void sessionEvents?.onDeaf?.("silent");
+      });
+      cancelMock.mockClear();
+      act(() => controller.current?.stop());
+      act(() => controller.current?.start());
+      await act(async () => release());
+      expect(cancelMock).not.toHaveBeenCalled();
+      expect(controller.current?.isListening()).toBe(true);
+    });
+
+    it("a failed restart reports the take ended quietly", async () => {
+      setUserAgent(IOS_UA);
+      let calls = 0;
+      sessionStartMock = vi.fn(async (events: DictationSessionEvents) => {
+        sessionEvents = events;
+        calls += 1;
+        if (calls === 2) throw new Error("ws closed");
+        return { stop: vi.fn(async () => ""), cancel: cancelMock };
+      });
+      const { controller, onListeningChange } = setup();
+      await act(async () => controller.current?.start());
+      await act(async () => sessionEvents?.onDeaf?.("silent"));
+      expect(controller.current?.isListening()).toBe(false);
+      expect(onListeningChange).toHaveBeenCalledTimes(2); // listening(true), then the failure
+      expect(onListeningChange).toHaveBeenLastCalledWith(false);
+    });
+  });
+
+  describe("unmounting while a take connects", () => {
+    function slowStart(nth: number) {
+      let release: () => void = () => {};
+      let calls = 0;
+      sessionStartMock = vi.fn(async (events: DictationSessionEvents) => {
+        sessionEvents = events;
+        calls += 1;
+        if (calls === nth) {
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        }
+        return { stop: vi.fn(async () => ""), cancel: cancelMock };
+      });
+      return () => release();
+    }
+
+    it("cancels a first take whose handshake resolves after unmount", async () => {
+      setUserAgent(IOS_UA);
+      const release = slowStart(1);
+      const { controller, view } = setup();
+      await act(async () => controller.current?.start());
+      view.unmount();
+      expect(cancelMock).not.toHaveBeenCalled();
+      await act(async () => release());
+      expect(cancelMock).toHaveBeenCalledTimes(1);
+      expect(formatVoiceLog()).toContain("dictation start after unmount, cancelled");
+    });
+
+    it("cancels a quiet deaf restart whose handshake resolves after unmount", async () => {
+      setUserAgent(IOS_UA);
+      const release = slowStart(2);
+      const { controller, view } = setup();
+      await act(async () => controller.current?.start());
+      await act(async () => {
+        void sessionEvents?.onDeaf?.("silent");
+      });
+      cancelMock.mockClear();
+      view.unmount();
+      await act(async () => release());
+      expect(cancelMock).toHaveBeenCalledTimes(1);
+      expect(formatVoiceLog()).toContain("dictation start after unmount, cancelled");
+    });
   });
 });

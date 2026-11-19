@@ -133,6 +133,8 @@ beforeEach(() => {
   resetMicLevel();
   resetVoiceBins();
   window.localStorage.removeItem(VOICE_METER_KEY);
+  // These tests cover the browser path on iOS; the server path has its own file.
+  window.localStorage.setItem("omnigent:ae-voice-server-stt", "off");
 });
 
 afterEach(() => {
@@ -141,6 +143,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   window.localStorage.removeItem(VOICE_METER_KEY);
+  window.localStorage.removeItem("omnigent:ae-voice-server-stt");
   delete (navigator as { mediaDevices?: unknown }).mediaDevices;
   if (originalUa) Object.defineProperty(navigator, "userAgent", originalUa);
   else delete (navigator as { userAgent?: unknown }).userAgent;
