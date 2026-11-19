@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -50,7 +51,7 @@ async def test_forwarder_posts_compaction_in_progress_on_precompact_hook(
     )
     record_hook_event(
         bridge_dir,
-        {"hook_event_name": "PreCompact", "session_id": "claude-session"},
+        {"hook_event_name": "PreCompact", "trigger": "manual", "session_id": "claude-session"},
     )
     server, thread, base_url = _start_recording_server()
     task = asyncio.create_task(
@@ -435,3 +436,145 @@ async def test_compact_refusal_swallows_post_failure(tmp_path: Path) -> None:
     assert len(captured) == 1
     assert captured[0].method == "POST"
     assert forwarder._read_compaction_state(bridge_dir).pending is None
+
+
+@pytest.mark.asyncio
+async def test_auto_precompact_posts_no_status_but_mints_token_and_persists_once(
+    tmp_path: Path,
+) -> None:
+    """
+    An ``auto`` ``PreCompact`` shows no strip, yet the boundary still lands once.
+
+    Claude fires ``PreCompact`` with ``trigger=auto`` when it starts
+    precomputing a summary in the background (about 85% of the auto-compact
+    window) and applies it only when context reaches the window, possibly
+    never. Treating that as ``in_progress`` pinned the web strip near 97%. The
+    forwarder must post nothing for it, still mint the pending token, and let
+    the later ``SessionStart source=compact`` post ``completed`` and persist
+    exactly one boundary.
+    """
+    bridge_dir = tmp_path / "bridge"
+    transcript_path = tmp_path / "session.jsonl"
+    transcript_path.write_text("", encoding="utf-8")
+    record_hook_event(
+        bridge_dir,
+        {
+            "hook_event_name": "SessionStart",
+            "session_id": "claude-session",
+            "transcript_path": str(transcript_path),
+        },
+    )
+    record_hook_event(
+        bridge_dir,
+        {"hook_event_name": "PreCompact", "trigger": "auto", "session_id": "claude-session"},
+    )
+    server, thread, base_url = _start_recording_server()
+    persist_mock = AsyncMock(return_value=None)
+    with patch(
+        "omnigent.harnesses.claude_native.forwarder._persist_native_compaction_item",
+        persist_mock,
+    ):
+        task = asyncio.create_task(
+            forwarder.forward_claude_transcript_to_session(
+                base_url=base_url,
+                headers={},
+                session_id="conv_auto",
+                bridge_dir=bridge_dir,
+                agent_name="claude-native-ui",
+                start_at_end=False,
+                poll_interval_s=0.01,
+            )
+        )
+        try:
+            # Let the forwarder consume the auto PreCompact over several polls.
+            for _ in range(30):
+                await asyncio.sleep(0.02)
+                state = forwarder._read_compaction_state(bridge_dir)
+                if state.pending is not None:
+                    break
+            state = forwarder._read_compaction_state(bridge_dir)
+            # The token is minted even though no status was posted.
+            assert state.pending is not None
+            assert state.last_seq == 1
+            assert not any(
+                r["body"].get("type") == "external_compaction_status"
+                for r in list(server.requests.queue)
+            ), "an auto PreCompact must not post any compaction status"
+            persist_mock.assert_not_called()
+
+            # The summary is applied: SessionStart source=compact completes it.
+            record_hook_event(
+                bridge_dir,
+                {
+                    "hook_event_name": "SessionStart",
+                    "source": "compact",
+                    "session_id": "claude-session",
+                },
+            )
+            request = await _get_recorded_request(server)
+            await asyncio.sleep(0.2)
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5.0)
+
+    assert request["body"] == {
+        "type": "external_compaction_status",
+        "data": {"status": "completed"},
+    }
+    persist_mock.assert_called_once()
+    assert forwarder._read_compaction_state(bridge_dir).last_seq == 1
+
+
+@pytest.mark.asyncio
+async def test_manual_precompact_still_posts_in_progress_and_mints_token(
+    tmp_path: Path,
+) -> None:
+    """
+    A ``manual`` ``PreCompact`` keeps the strip: ``/compact`` runs synchronously.
+    """
+    bridge_dir = tmp_path / "bridge"
+    transcript_path = tmp_path / "session.jsonl"
+    transcript_path.write_text("", encoding="utf-8")
+    record_hook_event(
+        bridge_dir,
+        {
+            "hook_event_name": "SessionStart",
+            "session_id": "claude-session",
+            "transcript_path": str(transcript_path),
+        },
+    )
+    record_hook_event(
+        bridge_dir,
+        {"hook_event_name": "PreCompact", "trigger": "manual", "session_id": "claude-session"},
+    )
+    server, thread, base_url = _start_recording_server()
+    task = asyncio.create_task(
+        forwarder.forward_claude_transcript_to_session(
+            base_url=base_url,
+            headers={},
+            session_id="conv_manual",
+            bridge_dir=bridge_dir,
+            agent_name="claude-native-ui",
+            start_at_end=False,
+            poll_interval_s=0.01,
+        )
+    )
+    try:
+        request = await _get_recorded_request(server)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5.0)
+
+    assert request["body"] == {
+        "type": "external_compaction_status",
+        "data": {"status": "in_progress"},
+    }
+    assert forwarder._read_compaction_state(bridge_dir).pending is not None

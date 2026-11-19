@@ -918,6 +918,10 @@ class ClaudeHookRecord:
         advance past it.
     :param source: Claude ``SessionStart`` source, e.g. ``"clear"``,
         or ``None`` for hook records without a source field.
+    :param trigger: ``PreCompact`` trigger from the hook payload, e.g.
+        ``"manual"`` or ``"auto"``. Claude Code fires ``auto`` when it starts
+        precomputing a summary in the background, long before it applies it.
+        ``None`` for other events or when absent.
     :param claude_session_id: Claude-native session uuid from the hook
         payload, e.g. ``"a1b2c3d4-1234-5678-9abc-def012345678"``,
         or ``None`` when absent.
@@ -983,6 +987,7 @@ class ClaudeHookRecord:
     event_name: str | None
     recorded_at: float | None = None
     source: str | None = None
+    trigger: str | None = None
     claude_session_id: str | None = None
     transcript_path: Path | None = None
     agent_id: str | None = None
@@ -3906,6 +3911,7 @@ def _hook_record_from_jsonl_record(record: _JsonlRecord) -> ClaudeHookRecord:
     if isinstance(raw_event_name, str) and raw_event_name:
         event_name = raw_event_name
     raw_source = payload.get("source") if isinstance(payload, dict) else None
+    raw_trigger = payload.get("trigger") if isinstance(payload, dict) else None
     raw_recorded_at = envelope.get("recorded_at") if isinstance(envelope, dict) else None
     raw_claude_session_id = payload.get("session_id") if isinstance(payload, dict) else None
     raw_transcript_path = payload.get("transcript_path") if isinstance(payload, dict) else None
@@ -4015,6 +4021,9 @@ def _hook_record_from_jsonl_record(record: _JsonlRecord) -> ClaudeHookRecord:
         if isinstance(raw_recorded_at, (int, float)) and not isinstance(raw_recorded_at, bool)
         else None,
         source=raw_source if isinstance(raw_source, str) and raw_source else None,
+        trigger=(
+            raw_trigger if event_name == "PreCompact" and isinstance(raw_trigger, str) else None
+        ),
         claude_session_id=(
             raw_claude_session_id
             if isinstance(raw_claude_session_id, str) and raw_claude_session_id

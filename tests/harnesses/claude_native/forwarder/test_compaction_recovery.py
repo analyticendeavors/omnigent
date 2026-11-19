@@ -154,7 +154,7 @@ async def test_compaction_completed_triggers_persist(tmp_path: Path) -> None:
     # SessionStart; the hook path only persists when that token exists.
     record_hook_event(
         bridge_dir,
-        {"hook_event_name": "PreCompact", "session_id": "claude-session"},
+        {"hook_event_name": "PreCompact", "trigger": "manual", "session_id": "claude-session"},
     )
     # Post-compaction SessionStart — the completion signal.
     record_hook_event(
@@ -242,7 +242,7 @@ async def test_compaction_in_progress_does_not_persist(tmp_path: Path) -> None:
     )
     record_hook_event(
         bridge_dir,
-        {"hook_event_name": "PreCompact", "session_id": "claude-session"},
+        {"hook_event_name": "PreCompact", "trigger": "manual", "session_id": "claude-session"},
     )
     server, thread, base_url = _start_recording_server()
     persist_mock = AsyncMock()

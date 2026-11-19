@@ -3931,8 +3931,14 @@ def _compaction_status_for_record(record: ClaudeHookRecord) -> str | None:
     Claude Code brackets a compaction with two hooks the forwarder
     translates into ``external_compaction_status`` events:
 
-    * ``PreCompact`` → ``"in_progress"`` — fires right before Claude
-      compacts (manual ``/compact`` or automatic context overflow).
+    * ``PreCompact`` with a manual trigger → ``"in_progress"`` — fires right
+      before ``/compact`` runs synchronously. An ``auto`` ``PreCompact`` is
+      NOT a compaction in progress: Claude fires it when it starts
+      precomputing a summary in the background (about 85% of the auto-compact
+      window) and applies that summary only when context reaches the window,
+      possibly never. Forwarding it would pin the strip for the whole
+      precompute, so it returns ``None`` here (the caller still mints the
+      pending token for it).
     * ``SessionStart`` with ``source == "compact"`` → ``"completed"``
       — fires when Claude resumes on the freshly-compacted context.
       (Claude Code has no dedicated post-compaction hook, so the
@@ -3945,7 +3951,7 @@ def _compaction_status_for_record(record: ClaudeHookRecord) -> str | None:
     :returns: ``"in_progress"``, ``"completed"``, or ``None`` when the
         record is not a compaction boundary.
     """
-    if record.event_name == "PreCompact":
+    if record.event_name == "PreCompact" and record.trigger != "auto":
         return "in_progress"
     if record.event_name == "SessionStart" and record.source == "compact":
         return "completed"
@@ -4116,25 +4122,26 @@ async def _forward_available_status_events(
             # advance the cursor on failure so one failed post doesn't stall
             # the rest of the hook stream.
             compaction_status = _compaction_status_for_record(record)
-            if compaction_status is not None:
-                try:
-                    await _post_external_compaction_status(
-                        client,
-                        session_id=session_id,
-                        status=compaction_status,
-                    )
-                except httpx.HTTPError:
-                    _logger.warning(
-                        "Failed to forward Claude compaction status; "
-                        "session=%s event_cursor=%s status=%s",
-                        session_id,
-                        record.event_cursor,
-                        compaction_status,
-                        exc_info=True,
-                        extra={"session_id": session_id},
-                    )
-                if compaction_status == "in_progress":
-                    # ``PreCompact`` mints a durable pending token that the
+            if compaction_status is not None or record.event_name == "PreCompact":
+                if compaction_status is not None:
+                    try:
+                        await _post_external_compaction_status(
+                            client,
+                            session_id=session_id,
+                            status=compaction_status,
+                        )
+                    except httpx.HTTPError:
+                        _logger.warning(
+                            "Failed to forward Claude compaction status; "
+                            "session=%s event_cursor=%s status=%s",
+                            session_id,
+                            record.event_cursor,
+                            compaction_status,
+                            exc_info=True,
+                            extra={"session_id": session_id},
+                        )
+                if record.event_name == "PreCompact":
+                    # Every ``PreCompact`` (manual or auto) mints a durable pending token that the
                     # completion signal (transcript ``isCompactSummary`` or
                     # this hook's ``SessionStart source=compact``) consumes,
                     # so exactly one boundary persists per compaction. Keyed
