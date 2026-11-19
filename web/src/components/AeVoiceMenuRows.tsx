@@ -35,6 +35,7 @@ import {
   pickDefaultVoice,
   RATE_FASTER,
   RATE_FASTEST,
+  canonicalVoiceUri,
   rankVoices,
   readRate,
   readVoiceChoice,
@@ -263,7 +264,7 @@ export function useVoiceChoices() {
   // back to the device per sentence if it cannot play.
   const voice: VoiceChoice | null =
     stored?.kind === "device" && !(legacy && cloudVoices.length > 0)
-      ? { kind: "device", id: stored.id }
+      ? { kind: "device", id: canonicalVoiceUri(stored.id) }
       : stored?.kind === "cloud" &&
           (cloudVoices.length === 0 || cloudVoices.some((v) => v.id === stored.id))
         ? { kind: "cloud", id: stored.id }

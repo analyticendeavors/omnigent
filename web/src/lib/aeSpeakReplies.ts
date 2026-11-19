@@ -151,6 +151,33 @@ function iosVoiceQuality(voice: SpeechSynthesisVoice): number {
   return 0;
 }
 
+function iosVoiceKey(v: SpeechSynthesisVoice): string {
+  // Only Apple's quality tiers of one system voice are merged; any other voice
+  // (a Personal Voice, a third-party voice) stays its own entry.
+  if (!/^com\.apple\.voice\.(compact|enhanced|premium)\./i.test(v.voiceURI ?? "")) {
+    return `uri|${v.voiceURI}`;
+  }
+  return `${v.name.trim().toLowerCase()}|${(v.lang ?? "").replace("_", "-").toLowerCase()}`;
+}
+
+/**
+ * Map a saved device voice URI to the copy listVoices() keeps. A pick of a
+ * copy that the iOS dedupe dropped resolves to the kept copy of the same voice.
+ */
+export function canonicalVoiceUri(uri: string): string {
+  const voices = listVoices();
+  if (voices.some((v) => v.voiceURI === uri)) return uri;
+  let raw: SpeechSynthesisVoice | undefined;
+  try {
+    raw = window.speechSynthesis.getVoices().find((v) => v.voiceURI === uri);
+  } catch {
+    return uri;
+  }
+  if (!raw) return uri;
+  const key = iosVoiceKey(raw);
+  return voices.find((v) => iosVoiceKey(v) === key)?.voiceURI ?? uri;
+}
+
 /**
  * iOS lists a voice once per installed quality (compact, enhanced, premium)
  * under the same name. Keep one entry per name and language, the best quality.
@@ -158,7 +185,7 @@ function iosVoiceQuality(voice: SpeechSynthesisVoice): number {
 export function dedupeIosVoices(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice[] {
   const best = new Map<string, SpeechSynthesisVoice>();
   for (const v of voices) {
-    const key = `${v.name.trim().toLowerCase()}|${v.lang}`;
+    const key = iosVoiceKey(v);
     const held = best.get(key);
     if (!held || iosVoiceQuality(v) > iosVoiceQuality(held)) best.set(key, v);
   }
@@ -501,7 +528,9 @@ export function createSpeaker(): Speaker {
     const synth = window.speechSynthesis;
     const voices = listVoices();
     const voice =
-      (opts.voiceURI ? voices.find((v) => v.voiceURI === opts.voiceURI) : undefined) ??
+      (opts.voiceURI
+        ? voices.find((v) => v.voiceURI === canonicalVoiceUri(opts.voiceURI!))
+        : undefined) ??
       pickDefaultVoice(voices);
     const utterance = new window.SpeechSynthesisUtterance(chunk);
     if (voice) {

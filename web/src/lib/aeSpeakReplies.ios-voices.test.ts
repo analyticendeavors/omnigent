@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { dedupeIosVoices, isSilentIosVoice, listVoices } from "./aeSpeakReplies";
+import { canonicalVoiceUri, dedupeIosVoices, isSilentIosVoice, listVoices } from "./aeSpeakReplies";
 
 const v = (name: string, voiceURI: string) => ({ name, voiceURI, lang: "en-US" }) as SpeechSynthesisVoice;
 const voices = [
@@ -40,5 +40,19 @@ describe("duplicate iOS voices", () => {
     const enhanced = v("Samantha", "com.apple.voice.enhanced.en-US.Samantha");
     const daniel = v("Daniel", "com.apple.voice.compact.en-GB.Daniel");
     expect(dedupeIosVoices([compact, daniel, enhanced])).toEqual([daniel, enhanced]);
+    const personal = v("Samantha", "com.apple.speech.personalvoice.Samantha");
+    expect(dedupeIosVoices([enhanced, personal])).toEqual([enhanced, personal]);
+  });
+});
+
+describe("saved pick of a dropped copy", () => {
+  it("resolves to the kept copy of the same voice", () => {
+    const compact = v("Samantha", "com.apple.voice.compact.en-US.Samantha");
+    const enhanced = { ...v("Samantha", "com.apple.voice.enhanced.en-US.Samantha"), lang: "en_US" } as SpeechSynthesisVoice;
+    vi.stubGlobal("navigator", { userAgent: "iPhone", maxTouchPoints: 5, language: "en-US" });
+    vi.stubGlobal("speechSynthesis", { getVoices: () => [compact, enhanced] });
+    vi.stubGlobal("SpeechSynthesisUtterance", function () {});
+    expect(listVoices()).toEqual([enhanced]);
+    expect(canonicalVoiceUri(compact.voiceURI)).toBe(enhanced.voiceURI);
   });
 });
