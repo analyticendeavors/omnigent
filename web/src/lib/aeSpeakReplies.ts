@@ -5,6 +5,7 @@
 import { splitForSpeech } from "./aeSpeechText";
 import { logVoice } from "./aeVoiceLog";
 import { isWebKitSpeech } from "./aeVoiceStall";
+import { isIosDevice } from "./aeVoiceServerStt";
 import { clearPlaybackBlocked, markPlaybackBlocked } from "./aeVoicePlayback";
 
 export const WORKING_CUE_TEXT = "Working on it.";
@@ -122,10 +123,26 @@ export function isSpeechSupported(): boolean {
 export function listVoices(): SpeechSynthesisVoice[] {
   if (!isSpeechSupported()) return [];
   try {
-    return window.speechSynthesis.getVoices();
+    const voices = window.speechSynthesis.getVoices();
+    return isIosDevice() ? voices.filter((v) => !isSilentIosVoice(v)) : voices;
   } catch {
     return [];
   }
+}
+
+/**
+ * Apple's novelty and legacy Mac voices. iOS lists them in getVoices() but
+ * most never make a sound, so the picker hides them on iPhone and iPad.
+ */
+const SILENT_IOS_VOICE_NAMES = new Set([
+  "albert", "bad news", "bahh", "bells", "boing", "bubbles", "cellos",
+  "good news", "jester", "organ", "superstar", "trinoids", "whisper",
+  "wobble", "zarvox", "fred", "junior", "kathy", "ralph",
+]);
+
+export function isSilentIosVoice(voice: SpeechSynthesisVoice): boolean {
+  if (voice.voiceURI?.startsWith("com.apple.speech.synthesis.voice.")) return true;
+  return SILENT_IOS_VOICE_NAMES.has(voice.name.trim().toLowerCase());
 }
 
 /** Voices load late in Chrome and Edge; the callback fires when the list changes. */

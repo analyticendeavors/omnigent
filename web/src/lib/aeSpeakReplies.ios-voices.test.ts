@@ -1,0 +1,33 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { isSilentIosVoice, listVoices } from "./aeSpeakReplies";
+
+const v = (name: string, voiceURI: string) => ({ name, voiceURI, lang: "en-US" }) as SpeechSynthesisVoice;
+const voices = [
+  v("Samantha", "com.apple.voice.compact.en-US.Samantha"),
+  v("Bad News", "com.apple.speech.synthesis.voice.BadNews"),
+  v("Bubbles", "Bubbles"),
+];
+
+function stub(ua: string) {
+  vi.stubGlobal("navigator", { userAgent: ua, maxTouchPoints: 5, language: "en-US" });
+  vi.stubGlobal("speechSynthesis", { getVoices: () => voices });
+  window.speechSynthesis = globalThis.speechSynthesis as SpeechSynthesis;
+  window.SpeechSynthesisUtterance ??= function () {} as unknown as typeof SpeechSynthesisUtterance;
+}
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe("silent iOS voices", () => {
+  it("flags novelty voices by URI or name", () => {
+    expect(isSilentIosVoice(voices[0])).toBe(false);
+    expect(isSilentIosVoice(voices[1])).toBe(true);
+    expect(isSilentIosVoice(voices[2])).toBe(true);
+  });
+
+  it("hides them on iPhone only", () => {
+    stub("Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X)");
+    expect(listVoices().map((x) => x.name)).toEqual(["Samantha"]);
+    stub("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+    expect(listVoices()).toHaveLength(3);
+  });
+});
