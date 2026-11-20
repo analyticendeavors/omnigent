@@ -88,6 +88,8 @@ export interface AeVoiceMode {
    * a final result.
    */
   filterHeard: (text: string, kind: "interim" | "final") => string;
+  /** Sends the heard draft at once instead of waiting out the send pause; no-op without a draft. */
+  sendNow: () => void;
   /** Stops the reply being spoken (the hotkey); true when it did. The mic stays on. */
   bargeIn: () => boolean;
   /** The mic reports it started or stopped listening (or failed to start). */
@@ -778,6 +780,13 @@ export function useAeVoiceMode({
     [on, clearGrace],
   );
 
+  const sendNow = useCallback(() => {
+    const current = latest.current;
+    if (current.quiet || current.value.trim() === "") return;
+    clearGrace();
+    send();
+  }, [clearGrace, send]);
+
   const answerApproval = useCallback(
     (action: "accept" | "decline") => {
       const pending = latest.current.approval;
@@ -798,6 +807,7 @@ export function useAeVoiceMode({
     micDetail,
     filterHeard,
     bargeIn,
+    sendNow,
     onFinal,
     onPartial,
     onListening,

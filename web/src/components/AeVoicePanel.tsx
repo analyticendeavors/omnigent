@@ -4,10 +4,10 @@
 
 import { KeyboardIcon } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
-import { AeVoiceRing } from "@/components/AeVoiceRing";
 import { Button } from "@/components/ui/button";
 import { useMicLevel } from "@/lib/aeMicLevel";
 import type { VoicePhase } from "@/lib/aeVoiceMode";
+import { isMacPlatform } from "@/lib/hotkeys";
 import { cn } from "@/lib/utils";
 
 export type VoicePhaseKey =
@@ -42,6 +42,8 @@ export interface AeVoicePanelProps {
   onApproval?: (action: "accept" | "decline") => void;
   /** Turn Voice mode off. */
   onEnd: () => void;
+  /** Sheet only: send the heard draft now instead of waiting out the send pause. */
+  onSendNow?: () => void;
   /** Stop the current reply. */
   onStop: () => void;
   /** Play the refused reply; runs inside the tap. */
@@ -139,15 +141,74 @@ const TONE: Record<VoicePhaseKey, { text: string; panel: string; ring: string; d
   },
 };
 
-/** The sheet circle's disc radius (size-20), in CSS px; the ring is drawn around it. */
-const SHEET_DISC_RADIUS = 40;
-
 /** The sheet draws the reply in the ring's own amber token (darker in light mode for contrast); the bar keeps blue. */
 const SHEET_SPEAKING = {
   text: "text-[color:var(--ae-voice-amber)]",
   ring: "border-[color:color-mix(in_srgb,var(--ae-voice-amber)_40%,transparent)]",
   disc: "bg-[color:var(--ae-voice-amber)]",
+  panel: "bg-[color:color-mix(in_srgb,var(--ae-voice-amber)_10%,transparent)]",
+  top: "border-t-[color:var(--ae-voice-amber)]",
+  solid: "bg-[color:var(--ae-voice-amber)] text-white hover:bg-[color:var(--ae-voice-amber)]/90",
+  outline:
+    "border-[color:var(--ae-voice-amber)] text-[color:var(--ae-voice-amber)] hover:bg-[color:var(--ae-voice-amber)]/10",
 };
+
+/** The sheet's top border and button fills per state colour (static strings so Tailwind sees them). */
+const SHEET_COLOURS: Record<string, { top: string; solid: string; outline: string }> = {
+  "text-teal-500": {
+    top: "border-t-teal-500",
+    solid: "bg-teal-500 text-white hover:bg-teal-500/90",
+    outline: "border-teal-500 text-teal-500 hover:bg-teal-500/10",
+  },
+  "text-amber-500": {
+    top: "border-t-amber-500",
+    solid: "bg-amber-500 text-white hover:bg-amber-500/90",
+    outline: "border-amber-500 text-amber-500 hover:bg-amber-500/10",
+  },
+  "text-blue-500": {
+    top: "border-t-blue-500",
+    solid: "bg-blue-500 text-white hover:bg-blue-500/90",
+    outline: "border-blue-500 text-blue-500 hover:bg-blue-500/10",
+  },
+  "text-red-500": {
+    top: "border-t-red-500",
+    solid: "bg-red-500 text-white hover:bg-red-500/90",
+    outline: "border-red-500 text-red-500 hover:bg-red-500/10",
+  },
+  "text-muted-foreground": {
+    top: "border-t-border",
+    solid: "bg-foreground text-background hover:bg-foreground/90",
+    outline: "border-border text-foreground hover:bg-muted",
+  },
+};
+
+/** The sheet's short state words; the bar keeps `words()`. */
+const SHEET_LABEL: Partial<Record<VoicePhaseKey, string>> = {
+  thinking: "Working",
+  speaking: "Speaking",
+};
+
+/** The mic chord as the key chips show it. */
+export function micChordKeys(isMac: boolean): string[] {
+  return isMac ? ["⌘", "⌥", "V"] : ["Ctrl", "Alt", "V"];
+}
+
+/** Key hints on the bar: only keys that do this in the phase. */
+export function barHints(key: VoicePhaseKey, isMac: boolean): { keys: string[]; word: string }[] {
+  if (key === "listening") {
+    return [
+      { keys: ["Enter"], word: "send" },
+      { keys: ["Esc"], word: "end" },
+    ];
+  }
+  if (key === "speaking") {
+    return [
+      { keys: micChordKeys(isMac), word: "stop" },
+      { keys: ["Esc"], word: "end" },
+    ];
+  }
+  return [];
+}
 
 const BAR_WEIGHTS = [0.6, 1, 0.8, 1, 0.7];
 const BAR_MIN_PX = 4;
@@ -187,12 +248,14 @@ function words(
   caption: string,
   micDetail: string | null | undefined,
   approvalActive: boolean,
-): { label: string; sub: string } {
+): { label: string; sub: string; strong?: boolean } {
   switch (key) {
     case "starting":
       return { label: "Starting the mic", sub: "" };
     case "listening":
-      return { label: "Listening", sub: heard.trim() ? "" : "Say something" };
+      return heard.trim()
+        ? { label: "Listening", sub: heard.trim(), strong: true }
+        : { label: "Listening", sub: "Say something" };
     case "paused":
       return { label: "Mic stopped", sub: "Tap the mic to listen again" };
     case "unavailable":
@@ -205,7 +268,7 @@ function words(
     case "thinking":
       return { label: "Working on it", sub: "Mic muted until the reply ends" };
     case "speaking":
-      return { label: "Speaking, tap to stop", sub: caption };
+      return { label: "Speaking, tap to stop", sub: caption, strong: true };
     case "approval":
       return { label: "Waiting for your OK", sub: "Say run it, or decline" };
     case "preparing":
@@ -230,6 +293,7 @@ export function AeVoicePanel({
   approvalActive = false,
   onApproval,
   onEnd,
+  onSendNow,
   onStop,
   onResume,
   onKeyboard,
@@ -237,7 +301,6 @@ export function AeVoicePanel({
   micStartPath,
   className,
 }: AeVoicePanelProps) {
-  const level = useMicLevel();
   const key = voicePhaseKey(phase, blocked);
   // A start that hangs on "starting" gets a tap, so the mic start runs inside a gesture.
   const [startStuck, setStartStuck] = useState(false);
@@ -250,13 +313,13 @@ export function AeVoicePanel({
   if (key === "off") return null;
   const tone =
     layout === "sheet" && key === "speaking" ? { ...TONE[key], ...SHEET_SPEAKING } : TONE[key];
-  const ringMode = key === "listening" ? "bars" : key === "speaking" ? "liquid" : "idle";
   // A server start is a model cold start that can take 40 s; a tap there would only get in its way.
   const tapToStart =
     key === "starting" && startStuck && Boolean(onRestartMic) && micStartPath?.() === "browser";
-  const { label, sub } = tapToStart
-    ? { label: "Tap to start the mic", sub: "" }
+  const spoken = tapToStart
+    ? { label: "Tap to start the mic", sub: "", strong: false }
     : words(key, heard, caption, micDetail, approvalActive);
+  const { label, sub, strong } = spoken;
   const restartable = key === "paused" || key === "unavailable" || tapToStart;
   const action =
     key === "speaking"
@@ -277,122 +340,169 @@ export function AeVoicePanel({
             ? "Listen again"
             : label;
   const endButton = (
-    <Button type="button" variant="outline" size="sm" aria-label="End voice mode" onClick={onEnd}>
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className={layout === "sheet" ? "h-11 px-4" : undefined}
+      aria-label="End voice mode"
+      onClick={onEnd}
+    >
       End
     </Button>
   );
+  const approvalPending = approvalActive && Boolean(onApproval);
 
-  // A pending yes-or-no card needs an answer even while the line plays, and the sheet covers
-  // the card on a phone: the label (when the phase word is not already it) and two buttons.
-  // `extras` (the sheet's keyboard and End) join the same row, so a phone shows one row.
-  const approvalStrip = (extras?: ReactNode) =>
-    approvalActive && onApproval ? (
-      <div
-        data-testid="ae-voice-approval"
-        className="relative z-10 flex flex-wrap items-center justify-center gap-2"
-      >
-        {key !== "approval" ? (
-          <span className={cn("text-xs font-medium text-amber-500", extras && "w-full")}>
-            Waiting for your OK
-          </span>
-        ) : null}
-        <Button
-          type="button"
-          size="sm"
-          data-testid="ae-voice-approval-run"
-          onClick={() => onApproval("accept")}
-        >
-          Run it
-        </Button>
+  if (layout === "sheet") {
+    const colours = key === "speaking" ? SHEET_SPEAKING : SHEET_COLOURS[tone.text];
+    const top = colours.top;
+    // The state tint only; the top border carries the full colour.
+    const sheetBg = tone.panel
+      .split(" ")
+      .filter((c) => c.startsWith("bg-"))
+      .join(" ");
+    const big = "h-14 w-full text-base font-semibold";
+    const placeholder = <div aria-hidden className="h-14" />;
+    // The big button: one per phase. `sheetButton` is the label shown, `actionLabel` the aria name.
+    let button: ReactNode = placeholder;
+    if (approvalPending && onApproval) {
+      button = (
+        <div data-testid="ae-voice-approval" className="flex gap-3">
+          <Button
+            type="button"
+            data-testid="ae-voice-approval-run"
+            className="h-14 flex-1 text-base font-semibold"
+            onClick={() => onApproval("accept")}
+          >
+            Run it
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            data-testid="ae-voice-approval-decline"
+            className="h-14 flex-1 text-base font-semibold"
+            onClick={() => onApproval("decline")}
+          >
+            Decline
+          </Button>
+        </div>
+      );
+    } else if (key === "listening") {
+      button = (
         <Button
           type="button"
           variant="outline"
-          size="sm"
-          data-testid="ae-voice-approval-decline"
-          onClick={() => onApproval("decline")}
+          data-testid="ae-voice-action"
+          className={cn(big, colours.outline)}
+          disabled={!heard.trim() || !onSendNow}
+          onClick={onSendNow}
         >
-          Decline
+          Send now
         </Button>
-        {extras}
-      </div>
-    ) : null;
-
-  // The keyboard button matches the h-7 End button beside it, in the approval row and out of it.
-  const sheetControls = (
-    <>
-      {onKeyboard ? (
+      );
+    } else if (key === "thinking" || key === "preparing") {
+      button = (
         <Button
           type="button"
-          variant="ghost"
-          size="icon-sm"
-          className="self-center text-muted-foreground hover:text-foreground"
-          aria-label="Type instead"
-          onClick={onKeyboard}
+          variant="outline"
+          data-testid="ae-voice-action"
+          className={cn(big, "opacity-50")}
+          disabled
         >
-          <KeyboardIcon className="size-4" />
+          Stop
         </Button>
-      ) : null}
-      {endButton}
-    </>
-  );
-  const sheetRow = approvalStrip(sheetControls);
-
-  if (layout === "sheet") {
+      );
+    } else if (key === "speaking") {
+      button = (
+        <Button
+          type="button"
+          data-testid="ae-voice-action"
+          aria-label={actionLabel}
+          className={cn(big, colours.solid)}
+          onClick={onStop}
+        >
+          Stop
+        </Button>
+      );
+    } else if (key === "blocked") {
+      button = (
+        <Button
+          type="button"
+          data-testid="ae-voice-action"
+          aria-label={actionLabel}
+          className={cn(big, colours.solid)}
+          onClick={onResume}
+        >
+          Play the reply
+        </Button>
+      );
+    } else if (restartable) {
+      button = (
+        <Button
+          type="button"
+          variant="outline"
+          data-testid="ae-voice-action"
+          aria-label={actionLabel}
+          className={cn(big, colours.outline)}
+          onClick={onRestartMic}
+        >
+          {tapToStart ? "Start the mic" : "Listen again"}
+        </Button>
+      );
+    }
+    const sheetSub =
+      approvalPending && key !== "approval" ? `Waiting for your OK${sub ? `. ${sub}` : ""}` : sub;
     return (
       <div
         data-testid="ae-voice-panel"
         data-layout="sheet"
         data-phase={key}
-        className={cn("flex flex-col items-center px-4 pt-5 pb-3 text-center", className)}
-      >
-        <div className={cn("relative z-10 text-sm font-medium", tone.text)}>{label}</div>
-        <button
-          type="button"
-          aria-label={actionLabel}
-          onClick={action}
-          className="relative isolate my-6 flex size-24 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <AeVoiceRing mode={ringMode} radius={SHEET_DISC_RADIUS} pulseKey={caption} />
-          <span
-            data-testid="ae-voice-ring"
-            className={cn(
-              "flex size-24 items-center justify-center rounded-full border",
-              tone.ring,
-            )}
-            style={{
-              transform: `scale(${1 + (key === "listening" ? level : 0) * 0.12})`,
-              transition: "transform 80ms",
-            }}
-          >
-            <span
-              className={cn(
-                "size-20 rounded-full",
-                tone.disc,
-                (key === "thinking" || key === "approval" || key === "preparing") &&
-                  "animate-pulse",
-              )}
-            />
-          </span>
-        </button>
-        <div className="relative z-10 min-h-10 line-clamp-2 text-sm text-muted-foreground">
-          {sub}
-        </div>
-        {sheetRow ? (
-          <div className="mt-3">{sheetRow}</div>
-        ) : (
-          <div className="mt-3 flex items-center gap-3">{sheetControls}</div>
+        className={cn(
+          "flex flex-col items-stretch gap-3 border-t-[3px] px-4 pt-3 pb-4",
+          sheetBg,
+          top,
+          className,
         )}
+      >
+        <div className="flex h-11 items-center justify-between">
+          {key === "listening" ? (
+            <AeLevelBars active className={tone.text} />
+          ) : (
+            <span aria-hidden className="h-4" />
+          )}
+          <div className="flex items-center gap-2">
+            {onKeyboard ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-11 text-muted-foreground hover:text-foreground"
+                aria-label="Type instead"
+                onClick={onKeyboard}
+              >
+                <KeyboardIcon className="size-5" />
+              </Button>
+            ) : null}
+            {endButton}
+          </div>
+        </div>
+        <div className={cn("text-[30px] leading-tight font-bold", tone.text)}>
+          {SHEET_LABEL[key] && !tapToStart ? SHEET_LABEL[key] : label}
+        </div>
+        <div className="min-h-10 line-clamp-2 text-sm text-muted-foreground">{sheetSub}</div>
+        {button}
       </div>
     );
   }
 
+  const hints = barHints(key, isMacPlatform());
   return (
     <div
       data-testid="ae-voice-panel"
       data-layout="bar"
       data-phase={key}
       className={cn(
-        "mx-3 mt-3 flex items-center gap-3 rounded-lg border px-3 py-2",
+        "@container mx-3 mt-3 flex items-center gap-3 rounded-lg border px-3 py-2",
         tone.panel,
         className,
       )}
@@ -405,9 +515,63 @@ export function AeVoicePanel({
         className="min-w-0 flex-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <div className={cn("text-sm font-medium", tone.text)}>{label}</div>
-        {sub ? <div className="truncate text-xs text-muted-foreground">{sub}</div> : null}
+        {sub ? (
+          <div
+            className={cn(
+              "line-clamp-2 text-xs",
+              strong ? "text-foreground" : "text-muted-foreground",
+            )}
+          >
+            {sub}
+          </div>
+        ) : null}
       </button>
-      {approvalStrip()}
+      {hints.length > 0 ? (
+        <div data-testid="ae-voice-hints" className="hidden items-center gap-2 @[560px]:flex">
+          {hints.map((hint) => (
+            <span key={hint.word} className="flex items-center gap-1">
+              <span className="flex gap-0.5">
+                {hint.keys.map((k) => (
+                  <kbd
+                    key={k}
+                    className="rounded border border-border bg-background/60 px-1 font-mono text-[10px] text-muted-foreground"
+                  >
+                    {k}
+                  </kbd>
+                ))}
+              </span>
+              <span className="text-[11px] text-muted-foreground">{hint.word}</span>
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {approvalPending && onApproval ? (
+        <div
+          data-testid="ae-voice-approval"
+          className="relative z-10 flex flex-wrap items-center justify-center gap-2"
+        >
+          {key !== "approval" ? (
+            <span className="text-xs font-medium text-amber-500">Waiting for your OK</span>
+          ) : null}
+          <Button
+            type="button"
+            size="sm"
+            data-testid="ae-voice-approval-run"
+            onClick={() => onApproval("accept")}
+          >
+            Run it
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            data-testid="ae-voice-approval-decline"
+            onClick={() => onApproval("decline")}
+          >
+            Decline
+          </Button>
+        </div>
+      ) : null}
       {endButton}
     </div>
   );

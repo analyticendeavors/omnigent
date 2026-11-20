@@ -234,6 +234,7 @@ import {
 import { AeSpeakRepliesButton } from "@/components/AeSpeakRepliesButton";
 import { ComposerMicButton } from "@/components/ComposerMicButton";
 import { useAeVoiceMode } from "@/hooks/useAeVoiceMode";
+import { overlayIsOpen, voiceKeyAction } from "@/lib/aeVoiceKeys";
 import { useAeVoiceSnips } from "@/hooks/useAeVoiceSnips";
 import { useVoiceLogInsert } from "@/lib/aeVoiceLog";
 import { AE_VOICE_RING, AeVoicePanel, voicePhaseKey } from "@/components/AeVoicePanel";
@@ -3584,6 +3585,38 @@ function ComposerImpl(
   const voiceMobile = useIsMobileViewport();
   const voiceSheet = voice.on && voiceCoarse && voiceMobile && !voiceTyping.typing;
   const voiceKey = voicePhaseKey(voice.phase, voiceSnap.blocked);
+  // Desktop Voice mode keys: Enter sends the heard draft, Esc ends Voice mode while listening or
+  // speaking. Never while the chat works, a dialog, menu or the /btw overlay is open.
+  const voiceKeyBusy =
+    isWorking ||
+    isReadOnly ||
+    Boolean(btwSidechat) ||
+    slashCompletion.open ||
+    mentionOpen ||
+    mentionListingPending;
+  const voiceKeyRef = useRef<(e: globalThis.KeyboardEvent) => boolean>(() => false);
+  voiceKeyRef.current = (e) => {
+    const act = voiceKeyAction(e, {
+      voiceOn: voice.on,
+      sheet: voiceSheet,
+      phase: voice.phase,
+      busy: voiceKeyBusy,
+      overlayOpen: overlayIsOpen(),
+    });
+    if (act === "send") voice.sendNow();
+    else if (act === "end" && composerSessionId) setVoiceOn(composerSessionId, false);
+    return act !== null;
+  };
+  const voiceTakeKey = useCallback((e: globalThis.KeyboardEvent) => voiceKeyRef.current(e), []);
+  useEffect(() => {
+    if (!voice.on) return;
+    const handler = (e: globalThis.KeyboardEvent): void => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (voiceKeyRef.current(e)) e.preventDefault();
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [voice.on]);
   const snips = useAeVoiceSnips({
     chatId: composerSessionId,
     voiceOn: voice.on,
@@ -3821,6 +3854,7 @@ function ComposerImpl(
                   caption={voiceSnap.caption}
                   micDetail={voice.micDetail}
                   onEnd={() => setVoiceOn(composerSessionId, false)}
+                  onSendNow={voice.sendNow}
                   onStop={() => {
                     setVoiceBarged(composerSessionId, true);
                     stopVoice(composerSessionId);
@@ -4073,6 +4107,7 @@ function ComposerImpl(
                 className={cn("size-8 md:size-7", COMPOSER_TIGHT_MIC_CLASS)}
                 enableHotkey
                 onHotkeyBarge={voice.bargeIn}
+                onTakeKey={voiceTakeKey}
                 controller={micController}
                 onListeningChange={voice.onListening}
                 disabled={
@@ -5006,7 +5041,8 @@ function SessionHarnessPicker({
                     ) : (
                       (effortWord(effort) ?? effort)
                     ),
-                  checked: !routingOn && effort === (selectedEffort ?? effortResolved?.level ?? null),
+                  checked:
+                    !routingOn && effort === (selectedEffort ?? effortResolved?.level ?? null),
                   disabled: routingOn || picksBusy || pendingModelChange !== null,
                   onSelect: () => void apply(() => useChatStore.getState().setEffort(effort)),
                   testId: `composer-agent-effort-${effort}`,

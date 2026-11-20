@@ -170,6 +170,8 @@ export interface ComposerMicButtonProps {
   enableHotkey?: boolean;
   /** The hotkey runs this first; true means handled (Voice mode stopped a spoken reply). */
   onHotkeyBarge?: () => boolean;
+  /** Runs first on Enter or Esc during a take; true means handled (Voice mode sends or ends). */
+  onTakeKey?: (e: globalThis.KeyboardEvent) => boolean;
   /** Fired when dictation begins. The parent should snapshot the composer text
    *  here so {@link onVoiceDiscard} can revert to it. */
   onVoiceStart?: () => void;
@@ -198,6 +200,7 @@ export const ComposerMicButton = ({
   lang = getDefaultDictationLang(),
   enableHotkey = false,
   onHotkeyBarge,
+  onTakeKey,
   onVoiceStart,
   onVoiceDiscard,
   controller,
@@ -1872,10 +1875,17 @@ export const ComposerMicButton = ({
   // the capture phase so it preempts the composer's own Enter-sends / Esc-stops.
   // Path-aware: a live server take is torn down via the DictationSession, a Web
   // Speech take via the recognizer.
+  const onTakeKeyRef = useRef(onTakeKey);
+  onTakeKeyRef.current = onTakeKey;
   useEffect(() => {
     if (!isListening) return;
     const handler = (e: globalThis.KeyboardEvent): void => {
       if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+      if ((e.key === "Enter" || e.key === "Escape") && onTakeKeyRef.current?.(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       if (e.key === "Enter" && !e.shiftKey) {
         // Commit: end the take and keep the text. toggle() routes to the right
         // path — Web Speech stop, or a server stop that flushes the tail.

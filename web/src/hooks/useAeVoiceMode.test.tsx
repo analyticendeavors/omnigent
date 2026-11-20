@@ -422,6 +422,29 @@ describe("useAeVoiceMode", () => {
     expect(result.current.filterHeard("anything at all", "final")).toBe("anything at all");
   });
 
+  it("sendNow sends the draft at once and clears the pending grace", () => {
+    const { result } = mount({ value: "hello there" });
+    act(() => void result.current.onFinal("hello there"));
+    act(() => void vi.advanceTimersByTime(500));
+    act(() => result.current.sendNow());
+    expect(submit).toHaveBeenCalledTimes(1);
+    act(() => void vi.advanceTimersByTime(GRACE_MS * 2));
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("sendNow does nothing without a draft", () => {
+    const { result } = mount({ value: "  " });
+    act(() => result.current.sendNow());
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("sendNow does nothing while the reply plays", () => {
+    const { result } = mount({ value: "hello" });
+    act(() => setVoiceSpeaking("c1", true));
+    act(() => result.current.sendNow());
+    expect(submit).not.toHaveBeenCalled();
+  });
+
   it("does not send an empty draft", () => {
     const { result } = mount({ value: "  " });
     act(() => void result.current.onFinal("x"));

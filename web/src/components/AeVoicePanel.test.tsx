@@ -1,11 +1,28 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type * as hotkeys from "@/lib/hotkeys";
 import { publishMicLevel, resetMicLevel } from "@/lib/aeMicLevel";
 import type { VoicePhase } from "@/lib/aeVoiceMode";
-import { AE_VOICE_RING, AeVoicePanel, type AeVoicePanelProps, voicePhaseKey } from "./AeVoicePanel";
+import {
+  AE_VOICE_RING,
+  AeVoicePanel,
+  type AeVoicePanelProps,
+  barHints,
+  micChordKeys,
+  voicePhaseKey,
+} from "./AeVoicePanel";
 
-afterEach(() => resetMicLevel());
+const platform = vi.hoisted(() => ({ mac: false }));
+vi.mock("@/lib/hotkeys", async (importOriginal) => ({
+  ...(await importOriginal<typeof hotkeys>()),
+  isMacPlatform: () => platform.mac,
+}));
+
+afterEach(() => {
+  resetMicLevel();
+  platform.mac = false;
+});
 
 function panel(props: Partial<AeVoicePanelProps> = {}) {
   const handlers = { onEnd: vi.fn(), onStop: vi.fn(), onResume: vi.fn() };
@@ -31,6 +48,11 @@ const WORDS: [VoicePhase, string, string][] = [
   ["thinking", "Working on it", "Mic muted until the reply ends"],
   ["speaking", "Speaking, tap to stop", "Hello there."],
 ];
+
+const SHEET_WORDS: Partial<Record<VoicePhase, string>> = {
+  thinking: "Working",
+  speaking: "Speaking",
+};
 
 describe("AeVoicePanel", () => {
   it("offers the restart and still names the approval when the mic went quiet during one", async () => {
@@ -58,8 +80,10 @@ describe("AeVoicePanel", () => {
         approvalActive: true,
         onApproval,
       });
-      expect(screen.getByText("Speaking, tap to stop")).toBeTruthy();
-      expect(screen.getByText("Waiting for your OK")).toBeTruthy();
+      expect(
+        screen.getByText(layout === "sheet" ? "Speaking" : "Speaking, tap to stop"),
+      ).toBeTruthy();
+      expect(screen.getByText(/Waiting for your OK/)).toBeTruthy();
       await userEvent.click(screen.getByRole("button", { name: "Run it" }));
       expect(onApproval).toHaveBeenLastCalledWith("accept");
       await userEvent.click(screen.getByRole("button", { name: "Decline" }));
@@ -81,7 +105,7 @@ describe("AeVoicePanel", () => {
     expect(screen.queryByTestId("ae-voice-approval")).toBeNull();
   });
 
-  it("the sheet puts Run it, Decline, keyboard and End in one row", () => {
+  it("the sheet's approval pair replaces the big button and keyboard and End stay on the top row", () => {
     panel({
       layout: "sheet",
       phase: "approval",
@@ -89,12 +113,13 @@ describe("AeVoicePanel", () => {
       onApproval: vi.fn(),
       onKeyboard: vi.fn(),
     });
+    expect(screen.queryByTestId("ae-voice-action")).toBeNull();
     const row = screen.getByTestId("ae-voice-approval");
-    expect(row.className).toContain("flex");
-    const names = Array.from(row.querySelectorAll("button")).map(
-      (b) => b.getAttribute("aria-label") ?? b.textContent,
-    );
-    expect(names).toEqual(["Run it", "Decline", "Type instead", "End voice mode"]);
+    const names = Array.from(row.querySelectorAll("button")).map((b) => b.textContent);
+    expect(names).toEqual(["Run it", "Decline"]);
+    expect(screen.getByTestId("ae-voice-approval-run").className).toContain("h-14");
+    expect(screen.getByLabelText("Type instead")).toBeTruthy();
+    expect(screen.getByLabelText("End voice mode")).toBeTruthy();
   });
 
   it("renders nothing when Voice mode is off", () => {
@@ -108,15 +133,15 @@ describe("AeVoicePanel", () => {
       const root = screen.getByTestId("ae-voice-panel");
       expect(root).toHaveAttribute("data-phase", phase);
       expect(root).toHaveAttribute("data-layout", layout);
-      expect(root).toHaveTextContent(label);
+      expect(root).toHaveTextContent(layout === "sheet" ? (SHEET_WORDS[phase] ?? label) : label);
       if (sub) expect(root).toHaveTextContent(sub);
     });
   }
 
-  it("listening does not repeat the heard text (the composer holds it), and unavailable shows the detail", () => {
+  it("listening shows the heard words (not the prompt), and unavailable shows the detail", () => {
     const { rerender, onEnd, onStop, onResume } = panel({ heard: "open the file" });
     const root = screen.getByTestId("ae-voice-panel");
-    expect(root).not.toHaveTextContent("open the file");
+    expect(root).toHaveTextContent("open the file");
     expect(root).not.toHaveTextContent("Say something");
     rerender(
       <AeVoicePanel
@@ -180,11 +205,11 @@ describe("AeVoicePanel", () => {
     expect(onKeyboard).toHaveBeenCalledTimes(1);
   });
 
-  it("the sheet disc is flat: no gradient or shadow classes", () => {
+  it("the sheet is flat: no gradient or shadow classes, and no orb", () => {
     panel({ layout: "sheet", phase: "thinking" });
     const html = screen.getByTestId("ae-voice-panel").innerHTML;
-    expect(html).toContain("animate-pulse");
     expect(html).not.toMatch(/gradient|shadow/);
+    expect(screen.queryByTestId("ae-voice-ring")).toBeNull();
   });
 
   it("the level bars read the mic level store", () => {
@@ -292,16 +317,14 @@ describe("AeVoicePanel (sheet controls)", () => {
     expect(onEnd).toHaveBeenCalledTimes(1);
   });
 
-  it("the sheet's keyboard and End share one centered row at one height", () => {
+  it("the sheet's keyboard and End share one row with 44 px tap targets", () => {
     panel({ layout: "sheet", onKeyboard: vi.fn() });
     const keyboard = screen.getByRole("button", { name: "Type instead" });
     const end = screen.getByRole("button", { name: "End voice mode" });
     expect(keyboard.parentElement).toBe(end.parentElement);
     expect(keyboard.parentElement?.className).toContain("items-center");
-    expect(keyboard.className).toContain("self-center");
-    // icon-sm (size-7) matches the small End button (h-7).
-    expect(keyboard.className).toContain("size-7");
-    expect(end.className).toContain("h-7");
+    expect(keyboard.className).toContain("size-11");
+    expect(end.className).toContain("h-11");
   });
 
   it("an undefined onKeyboard hides the keyboard button, with and without an approval", () => {
@@ -315,28 +338,137 @@ describe("AeVoicePanel (sheet controls)", () => {
   });
 });
 
-describe("AeVoicePanel approval row alignment", () => {
-  it("the keyboard button is the same height as the text buttons and centered", () => {
-    panel({
-      layout: "sheet",
-      phase: "approval",
-      approvalActive: true,
-      onApproval: vi.fn(),
-      onKeyboard: vi.fn(),
-    });
-    const row = screen.getByTestId("ae-voice-approval");
-    expect(row.className).toContain("items-center");
-    const keyboard = screen.getByLabelText("Type instead");
-    expect(keyboard.className).toContain("size-7");
-    expect(keyboard.className).toContain("self-center");
-    expect(keyboard.className).not.toContain("size-10");
-    expect(screen.getByTestId("ae-voice-approval-run").className).toContain("h-7");
+describe("AeVoicePanel car-mode sheet", () => {
+  const sheet = (props: Partial<AeVoicePanelProps> = {}) => panel({ layout: "sheet", ...props });
+  const button = () => screen.getByTestId("ae-voice-action");
+
+  it("listening: Send now is disabled until something is heard, then sends at once", async () => {
+    const onSendNow = vi.fn();
+    const { rerender, onEnd, onStop, onResume } = sheet({ onSendNow });
+    expect(button()).toHaveTextContent("Send now");
+    expect(button()).toBeDisabled();
+    rerender(
+      <AeVoicePanel
+        layout="sheet"
+        phase="listening"
+        blocked={false}
+        heard="open the file"
+        caption=""
+        onSendNow={onSendNow}
+        onEnd={onEnd}
+        onStop={onStop}
+        onResume={onResume}
+      />,
+    );
+    expect(button()).toBeEnabled();
+    await userEvent.click(button());
+    expect(onSendNow).toHaveBeenCalledTimes(1);
   });
 
-  it("uses the same small keyboard button when no approval is pending", () => {
-    panel({ layout: "sheet", phase: "listening", onKeyboard: vi.fn() });
-    const keyboard = screen.getByLabelText("Type instead");
-    expect(keyboard.className).toContain("size-7");
-    expect(keyboard.className).not.toContain("size-10");
+  it.each(["thinking", "preparing"] as const)("%s: Stop is disabled and dimmed", (phase) => {
+    sheet({ phase });
+    expect(button()).toHaveTextContent("Stop");
+    expect(button()).toBeDisabled();
+    expect(button().className).toContain("opacity-50");
+  });
+
+  it("speaking: Stop is solid and calls onStop", async () => {
+    const { onStop } = sheet({ phase: "speaking", caption: "Hello." });
+    expect(button()).toHaveTextContent("Stop");
+    expect(button()).toHaveAccessibleName("Stop speaking");
+    await userEvent.click(button());
+    expect(onStop).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocked: Play the reply calls onResume", async () => {
+    const { onResume } = sheet({ blocked: true });
+    expect(screen.getByText("Tap to hear the reply")).toBeTruthy();
+    expect(button()).toHaveAccessibleName("Play the reply");
+    await userEvent.click(button());
+    expect(onResume).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["paused", "unavailable"] as const)(
+    "%s: Listen again calls onRestartMic",
+    async (phase) => {
+      const onRestartMic = vi.fn();
+      sheet({ phase, onRestartMic });
+      expect(button()).toHaveTextContent("Listen again");
+      await userEvent.click(button());
+      expect(onRestartMic).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("stalled has no button but keeps the row height", () => {
+    sheet({ phase: "stalled" });
+    expect(screen.queryByTestId("ae-voice-action")).toBeNull();
+    expect(screen.getByText("Chat not ready")).toBeTruthy();
+  });
+
+  it("the state word is large and the top border carries the state colour", () => {
+    sheet({ phase: "listening" });
+    const root = screen.getByTestId("ae-voice-panel");
+    expect(root.className).toContain("border-t-[3px]");
+    expect(root.className).toContain("border-t-teal-500");
+    expect(screen.getByText("Listening").className).toContain("text-[30px]");
+  });
+
+  it("the level bars show only while listening", () => {
+    const { unmount } = sheet({ phase: "listening" });
+    expect(screen.getByTestId("ae-voice-level")).toBeTruthy();
+    unmount();
+    sheet({ phase: "thinking" });
+    expect(screen.queryByTestId("ae-voice-level")).toBeNull();
+  });
+});
+
+describe("AeVoicePanel bar words and keys", () => {
+  it("lists only true hints per phase", () => {
+    expect(barHints("listening", false)).toEqual([
+      { keys: ["Enter"], word: "send" },
+      { keys: ["Esc"], word: "end" },
+    ]);
+    expect(barHints("speaking", false)).toEqual([
+      { keys: ["Ctrl", "Alt", "V"], word: "stop" },
+      { keys: ["Esc"], word: "end" },
+    ]);
+    for (const key of ["thinking", "starting", "paused", "approval", "blocked"] as const) {
+      expect(barHints(key, false)).toEqual([]);
+    }
+  });
+
+  it("uses the Mac chord label on a Mac", () => {
+    expect(micChordKeys(true)).toEqual(["⌘", "⌥", "V"]);
+    platform.mac = true;
+    panel({ phase: "speaking", caption: "Hi." });
+    expect(screen.getByTestId("ae-voice-hints")).toHaveTextContent("⌘⌥Vstop");
+  });
+
+  it("renders the hints in a group hidden below the container width", () => {
+    panel({ phase: "listening" });
+    const hints = screen.getByTestId("ae-voice-hints");
+    expect(hints).toHaveTextContent("Entersend");
+    expect(hints).toHaveTextContent("Escend");
+    expect(hints.className).toContain("hidden");
+    expect(hints.className).toContain("@[560px]:flex");
+    expect(screen.getByTestId("ae-voice-panel").className).toContain("@container");
+  });
+
+  it("shows no hints while thinking", () => {
+    panel({ phase: "thinking" });
+    expect(screen.queryByTestId("ae-voice-hints")).toBeNull();
+  });
+
+  it("wraps the sub line to two lines; words in the foreground colour, hints muted", () => {
+    const { unmount } = panel({ phase: "listening", heard: "open the file" });
+    const sub = screen.getByText("open the file");
+    expect(sub.className).toContain("line-clamp-2");
+    expect(sub.className).not.toContain("truncate");
+    expect(sub.className).toContain("text-foreground");
+    unmount();
+    panel({ phase: "thinking" });
+    expect(screen.getByText("Mic muted until the reply ends").className).toContain(
+      "text-muted-foreground",
+    );
   });
 });
