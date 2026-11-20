@@ -196,6 +196,15 @@ const SHEET_COLOURS: Record<string, { top: string; solid: string; outline: strin
     },
   };
 
+/** The disabled Stop's dimmed fill per state colour: the speaking Stop's shape, not ready yet. */
+const SHEET_DIM: Record<string, string> = {
+  "text-teal-500": "bg-teal-500/30 text-teal-800 dark:text-teal-200",
+  "text-amber-500": "bg-amber-500/30 text-amber-900 dark:text-amber-200",
+  "text-blue-500": "bg-blue-500/30 text-blue-900 dark:text-blue-200",
+  "text-red-500": "bg-red-500/30 text-red-900 dark:text-red-200",
+  "text-muted-foreground": "bg-foreground/15 text-foreground/70",
+};
+
 /** The sheet's short state words; the bar keeps `words()`. */
 const SHEET_LABEL: Partial<Record<VoicePhaseKey, string>> = {
   thinking: "Working",
@@ -423,9 +432,8 @@ export function AeVoicePanel({
       button = (
         <Button
           type="button"
-          variant="outline"
           data-testid="ae-voice-action"
-          className={cn(big, "opacity-50")}
+          className={cn(big, SHEET_DIM[tone.text])}
           aria-disabled="true"
           aria-label="Stop (nothing playing yet)"
           tabIndex={-1}
@@ -480,7 +488,7 @@ export function AeVoicePanel({
         data-layout="sheet"
         data-phase={key}
         className={cn(
-          "flex flex-col items-stretch gap-3 border-t-[3px] px-4 pt-3 pb-4",
+          "flex flex-col items-stretch gap-3 rounded-t-[calc(1rem-1px)] border-t-[3px] px-4 pt-3 pb-4",
           sheetBg,
           top,
           className,

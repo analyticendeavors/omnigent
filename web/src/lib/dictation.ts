@@ -318,6 +318,14 @@ export class DictationSession {
     // The mic and the socket are opened together: each takes a few hundred ms and neither
     // needs the other.
     const t0 = Date.now();
+    // On iOS the shared tap context is left suspended by playback; its resume overlaps the
+    // mic and the socket instead of following them. resumeCapped never rejects.
+    const earlyContext = isIosDevice() ? getSharedVoiceAudioContext() : null;
+    const earlyResume = earlyContext
+      ? resumeCapped(earlyContext).then(() => {
+          logVoice("dictation ctx resume", `${Date.now() - t0} ms`);
+        })
+      : null;
     const micPromise = getMicStream({
       channelCount: 1,
       echoCancellation: true,
@@ -385,7 +393,8 @@ export class DictationSession {
           audioContext = new AudioContext();
         }
       }
-      await resumeCapped(audioContext);
+      if (earlyResume && audioContext === earlyContext) await earlyResume;
+      else await resumeCapped(audioContext);
       if (ios && audioContext.state !== "running") {
         logVoice("dictation ctx not unlocked", audioContext.state);
       }

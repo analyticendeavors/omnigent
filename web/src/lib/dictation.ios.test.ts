@@ -191,6 +191,31 @@ describe("DictationSession on iOS", () => {
     second.cancel();
   });
 
+  it("resumes the shared context before the mic and the socket settle", async () => {
+    setUserAgent(IOS_UA);
+    unlockVoiceAudioContext();
+    const order: string[] = [];
+    contexts[0].resume.mockClear();
+    contexts[0].resume.mockImplementation(() => {
+      order.push("resume");
+      contexts[0].state = "running";
+      return Promise.resolve();
+    });
+    getMicStreamMock.mockImplementation(() => {
+      order.push("mic asked");
+      return Promise.resolve(makeStream()).then((stream) => {
+        order.push("mic resolved");
+        return stream;
+      });
+    });
+    const session = await DictationSession.start(events());
+    expect(order.indexOf("resume")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("resume")).toBeLessThan(order.indexOf("mic resolved"));
+    expect(contexts[0].resume).toHaveBeenCalledTimes(1);
+    expect(formatVoiceLog()).toContain("dictation ctx resume");
+    session.cancel();
+  });
+
   it("makes no shared context when the setting is off", () => {
     setUserAgent(IOS_UA);
     window.localStorage.setItem(VOICE_SERVER_STT_KEY, "off");
