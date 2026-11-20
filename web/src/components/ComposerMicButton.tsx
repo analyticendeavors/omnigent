@@ -1737,6 +1737,8 @@ export const ComposerMicButton = ({
     };
     controller.current = {
       start,
+      // A manual tap on iPhone uses the browser recognizer even with the server setting on.
+      takePath: () => (serverBusyRef.current || sessionRef.current ? "server" : "browser"),
       startPath: () =>
         serverBusyRef.current || sessionRef.current || voiceServerRef.current
           ? "server"

@@ -49,6 +49,8 @@ export interface AeMicController {
   isListening: () => boolean;
   /** Which path a start is on right now: only the browser one can be stuck inside a tap. */
   startPath: () => "browser" | "server";
+  /** Which recognizer the live take really uses; "browser" when no server take is running. */
+  takePath?: () => "browser" | "server";
   /** The assistant's voice is playing (or just stopped): the mic's stall detector ignores it. */
   setAssistantAudible?: (audible: boolean) => void;
 }

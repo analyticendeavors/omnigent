@@ -289,7 +289,7 @@ export function useAeVoiceMode({
 
   /** The send pause for the live mic path: server dictation already waited out the silence. */
   const graceMs = useCallback(
-    () => (controller.current?.startPath() === "server" ? SERVER_STT_GRACE_MS : GRACE_MS),
+    () => (controller.current?.takePath?.() === "server" ? SERVER_STT_GRACE_MS : GRACE_MS),
     [controller],
   );
 

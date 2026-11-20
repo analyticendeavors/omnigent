@@ -12,6 +12,7 @@ import { getVoiceSnapshot, resetVoiceStore, setVoiceBarged } from "@/lib/aeVoice
 import { clearPlaybackBlocked, markPlaybackBlocked } from "@/lib/aeVoicePlayback";
 import { type AnyBlock, LIVE_ITEM_PREFIX } from "@/lib/blocks";
 import { useChatStore } from "@/store/chatStore";
+import { resetVoiceLog, formatVoiceLog } from "@/lib/aeVoiceLog";
 import { type FakeSynth, installFakeSpeech, removeFakeSpeech } from "@/test/fakeSpeech";
 import { useAeSpeakReplies } from "./useAeSpeakReplies";
 
@@ -444,6 +445,20 @@ describe("useAeSpeakReplies", () => {
       vi.advanceTimersByTime(WORKING_CUE_DELAY_MS + 10);
     });
     expect(synth.texts()).toEqual(["Quick start."]);
+  });
+
+  it("logs reply first text once for a cue-first turn and a multi-sentence reply", () => {
+    resetVoiceLog();
+    mount();
+    setStore({ status: "streaming", ...send() });
+    act(() => {
+      vi.advanceTimersByTime(WORKING_CUE_DELAY_MS + 10);
+    });
+    setStore({ blocks: [live("r1", "First one. ")] });
+    flush();
+    setStore({ blocks: [live("r1", "First one. Second one. ")] });
+    flush();
+    expect(formatVoiceLog().split("reply first text").length - 1).toBe(1);
   });
 
   it("stops and goes quiet when disabled", () => {

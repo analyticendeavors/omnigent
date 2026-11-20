@@ -73,6 +73,7 @@ const controller = {
     restart: vi.fn(),
     isListening: () => listening,
     startPath: () => micPath,
+    takePath: () => micPath,
   },
 };
 const submit = vi.fn();
@@ -159,6 +160,20 @@ describe("useAeVoiceMode", () => {
     expect(submit).not.toHaveBeenCalled();
     act(() => void vi.advanceTimersByTime(1));
     expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("a browser take waits the full grace even when the server setting is on", () => {
+    // startPath says server (the setting), takePath says the live take is the browser one.
+    const take = controller.current.takePath;
+    controller.current.takePath = () => "browser";
+    micPath = "server";
+    const { result } = mount({ value: "hello there" });
+    act(() => void result.current.onFinal("hello there"));
+    act(() => void vi.advanceTimersByTime(SERVER_STT_GRACE_MS + 100));
+    expect(submit).not.toHaveBeenCalled();
+    act(() => void vi.advanceTimersByTime(GRACE_MS - SERVER_STT_GRACE_MS));
+    expect(submit).toHaveBeenCalledTimes(1);
+    controller.current.takePath = take;
   });
 
   it("a new partial inside the grace cancels the send", () => {
@@ -678,6 +693,17 @@ describe("useAeVoiceMode", () => {
       },
       { source: "voice" },
     );
+  });
+
+  it("a custom card answer waits 1 s on the server path and 2 s on the browser path", () => {
+    useChatStore.setState({ blocks: [CARD] } as never);
+    micPath = "server";
+    const { result } = mount();
+    act(() => void result.current.onFinal("ask me tomorrow"));
+    act(() => void vi.advanceTimersByTime(SERVER_STT_GRACE_MS - 1));
+    expect(submitApproval).not.toHaveBeenCalled();
+    act(() => void vi.advanceTimersByTime(1));
+    expect(submitApproval).toHaveBeenCalledTimes(1);
   });
 
   it("a card answered by a click leaves the pending custom answer inert", () => {

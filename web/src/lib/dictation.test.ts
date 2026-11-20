@@ -6,7 +6,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getMicStream } from "@/lib/aeAudioDevices";
-import { DictationSession, parseDictationEvent } from "./dictation";
+import { DictationBusyError, DictationSession, parseDictationEvent } from "./dictation";
 
 vi.mock("@/lib/aeAudioDevices", () => ({ getMicStream: vi.fn() }));
 
@@ -58,6 +58,51 @@ describe("DictationSession.start opens the mic and the socket together", () => {
     FakeSocket.last?.onmessage?.({ data: '{"type":"ready"}' });
     await expect(started).rejects.toThrow("denied");
     expect(FakeSocket.last?.closed).toBe(true);
+  });
+
+  it("a denied mic closes the socket at once, while it is still connecting", async () => {
+    vi.stubGlobal("WebSocket", FakeSocket);
+    vi.mocked(getMicStream).mockRejectedValue(new Error("denied"));
+    const started = DictationSession.start(events);
+    await expect(started).rejects.toThrow("denied");
+    expect(FakeSocket.last?.closed).toBe(true);
+  });
+
+  it("a socket failure rejects at once and stops a mic that opens later", async () => {
+    vi.stubGlobal("WebSocket", FakeSocket);
+    const { stream, track } = fakeStream();
+    let openMic: (s: MediaStream) => void = () => {};
+    vi.mocked(getMicStream).mockReturnValue(
+      new Promise((r) => {
+        openMic = r;
+      }),
+    );
+    const started = DictationSession.start(events);
+    FakeSocket.last?.onerror?.();
+    await expect(started).rejects.toThrow("dictation connection failed");
+    expect(track.stop).not.toHaveBeenCalled();
+    openMic(stream);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(track.stop).toHaveBeenCalled();
+  });
+
+  it("when both fail the mic error wins", async () => {
+    vi.stubGlobal("WebSocket", FakeSocket);
+    vi.mocked(getMicStream).mockRejectedValue(new Error("denied"));
+    const started = DictationSession.start(events);
+    FakeSocket.last?.onerror?.();
+    await expect(started).rejects.toThrow("denied");
+  });
+
+  it("a busy close (1013) during the parallel wait rejects as busy", async () => {
+    vi.stubGlobal("WebSocket", FakeSocket);
+    const { stream, track } = fakeStream();
+    vi.mocked(getMicStream).mockResolvedValue(stream);
+    const started = DictationSession.start(events);
+    FakeSocket.last?.onclose?.({ code: 1013 });
+    await expect(started).rejects.toBeInstanceOf(DictationBusyError);
+    expect(track.stop).toHaveBeenCalled();
   });
 
   it("a failed socket rejects and stops the mic that did open", async () => {

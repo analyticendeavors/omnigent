@@ -218,6 +218,8 @@ export function useAeSpeakReplies({
     // Responses whose first chunk was spoken: later text of a response keeps the normal chunking.
     const started = new Set<string>();
     let spokenThisTurn = false;
+    // The reply's first text reached the speaker (the cue also sets spokenThisTurn, so apart).
+    let replyTextLogged = false;
     let synced = false;
     let prevStatus: "idle" | "streaming" = "idle";
     let prevPending = 0;
@@ -274,7 +276,10 @@ export function useAeSpeakReplies({
       // A tap on the speaker silenced this turn: the sentences count as read, none is spoken.
       if (getVoiceSnapshot(chatId).barged) return;
       // Once per turn: with the send and first audio logs it splits model time from TTS time.
-      if (!spokenThisTurn) logVoice("reply first text");
+      if (!replyTextLogged) {
+        replyTextLogged = true;
+        logVoice("reply first text");
+      }
       spokenThisTurn = true;
       clearCue();
       // The cue must not delay the real reply, nor queue ahead of its first chunk.
@@ -349,6 +354,7 @@ export function useAeSpeakReplies({
         speaker.stop();
         snapshot(state.blocks, false);
         spokenThisTurn = false;
+        replyTextLogged = false;
         endCue();
         clearCue();
         cueTimer = setTimeout(() => {

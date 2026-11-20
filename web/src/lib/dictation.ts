@@ -316,7 +316,7 @@ export class DictationSession {
     options: DictationStartOptions = {},
   ): Promise<DictationSession> {
     // The mic and the socket are opened together: each takes a few hundred ms and neither
-    // needs the other. allSettled keeps a late failure of one half from going unhandled.
+    // needs the other.
     const t0 = Date.now();
     const micPromise = getMicStream({
       channelCount: 1,
@@ -331,18 +331,25 @@ export class DictationSession {
     const readyPromise = waitForReady(ws).then(() => {
       logVoice("dictation ws ready", `${Date.now() - t0} ms`);
     });
-    const [micResult, readyResult] = await Promise.allSettled([micPromise, readyPromise]);
-    if (micResult.status === "rejected" || readyResult.status === "rejected") {
-      // Close whichever half succeeded; the failure that surfaces is the mic's first.
-      if (micResult.status === "fulfilled") {
-        for (const track of micResult.value.getTracks()) track.stop();
-      }
-      ws.close();
-      throw micResult.status === "rejected"
-        ? micResult.reason
-        : (readyResult as PromiseRejectedResult).reason;
-    }
-    const mediaStream = micResult.value;
+    // Fail fast: the first half to fail ends the start at once; a mic that opens late is
+    // stopped as soon as it resolves.
+    const failFast = new Promise<never>((_, reject) => {
+      micPromise.catch((error) => {
+        ws.close();
+        reject(error);
+      });
+      readyPromise.catch((error) => {
+        void micPromise.then(
+          (stream) => {
+            for (const track of stream.getTracks()) track.stop();
+          },
+          () => {},
+        );
+        ws.close();
+        reject(error);
+      });
+    });
+    const [mediaStream] = await Promise.race([Promise.all([micPromise, readyPromise]), failFast]);
 
     let audioContext: AudioContext | null = null;
     let shared = false;
