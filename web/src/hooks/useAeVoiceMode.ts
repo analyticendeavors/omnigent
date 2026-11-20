@@ -41,6 +41,10 @@ import { useChatStore } from "@/store/chatStore";
 
 /** If the chat never shows a turn after a send, stop waiting for it. */
 const SEND_WAIT_MS = 5000;
+/** Send now: the longest wait for the stopped take's last words before sending what is there. */
+export const SEND_NOW_CAP_MS = 1500;
+/** Send now: after the last final, how long the draft takes to settle before it is sent. */
+const SEND_NOW_SETTLE_MS = 150;
 /** One retry of a mic start that failed. */
 const MIC_RETRY_MS = 1000;
 /**
@@ -88,8 +92,12 @@ export interface AeVoiceMode {
    * a final result.
    */
   filterHeard: (text: string, kind: "interim" | "final") => string;
-  /** Sends the heard draft at once instead of waiting out the send pause; no-op without a draft. */
-  sendNow: () => void;
+  /**
+   * Sends the heard draft at once instead of waiting out the send pause: stops the take, lets its
+   * last words land, then sends once. False when it cannot send (no draft, a card is pending, the
+   * composer refuses), so the key can do what it did before.
+   */
+  sendNow: () => boolean;
   /** Stops the reply being spoken (the hotkey); true when it did. The mic stays on. */
   bargeIn: () => boolean;
   /** The mic reports it started or stopped listening (or failed to start). */
@@ -137,6 +145,14 @@ export function useAeVoiceMode({
   const approvalActive = approval !== null;
 
   const [awaiting, setAwaiting] = useState(false);
+  // Send now: the take is stopping so its tail can land before the draft is sent.
+  const [flushing, setFlushing] = useState(false);
+  const flushRef = useRef(false);
+  const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Finals for the take Send now stopped never arm a grace; cleared when the mic listens again.
+  const sentNowTake = useRef(false);
+  // Set inside send() and cleared after the next render: two presses in one render send once.
+  const sendLock = useRef(false);
   const [ready, setReady] = useState(true);
   const [micListening, setMicListening] = useState(false);
   const [micFailed, setMicFailed] = useState(false);
@@ -217,6 +233,51 @@ export function useAeVoiceMode({
     if (graceTimer.current !== null) clearTimeout(graceTimer.current);
     graceTimer.current = null;
   }, []);
+
+  useEffect(() => {
+    sendLock.current = false;
+  });
+
+  const send = useCallback(() => {
+    const now = latest.current;
+    if (sendLock.current) return;
+    if (!now.canSend) {
+      logVoice(
+        "send refused",
+        now.approval !== null
+          ? "approval pending"
+          : now.questions !== null
+            ? "card pending"
+            : "composer",
+      );
+      return;
+    }
+    sendLock.current = true;
+    logVoice("send");
+    setAwaiting(true);
+    if (sendTimer.current !== null) clearTimeout(sendTimer.current);
+    sendTimer.current = setTimeout(() => {
+      sendTimer.current = null;
+      setAwaiting(false);
+    }, SEND_WAIT_MS);
+    now.submit();
+  }, []);
+
+  const endFlush = useCallback(() => {
+    if (flushTimer.current !== null) clearTimeout(flushTimer.current);
+    flushTimer.current = null;
+    flushRef.current = false;
+    setFlushing(false);
+  }, []);
+
+  // Send now: the stopped take is done (or the cap passed); send the settled draft once.
+  const finishFlush = useCallback(() => {
+    if (!flushRef.current) return;
+    endFlush();
+    const now = latest.current;
+    if (now.value.trim() === "" || now.quiet) return;
+    send();
+  }, [endFlush, send]);
 
   // This mounted chat's Voice mode holds the audio session (a count, so two Voice chats or a
   // remount never restore it early). A start tap's hold (new-chat Voice button, Voice switch)
@@ -339,6 +400,7 @@ export function useAeVoiceMode({
     chatSwitched.current = false;
     if (!on) {
       clearGrace();
+      endFlush();
       // Turning the switch off hands the mic back, quiet.
       if (wasOn.current) {
         logVoice("voice end");
@@ -379,7 +441,7 @@ export function useAeVoiceMode({
       // A start still connecting is withdrawn too, not only a live stream.
       mic.stop();
     }
-  }, [on, wantListen, chatId, controller, clearGrace, clearNet, startMic]);
+  }, [on, wantListen, chatId, controller, clearGrace, clearNet, startMic, endFlush]);
 
   const onListening = useCallback(
     (listening: boolean, reason?: "deaf") => {
@@ -388,6 +450,7 @@ export function useAeVoiceMode({
       personInterims.current = 0;
       utteranceStartedAt.current = null;
       if (listening) {
+        sentNowTake.current = false;
         clearNet();
         startPending.current = false;
         failures.current = 0;
@@ -439,7 +502,7 @@ export function useAeVoiceMode({
         stopAsked.current = false;
         if (latest.current.wantListen) startMic();
         return;
-      } else if (latest.current.wantListen) {
+      } else if (latest.current.wantListen && !flushRef.current) {
         // Stopped from outside (the mic button, the hotkey): leave it stopped.
         logVoice("mic paused", "stopped from outside");
         // Not uploaded: this stop is also the user's own (the mic button, the hotkey) and the
@@ -464,37 +527,24 @@ export function useAeVoiceMode({
             ? "approval"
             : waiting
               ? "thinking"
-              : micListening
+              : micListening || flushing
                 ? "listening"
                 : micStopped
                   ? "paused"
                   : "starting";
     logVoice(`phase ${phase}`);
     setVoicePhase(chatId, phase);
-  }, [chatId, on, speaking, micFailed, approvalActive, waiting, micListening, micStopped]);
-
-  const send = useCallback(() => {
-    const now = latest.current;
-    if (!now.canSend) {
-      logVoice(
-        "send refused",
-        now.approval !== null
-          ? "approval pending"
-          : now.questions !== null
-            ? "card pending"
-            : "composer",
-      );
-      return;
-    }
-    logVoice("send");
-    setAwaiting(true);
-    if (sendTimer.current !== null) clearTimeout(sendTimer.current);
-    sendTimer.current = setTimeout(() => {
-      sendTimer.current = null;
-      setAwaiting(false);
-    }, SEND_WAIT_MS);
-    now.submit();
-  }, []);
+  }, [
+    chatId,
+    on,
+    speaking,
+    micFailed,
+    approvalActive,
+    waiting,
+    micListening,
+    micStopped,
+    flushing,
+  ]);
 
   // A new question card: read it aloud, one question at a time.
   const cardId = block?.type === "elicitation" ? block.elicitationId : null;
@@ -754,6 +804,14 @@ export function useAeVoiceMode({
         return true;
       }
       clearGrace();
+      if (flushRef.current) {
+        // Send now: the take's last words go in the draft, then it is sent once, settled.
+        if (flushTimer.current !== null) clearTimeout(flushTimer.current);
+        flushTimer.current = setTimeout(finishFlush, SEND_NOW_SETTLE_MS);
+        return false;
+      }
+      // A final of the take Send now already sent never starts a second send.
+      if (sentNowTake.current) return false;
       graceTimer.current = setTimeout(() => {
         graceTimer.current = null;
         const current = latest.current;
@@ -762,7 +820,7 @@ export function useAeVoiceMode({
       }, graceMs());
       return false;
     },
-    [on, onCardFinal, clearGrace, send, sendApproval, graceMs],
+    [on, onCardFinal, clearGrace, send, sendApproval, graceMs, finishFlush],
   );
 
   const onPartial = useCallback(
@@ -780,12 +838,28 @@ export function useAeVoiceMode({
     [on, clearGrace],
   );
 
-  const sendNow = useCallback(() => {
+  const sendNow = useCallback((): boolean => {
+    // A second press while the first is sending is spent, not passed on.
+    if (flushRef.current || sendLock.current) return true;
     const current = latest.current;
-    if (current.quiet || current.value.trim() === "") return;
+    if (!current.canSend || current.quiet || current.value.trim() === "") return false;
     clearGrace();
-    send();
-  }, [clearGrace, send]);
+    logVoice("send now");
+    flushRef.current = true;
+    sentNowTake.current = true;
+    setFlushing(true);
+    const mic = controller.current;
+    if (mic && (mic.isListening() || startPending.current)) {
+      // Our own stop: the take flushes its tail as a final before it ends.
+      stopAsked.current = false;
+      startPending.current = false;
+      mic.stop();
+      flushTimer.current = setTimeout(finishFlush, SEND_NOW_CAP_MS);
+    } else {
+      finishFlush();
+    }
+    return true;
+  }, [clearGrace, controller, finishFlush]);
 
   const answerApproval = useCallback(
     (action: "accept" | "decline") => {

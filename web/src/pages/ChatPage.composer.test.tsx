@@ -19,6 +19,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SideChatPane } from "@/components/chat/SideChatPane";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { getVoiceSnapshot, resetVoiceStore, setVoiceOn, setVoicePhase } from "@/lib/aeVoiceMode";
+import type { VoicePhase } from "@/lib/aeVoiceMode";
 import { handleSessionEvent, useChatStore, type ChatState } from "@/store/chatStore";
 import {
   clearSessionDrafts,
@@ -182,6 +184,7 @@ import type { ElicitationBlock, UserMessageBlock } from "@/lib/blocks";
 import { getGoal } from "@/lib/goalApi";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { changeAeFastMode, resetAeFastModeStore } from "@/lib/aeFastMode";
+import type * as ComposerMicModule from "@/components/ComposerMicButton";
 import { Composer, computeIsWorking } from "./ChatPage";
 import { readAlwaysSteer, writeAlwaysSteer } from "@/lib/alwaysSteerPreferences";
 import { appendPromptHistoryEntry } from "@/hooks/usePromptHistory";
@@ -283,6 +286,217 @@ function tooltipKeys(tooltip: HTMLElement): string[] {
     (key) => key.textContent ?? "",
   );
 }
+
+type MicModule = typeof ComposerMicModule;
+const micStub = vi.hoisted(() => ({
+  on: false,
+  props: null as null | {
+    onTakeKey?: (e: KeyboardEvent) => "handled" | "skip" | null;
+    controller?: { current: unknown };
+  },
+  listening: true,
+  stop: null as null | (() => void),
+}));
+vi.mock("@/components/ComposerMicButton", async (importOriginal) => {
+  const real = await importOriginal<MicModule>();
+  return {
+    ...real,
+    ComposerMicButton: (props: Parameters<typeof real.ComposerMicButton>[0]) => {
+      if (!micStub.on) return <real.ComposerMicButton {...props} />;
+      micStub.props = props as never;
+      const stop = vi.fn();
+      micStub.stop = stop;
+      if (props.controller) {
+        props.controller.current = {
+          start: vi.fn(),
+          stop,
+          restart: vi.fn(),
+          isListening: () => micStub.listening,
+          startPath: () => "browser",
+          takePath: () => "browser",
+        };
+      }
+      return <button type="button" data-testid="mic-stub" />;
+    },
+  };
+});
+
+describe("Composer Voice mode keys", () => {
+  const CHAT = "conv_voice_keys";
+  beforeEach(() => {
+    clearSessionDrafts();
+    micStub.on = true;
+    micStub.listening = false;
+    useChatStore.setState({ conversationId: CHAT, blocks: [] });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response("{}", { status: 200 }))),
+    );
+    resetVoiceStore();
+  });
+  afterEach(() => {
+    cleanup();
+    micStub.on = false;
+    micStub.props = null;
+    document.body.querySelectorAll("[data-test-extra]").forEach((el) => el.remove());
+    resetVoiceStore();
+    vi.unstubAllGlobals();
+  });
+
+  function voiceComposer(
+    phase: VoicePhase,
+    overrides: Partial<Parameters<typeof Composer>[0]> = {},
+  ) {
+    const props = composerProps(overrides);
+    render(<Composer {...props} />);
+    act(() => setVoiceOn(CHAT, true));
+    act(() => setVoicePhase(CHAT, phase));
+    return props;
+  }
+  const keyOn = (target: EventTarget, key: string) => {
+    const e = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+    act(() => {
+      target.dispatchEvent(e);
+    });
+    return e;
+  };
+  const extra = (html: string) => {
+    const wrap = document.createElement("div");
+    wrap.setAttribute("data-test-extra", "");
+    wrap.innerHTML = html;
+    document.body.append(wrap);
+    return wrap.firstElementChild as HTMLElement;
+  };
+
+  it.each(["listening", "speaking"] as const)("Esc ends Voice mode while %s", (phase) => {
+    voiceComposer(phase);
+    expect(getVoiceSnapshot(CHAT).on).toBe(true);
+    const e = keyOn(document.body, "Escape");
+    expect(getVoiceSnapshot(CHAT).on).toBe(false);
+    expect(e.defaultPrevented).toBe(true);
+  });
+
+  it("Esc from the composer text box ends Voice mode and keeps the draft", () => {
+    voiceComposer("listening");
+    fireEvent.change(textarea(), { target: { value: "half a thought" } });
+    keyOn(textarea(), "Escape");
+    expect(getVoiceSnapshot(CHAT).on).toBe(false);
+    expect(textarea()).toHaveValue("half a thought");
+  });
+
+  it("no menu, listbox or dialog role is mounted while Voice mode runs", () => {
+    voiceComposer("listening");
+    expect(document.querySelector('[role="menu"], [role="listbox"], [role="dialog"]')).toBeNull();
+  });
+
+  it("Esc does not end Voice mode while thinking, or with Voice mode off", () => {
+    voiceComposer("thinking");
+    keyOn(document.body, "Escape");
+    expect(getVoiceSnapshot(CHAT).on).toBe(true);
+    act(() => setVoiceOn(CHAT, false));
+    const e = keyOn(document.body, "Escape");
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  it("Esc keeps stopping a working chat and leaves Voice mode on", () => {
+    const props = voiceComposer("listening", { isWorking: true, status: "streaming" });
+    fireEvent.keyDown(textarea(), { key: "Escape" });
+    expect(props.onStop).toHaveBeenCalledTimes(1);
+    keyOn(document.body, "Escape");
+    expect(getVoiceSnapshot(CHAT).on).toBe(true);
+  });
+
+  it("Esc leaves an open dialog, the slash menu and the /btw overlay alone", () => {
+    voiceComposer("listening");
+    const dialog = extra('<div role="dialog"></div>');
+    keyOn(document.body, "Escape");
+    expect(getVoiceSnapshot(CHAT).on).toBe(true);
+    dialog.remove();
+    fireEvent.change(textarea(), { target: { value: "/" } });
+    expect(activeRow()).not.toBeNull();
+    keyOn(document.body, "Escape");
+    expect(getVoiceSnapshot(CHAT).on).toBe(true);
+    fireEvent.change(textarea(), { target: { value: "" } });
+    act(() => {
+      useChatStore.setState({ btwSidechat: { question: "q" } } as never);
+    });
+    keyOn(document.body, "Escape");
+    expect(getVoiceSnapshot(CHAT).on).toBe(true);
+    act(() => {
+      useChatStore.setState({ btwSidechat: null } as never);
+    });
+  });
+
+  it("Esc from a button, a terminal or an editor is left to that control", () => {
+    voiceComposer("listening");
+    for (const target of [
+      screen.getByRole("button", { name: "End voice mode" }),
+      extra('<div class="xterm"><textarea></textarea></div>').querySelector("textarea")!,
+      extra('<div contenteditable="true"></div>'),
+      extra("<input />"),
+    ]) {
+      keyOn(target, "Escape");
+      expect(getVoiceSnapshot(CHAT).on).toBe(true);
+    }
+  });
+
+  it("Enter sends the heard draft once, even pressed twice", async () => {
+    const props = voiceComposer("listening");
+    fireEvent.change(textarea(), { target: { value: "open the file" } });
+    const take = micStub.props!.onTakeKey!;
+    let first: string | null = null;
+    let second: string | null = null;
+    act(() => {
+      first = take(new KeyboardEvent("keydown", { key: "Enter" }));
+      second = take(new KeyboardEvent("keydown", { key: "Enter" }));
+    });
+    expect(first).toBe("handled");
+    expect(second).toBe("handled");
+    // The stopped take settles for up to SEND_NOW_CAP_MS before the draft goes.
+    await waitFor(() => expect(props.onSend).toHaveBeenCalledTimes(1), { timeout: 3000 });
+  });
+
+  it("Enter with no draft, or a composer that refuses, falls through to the take", () => {
+    const props = voiceComposer("listening");
+    const take = micStub.props!.onTakeKey!;
+    expect(take(new KeyboardEvent("keydown", { key: "Enter" }))).toBeNull();
+    cleanup();
+    resetVoiceStore();
+    const refusing = voiceComposer("listening", { sendDisabledReason: "Start the session first" });
+    fireEvent.change(textarea(), { target: { value: "hello" } });
+    expect(micStub.props!.onTakeKey!(new KeyboardEvent("keydown", { key: "Enter" }))).toBeNull();
+    expect(props.onSend).not.toHaveBeenCalled();
+    expect(refusing.onSend).not.toHaveBeenCalled();
+  });
+
+  it("Enter with the slash menu open does not send", () => {
+    const props = voiceComposer("listening");
+    fireEvent.change(textarea(), { target: { value: "/" } });
+    expect(activeRow()).not.toBeNull();
+    const out = micStub.props!.onTakeKey!(new KeyboardEvent("keydown", { key: "Enter" }));
+    expect(out).toBeNull();
+    expect(props.onSend).not.toHaveBeenCalled();
+  });
+
+  it("Enter on the focused End button, or in a terminal, is skipped so it clicks End", () => {
+    voiceComposer("listening");
+    fireEvent.change(textarea(), { target: { value: "hello" } });
+    const take = micStub.props!.onTakeKey!;
+    const end = screen.getByRole("button", { name: "End voice mode" });
+    const term = extra('<div class="xterm"><textarea></textarea></div>').querySelector("textarea")!;
+    for (const target of [end, term]) {
+      const e = new KeyboardEvent("keydown", { key: "Enter", bubbles: true });
+      target.dispatchEvent(e);
+      expect(take(e)).toBe("skip");
+    }
+  });
+
+  it("Enter does nothing special on the phone-less speaking phase", () => {
+    voiceComposer("speaking");
+    fireEvent.change(textarea(), { target: { value: "hello" } });
+    expect(micStub.props!.onTakeKey!(new KeyboardEvent("keydown", { key: "Enter" }))).toBeNull();
+  });
+});
 
 describe("Composer Escape interrupt", () => {
   beforeEach(() => {
@@ -2382,7 +2596,10 @@ describe("Composer model/effort label", () => {
     // From the Effort row too, not only from a model row.
     fireEvent.keyDown(screen.getByTestId("composer-agent-effort-trigger"), { key: "2" });
     await waitFor(() =>
-      expect(setModel).toHaveBeenCalledWith(rows[1].getAttribute("data-model-id"), expect.anything()),
+      expect(setModel).toHaveBeenCalledWith(
+        rows[1].getAttribute("data-model-id"),
+        expect.anything(),
+      ),
     );
     // The current model's own digit is not a pick either.
     setModel.mockClear();

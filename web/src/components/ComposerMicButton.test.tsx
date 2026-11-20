@@ -28,7 +28,11 @@ import { getVoiceBins } from "@/lib/aeVoiceLevel";
 import { formatVoiceLog, resetVoiceLog } from "@/lib/aeVoiceLog";
 import { getVoiceSnapshot, resetVoiceStore, setVoiceOn } from "@/lib/aeVoiceMode";
 import { useAeVoiceMode } from "@/hooks/useAeVoiceMode";
-import { MIC_SYNTH_WAIT_CAP_MS, primeVoicePlayback, resetPrimeSpeaking } from "@/lib/aeSpeakReplies";
+import {
+  MIC_SYNTH_WAIT_CAP_MS,
+  primeVoicePlayback,
+  resetPrimeSpeaking,
+} from "@/lib/aeSpeakReplies";
 import { installFakeSpeech, removeFakeSpeech, type FakeSynth } from "@/test/fakeSpeech";
 import { ComposerMicButton } from "./ComposerMicButton";
 
@@ -385,6 +389,63 @@ describe("ComposerMicButton", () => {
     expect(stopSpy).toHaveBeenCalledTimes(1);
     expect(onVoiceDiscard).toHaveBeenCalledTimes(1);
     expect(e.defaultPrevented).toBe(true);
+  });
+
+  it("onTakeKey handled: Enter and Esc leave the take alone and are consumed", () => {
+    const onVoiceDiscard = vi.fn();
+    const onTakeKey = vi.fn(() => "handled" as const);
+    render(
+      <ComposerMicButton
+        onTranscript={vi.fn()}
+        onVoiceDiscard={onVoiceDiscard}
+        onTakeKey={onTakeKey}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Voice dictation" }));
+    act(() => handlers.start?.({}));
+    for (const key of ["Enter", "Escape"]) {
+      const e = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+      act(() => {
+        window.dispatchEvent(e);
+      });
+      expect(e.defaultPrevented).toBe(true);
+    }
+    expect(onTakeKey).toHaveBeenCalledTimes(2);
+    expect(stopSpy).not.toHaveBeenCalled();
+    expect(onVoiceDiscard).not.toHaveBeenCalled();
+  });
+
+  it("onTakeKey skip: Enter is left to the focused control, the take goes on", () => {
+    const onTakeKey = vi.fn(() => "skip" as const);
+    render(<ComposerMicButton onTranscript={vi.fn()} onTakeKey={onTakeKey} />);
+    fireEvent.click(screen.getByRole("button", { name: "Voice dictation" }));
+    act(() => handlers.start?.({}));
+    const e = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    act(() => {
+      window.dispatchEvent(e);
+    });
+    expect(e.defaultPrevented).toBe(false);
+    expect(stopSpy).not.toHaveBeenCalled();
+  });
+
+  it("onTakeKey null: Enter commits and Esc discards as before", () => {
+    const onVoiceDiscard = vi.fn();
+    render(
+      <ComposerMicButton
+        onTranscript={vi.fn()}
+        onVoiceDiscard={onVoiceDiscard}
+        onTakeKey={() => null}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Voice dictation" }));
+    act(() => handlers.start?.({}));
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+      );
+    });
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+    expect(onVoiceDiscard).not.toHaveBeenCalled();
   });
 
   it("drops a late transcript that arrives after an Esc discard", () => {

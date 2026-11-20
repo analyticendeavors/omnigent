@@ -19,7 +19,12 @@ import {
 import { useChatStore } from "@/store/chatStore";
 import { installFakeSpeech, removeFakeSpeech, type FakeSynth } from "@/test/fakeSpeech";
 import { formatVoiceLog, resetVoiceLog } from "@/lib/aeVoiceLog";
-import { MIC_DEAF_DETAIL, MIC_START_NET_MS, useAeVoiceMode } from "./useAeVoiceMode";
+import {
+  MIC_DEAF_DETAIL,
+  MIC_START_NET_MS,
+  SEND_NOW_CAP_MS,
+  useAeVoiceMode,
+} from "./useAeVoiceMode";
 
 const CARD = {
   type: "elicitation",
@@ -422,27 +427,134 @@ describe("useAeVoiceMode", () => {
     expect(result.current.filterHeard("anything at all", "final")).toBe("anything at all");
   });
 
-  it("sendNow sends the draft at once and clears the pending grace", () => {
-    const { result } = mount({ value: "hello there" });
-    act(() => void result.current.onFinal("hello there"));
-    act(() => void vi.advanceTimersByTime(500));
-    act(() => result.current.sendNow());
-    expect(submit).toHaveBeenCalledTimes(1);
-    act(() => void vi.advanceTimersByTime(GRACE_MS * 2));
-    expect(submit).toHaveBeenCalledTimes(1);
-  });
+  describe("sendNow", () => {
+    it("stops the take, lets its last words land, then sends once and clears the grace", () => {
+      const { result, rerender } = mount({ value: "hello" });
+      act(() => result.current.onListening(true));
+      act(() => void result.current.onFinal("hello"));
+      let handled = false;
+      act(() => {
+        handled = result.current.sendNow();
+      });
+      expect(handled).toBe(true);
+      expect(controller.current.stop).toHaveBeenCalled();
+      expect(submit).not.toHaveBeenCalled();
+      // The stopped take's tail arrives as a final and goes into the draft.
+      let used = true;
+      act(() => {
+        used = result.current.onFinal("there");
+      });
+      expect(used).toBe(false);
+      rerender({
+        chatId: "c1",
+        value: "hello there",
+        status: "idle",
+        canSend: true,
+        submit,
+      });
+      act(() => void vi.advanceTimersByTime(200));
+      expect(submit).toHaveBeenCalledTimes(1);
+      act(() => void vi.advanceTimersByTime(GRACE_MS * 3));
+      expect(submit).toHaveBeenCalledTimes(1);
+    });
 
-  it("sendNow does nothing without a draft", () => {
-    const { result } = mount({ value: "  " });
-    act(() => result.current.sendNow());
-    expect(submit).not.toHaveBeenCalled();
-  });
+    it("sends what is there after the cap when no final arrives", () => {
+      const { result } = mount({ value: "hello" });
+      act(() => result.current.onListening(true));
+      act(() => void result.current.sendNow());
+      act(() => void vi.advanceTimersByTime(SEND_NOW_CAP_MS - 1));
+      expect(submit).not.toHaveBeenCalled();
+      act(() => void vi.advanceTimersByTime(1));
+      expect(submit).toHaveBeenCalledTimes(1);
+    });
 
-  it("sendNow does nothing while the reply plays", () => {
-    const { result } = mount({ value: "hello" });
-    act(() => setVoiceSpeaking("c1", true));
-    act(() => result.current.sendNow());
-    expect(submit).not.toHaveBeenCalled();
+    it("sends at once when the mic is not listening", () => {
+      const { result } = mount({ value: "hello" });
+      act(() => result.current.onListening(true));
+      listening = false;
+      act(() => void result.current.sendNow());
+      expect(submit).toHaveBeenCalledTimes(1);
+    });
+
+    it("a second press while the first is sending sends nothing more", () => {
+      const { result } = mount({ value: "hello" });
+      act(() => result.current.onListening(true));
+      let first = false;
+      let second = false;
+      act(() => {
+        first = result.current.sendNow();
+        second = result.current.sendNow();
+      });
+      expect(first).toBe(true);
+      expect(second).toBe(true);
+      act(() => void vi.advanceTimersByTime(SEND_NOW_CAP_MS));
+      expect(submit).toHaveBeenCalledTimes(1);
+    });
+
+    it("two sends in one render send once", () => {
+      const { result } = mount({ value: "hello" });
+      act(() => result.current.onListening(true));
+      listening = false;
+      act(() => {
+        result.current.sendNow();
+        result.current.sendNow();
+      });
+      expect(submit).toHaveBeenCalledTimes(1);
+    });
+
+    it("a final that arrives after the send never starts a second message", () => {
+      const { result } = mount({ value: "hello" });
+      act(() => result.current.onListening(true));
+      act(() => void result.current.sendNow());
+      act(() => void vi.advanceTimersByTime(SEND_NOW_CAP_MS));
+      expect(submit).toHaveBeenCalledTimes(1);
+      act(() => void result.current.onFinal("late words"));
+      act(() => void vi.advanceTimersByTime(GRACE_MS * 3));
+      expect(submit).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not say Mic stopped while the take is stopping", () => {
+      const { result } = mount({ value: "hello" });
+      act(() => result.current.onListening(true));
+      act(() => void result.current.sendNow());
+      act(() => result.current.onListening(false));
+      expect(getVoiceSnapshot("c1").phase).toBe("listening");
+    });
+
+    it("returns false and leaves the take alone with no draft", () => {
+      const { result } = mount({ value: "  " });
+      act(() => result.current.onListening(true));
+      let handled = true;
+      act(() => {
+        handled = result.current.sendNow();
+      });
+      expect(handled).toBe(false);
+      expect(controller.current.stop).not.toHaveBeenCalled();
+      expect(submit).not.toHaveBeenCalled();
+    });
+
+    it("returns false when the composer refuses (a card is pending), grace untouched", () => {
+      const { result } = mount({ value: "hello", canSend: false });
+      act(() => result.current.onListening(true));
+      let handled = true;
+      act(() => {
+        handled = result.current.sendNow();
+      });
+      expect(handled).toBe(false);
+      expect(controller.current.stop).not.toHaveBeenCalled();
+      expect(submit).not.toHaveBeenCalled();
+    });
+
+    it("returns false while the reply plays", () => {
+      const { result } = mount({ value: "hello" });
+      act(() => setVoiceSpeaking("c1", true));
+      let handled = true;
+      act(() => {
+        handled = result.current.sendNow();
+      });
+      expect(handled).toBe(false);
+      expect(submit).not.toHaveBeenCalled();
+    });
   });
 
   it("does not send an empty draft", () => {

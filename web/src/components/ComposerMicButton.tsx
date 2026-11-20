@@ -170,8 +170,11 @@ export interface ComposerMicButtonProps {
   enableHotkey?: boolean;
   /** The hotkey runs this first; true means handled (Voice mode stopped a spoken reply). */
   onHotkeyBarge?: () => boolean;
-  /** Runs first on Enter or Esc during a take; true means handled (Voice mode sends or ends). */
-  onTakeKey?: (e: globalThis.KeyboardEvent) => boolean;
+  /**
+   * Runs first on Enter or Esc during a take: "handled" means Voice mode sent or ended, "skip"
+   * leaves the key to the focused control, null keeps the take behavior.
+   */
+  onTakeKey?: (e: globalThis.KeyboardEvent) => "handled" | "skip" | null;
   /** Fired when dictation begins. The parent should snapshot the composer text
    *  here so {@link onVoiceDiscard} can revert to it. */
   onVoiceStart?: () => void;
@@ -1881,10 +1884,15 @@ export const ComposerMicButton = ({
     if (!isListening) return;
     const handler = (e: globalThis.KeyboardEvent): void => {
       if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
-      if ((e.key === "Enter" || e.key === "Escape") && onTakeKeyRef.current?.(e)) {
-        e.preventDefault();
-        e.stopPropagation();
-        return;
+      if (e.key === "Enter" || e.key === "Escape") {
+        const verdict = onTakeKeyRef.current?.(e);
+        if (verdict === "skip") return;
+        if (verdict === "handled") {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          return;
+        }
       }
       if (e.key === "Enter" && !e.shiftKey) {
         // Commit: end the take and keep the text. toggle() routes to the right

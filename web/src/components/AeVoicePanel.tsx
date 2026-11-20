@@ -42,6 +42,8 @@ export interface AeVoicePanelProps {
   onApproval?: (action: "accept" | "decline") => void;
   /** Turn Voice mode off. */
   onEnd: () => void;
+  /** A yes-or-no or question card waits: Enter cannot send, so its hint is hidden. */
+  cardPending?: boolean;
   /** Sheet only: send the heard draft now instead of waiting out the send pause. */
   onSendNow?: () => void;
   /** Stop the current reply. */
@@ -150,37 +152,49 @@ const SHEET_SPEAKING = {
   top: "border-t-[color:var(--ae-voice-amber)]",
   solid: "bg-[color:var(--ae-voice-amber)] text-white hover:bg-[color:var(--ae-voice-amber)]/90",
   outline:
-    "border-[color:var(--ae-voice-amber)] text-[color:var(--ae-voice-amber)] hover:bg-[color:var(--ae-voice-amber)]/10",
+    "border-[color:var(--ae-voice-amber)] text-[color:var(--ae-voice-amber)] hover:bg-[color:var(--ae-voice-amber)]/10 dark:bg-transparent",
+  word: "text-[color:var(--ae-voice-amber)]",
 };
 
 /** The sheet's top border and button fills per state colour (static strings so Tailwind sees them). */
-const SHEET_COLOURS: Record<string, { top: string; solid: string; outline: string }> = {
-  "text-teal-500": {
-    top: "border-t-teal-500",
-    solid: "bg-teal-500 text-white hover:bg-teal-500/90",
-    outline: "border-teal-500 text-teal-500 hover:bg-teal-500/10",
-  },
-  "text-amber-500": {
-    top: "border-t-amber-500",
-    solid: "bg-amber-500 text-white hover:bg-amber-500/90",
-    outline: "border-amber-500 text-amber-500 hover:bg-amber-500/10",
-  },
-  "text-blue-500": {
-    top: "border-t-blue-500",
-    solid: "bg-blue-500 text-white hover:bg-blue-500/90",
-    outline: "border-blue-500 text-blue-500 hover:bg-blue-500/10",
-  },
-  "text-red-500": {
-    top: "border-t-red-500",
-    solid: "bg-red-500 text-white hover:bg-red-500/90",
-    outline: "border-red-500 text-red-500 hover:bg-red-500/10",
-  },
-  "text-muted-foreground": {
-    top: "border-t-border",
-    solid: "bg-foreground text-background hover:bg-foreground/90",
-    outline: "border-border text-foreground hover:bg-muted",
-  },
-};
+const SHEET_COLOURS: Record<string, { top: string; solid: string; outline: string; word: string }> =
+  {
+    "text-teal-500": {
+      top: "border-t-teal-500",
+      solid: "bg-teal-500 text-white hover:bg-teal-500/90",
+      outline:
+        "border-teal-600 text-teal-700 hover:bg-teal-500/10 dark:border-teal-500 dark:bg-transparent dark:text-teal-500",
+      word: "text-teal-700 dark:text-teal-500",
+    },
+    "text-amber-500": {
+      top: "border-t-amber-500",
+      solid: "bg-amber-500 text-white hover:bg-amber-500/90",
+      outline:
+        "border-[color:var(--ae-voice-amber)] text-[color:var(--ae-voice-amber)] hover:bg-amber-500/10 dark:bg-transparent",
+      word: "text-[color:var(--ae-voice-amber)]",
+    },
+    "text-blue-500": {
+      top: "border-t-blue-500",
+      solid: "bg-blue-500 text-white hover:bg-blue-500/90",
+      outline:
+        "border-blue-600 text-blue-700 hover:bg-blue-500/10 dark:border-blue-500 dark:bg-transparent dark:text-blue-500",
+      word: "text-blue-700 dark:text-blue-500",
+    },
+    "text-red-500": {
+      top: "border-t-red-500",
+      solid: "bg-red-500 text-white hover:bg-red-500/90",
+      outline:
+        "border-red-600 text-red-700 hover:bg-red-500/10 dark:border-red-500 dark:bg-transparent dark:text-red-500",
+      word: "text-red-700 dark:text-red-500",
+    },
+    "text-muted-foreground": {
+      top: "border-t-border",
+      solid: "bg-foreground text-background hover:bg-foreground/90",
+      outline:
+        "border-foreground/50 text-foreground hover:bg-muted dark:border-foreground/50 dark:bg-transparent",
+      word: "text-muted-foreground",
+    },
+  };
 
 /** The sheet's short state words; the bar keeps `words()`. */
 const SHEET_LABEL: Partial<Record<VoicePhaseKey, string>> = {
@@ -194,10 +208,14 @@ export function micChordKeys(isMac: boolean): string[] {
 }
 
 /** Key hints on the bar: only keys that do this in the phase. */
-export function barHints(key: VoicePhaseKey, isMac: boolean): { keys: string[]; word: string }[] {
+export function barHints(
+  key: VoicePhaseKey,
+  isMac: boolean,
+  canSendWithEnter = true,
+): { keys: string[]; word: string }[] {
   if (key === "listening") {
     return [
-      { keys: ["Enter"], word: "send" },
+      ...(canSendWithEnter ? [{ keys: ["Enter"], word: "send" }] : []),
       { keys: ["Esc"], word: "end" },
     ];
   }
@@ -291,6 +309,7 @@ export function AeVoicePanel({
   caption,
   micDetail,
   approvalActive = false,
+  cardPending = false,
   onApproval,
   onEnd,
   onSendNow,
@@ -407,7 +426,10 @@ export function AeVoicePanel({
           variant="outline"
           data-testid="ae-voice-action"
           className={cn(big, "opacity-50")}
-          disabled
+          aria-disabled="true"
+          aria-label="Stop (nothing playing yet)"
+          tabIndex={-1}
+          onClick={(e) => e.preventDefault()}
         >
           Stop
         </Button>
@@ -486,7 +508,7 @@ export function AeVoicePanel({
             {endButton}
           </div>
         </div>
-        <div className={cn("text-[30px] leading-tight font-bold", tone.text)}>
+        <div className={cn("text-[30px] leading-tight font-bold", colours.word)}>
           {SHEET_LABEL[key] && !tapToStart ? SHEET_LABEL[key] : label}
         </div>
         <div className="min-h-10 line-clamp-2 text-sm text-muted-foreground">{sheetSub}</div>
@@ -495,14 +517,14 @@ export function AeVoicePanel({
     );
   }
 
-  const hints = barHints(key, isMacPlatform());
+  const hints = barHints(key, isMacPlatform(), !(cardPending || approvalActive));
   return (
     <div
       data-testid="ae-voice-panel"
       data-layout="bar"
       data-phase={key}
       className={cn(
-        "@container mx-3 mt-3 flex items-center gap-3 rounded-lg border px-3 py-2",
+        "@container mx-3 mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border px-3 py-2",
         tone.panel,
         className,
       )}
@@ -514,7 +536,7 @@ export function AeVoicePanel({
         onClick={action}
         className="min-w-0 flex-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <div className={cn("text-sm font-medium", tone.text)}>{label}</div>
+        <div className={cn("truncate text-sm font-medium", tone.text)}>{label}</div>
         {sub ? (
           <div
             className={cn(
@@ -548,7 +570,7 @@ export function AeVoicePanel({
       {approvalPending && onApproval ? (
         <div
           data-testid="ae-voice-approval"
-          className="relative z-10 flex flex-wrap items-center justify-center gap-2"
+          className="relative z-10 order-last flex basis-full flex-wrap items-center justify-end gap-2 @[560px]:order-none @[560px]:basis-auto @[560px]:justify-center"
         >
           {key !== "approval" ? (
             <span className="text-xs font-medium text-amber-500">Waiting for your OK</span>

@@ -234,7 +234,7 @@ import {
 import { AeSpeakRepliesButton } from "@/components/AeSpeakRepliesButton";
 import { ComposerMicButton } from "@/components/ComposerMicButton";
 import { useAeVoiceMode } from "@/hooks/useAeVoiceMode";
-import { overlayIsOpen, voiceKeyAction } from "@/lib/aeVoiceKeys";
+import { isComposerKeyTarget, overlayIsOpen, voiceKeyAction } from "@/lib/aeVoiceKeys";
 import { useAeVoiceSnips } from "@/hooks/useAeVoiceSnips";
 import { useVoiceLogInsert } from "@/lib/aeVoiceLog";
 import { AE_VOICE_RING, AeVoicePanel, voicePhaseKey } from "@/components/AeVoicePanel";
@@ -3594,25 +3594,39 @@ function ComposerImpl(
     slashCompletion.open ||
     mentionOpen ||
     mentionListingPending;
-  const voiceKeyRef = useRef<(e: globalThis.KeyboardEvent) => boolean>(() => false);
+  const voiceKeyRef = useRef<(e: globalThis.KeyboardEvent) => "handled" | "skip" | null>(
+    () => null,
+  );
   voiceKeyRef.current = (e) => {
+    const targetOk = isComposerKeyTarget(e.target, textareaRef.current);
     const act = voiceKeyAction(e, {
       voiceOn: voice.on,
       sheet: voiceSheet,
       phase: voice.phase,
       busy: voiceKeyBusy,
       overlayOpen: overlayIsOpen(),
+      targetOk,
     });
-    if (act === "send") voice.sendNow();
-    else if (act === "end" && composerSessionId) setVoiceOn(composerSessionId, false);
-    return act !== null;
+    // Enter that cannot send (no draft, a card waits) is left to end the take as before.
+    if (act === "send") return voice.sendNow() ? "handled" : null;
+    if (act === "end" && composerSessionId) {
+      setVoiceOn(composerSessionId, false);
+      return "handled";
+    }
+    // Enter on a focused button or menu item belongs to that control, not to the take.
+    if (e.key === "Enter" && voice.on && !voiceSheet && !targetOk) return "skip";
+    return null;
   };
   const voiceTakeKey = useCallback((e: globalThis.KeyboardEvent) => voiceKeyRef.current(e), []);
   useEffect(() => {
     if (!voice.on) return;
     const handler = (e: globalThis.KeyboardEvent): void => {
       if (e.key !== "Escape" || e.defaultPrevented) return;
-      if (voiceKeyRef.current(e)) e.preventDefault();
+      if (voiceKeyRef.current(e) === "handled") {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+      }
     };
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
@@ -3854,7 +3868,8 @@ function ComposerImpl(
                   caption={voiceSnap.caption}
                   micDetail={voice.micDetail}
                   onEnd={() => setVoiceOn(composerSessionId, false)}
-                  onSendNow={voice.sendNow}
+                  onSendNow={() => void voice.sendNow()}
+                  cardPending={voice.cardActive || voice.approvalActive}
                   onStop={() => {
                     setVoiceBarged(composerSessionId, true);
                     stopVoice(composerSessionId);

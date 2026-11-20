@@ -365,12 +365,20 @@ describe("AeVoicePanel car-mode sheet", () => {
     expect(onSendNow).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["thinking", "preparing"] as const)("%s: Stop is disabled and dimmed", (phase) => {
-    sheet({ phase });
-    expect(button()).toHaveTextContent("Stop");
-    expect(button()).toBeDisabled();
-    expect(button().className).toContain("opacity-50");
-  });
+  it.each(["thinking", "preparing"] as const)(
+    "%s: Stop stays visible, dimmed, aria-disabled and out of the tab order",
+    async (phase) => {
+      const { onStop } = sheet({ phase });
+      expect(button()).toHaveTextContent("Stop");
+      expect(button()).toHaveAttribute("aria-disabled", "true");
+      expect(button()).toHaveAccessibleName("Stop (nothing playing yet)");
+      expect(button()).toHaveAttribute("tabindex", "-1");
+      expect(button()).not.toBeDisabled();
+      expect(button().className).toContain("opacity-50");
+      await userEvent.click(button());
+      expect(onStop).not.toHaveBeenCalled();
+    },
+  );
 
   it("speaking: Stop is solid and calls onStop", async () => {
     const { onStop } = sheet({ phase: "speaking", caption: "Hello." });
@@ -413,6 +421,20 @@ describe("AeVoicePanel car-mode sheet", () => {
     expect(screen.getByText("Listening").className).toContain("text-[30px]");
   });
 
+  it("the state word and outline buttons use light-safe shades, with dark mode kept", () => {
+    sheet({ phase: "listening" });
+    expect(screen.getByText("Listening").className).toContain("text-teal-700");
+    expect(screen.getByText("Listening").className).toContain("dark:text-teal-500");
+    expect(button().className).toContain("dark:border-teal-500");
+    expect(button().className).toContain("dark:bg-transparent");
+    cleanup();
+    sheet({ phase: "thinking" });
+    expect(screen.getByText("Working").className).toContain("var(--ae-voice-amber)");
+    cleanup();
+    sheet({ phase: "paused", onRestartMic: vi.fn() });
+    expect(button().className).toContain("border-foreground/50");
+  });
+
   it("the level bars show only while listening", () => {
     const { unmount } = sheet({ phase: "listening" });
     expect(screen.getByTestId("ae-voice-level")).toBeTruthy();
@@ -452,6 +474,27 @@ describe("AeVoicePanel bar words and keys", () => {
     expect(hints.className).toContain("hidden");
     expect(hints.className).toContain("@[560px]:flex");
     expect(screen.getByTestId("ae-voice-panel").className).toContain("@container");
+  });
+
+  it("hides the Enter hint while an approval or question card is pending", () => {
+    expect(barHints("listening", false, false)).toEqual([{ keys: ["Esc"], word: "end" }]);
+    const { unmount } = panel({ phase: "listening", cardPending: true });
+    expect(screen.getByTestId("ae-voice-hints")).not.toHaveTextContent("Enter");
+    expect(screen.getByTestId("ae-voice-hints")).toHaveTextContent("Escend");
+    unmount();
+    panel({ phase: "listening", approvalActive: true, onApproval: vi.fn() });
+    expect(screen.getByTestId("ae-voice-hints")).not.toHaveTextContent("Enter");
+  });
+
+  it("puts the approval buttons on their own row below the container width", () => {
+    panel({ phase: "speaking", caption: "Slots full.", approvalActive: true, onApproval: vi.fn() });
+    const approval = screen.getByTestId("ae-voice-approval");
+    expect(approval.className).toContain("basis-full");
+    expect(approval.className).toContain("order-last");
+    expect(approval.className).toContain("@[560px]:basis-auto");
+    expect(screen.getByTestId("ae-voice-panel").className).toContain("flex-wrap");
+    expect(screen.getByText("Speaking, tap to stop").className).toContain("truncate");
+    expect(screen.getByText("Slots full.").className).toContain("line-clamp-2");
   });
 
   it("shows no hints while thinking", () => {
