@@ -151,6 +151,7 @@ export function useAeVoiceMode({
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Finals for the take Send now stopped never arm a grace; cleared when the mic listens again.
   const sentNowTake = useRef(false);
+  const flushChat = useRef<string | null>(null);
   // Set inside send() and cleared after the next render: two presses in one render send once.
   const sendLock = useRef(false);
   const [ready, setReady] = useState(true);
@@ -227,6 +228,8 @@ export function useAeVoiceMode({
   // The voice log goes to the server with the chat it belongs to (see uploadVoiceLog).
   const chatIdRef = useRef(chatId);
   chatIdRef.current = chatId;
+  const voiceOnRef = useRef(on);
+  voiceOnRef.current = on;
   useVoiceLogOnHide(on, () => chatIdRef.current);
 
   const clearGrace = useCallback(() => {
@@ -275,6 +278,7 @@ export function useAeVoiceMode({
     if (!flushRef.current) return;
     endFlush();
     const now = latest.current;
+    if (flushChat.current !== chatIdRef.current || !voiceOnRef.current) return;
     if (now.value.trim() === "" || now.quiet) return;
     send();
   }, [endFlush, send]);
@@ -294,6 +298,8 @@ export function useAeVoiceMode({
   useEffect(
     () => () => {
       clearGrace();
+      endFlush();
+      sentNowTake.current = false;
       if (sendTimer.current !== null) clearTimeout(sendTimer.current);
       if (retryTimer.current !== null) clearTimeout(retryTimer.current);
       if (netTimer.current !== null) clearTimeout(netTimer.current);
@@ -317,7 +323,7 @@ export function useAeVoiceMode({
       setMicStopped(false);
       setMicDetail(null);
     },
-    [chatId, clearGrace],
+    [chatId, clearGrace, endFlush],
   );
 
   // Make the server's label agree with this browser's switch, once per chat.
@@ -846,6 +852,7 @@ export function useAeVoiceMode({
     clearGrace();
     logVoice("send now");
     flushRef.current = true;
+    flushChat.current = chatIdRef.current;
     sentNowTake.current = true;
     setFlushing(true);
     const mic = controller.current;

@@ -521,6 +521,41 @@ describe("useAeVoiceMode", () => {
       expect(getVoiceSnapshot("c1").phase).toBe("listening");
     });
 
+    it("a chat switch mid-settle sends nothing into the new chat", () => {
+      const { result, rerender } = mount({ value: "hello" });
+      act(() => result.current.onListening(true));
+      act(() => void result.current.sendNow());
+      setVoiceOn("c2", true);
+      rerender({ chatId: "c2", value: "other draft", status: "idle", canSend: true, submit });
+      act(() => void vi.advanceTimersByTime(SEND_NOW_CAP_MS * 2 + GRACE_MS));
+      expect(submit).not.toHaveBeenCalled();
+    });
+
+    it("an unmount mid-settle sends nothing", () => {
+      const { result, unmount } = mount({ value: "hello" });
+      act(() => result.current.onListening(true));
+      act(() => void result.current.sendNow());
+      unmount();
+      act(() => void vi.advanceTimersByTime(SEND_NOW_CAP_MS * 2));
+      expect(submit).not.toHaveBeenCalled();
+    });
+
+    it("Enter works again right after a chat switch", () => {
+      const { result, rerender } = mount({ value: "hello" });
+      act(() => result.current.onListening(true));
+      act(() => void result.current.sendNow());
+      setVoiceOn("c2", true);
+      rerender({ chatId: "c2", value: "next", status: "idle", canSend: true, submit });
+      act(() => result.current.onListening(true));
+      let handled = false;
+      act(() => {
+        handled = result.current.sendNow();
+      });
+      expect(handled).toBe(true);
+      act(() => void vi.advanceTimersByTime(SEND_NOW_CAP_MS));
+      expect(submit).toHaveBeenCalledTimes(1);
+    });
+
     it("returns false and leaves the take alone with no draft", () => {
       const { result } = mount({ value: "  " });
       act(() => result.current.onListening(true));

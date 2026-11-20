@@ -448,6 +448,18 @@ describe("ComposerMicButton", () => {
     expect(onVoiceDiscard).not.toHaveBeenCalled();
   });
 
+  it("onTakeKey null on Enter with nothing to send ends the take and adds no newline", () => {
+    render(<ComposerMicButton onTranscript={vi.fn()} onTakeKey={() => null} />);
+    fireEvent.click(screen.getByRole("button", { name: "Voice dictation" }));
+    act(() => handlers.start?.({}));
+    const e = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    act(() => {
+      window.dispatchEvent(e);
+    });
+    expect(e.defaultPrevented).toBe(true);
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("drops a late transcript that arrives after an Esc discard", () => {
     const onTranscript = vi.fn();
     render(<ComposerMicButton onTranscript={onTranscript} onVoiceDiscard={vi.fn()} />);

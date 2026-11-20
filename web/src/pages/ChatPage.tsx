@@ -3613,8 +3613,14 @@ function ComposerImpl(
       setVoiceOn(composerSessionId, false);
       return "handled";
     }
-    // Enter on a focused button or menu item belongs to that control, not to the take.
-    if (e.key === "Enter" && voice.on && !voiceSheet && !targetOk) return "skip";
+    // Enter or Esc from a focused control, or with an overlay open, is not the take's.
+    if (
+      voice.on &&
+      !voiceSheet &&
+      (e.key === "Enter" ? !targetOk : e.key === "Escape" && (!targetOk || overlayIsOpen()))
+    ) {
+      return "skip";
+    }
     return null;
   };
   const voiceTakeKey = useCallback((e: globalThis.KeyboardEvent) => voiceKeyRef.current(e), []);

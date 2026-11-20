@@ -440,6 +440,20 @@ describe("Composer Voice mode keys", () => {
     }
   });
 
+  it("Esc from a terminal during a take is skipped so the take and draft stay", () => {
+    voiceComposer("listening");
+    fireEvent.change(textarea(), { target: { value: "keep me" } });
+    const take = micStub.props!.onTakeKey!;
+    const term = extra('<div class="xterm"><textarea></textarea></div>').querySelector("textarea")!;
+    const e = new KeyboardEvent("keydown", { key: "Escape", bubbles: true });
+    term.dispatchEvent(e);
+    expect(take(e)).toBe("skip");
+    const dialog = extra('<div role="dialog"></div>');
+    expect(take(new KeyboardEvent("keydown", { key: "Escape" }))).toBe("skip");
+    dialog.remove();
+    expect(textarea()).toHaveValue("keep me");
+  });
+
   it("Enter sends the heard draft once, even pressed twice", async () => {
     const props = voiceComposer("listening");
     fireEvent.change(textarea(), { target: { value: "open the file" } });
