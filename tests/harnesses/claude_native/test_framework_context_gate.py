@@ -18,6 +18,7 @@ from omnigent.harnesses.claude_native.bridge import (
     CLAUDE_FRAMEWORK_STATE_FILE,
     FRAMEWORK_REFRESH_EVERY,
 )
+from omnigent.harnesses.claude_native.bridge import CLAUDE_NOTICE_OFF_MARKER as OFF
 from omnigent.harnesses.claude_native.hook import NOTICE_WITHDRAWN
 from omnigent.inner.ae_roles import NOTICE_PREFIX
 from omnigent.inner.ae_team import render_team_notice
@@ -182,8 +183,10 @@ def test_other_notices_pass_through_whole(monkeypatch, capsys, tmp_path) -> None
     second = _prompt(monkeypatch, capsys, tmp_path, both)
     assert second.startswith(resize + "\n\n")
     assert _is_marker(second.split("\n\n", 1)[1])
-    # With the team notice gone, the other notice goes alone with the withdrawal line.
-    assert _prompt(monkeypatch, capsys, tmp_path, resize) == f"{resize}\n\n{NOTICE_WITHDRAWN}"
+    # A message with no team notice and no off marker (queued, system or pane-typed) leaves
+    # the gate alone.
+    assert _prompt(monkeypatch, capsys, tmp_path, resize) == resize
+    assert _is_marker(_prompt(monkeypatch, capsys, tmp_path))
 
 
 def test_a_prompt_with_no_context_file_adds_nothing(monkeypatch, capsys, tmp_path) -> None:
@@ -204,14 +207,14 @@ def test_turning_collaboration_off_withdraws_the_notice_once(
     monkeypatch, capsys, tmp_path
 ) -> None:
     _prompt(monkeypatch, capsys, tmp_path)
-    assert _prompt(monkeypatch, capsys, tmp_path, "") == NOTICE_WITHDRAWN
+    assert _prompt(monkeypatch, capsys, tmp_path, OFF) == NOTICE_WITHDRAWN
     assert not (tmp_path / CLAUDE_FRAMEWORK_STATE_FILE).exists()
-    assert _prompt(monkeypatch, capsys, tmp_path, "") == ""
+    assert _prompt(monkeypatch, capsys, tmp_path, OFF) == ""
 
 
 def test_turning_collaboration_back_on_sends_the_full_block(monkeypatch, capsys, tmp_path) -> None:
     _prompt(monkeypatch, capsys, tmp_path)
-    _prompt(monkeypatch, capsys, tmp_path, "")
+    _prompt(monkeypatch, capsys, tmp_path, OFF)
     assert _prompt(monkeypatch, capsys, tmp_path) == BODY
     assert _is_marker(_prompt(monkeypatch, capsys, tmp_path))
 
@@ -219,12 +222,13 @@ def test_turning_collaboration_back_on_sends_the_full_block(monkeypatch, capsys,
 def test_withdrawal_keeps_other_notices(monkeypatch, capsys, tmp_path) -> None:
     resize = "Note: the attached image was downscaled."
     _prompt(monkeypatch, capsys, tmp_path)
-    assert _prompt(monkeypatch, capsys, tmp_path, resize) == f"{resize}\n\n{NOTICE_WITHDRAWN}"
+    both = f"{resize}\n\n{OFF}"
+    assert _prompt(monkeypatch, capsys, tmp_path, both) == f"{resize}\n\n{NOTICE_WITHDRAWN}"
 
 
 def test_a_compact_after_withdrawal_resends_nothing(monkeypatch, capsys, tmp_path) -> None:
     _prompt(monkeypatch, capsys, tmp_path)
-    _prompt(monkeypatch, capsys, tmp_path, "")
+    _prompt(monkeypatch, capsys, tmp_path, OFF)
     assert _start(monkeypatch, capsys, tmp_path, "compact") == ""
 
 
@@ -369,3 +373,25 @@ def test_a_notice_naming_no_preset_gets_a_marker_without_one(
     assert _is_marker(marker)
     assert "preset" not in marker
     assert re.fullmatch(r"Omnigent notice v[0-9a-f]{8} still in force\.", marker), marker
+
+
+def test_no_notice_without_the_off_marker_never_withdraws(monkeypatch, capsys, tmp_path) -> None:
+    _prompt(monkeypatch, capsys, tmp_path)
+    # Pane-typed: no context file at all.
+    assert _prompt(monkeypatch, capsys, tmp_path, None) == ""
+    # Queued or system prompt that reached the hook with an empty file.
+    assert _prompt(monkeypatch, capsys, tmp_path, "") == ""
+    assert (tmp_path / CLAUDE_FRAMEWORK_STATE_FILE).exists()
+    assert _is_marker(_prompt(monkeypatch, capsys, tmp_path))
+
+
+def test_an_interrupt_just_before_the_boundary_gets_the_refresh(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    log = _transcript(tmp_path / "t.jsonl", ["a"])
+    assert _prompt(monkeypatch, capsys, tmp_path, transcript=log) == BODY
+    for _ in range(FRAMEWORK_REFRESH_EVERY - 1):
+        assert _is_marker(_prompt(monkeypatch, capsys, tmp_path, transcript=log))
+    with log.open("a") as handle:
+        handle.write(json.dumps({"uuid": "b", "text": "[Request interrupted by user]"}) + "\n")
+    assert _prompt(monkeypatch, capsys, tmp_path, transcript=log) == BODY

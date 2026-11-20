@@ -109,6 +109,9 @@ CLAUDE_FRAMEWORK_CONTEXT_FILE = "pending_framework_context.txt"
 CLAUDE_FRAMEWORK_STATE_FILE = "framework_context_state.json"
 CLAUDE_FRAMEWORK_LAST_FILE = "framework_context_last.txt"
 CLAUDE_FRAMEWORK_LOCK_FILE = "framework_context.lock"
+# Written into the context file by the executor, only when the server says the team notice
+# is off; the hook withdraws an earlier full notice on it and never on an empty file.
+CLAUDE_NOTICE_OFF_MARKER = "Omnigent notice off."
 # The notice goes out in full on the first prompt, whenever it changes, and on every Nth
 # prompt after, so a long chat never drifts from it.
 FRAMEWORK_REFRESH_EVERY = 20

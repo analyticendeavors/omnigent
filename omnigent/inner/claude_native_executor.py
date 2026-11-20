@@ -14,6 +14,7 @@ from pathlib import Path
 from omnigent.harnesses.claude_native.bridge import (
     BRIDGE_DIR_ENV_VAR,
     CLAUDE_FRAMEWORK_CONTEXT_FILE,
+    CLAUDE_NOTICE_OFF_MARKER,
     REQUEST_SESSION_ID_ENV_VAR,
     SWITCH_MODEL_DIALOG_HINT,
     ClaudePromptTimeout,
@@ -48,6 +49,7 @@ from omnigent.inner.executor import (
 from omnigent.inner.native_attachments import (
     FRAMEWORK_NOTICE_BLOCK_TYPE,
     attachment_reference_line,
+    framework_notice_off,
     framework_notices,
 )
 from omnigent.models.claude_model_vocabulary import claude_model_command_arg, normalized_model_id
@@ -125,7 +127,7 @@ class ClaudeNativeExecutor(Executor):
             return False
         try:
             async with self._inject_lock:
-                await self._inject_prompt(text, framework_notices(content))
+                await self._inject_prompt(text, _notices_and_off(content))
         except RuntimeError:
             return False
         return True
@@ -134,16 +136,11 @@ class ClaudeNativeExecutor(Executor):
         """Inject user text with one-shot context while holding the injection lock."""
         context_path = self._bridge_dir / CLAUDE_FRAMEWORK_CONTEXT_FILE
         context_path.unlink(missing_ok=True)
-        # The team and roles notice goes last: the framework-context hook gates it (full
-        # once, then a marker) and passes the other notices through whole. The file is
-        # written empty when there are no notices, so the hook can tell "nothing to add"
-        # (say a withdrawn notice is gone) from a prompt typed straight into the pane.
-        notices = sorted(notices, key=lambda notice: notice.startswith(NOTICE_PREFIX))
         if notices:
+            # The team and roles notice goes last: the framework-context hook gates it (full
+            # once, then a marker) and passes the other notices through whole.
+            notices = sorted(notices, key=lambda notice: notice.startswith(NOTICE_PREFIX))
             context_path.write_text("\n\n".join(notices), encoding="utf-8")
-        else:
-            with contextlib.suppress(OSError):
-                context_path.write_text("", encoding="utf-8")
         try:
             await self._inject(partial(inject_user_message, self._bridge_dir, content=text))
         except BaseException:
@@ -573,5 +570,13 @@ def _latest_framework_notices(messages: list[Message]) -> list[str]:
     """Return framework context attached to the latest user turn."""
     for message in reversed(messages):
         if message.get("role") == "user":
-            return framework_notices(message.get("content"))
+            return _notices_and_off(message.get("content"))
     return []
+
+
+def _notices_and_off(content: object) -> list[str]:
+    """Framework notices in *content*, plus the off marker when the server says it is off."""
+    notices = framework_notices(content)
+    if framework_notice_off(content):
+        notices.append(CLAUDE_NOTICE_OFF_MARKER)
+    return notices

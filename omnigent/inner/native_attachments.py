@@ -470,6 +470,27 @@ def framework_notice_block(source_metadata: Mapping[str, object]) -> dict[str, o
     return {"type": FRAMEWORK_NOTICE_BLOCK_TYPE, "source_metadata": dict(source_metadata)}
 
 
+NOTICE_OFF_KEY = "ae_notice_off"
+
+
+def framework_notice_off_block() -> dict[str, object]:
+    """The block the server attaches when a message carries no team notice because it is off."""
+    return framework_notice_block({NOTICE_OFF_KEY: True})
+
+
+def framework_notice_off(content: object) -> bool:
+    """Whether *content* carries the explicit "team notice is off" block."""
+    if not isinstance(content, list):
+        return False
+    return any(
+        isinstance(block, dict)
+        and block.get("type") == FRAMEWORK_NOTICE_BLOCK_TYPE
+        and isinstance(block.get("source_metadata"), dict)
+        and block["source_metadata"].get(NOTICE_OFF_KEY) is True
+        for block in content
+    )
+
+
 def framework_notices(content: object) -> list[str]:
     """Extract transient framework notices from structured content."""
     if not isinstance(content, list):

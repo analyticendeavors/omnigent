@@ -5806,11 +5806,17 @@ async def _forward_native_terminal_message(
     )
     if conversation_store is not None:
         from omnigent.inner.ae_team import team_notice
-        from omnigent.inner.native_attachments import framework_notice_block
+        from omnigent.inner.native_attachments import (
+            framework_notice_block,
+            framework_notice_off_block,
+        )
 
         notice = await asyncio.to_thread(team_notice, conv, conversation_store)
-        if notice is not None:
-            event["content"] = [*event["content"], framework_notice_block(notice)]
+        # No notice means it is off: say so, so the native hook can withdraw one it sent.
+        event["content"] = [
+            *event["content"],
+            framework_notice_block(notice) if notice is not None else framework_notice_off_block(),
+        ]
     _logger.info(
         "%s terminal message forward starting: session=%s block_types=%s model_override=%s",
         display_name,
@@ -6449,14 +6455,17 @@ async def _forward_event_to_runner(
     forwarded_data = dict(body.data)
     if body.type == "message" and body.data.get("role") == "user":
         from omnigent.inner.ae_team import team_notice
-        from omnigent.inner.native_attachments import framework_notice_block
+        from omnigent.inner.native_attachments import (
+            framework_notice_block,
+            framework_notice_off_block,
+        )
 
         notice = await asyncio.to_thread(team_notice, conv, conversation_store)
-        if notice is not None:
-            forwarded_data["content"] = [
-                *forwarded_data.get("content", []),
-                framework_notice_block(notice),
-            ]
+        # No notice means it is off: say so, so the native hook can withdraw one it sent.
+        forwarded_data["content"] = [
+            *forwarded_data.get("content", []),
+            framework_notice_block(notice) if notice is not None else framework_notice_off_block(),
+        ]
     if (
         file_store is not None
         and artifact_store is not None

@@ -22,6 +22,7 @@ from omnigent.harnesses.claude_native.bridge import (
     CLAUDE_FRAMEWORK_LAST_FILE,
     CLAUDE_FRAMEWORK_LOCK_FILE,
     CLAUDE_FRAMEWORK_STATE_FILE,
+    CLAUDE_NOTICE_OFF_MARKER,
     FRAMEWORK_REFRESH_EVERY,
     approval_wait_marker_path,
     hold_approval_wait_marker,
@@ -1295,7 +1296,7 @@ def _gate_notice(
         or time.time() - sent_at > FRAMEWORK_TURN_STALE_SECONDS
     ):
         in_turn = False
-    refresh = since + 1 >= FRAMEWORK_REFRESH_EVERY and not bool(state.get("full_in_turn"))
+    refresh = since + 1 >= FRAMEWORK_REFRESH_EVERY and not in_turn
     if changed or rewound or refresh or not locked:
         with contextlib.suppress(OSError):
             (bridge_dir / CLAUDE_FRAMEWORK_LAST_FILE).write_text(notice, encoding="utf-8")
@@ -1328,8 +1329,8 @@ def _main_framework_context(argv: list[str]) -> int:
     mid-turn gets the marker only. When the notice disappears after a full send (auto
     collaboration turned off), one line says it is withdrawn and the gate resets.
 
-    The bridge writes the context file on every message it sends, empty when there is
-    nothing to add; no file at all means a prompt typed straight into the pane.
+    The notice is withdrawn only when the context file carries ``CLAUDE_NOTICE_OFF_MARKER``,
+    which the executor writes when the server says the notice is off.
     """
     args = _parse_evaluate_policy_args(argv)
     try:
@@ -1347,11 +1348,16 @@ def _main_framework_context(argv: list[str]) -> int:
             path.unlink(missing_ok=True)
         except OSError:
             return 0
+        # Withdraw only on the executor's explicit marker, never on an empty or missing file:
+        # a pane-typed, queued or system prompt can arrive with no notice while it is on.
+        notice_off = CLAUDE_NOTICE_OFF_MARKER in text
+        if notice_off:
+            text = text.replace(CLAUDE_NOTICE_OFF_MARKER, "").strip()
         other, notice = _split_notice(text)
         if notice:
             notice = _gate_notice(bridge_dir, notice, session_id, transcript_path, locked)
             text = f"{other}\n\n{notice}" if other else notice
-        elif _read_framework_state(bridge_dir).get("hash"):
+        elif notice_off and _read_framework_state(bridge_dir).get("hash"):
             (bridge_dir / CLAUDE_FRAMEWORK_STATE_FILE).unlink(missing_ok=True)
             (bridge_dir / CLAUDE_FRAMEWORK_LAST_FILE).unlink(missing_ok=True)
             text = f"{other}\n\n{NOTICE_WITHDRAWN}" if other else NOTICE_WITHDRAWN

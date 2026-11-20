@@ -1011,7 +1011,7 @@ async def test_enqueue_session_message_materializes_image(
     assert len(written) == 1
     assert written[0].name == "steering_img.png"
     assert await executor.enqueue_session_message("session-key", "follow-up")
-    assert (tmp_path / CLAUDE_FRAMEWORK_CONTEXT_FILE).read_text() == ""
+    assert not (tmp_path / CLAUDE_FRAMEWORK_CONTEXT_FILE).exists()
 
 
 @pytest.mark.asyncio
@@ -2089,3 +2089,14 @@ async def test_run_turn_ignores_missing_tmux_during_timeout_reap(
 
     assert isinstance(events[0], ExecutorError)
     assert events[0].message == "terminal did not become ready"
+
+
+def test_the_off_marker_rides_only_an_explicit_off_block() -> None:
+    from omnigent.harnesses.claude_native.bridge import CLAUDE_NOTICE_OFF_MARKER
+    from omnigent.inner.claude_native_executor import _notices_and_off
+    from omnigent.inner.native_attachments import framework_notice_off_block
+
+    assert _notices_and_off([{"type": "input_text", "text": "hi"}]) == []
+    assert _notices_and_off("plain text") == []
+    off = [{"type": "input_text", "text": "hi"}, framework_notice_off_block()]
+    assert _notices_and_off(off) == [CLAUDE_NOTICE_OFF_MARKER]
