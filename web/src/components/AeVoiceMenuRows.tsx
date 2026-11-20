@@ -52,6 +52,9 @@ import {
   writeVoiceChatVoicePick,
 } from "@/lib/aeVoiceChatVoice";
 import { logVoice, uploadVoiceLog } from "@/lib/aeVoiceLog";
+
+/** Duplicate device voices are logged once per change, not per menu or voiceschanged event. */
+let lastLoggedDeviceVoices = "";
 import { useMicWhileSpeaking, writeMicWhileSpeaking } from "@/lib/aeVoiceMic";
 import { useVoiceMeter, writeVoiceMeter } from "@/lib/aeVoiceMeter";
 import { isIosDevice, useVoiceServerStt, writeVoiceServerStt } from "@/lib/aeVoiceServerStt";
@@ -254,8 +257,17 @@ export function useVoiceChoices() {
     const refresh = () => {
       const next = listVoices();
       setVoices(next);
-      if (next.length > 0) {
-        logVoice("device voices", next.map((v) => `${v.name}|${v.lang}|${v.voiceURI}`).join(", ").slice(0, 4000));
+      // One entry per voice whose name still shows more than once, so a
+      // duplicate the dedupe missed can be traced. Personal Voice is never logged.
+      const seen = new Map<string, number>();
+      for (const v of next) seen.set(v.name, (seen.get(v.name) ?? 0) + 1);
+      const dupes = next.filter(
+        (v) => (seen.get(v.name) ?? 0) > 1 && !/personalvoice/i.test(v.voiceURI ?? ""),
+      );
+      const sig = dupes.map((v) => v.voiceURI).join(",");
+      if (sig && sig !== lastLoggedDeviceVoices) {
+        lastLoggedDeviceVoices = sig;
+        for (const v of dupes) logVoice("duplicate voice", `${v.lang} ${v.voiceURI}`);
       }
     };
     refresh();
