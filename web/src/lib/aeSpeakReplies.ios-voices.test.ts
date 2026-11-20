@@ -56,3 +56,11 @@ describe("saved pick of a dropped copy", () => {
     expect(canonicalVoiceUri(compact.voiceURI)).toBe(enhanced.voiceURI);
   });
 });
+
+describe("older Apple voice ids", () => {
+  it("merges ttsbundle copies of one voice", () => {
+    const a = v("Daniel", "com.apple.ttsbundle.Daniel-compact");
+    const b = v("Daniel", "com.apple.voice.enhanced.en-US.Daniel");
+    expect(dedupeIosVoices([a, b])).toEqual([b]);
+  });
+});

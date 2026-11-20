@@ -146,15 +146,18 @@ export function isSilentIosVoice(voice: SpeechSynthesisVoice): boolean {
 
 function iosVoiceQuality(voice: SpeechSynthesisVoice): number {
   const uri = voice.voiceURI ?? "";
-  if (/\.premium\./i.test(uri)) return 2;
-  if (/\.enhanced\./i.test(uri)) return 1;
+  if (/premium/i.test(uri)) return 2;
+  if (/enhanced/i.test(uri)) return 1;
   return 0;
 }
 
 function iosVoiceKey(v: SpeechSynthesisVoice): string {
   // Only Apple's quality tiers of one system voice are merged; any other voice
   // (a Personal Voice, a third-party voice) stays its own entry.
-  if (!/^com\.apple\.voice\.(compact|enhanced|premium)\./i.test(v.voiceURI ?? "")) {
+  // Apple names its system voices several ways across iOS releases
+  // (com.apple.voice.compact..., com.apple.ttsbundle.Samantha-compact, ...).
+  const uri = v.voiceURI ?? "";
+  if (!/^com\.apple\./i.test(uri) || /personalvoice/i.test(uri)) {
     return `uri|${v.voiceURI}`;
   }
   return `${v.name.trim().toLowerCase()}|${(v.lang ?? "").replace("_", "-").toLowerCase()}`;

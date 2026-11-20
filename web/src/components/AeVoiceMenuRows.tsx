@@ -251,7 +251,13 @@ export function useVoiceChoices() {
     };
   }, []);
   useEffect(() => {
-    const refresh = () => setVoices(listVoices());
+    const refresh = () => {
+      const next = listVoices();
+      setVoices(next);
+      if (next.length > 0) {
+        logVoice("device voices", next.map((v) => `${v.name}|${v.lang}|${v.voiceURI}`).join(", ").slice(0, 4000));
+      }
+    };
     refresh();
     return onVoicesChanged(refresh);
   }, []);
