@@ -150,7 +150,8 @@ const SHEET_SPEAKING = {
   disc: "bg-[color:var(--ae-voice-amber)]",
   panel: "bg-[color:color-mix(in_srgb,var(--ae-voice-amber)_10%,transparent)]",
   top: "border-t-[color:var(--ae-voice-amber)]",
-  solid: "bg-[color:var(--ae-voice-amber)] text-white hover:bg-[color:var(--ae-voice-amber)]/90",
+  solid:
+    "bg-[color:var(--ae-voice-amber)] text-white hover:bg-[color:var(--ae-voice-amber)]/90 dark:text-amber-950",
   outline:
     "border-[color:var(--ae-voice-amber)] text-[color:var(--ae-voice-amber)] hover:bg-[color:var(--ae-voice-amber)]/10 dark:bg-transparent",
   word: "text-[color:var(--ae-voice-amber)]",
@@ -488,7 +489,7 @@ export function AeVoicePanel({
         data-layout="sheet"
         data-phase={key}
         className={cn(
-          "flex flex-col items-stretch gap-3 rounded-t-[calc(1rem-1px)] border-t-[3px] px-4 pt-3 pb-4",
+          "flex flex-col items-stretch gap-3 rounded-t-[calc(var(--radius-2xl)-1px)] border-t-[3px] px-4 pt-3 pb-4",
           sheetBg,
           top,
           className,

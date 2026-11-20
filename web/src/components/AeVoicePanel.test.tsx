@@ -374,7 +374,12 @@ describe("AeVoicePanel car-mode sheet", () => {
       expect(button()).toHaveAccessibleName("Stop (nothing playing yet)");
       expect(button()).toHaveAttribute("tabindex", "-1");
       expect(button()).not.toBeDisabled();
-      expect(button().className).toContain("opacity-50");
+      const cls = button().className;
+      expect(cls).toContain("h-14 w-full");
+      expect(cls).toContain("bg-amber-500/30");
+      expect(cls).toContain("text-amber-900");
+      expect(cls).toContain("dark:text-amber-200");
+      expect(cls).not.toContain("bg-background");
       await userEvent.click(button());
       expect(onStop).not.toHaveBeenCalled();
     },
@@ -384,6 +389,8 @@ describe("AeVoicePanel car-mode sheet", () => {
     const { onStop } = sheet({ phase: "speaking", caption: "Hello." });
     expect(button()).toHaveTextContent("Stop");
     expect(button()).toHaveAccessibleName("Stop speaking");
+    expect(button().className).toContain("dark:text-amber-950");
+    expect(button().className).toContain("h-14 w-full");
     await userEvent.click(button());
     expect(onStop).toHaveBeenCalledTimes(1);
   });
