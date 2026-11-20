@@ -73,6 +73,7 @@ import { AeApprovalPreview, aeFoldsApprovalPreview } from "./AeApprovalPreview";
 import { AeChoiceButtons } from "./AeChoiceButtons";
 import { AeSlotsFullBody } from "./AeSlotsFullBody";
 import { AskUserQuestionForm, type AskUserQuestionAnswers } from "./AskUserQuestionForm";
+import { AeClampedMessage } from "./AeClampedMessage";
 import { ElicitationMessage } from "./ElicitationMessage";
 import {
   type ElicitationAnswers,
@@ -767,7 +768,7 @@ export function ApprovalCard({
                 onDecline={() => submitBinary("decline")}
               />
             ) : (
-              <ElicitationMessage message={message} />
+              <AeClampedMessage message={message} />
             )}
             {formattedPreview && (
               <AeApprovalPreview text={formattedPreview} fold={aeFoldsApprovalPreview(phase)} />

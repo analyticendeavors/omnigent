@@ -59,6 +59,14 @@ describe("parseAeSlotsFull", () => {
     expect(parsed.park.endsWith("tha....")).toBe(true);
   });
 
+  it("reads the ask with the policy-name prefix the engine puts on it", () => {
+    const parsed = parseAeSlotsFull(`ae_slot_cap: ${ONE}`);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.headline).toBe("Slots full: 1 of 3 taken. Run this as the 2nd?");
+    expect(parsed?.rows).toEqual([{ title: "Lead build", detail: "next: finish the card" }]);
+    expect(parseAeSlotsFull(`ae_slot_cap: ${SIX}`)?.rows).toHaveLength(6);
+  });
+
   it("returns null for block-mode and unrelated text", () => {
     expect(parseAeSlotsFull(BLOCK)).toBeNull();
     expect(parseAeSlotsFull("Approve running rm -rf /tmp/cache?")).toBeNull();

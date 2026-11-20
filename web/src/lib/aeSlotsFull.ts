@@ -23,6 +23,9 @@ export interface AeSlotsFull {
   tail: string[];
 }
 
+// The policy engine prefixes an ask reason with its policy name ("ae_slot_cap: Slots full: ...",
+// engine.py); the card already shows the policy label, so the prefix is dropped.
+const POLICY_PREFIX = /^[A-Za-z0-9_.-]+: (?=Slots full: )/;
 const HEADLINE = /^Slots full: (\d+) of \d+ taken\. Run this as the [^?]+\?/;
 const ACCEPT = " Accept to run it as overflow, or decline, then ";
 const PARK = " To park one instead, the longest running: ";
@@ -69,7 +72,8 @@ function parseRows(text: string, expected: number): AeSlotsFullRow[] | null {
   return expected === 0 ? (text === "" ? [] : null) : walk(1, 0);
 }
 
-export function parseAeSlotsFull(text: string): AeSlotsFull | null {
+export function parseAeSlotsFull(raw: string): AeSlotsFull | null {
+  const text = raw.replace(POLICY_PREFIX, "");
   const head = HEADLINE.exec(text);
   if (!head) return null;
   let rest = text.slice(head[0].length);

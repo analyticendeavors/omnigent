@@ -1981,6 +1981,23 @@ describe("ApprovalCard — slots full ask", () => {
     expect(screen.getByTestId("ae-slots-full-toggle").textContent).toBe("Show the holding slot");
   });
 
+  it("lays out the ask when the engine put the policy name in front of it", () => {
+    render(
+      <ApprovalCard
+        elicitationId="elic_slots_prefixed"
+        message={`ae_slot_cap: ${SLOTS}`}
+        phase="request"
+        policyName="ae_slot_cap"
+        contentPreview=""
+        requestedSchema={{}}
+        status="pending"
+        response={null}
+      />,
+    );
+    expect(screen.getByTestId("ae-slots-full")).toBeDefined();
+    expect(screen.getByRole("button", { name: /run as overflow/i })).toBeDefined();
+  });
+
   it("leaves a request ask that is not the slot cap as it was", () => {
     render(
       <ApprovalCard
