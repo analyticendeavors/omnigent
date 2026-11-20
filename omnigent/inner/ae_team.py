@@ -84,7 +84,8 @@ def _render_team(metadata: Any) -> str | None:
         return (
             "Auto collaboration is enabled for this chat. You are the lead and give one "
             "integrated answer. Work yourself, use native in-harness subagents, or bring in "
-            "another configured agent, in the smallest useful group. Before cross-agent work, "
+            "another configured agent, in the smallest useful group; routine work does not need a "
+            "team. Before cross-agent work, "
             "check agent and host readiness; use only configured, reachable agents. Reuse "
             "suitable child sessions. Delegate bounded tasks with context and file ownership, "
             "then inspect results. If cross-agent tools are missing, use native helpers and "

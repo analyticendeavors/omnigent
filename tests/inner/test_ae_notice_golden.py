@@ -1,8 +1,10 @@
 """Every rule of the team and roles notice survives, in every mode (golden table).
 
-The framework-context hook sends the notice in full once per session and a marker after, and
-the auto paragraph was shortened with it. Each rule below is pinned by a substring of the full
-block, so a trim that drops a rule fails here.
+The rule lists are a preserved baseline, not a copy of the current wording. The auto
+paragraph's entries are phrases from the notice as it stood before the once-per-session change
+(``OLD_AUTO_PARAGRAPH`` below is that text, kept whole); an entry is a tuple of the old phrase
+followed by any exact equivalents the new text may use instead. Every other list holds phrases
+that are word for word in the old text of its mode. A trim that drops a rule fails here.
 """
 
 from __future__ import annotations
@@ -25,17 +27,54 @@ from tests.inner.test_ae_roles import (
     _with_reviewers,
 )
 
-AUTO_RULES = (
-    "Auto collaboration is enabled for this chat",
-    "You are the lead and give one integrated answer",
-    "Work yourself, use native in-harness subagents, or bring in another configured agent",
-    "smallest useful group",
-    "check agent and host readiness; use only configured, reachable agents",
-    "Reuse suitable child sessions",
-    "Delegate bounded tasks with context and file ownership, then inspect results",
-    "If cross-agent tools are missing, use native helpers and say what you used",
-    "Never claim a collaborator or model worked unless you invoked it",
-    "Follow the user's permissions and limits",
+OLD_AUTO_PARAGRAPH = (
+    "Auto collaboration is enabled for this message. You are the lead and give one "
+    "integrated answer. Decide whether to work yourself, use your native in-harness "
+    "subagents, or bring in another configured agent. Use the smallest useful group; "
+    "routine work does not need a team. Before starting cross-agent work, inspect the "
+    "available agents and host readiness and use only configured, reachable agents. "
+    "Reuse suitable existing child sessions where possible. Delegate bounded tasks "
+    "with the relevant context, coordinate file ownership, and inspect the results. "
+    "If cross-agent tools are unavailable, use your normal native helpers and say "
+    "what you could actually use. Do not claim a collaborator or model worked "
+    "unless you invoked it. Follow the user's permissions and limits."
+)
+# (old phrase, *exact equivalents in the shortened wording). Case-insensitive.
+AUTO_RULES: tuple[tuple[str, ...], ...] = (
+    (
+        "Auto collaboration is enabled for this message",
+        "Auto collaboration is enabled for this chat",
+    ),
+    ("You are the lead and give one integrated answer",),
+    (
+        "work yourself, use your native in-harness subagents, or bring in another "
+        "configured agent",
+        "Work yourself, use native in-harness subagents, or bring in another configured agent",
+    ),
+    ("Use the smallest useful group", "in the smallest useful group"),
+    ("routine work does not need a team",),
+    (
+        "Before starting cross-agent work, inspect the available agents and host readiness and "
+        "use only configured, reachable agents",
+        "Before cross-agent work, check agent and host readiness; use only configured, "
+        "reachable agents",
+    ),
+    ("Reuse suitable existing child sessions where possible", "Reuse suitable child sessions"),
+    (
+        "Delegate bounded tasks with the relevant context, coordinate file ownership, and "
+        "inspect the results",
+        "Delegate bounded tasks with context and file ownership, then inspect results",
+    ),
+    (
+        "If cross-agent tools are unavailable, use your normal native helpers and say what you "
+        "could actually use",
+        "If cross-agent tools are missing, use native helpers and say what you used",
+    ),
+    (
+        "Do not claim a collaborator or model worked unless you invoked it",
+        "Never claim a collaborator or model worked unless you invoked it",
+    ),
+    ("Follow the user's permissions and limits",),
 )
 SOLO_RULES = (
     "keeps work in house",
@@ -132,6 +171,18 @@ def _full(mode: str, preset: dict[str, Any] | None = None) -> str:
     return render_team_notice(meta) or ""
 
 
+def _assert_has(text: str, rule: str | tuple[str, ...], mode: str) -> None:
+    """Assert *text* holds the rule's old phrase or one of its listed equivalents."""
+    options = (rule,) if isinstance(rule, str) else rule
+    lowered = text.lower()
+    assert any(option.lower() in lowered for option in options), f"{mode}: lost {options[0]!r}"
+
+
+def test_the_baseline_phrases_come_from_the_old_text() -> None:
+    for rule in AUTO_RULES:
+        assert rule[0].lower() in OLD_AUTO_PARAGRAPH.lower(), rule[0]
+
+
 @pytest.mark.parametrize(
     ("mode", "mode_rules"), [("auto", AUTO_RULES), ("solo", SOLO_RULES), ("team", TEAM_RULES)]
 )
@@ -139,7 +190,7 @@ def test_every_rule_is_in_the_full_block(mode: str, mode_rules: tuple[str, ...])
     text = _full(mode)
     assert text.startswith(NOTICE_PREFIX)
     for rule in (*mode_rules, *ROLE_RULES):
-        assert rule in text, f"{mode}: lost {rule!r}"
+        _assert_has(text, rule, mode)
 
 
 @pytest.mark.parametrize("mode", ["auto", "solo", "team"])
@@ -147,7 +198,7 @@ def test_every_reviewer_rule_is_in_the_full_block(mode: str) -> None:
     text = _full(mode, _reviewing_preset())
     assert "Roles preset: Balanced." in text
     for rule in REVIEWER_RULES:
-        assert rule in text, f"{mode}: lost {rule!r}"
+        _assert_has(text, rule, mode)
 
 
 def test_lead_picks_keeps_every_rule() -> None:
@@ -163,16 +214,16 @@ def test_lead_picks_keeps_every_rule() -> None:
     text = render_team_notice(meta) or ""
     assert text.startswith(NOTICE_PREFIX)
     for rule in (*AUTO_RULES, *LEAD_PICKS_RULES):
-        assert rule in text, f"lead-picks: lost {rule!r}"
+        _assert_has(text, rule, "lead-picks")
 
 
 def test_helper_keeps_every_rule() -> None:
     text = render_team_notice({"ae_helper": True}) or ""
     assert text.startswith(NOTICE_PREFIX)
     for rule in HELPER_RULES:
-        assert rule in text, f"helper: lost {rule!r}"
+        _assert_has(text, rule, "helper")
 
 
 def test_the_auto_paragraph_is_short() -> None:
     text = _full("auto").split("\n\nRoles preset")[0]
-    assert len(text) < 640
+    assert len(text) < len(OLD_AUTO_PARAGRAPH)

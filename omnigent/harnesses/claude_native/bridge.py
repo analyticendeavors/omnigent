@@ -108,6 +108,7 @@ CLAUDE_FRAMEWORK_CONTEXT_FILE = "pending_framework_context.txt"
 # full, so it can send a one-line marker in between (see ``hook._main_framework_context``).
 CLAUDE_FRAMEWORK_STATE_FILE = "framework_context_state.json"
 CLAUDE_FRAMEWORK_LAST_FILE = "framework_context_last.txt"
+CLAUDE_FRAMEWORK_LOCK_FILE = "framework_context.lock"
 # The notice goes out in full on the first prompt, whenever it changes, and on every Nth
 # prompt after, so a long chat never drifts from it.
 FRAMEWORK_REFRESH_EVERY = 20

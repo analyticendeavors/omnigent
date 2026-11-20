@@ -134,11 +134,16 @@ class ClaudeNativeExecutor(Executor):
         """Inject user text with one-shot context while holding the injection lock."""
         context_path = self._bridge_dir / CLAUDE_FRAMEWORK_CONTEXT_FILE
         context_path.unlink(missing_ok=True)
+        # The team and roles notice goes last: the framework-context hook gates it (full
+        # once, then a marker) and passes the other notices through whole. The file is
+        # written empty when there are no notices, so the hook can tell "nothing to add"
+        # (say a withdrawn notice is gone) from a prompt typed straight into the pane.
+        notices = sorted(notices, key=lambda notice: notice.startswith(NOTICE_PREFIX))
         if notices:
-            # The team and roles notice goes last: the framework-context hook gates it
-            # (full once, then a marker) and passes the other notices through whole.
-            notices = sorted(notices, key=lambda notice: notice.startswith(NOTICE_PREFIX))
             context_path.write_text("\n\n".join(notices), encoding="utf-8")
+        else:
+            with contextlib.suppress(OSError):
+                context_path.write_text("", encoding="utf-8")
         try:
             await self._inject(partial(inject_user_message, self._bridge_dir, content=text))
         except BaseException:

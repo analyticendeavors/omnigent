@@ -12,7 +12,7 @@ import re
 import secrets
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -20,6 +20,7 @@ from omnigent.harnesses.claude_native.bridge import (
     BRIDGE_ID_LABEL_KEY,
     CLAUDE_FRAMEWORK_CONTEXT_FILE,
     CLAUDE_FRAMEWORK_LAST_FILE,
+    CLAUDE_FRAMEWORK_LOCK_FILE,
     CLAUDE_FRAMEWORK_STATE_FILE,
     FRAMEWORK_REFRESH_EVERY,
     approval_wait_marker_path,
@@ -1130,6 +1131,10 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 _LEAD_LINE = re.compile(r"^- Lead: .*$\n?", re.MULTILINE)
+_INTERRUPT_MARK = b"[Request interrupted by user"
+NOTICE_WITHDRAWN = "Omnigent notice withdrawn: auto collaboration is off for this chat."
+# A full send older than this no longer counts as "this turn" (Stop never fired).
+FRAMEWORK_TURN_STALE_SECONDS = 1800
 _PRESET_LINE = re.compile(r"Roles preset: (.+?)\. (?:Name a role|Pick the preset)")
 _SOLO_PRESET = re.compile(r'preset \("(.+?)"\) keeps work in house')
 
@@ -1155,18 +1160,23 @@ def _notice_hash(notice: str) -> str:
     return hashlib.sha256(_LEAD_LINE.sub("", notice).encode("utf-8")).hexdigest()
 
 
-def _notice_marker(notice: str, digest: str) -> str:
-    """The one line sent in place of an unchanged notice."""
+def _preset_name(notice: str) -> str | None:
+    """The roles preset the notice names, read from its prose; ``None`` when it names none."""
     from omnigent.inner.ae_roles import HELPER_NOTICE
 
     if HELPER_NOTICE in notice:
-        preset = "helper"
-    else:
-        found = _PRESET_LINE.search(notice) or _SOLO_PRESET.search(notice)
-        preset = found.group(1) if found else "none"
+        return "helper"
+    found = _PRESET_LINE.search(notice) or _SOLO_PRESET.search(notice)
+    return found.group(1) if found else None
+
+
+def _notice_marker(notice: str, digest: str) -> str:
+    """The one line sent in place of an unchanged notice."""
+    preset = _preset_name(notice)
+    preset_part = f"; preset {preset}" if preset else ""
     lead = re.search(r"^- Lead: (.*?)\.?$", notice, re.MULTILINE)
     lead_part = f"; Lead: {lead.group(1)}." if lead else "."
-    return f"Omnigent notice v{digest[:8]} still in force; preset {preset}{lead_part}"
+    return f"Omnigent notice v{digest[:8]} still in force{preset_part}{lead_part}"
 
 
 def _read_framework_state(bridge_dir: Path) -> dict[str, object]:
@@ -1185,12 +1195,126 @@ def _write_framework_state(bridge_dir: Path, state: dict[str, object]) -> None:
         tmp.replace(path)
 
 
+@contextlib.contextmanager
+def _framework_lock(bridge_dir: Path) -> Iterator[bool]:
+    """
+    Hold an exclusive lock on the gate's state; yield ``False`` when it cannot be taken.
+
+    Overlapping hooks (a queued prompt, a Stop) would otherwise read the same state and
+    each decide to send in full, or lose a counter increment. Callers fail open: a ``False``
+    means send the notice in full.
+    """
+    try:
+        import fcntl
+
+        handle = (bridge_dir / CLAUDE_FRAMEWORK_LOCK_FILE).open("a+")
+    except (ImportError, OSError):
+        yield False
+        return
+    try:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+        except OSError:
+            yield False
+            return
+        yield True
+    finally:
+        handle.close()
+
+
+def _scan_transcript(
+    path: object, since_lines: int, uuid: object
+) -> tuple[int, bool, bool] | None:
+    """
+    Read the Claude transcript: its line count, whether *uuid* is in it, and whether an
+    interrupt marker follows line *since_lines*. ``None`` when it cannot be read.
+    """
+    if not isinstance(path, str) or not path:
+        return None
+    try:
+        data = Path(path).read_bytes()
+    except OSError:
+        return None
+    lines = data.splitlines()
+    has_uuid = not isinstance(uuid, str) or not uuid or uuid.encode("utf-8") in data
+    interrupted = any(_INTERRUPT_MARK in line for line in lines[since_lines:])
+    return len(lines), has_uuid, interrupted
+
+
+def _transcript_tail(path: object) -> dict[str, object]:
+    """The transcript position to remember at a full send: line count and last message uuid."""
+    if not isinstance(path, str) or not path:
+        return {}
+    try:
+        lines = Path(path).read_bytes().splitlines()
+    except OSError:
+        return {}
+    last_uuid = None
+    for line in reversed(lines[-20:]):
+        try:
+            found = json.loads(line).get("uuid")
+        except (ValueError, AttributeError):
+            continue
+        if isinstance(found, str) and found:
+            last_uuid = found
+            break
+    return {"transcript_lines": len(lines), "transcript_uuid": last_uuid}
+
+
 def _end_framework_turn(bridge_dir: Path) -> None:
     """A turn ended: a drift refresh may go out again on a later prompt."""
+    with _framework_lock(bridge_dir):
+        state = _read_framework_state(bridge_dir)
+        if state.get("full_in_turn"):
+            state["full_in_turn"] = False
+            _write_framework_state(bridge_dir, state)
+
+
+def _gate_notice(
+    bridge_dir: Path, notice: str, session_id: object, transcript_path: object, locked: bool
+) -> str:
+    """Return the full *notice* or its marker, and record what was sent."""
+    digest = _notice_hash(notice)
     state = _read_framework_state(bridge_dir)
-    if state.get("full_in_turn"):
-        state["full_in_turn"] = False
-        _write_framework_state(bridge_dir, state)
+    since = state.get("prompts_since_full")
+    since = since if isinstance(since, int) and not isinstance(since, bool) else 0
+    changed = state.get("hash") != digest or state.get("session_id") != session_id
+    lines = state.get("transcript_lines")
+    lines = lines if isinstance(lines, int) and not isinstance(lines, bool) else 0
+    scan = _scan_transcript(transcript_path, lines, state.get("transcript_uuid"))
+    # /rewind and a fork fire no SessionStart: the full block is gone from the conversation
+    # when the transcript is shorter than at the send or no longer holds its last message.
+    rewound = scan is not None and (not scan[1] or scan[0] < lines)
+    # Stop does not fire on an Esc interrupt: the transcript's interrupt line (or an old
+    # enough send) ends the turn, so a drift refresh is not blocked for good.
+    in_turn = bool(state.get("full_in_turn"))
+    sent_at = state.get("full_at")
+    if in_turn and (
+        (scan is not None and scan[2])
+        or not isinstance(sent_at, (int, float))
+        or time.time() - sent_at > FRAMEWORK_TURN_STALE_SECONDS
+    ):
+        in_turn = False
+    refresh = since + 1 >= FRAMEWORK_REFRESH_EVERY and not bool(state.get("full_in_turn"))
+    if changed or rewound or refresh or not locked:
+        with contextlib.suppress(OSError):
+            (bridge_dir / CLAUDE_FRAMEWORK_LAST_FILE).write_text(notice, encoding="utf-8")
+        _write_framework_state(
+            bridge_dir,
+            {
+                "hash": digest,
+                "session_id": session_id,
+                "prompts_since_full": 0,
+                "full_in_turn": True,
+                "full_at": time.time(),
+                **_transcript_tail(transcript_path),
+            },
+        )
+        return notice
+    _write_framework_state(
+        bridge_dir, {**state, "prompts_since_full": since + 1, "full_in_turn": in_turn}
+    )
+    return _notice_marker(notice, digest)
 
 
 def _main_framework_context(argv: list[str]) -> int:
@@ -1198,50 +1322,41 @@ def _main_framework_context(argv: list[str]) -> int:
     Add pending framework context to one submitted prompt.
 
     The team and roles notice goes out in full on the first prompt of a Claude session,
-    when its text changes (the ``- Lead:`` line aside) and on every
+    when its text changes (the ``- Lead:`` line aside), after a rewind, and on every
     ``FRAMEWORK_REFRESH_EVERY``th prompt; every other prompt gets a one-line marker. A
     drift refresh never lands in the same turn as a full send, so a prompt queued
-    mid-turn gets the marker only.
+    mid-turn gets the marker only. When the notice disappears after a full send (auto
+    collaboration turned off), one line says it is withdrawn and the gate resets.
+
+    The bridge writes the context file on every message it sends, empty when there is
+    nothing to add; no file at all means a prompt typed straight into the pane.
     """
     args = _parse_evaluate_policy_args(argv)
     try:
         payload = json.loads(sys.stdin.read() or "{}")
     except ValueError:
         payload = {}
-    session_id = payload.get("session_id") if isinstance(payload, dict) else None
+    payload = payload if isinstance(payload, dict) else {}
+    session_id = payload.get("session_id")
+    transcript_path = payload.get("transcript_path")
     bridge_dir = Path(args.bridge_dir)
     path = bridge_dir / CLAUDE_FRAMEWORK_CONTEXT_FILE
-    try:
-        text = path.read_text(encoding="utf-8")
-        path.unlink(missing_ok=True)
-    except OSError:
-        return 0
+    with _framework_lock(bridge_dir) as locked:
+        try:
+            text = path.read_text(encoding="utf-8")
+            path.unlink(missing_ok=True)
+        except OSError:
+            return 0
+        other, notice = _split_notice(text)
+        if notice:
+            notice = _gate_notice(bridge_dir, notice, session_id, transcript_path, locked)
+            text = f"{other}\n\n{notice}" if other else notice
+        elif _read_framework_state(bridge_dir).get("hash"):
+            (bridge_dir / CLAUDE_FRAMEWORK_STATE_FILE).unlink(missing_ok=True)
+            (bridge_dir / CLAUDE_FRAMEWORK_LAST_FILE).unlink(missing_ok=True)
+            text = f"{other}\n\n{NOTICE_WITHDRAWN}" if other else NOTICE_WITHDRAWN
     if not text:
         return 0
-    other, notice = _split_notice(text)
-    if notice:
-        digest = _notice_hash(notice)
-        state = _read_framework_state(bridge_dir)
-        since = state.get("prompts_since_full")
-        since = since if isinstance(since, int) and not isinstance(since, bool) else 0
-        changed = state.get("hash") != digest or state.get("session_id") != session_id
-        refresh = since + 1 >= FRAMEWORK_REFRESH_EVERY and not state.get("full_in_turn")
-        if changed or refresh:
-            with contextlib.suppress(OSError):
-                (bridge_dir / CLAUDE_FRAMEWORK_LAST_FILE).write_text(notice, encoding="utf-8")
-            _write_framework_state(
-                bridge_dir,
-                {
-                    "hash": digest,
-                    "session_id": session_id,
-                    "prompts_since_full": 0,
-                    "full_in_turn": True,
-                },
-            )
-        else:
-            _write_framework_state(bridge_dir, {**state, "prompts_since_full": since + 1})
-            notice = _notice_marker(notice, digest)
-        text = f"{other}\n\n{notice}" if other else notice
     output = {"hookEventName": "UserPromptSubmit", "additionalContext": text}
     sys.stdout.write(json.dumps({"hookSpecificOutput": output}))
     return 0
@@ -1279,6 +1394,7 @@ def _main_framework_session_start(argv: list[str]) -> int:
             "session_id": payload.get("session_id"),
             "prompts_since_full": 0,
             "full_in_turn": False,
+            **_transcript_tail(payload.get("transcript_path")),
         },
     )
     sys.stdout.write(

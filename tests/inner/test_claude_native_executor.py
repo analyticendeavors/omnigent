@@ -1011,7 +1011,7 @@ async def test_enqueue_session_message_materializes_image(
     assert len(written) == 1
     assert written[0].name == "steering_img.png"
     assert await executor.enqueue_session_message("session-key", "follow-up")
-    assert not (tmp_path / CLAUDE_FRAMEWORK_CONTEXT_FILE).exists()
+    assert (tmp_path / CLAUDE_FRAMEWORK_CONTEXT_FILE).read_text() == ""
 
 
 @pytest.mark.asyncio
