@@ -69,7 +69,7 @@ describe("ExtensionViewHost", () => {
   it("uses an opaque sandbox and becomes ready only after the nonce-bound handshake", async () => {
     render(<ExtensionViewHost extension={extension} page={page} refresh={refresh} />);
     const iframe = await screen.findByTitle("Dashboard");
-    expect(iframe).toHaveAttribute("sandbox", "allow-scripts");
+    expect(iframe).toHaveAttribute("sandbox", "allow-scripts allow-downloads");
     expect(iframe).toHaveAttribute("allow", "");
     expect(iframe).toHaveClass("min-h-0", "flex-1");
     expect(iframe.parentElement).toHaveClass("extension-view-host", "pt-14", "md:pt-12");

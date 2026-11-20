@@ -305,7 +305,9 @@ export function ExtensionViewHost({
           key={frameDocument.identity.nonce}
           ref={iframeRef}
           title={page.title}
-          sandbox="allow-scripts"
+          // allow-downloads (AE, 2026-11-20): a page's own Download button (a blob link with
+          // `download`) saves a file; without it the frame drops the save with no message.
+          sandbox="allow-scripts allow-downloads"
           allow=""
           srcDoc={frameDocument.srcDoc}
           onLoad={handleLoad}
