@@ -273,6 +273,8 @@ export function useAeSpeakReplies({
       if (fresh.length === 0) return;
       // A tap on the speaker silenced this turn: the sentences count as read, none is spoken.
       if (getVoiceSnapshot(chatId).barged) return;
+      // Once per turn: with the send and first audio logs it splits model time from TTS time.
+      if (!spokenThisTurn) logVoice("reply first text");
       spokenThisTurn = true;
       clearCue();
       // The cue must not delay the real reply, nor queue ahead of its first chunk.

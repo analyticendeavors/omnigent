@@ -17,8 +17,13 @@ import { authenticatedFetch } from "./identity";
 
 /** Quiet time after a finished sentence before the draft is sent. */
 export const GRACE_MS = 2000;
+/**
+ * The same pause when the mic uses server dictation (iPhone, iPad): the server already waited
+ * 1.6 s of silence before it finalized, so a second 2 s wait only adds dead air.
+ */
+export const SERVER_STT_GRACE_MS = 1000;
 /** Gap after the last spoken sentence before the mic comes back. */
-export const RESUME_MS = 300;
+export const RESUME_MS = 100;
 
 export type VoicePhase =
   | "off"

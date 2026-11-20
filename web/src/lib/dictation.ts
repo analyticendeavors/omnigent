@@ -315,23 +315,38 @@ export class DictationSession {
     events: DictationSessionEvents,
     options: DictationStartOptions = {},
   ): Promise<DictationSession> {
+    // The mic and the socket are opened together: each takes a few hundred ms and neither
+    // needs the other. allSettled keeps a late failure of one half from going unhandled.
     const t0 = Date.now();
-    const mediaStream = await getMicStream({
+    const micPromise = getMicStream({
       channelCount: 1,
       echoCancellation: true,
       noiseSuppression: true,
+    }).then((stream) => {
+      logVoice("dictation mic", `${Date.now() - t0} ms`);
+      return stream;
     });
-    logVoice("dictation mic", `${Date.now() - t0} ms`);
+    const ws = new WebSocket(buildDictationUrl());
+    ws.binaryType = "arraybuffer";
+    const readyPromise = waitForReady(ws).then(() => {
+      logVoice("dictation ws ready", `${Date.now() - t0} ms`);
+    });
+    const [micResult, readyResult] = await Promise.allSettled([micPromise, readyPromise]);
+    if (micResult.status === "rejected" || readyResult.status === "rejected") {
+      // Close whichever half succeeded; the failure that surfaces is the mic's first.
+      if (micResult.status === "fulfilled") {
+        for (const track of micResult.value.getTracks()) track.stop();
+      }
+      ws.close();
+      throw micResult.status === "rejected"
+        ? micResult.reason
+        : (readyResult as PromiseRejectedResult).reason;
+    }
+    const mediaStream = micResult.value;
 
-    let ws: WebSocket | null = null;
     let audioContext: AudioContext | null = null;
     let shared = false;
     try {
-      const wsAt = Date.now();
-      ws = new WebSocket(buildDictationUrl());
-      ws.binaryType = "arraybuffer";
-      await waitForReady(ws);
-      logVoice("dictation ws ready", `${Date.now() - wsAt} ms`);
       // Detect a close during the async audio-graph setup below: the
       // handler-swap in the constructor would otherwise never see it and
       // start() would resolve a dead session that silently drops audio.
@@ -402,7 +417,7 @@ export class DictationSession {
     } catch (error) {
       for (const track of mediaStream.getTracks()) track.stop();
       if (audioContext && !shared && audioContext.state !== "closed") void audioContext.close();
-      ws?.close();
+      ws.close();
       throw error;
     }
   }

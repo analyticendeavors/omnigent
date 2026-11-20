@@ -5,6 +5,7 @@ import { activeEchoWords, notePlayback, recordSpoken, resetEcho } from "@/lib/ae
 import { MIC_WHILE_SPEAKING_KEY } from "@/lib/aeVoiceMic";
 import {
   GRACE_MS,
+  SERVER_STT_GRACE_MS,
   registerVoiceSpeaker,
   registerVoiceStop,
   RESUME_MS,
@@ -60,6 +61,7 @@ let synth: FakeSynth;
 let listening = false;
 // False leaves a start "connecting": isListening stays false until the test says otherwise.
 let autoConnect = true;
+let micPath: "browser" | "server" = "browser";
 const controller = {
   current: {
     start: vi.fn(() => {
@@ -70,7 +72,7 @@ const controller = {
     }),
     restart: vi.fn(),
     isListening: () => listening,
-    startPath: () => "browser" as const,
+    startPath: () => micPath,
   },
 };
 const submit = vi.fn();
@@ -102,6 +104,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   window.localStorage.clear();
   resetVoiceLog();
+  micPath = "browser";
   resetEcho();
   resetVoiceStore();
   listening = false;
@@ -144,6 +147,18 @@ describe("useAeVoiceMode", () => {
     act(() => void vi.advanceTimersByTime(1));
     expect(submit).toHaveBeenCalledTimes(1);
     expect(controller.current.stop).toHaveBeenCalled();
+  });
+
+  it("sends after 1 s on the server dictation path and 2 s on the browser path", () => {
+    expect(SERVER_STT_GRACE_MS).toBe(1000);
+    expect(GRACE_MS).toBe(2000);
+    micPath = "server";
+    const { result } = mount({ value: "hello there" });
+    act(() => void result.current.onFinal("hello there"));
+    act(() => void vi.advanceTimersByTime(SERVER_STT_GRACE_MS - 1));
+    expect(submit).not.toHaveBeenCalled();
+    act(() => void vi.advanceTimersByTime(1));
+    expect(submit).toHaveBeenCalledTimes(1);
   });
 
   it("a new partial inside the grace cancels the send", () => {

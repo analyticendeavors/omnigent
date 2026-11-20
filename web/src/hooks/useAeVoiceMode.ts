@@ -15,6 +15,7 @@ import {
   approvalSpeech,
   customAllowed,
   GRACE_MS,
+  SERVER_STT_GRACE_MS,
   isPendingElicitation,
   matchApprovalReply,
   matchSpokenOption,
@@ -285,6 +286,12 @@ export function useAeVoiceMode({
     const t = setTimeout(() => setReady(true), RESUME_MS);
     return () => clearTimeout(t);
   }, [muted]);
+
+  /** The send pause for the live mic path: server dictation already waited out the silence. */
+  const graceMs = useCallback(
+    () => (controller.current?.startPath() === "server" ? SERVER_STT_GRACE_MS : GRACE_MS),
+    [controller],
+  );
 
   const clearNet = useCallback(() => {
     if (netTimer.current !== null) clearTimeout(netTimer.current);
@@ -622,9 +629,9 @@ export function useAeVoiceMode({
       graceTimer.current = setTimeout(() => {
         graceTimer.current = null;
         if (card.current === state && state.custom !== "") answerCard(state, state.custom);
-      }, GRACE_MS);
+      }, graceMs());
     },
-    [answerCard, clearGrace],
+    [answerCard, clearGrace, graceMs],
   );
 
   const bargeIn = useCallback((): boolean => {
@@ -750,10 +757,10 @@ export function useAeVoiceMode({
         const current = latest.current;
         if (current.quiet || current.value.trim() === "") return;
         send();
-      }, GRACE_MS);
+      }, graceMs());
       return false;
     },
-    [on, onCardFinal, clearGrace, send, sendApproval],
+    [on, onCardFinal, clearGrace, send, sendApproval, graceMs],
   );
 
   const onPartial = useCallback(

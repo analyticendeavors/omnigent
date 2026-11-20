@@ -4,8 +4,73 @@
 // with a mocked session, and the full loop runs in the Playwright e2e test
 // against the server's fake engine.
 
-import { describe, expect, it } from "vitest";
-import { parseDictationEvent } from "./dictation";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { getMicStream } from "@/lib/aeAudioDevices";
+import { DictationSession, parseDictationEvent } from "./dictation";
+
+vi.mock("@/lib/aeAudioDevices", () => ({ getMicStream: vi.fn() }));
+
+class FakeSocket {
+  static last: FakeSocket | null = null;
+  static OPEN = 1;
+  binaryType = "";
+  readyState = 0;
+  closed = false;
+  onmessage: ((m: { data: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  onclose: ((e: { code: number }) => void) | null = null;
+  constructor(_url: string) {
+    FakeSocket.last = this;
+  }
+  close() {
+    this.closed = true;
+  }
+  addEventListener() {}
+  removeEventListener() {}
+}
+
+const events = { onPartial: vi.fn(), onFinal: vi.fn(), onError: vi.fn() };
+
+function fakeStream() {
+  const track = { stop: vi.fn() };
+  return { stream: { getTracks: () => [track] } as unknown as MediaStream, track };
+}
+
+describe("DictationSession.start opens the mic and the socket together", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.mocked(getMicStream).mockReset();
+    FakeSocket.last = null;
+  });
+
+  it("asks for the mic before the socket is ready", async () => {
+    vi.stubGlobal("WebSocket", FakeSocket);
+    vi.mocked(getMicStream).mockReturnValue(new Promise(() => {}));
+    void DictationSession.start(events).catch(() => {});
+    expect(getMicStream).toHaveBeenCalledTimes(1);
+    expect(FakeSocket.last).not.toBeNull();
+  });
+
+  it("a denied mic rejects and closes the socket", async () => {
+    vi.stubGlobal("WebSocket", FakeSocket);
+    vi.mocked(getMicStream).mockRejectedValue(new Error("denied"));
+    const started = DictationSession.start(events);
+    FakeSocket.last?.onmessage?.({ data: '{"type":"ready"}' });
+    await expect(started).rejects.toThrow("denied");
+    expect(FakeSocket.last?.closed).toBe(true);
+  });
+
+  it("a failed socket rejects and stops the mic that did open", async () => {
+    vi.stubGlobal("WebSocket", FakeSocket);
+    const { stream, track } = fakeStream();
+    vi.mocked(getMicStream).mockResolvedValue(stream);
+    const started = DictationSession.start(events);
+    FakeSocket.last?.onerror?.();
+    await expect(started).rejects.toThrow("dictation connection failed");
+    expect(track.stop).toHaveBeenCalled();
+    expect(FakeSocket.last?.closed).toBe(true);
+  });
+});
 
 describe("parseDictationEvent", () => {
   it("parses the transcript event shapes", () => {
