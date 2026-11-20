@@ -33,6 +33,7 @@ from omnigent.harnesses.claude_native.bridge import (
     read_model_env,
     read_model_picker_values,
 )
+from omnigent.inner.ae_roles import NOTICE_PREFIX
 from omnigent.inner.executor import (
     EnqueuedContent,
     Executor,
@@ -134,6 +135,9 @@ class ClaudeNativeExecutor(Executor):
         context_path = self._bridge_dir / CLAUDE_FRAMEWORK_CONTEXT_FILE
         context_path.unlink(missing_ok=True)
         if notices:
+            # The team and roles notice goes last: the framework-context hook gates it
+            # (full once, then a marker) and passes the other notices through whole.
+            notices = sorted(notices, key=lambda notice: notice.startswith(NOTICE_PREFIX))
             context_path.write_text("\n\n".join(notices), encoding="utf-8")
         try:
             await self._inject(partial(inject_user_message, self._bridge_dir, content=text))

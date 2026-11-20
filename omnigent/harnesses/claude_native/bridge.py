@@ -68,15 +68,17 @@ from filelock import FileLock
 from filelock import Timeout as FileLockTimeout
 
 from omnigent._platform import IS_WINDOWS, is_wsl, stable_user_id
-from omnigent.harnesses.claude_native import ae_bridge_retention
-from omnigent.harnesses.claude_native import delivery_diagnostics
-from omnigent.harnesses.claude_native import transcript_filters
-from omnigent.harnesses.claude_native.failure_telemetry import claude_failure_context
+from omnigent.harnesses.claude_native import (
+    ae_bridge_retention,
+    delivery_diagnostics,
+    transcript_filters,
+)
 from omnigent.harnesses.claude_native.ae_pane_progress import (
     PROGRESS_UNKNOWN,
     PaneProgressRead,
     progress_from_pane,
 )
+from omnigent.harnesses.claude_native.failure_telemetry import claude_failure_context
 from omnigent.harnesses.claude_native.message_display_hook import MESSAGE_DELTAS_FILE
 from omnigent.harnesses.claude_native.status import CLAUDE_ACCOUNT_FILE, CONTEXT_RAW_FILE
 from omnigent.harnesses.diagnostics import detect_sign_in_prompt, sign_in_next_step
@@ -102,6 +104,13 @@ from omnigent.tools.base import Tool, ToolContext
 from omnigent.util.reasoning_effort import CLAUDE_EFFORTS
 
 CLAUDE_FRAMEWORK_CONTEXT_FILE = "pending_framework_context.txt"
+# Once-per-session notice gate (2026-11-20): what the framework-context hook last sent in
+# full, so it can send a one-line marker in between (see ``hook._main_framework_context``).
+CLAUDE_FRAMEWORK_STATE_FILE = "framework_context_state.json"
+CLAUDE_FRAMEWORK_LAST_FILE = "framework_context_last.txt"
+# The notice goes out in full on the first prompt, whenever it changes, and on every Nth
+# prompt after, so a long chat never drifts from it.
+FRAMEWORK_REFRESH_EVERY = 20
 
 _logger = logging.getLogger(__name__)
 _INJECTION_CANCEL_EVENT: ContextVar[threading.Event | None] = ContextVar(
@@ -2412,6 +2421,21 @@ def build_hook_settings(
         "type": "command",
         "command": command,
     }
+    framework_session_start_parts = [
+        python,
+        "-I",
+        "-m",
+        "omnigent.harnesses.claude_native.hook",
+        "framework-context-session-start",
+        "--bridge-dir",
+        str(bridge_dir),
+    ]
+    framework_session_start_hook = {
+        "type": "command",
+        "command": (
+            f"{_python_hook_command(framework_session_start_parts)} 2>> {observer_stderr}"
+        ),
+    }
     # ``MessageDisplay`` fires once per streamed assistant-text chunk and
     # Claude blocks on the hook, so the hot path must not even pay an
     # interpreter spawn: a /bin/sh appender writes Claude's raw payload
@@ -2427,7 +2451,7 @@ def build_hook_settings(
         ),
     }
     hooks: dict[str, list[_JsonObject]] = {
-        "SessionStart": [{"hooks": [session_start_hook]}],
+        "SessionStart": [{"hooks": [session_start_hook, framework_session_start_hook]}],
         "SessionEnd": [{"hooks": [hook]}],
         "Stop": [{"hooks": [hook]}],
         "StopFailure": [{"hooks": [hook]}],

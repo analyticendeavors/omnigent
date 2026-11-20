@@ -5,7 +5,7 @@ import json
 import httpx
 import pytest
 
-from omnigent.inner.ae_roles import HELPER_NOTICE
+from omnigent.inner.ae_roles import HELPER_NOTICE, NOTICE_PREFIX
 from omnigent.inner.ae_team import TEAM_LABEL
 from omnigent.inner.native_attachments import framework_notices
 from omnigent.server.routes._sessions import orchestration
@@ -111,4 +111,4 @@ async def test_native_child_session_gets_the_helper_notice(
         await orchestration._forward_native_terminal_message(
             runner, child.id, conv, event, conversation_store=store
         )
-    assert framework_notices(sent[-1]["content"]) == [HELPER_NOTICE]
+    assert framework_notices(sent[-1]["content"]) == [f"{NOTICE_PREFIX} {HELPER_NOTICE}"]

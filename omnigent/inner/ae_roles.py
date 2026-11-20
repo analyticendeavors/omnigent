@@ -103,6 +103,10 @@ BALANCED: dict[str, Any] = {
         "helpers": "any",
     },
 }
+# Opens every rendered team and roles notice (2026-11-20). The native framework-context hook
+# sends the whole notice once per session and a one-line marker after it, and tells the
+# notice apart from other context by this prefix.
+NOTICE_PREFIX = "Replaces any earlier notice."
 SOLO = "solo"
 HELPER_KEY = "ae_helper"
 HELPER_NOTICE = (

@@ -115,7 +115,7 @@ def test_a_child_session_is_told_it_is_a_helper_not_the_lead() -> None:
     child = conversation("child", parent_conversation_id="parent")
     notice = team_notice(child, Mock())
     text = render_team_notice(notice) or ""
-    assert text.startswith("You are a helper session started by a lead session.")
+    assert text.startswith("Replaces any earlier notice. You are a helper session")
     assert "You are the lead" not in text
     assert "Roles preset" not in text
     expanded = expand_framework_notices(

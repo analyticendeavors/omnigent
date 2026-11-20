@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from omnigent.inner.ae_roles import append_roles, solo_opening, with_roles
+from omnigent.inner.ae_roles import NOTICE_PREFIX, append_roles, solo_opening, with_roles
 
 if TYPE_CHECKING:
     from omnigent.entities.conversation import Conversation
@@ -67,8 +67,13 @@ def _team_notice(conv: Conversation, store: ConversationStore) -> dict[str, obje
 
 
 def render_team_notice(metadata: Any) -> str | None:
-    """Canonical wording shared by SDK and native framework-notice transports."""
-    return append_roles(_render_team(metadata), metadata)
+    """Canonical wording shared by SDK and native framework-notice transports.
+
+    The text opens with :data:`NOTICE_PREFIX`: a resent notice replaces the earlier one,
+    and the native framework-context hook finds the notice in a joined context file by it.
+    """
+    text = append_roles(_render_team(metadata), metadata)
+    return f"{NOTICE_PREFIX} {text}" if text else text
 
 
 def _render_team(metadata: Any) -> str | None:
@@ -77,16 +82,14 @@ def _render_team(metadata: Any) -> str | None:
     roster = metadata["ae_team"]
     if roster.get("mode") == "auto":
         return (
-            "Auto collaboration is enabled for this message. You are the lead and give one "
-            "integrated answer. Decide whether to work yourself, use your native in-harness "
-            "subagents, or bring in another configured agent. Use the smallest useful group; "
-            "routine work does not need a team. Before starting cross-agent work, inspect the "
-            "available agents and host readiness and use only configured, reachable agents. "
-            "Reuse suitable existing child sessions where possible. Delegate bounded tasks "
-            "with the relevant context, coordinate file ownership, and inspect the results. "
-            "If cross-agent tools are unavailable, use your normal native helpers and say "
-            "what you could actually use. Do not claim a collaborator or model worked "
-            "unless you invoked it. Follow the user's permissions and limits."
+            "Auto collaboration is enabled for this chat. You are the lead and give one "
+            "integrated answer. Work yourself, use native in-harness subagents, or bring in "
+            "another configured agent, in the smallest useful group. Before cross-agent work, "
+            "check agent and host readiness; use only configured, reachable agents. Reuse "
+            "suitable child sessions. Delegate bounded tasks with context and file ownership, "
+            "then inspect results. If cross-agent tools are missing, use native helpers and "
+            "say what you used. Never claim a collaborator or model worked unless you invoked "
+            "it. Follow the user's permissions and limits."
         )
     if roster.get("mode") == "solo":
         return (

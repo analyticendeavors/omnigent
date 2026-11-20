@@ -13,8 +13,9 @@ import pytest
 
 from omnigent.entities.conversation import Conversation
 from omnigent.inner import ae_reviewers, ae_roles
-from omnigent.inner.ae_roles import render_roles, resolve_roles
-from omnigent.inner.ae_team import TEAM_LABEL, render_team_notice, team_notice
+from omnigent.inner.ae_roles import NOTICE_PREFIX, render_roles, resolve_roles
+from omnigent.inner.ae_team import TEAM_LABEL, team_notice
+from omnigent.inner.ae_team import render_team_notice as _render_team_notice
 
 BALANCED: dict[str, Any] = {
     **ae_roles.BALANCED,
@@ -55,6 +56,12 @@ def conversation(labels: dict[str, str] | None = None, **kwargs: Any) -> Convers
         labels=labels or {},
         **kwargs,
     )
+
+
+def render_team_notice(notice: Any) -> str | None:
+    """The notice minus its "Replaces any earlier notice." opening (see the golden test)."""
+    text = _render_team_notice(notice)
+    return text.removeprefix(NOTICE_PREFIX + " ") if text else text
 
 
 def team_label(**fields: Any) -> dict[str, str]:

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import json
 import math
 import os
+import re
 import secrets
 import sys
 import time
@@ -17,6 +19,9 @@ from typing import TYPE_CHECKING
 from omnigent.harnesses.claude_native.bridge import (
     BRIDGE_ID_LABEL_KEY,
     CLAUDE_FRAMEWORK_CONTEXT_FILE,
+    CLAUDE_FRAMEWORK_LAST_FILE,
+    CLAUDE_FRAMEWORK_STATE_FILE,
+    FRAMEWORK_REFRESH_EVERY,
     approval_wait_marker_path,
     hold_approval_wait_marker,
     read_active_session_id,
@@ -208,6 +213,8 @@ def main(argv: list[str] | None = None) -> int:
         return _main_route_turn(raw_argv[1:])
     if raw_argv and raw_argv[0] == "framework-context":
         return _main_framework_context(raw_argv[1:])
+    if raw_argv and raw_argv[0] == "framework-context-session-start":
+        return _main_framework_session_start(raw_argv[1:])
     # Backwards compat: older bridge dirs may still reference the
     # pre-tool-use subcommand before the terminal is restarted.
     if raw_argv and raw_argv[0] == "pre-tool-use":
@@ -226,6 +233,8 @@ def main(argv: list[str] | None = None) -> int:
     from omnigent.harnesses.claude_native.lifecycle import record_hook_lifecycle
 
     record_hook_lifecycle(bridge_dir, payload, time.time())
+    if payload.get("hook_event_name") in ("Stop", "StopFailure"):
+        _end_framework_turn(bridge_dir)
     if payload.get("hook_event_name") == "SessionEnd":
         # SessionEnd is diagnostic evidence, not a status or transcript change.
         return 0
@@ -1120,27 +1129,163 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+_LEAD_LINE = re.compile(r"^- Lead: .*$\n?", re.MULTILINE)
+_PRESET_LINE = re.compile(r"Roles preset: (.+?)\. (?:Name a role|Pick the preset)")
+_SOLO_PRESET = re.compile(r'preset \("(.+?)"\) keeps work in house')
+
+
+def _split_notice(text: str) -> tuple[str, str]:
+    """Split pending context into other notices and the team and roles notice.
+
+    The executor writes the team and roles notice last, and it opens with
+    ``NOTICE_PREFIX``; anything before it (an image resize note) is not gated.
+    """
+    from omnigent.inner.ae_roles import NOTICE_PREFIX
+
+    if text.startswith(NOTICE_PREFIX):
+        return "", text
+    index = text.find("\n\n" + NOTICE_PREFIX)
+    if index < 0:
+        return text, ""
+    return text[:index], text[index + 2 :]
+
+
+def _notice_hash(notice: str) -> str:
+    """Hash of *notice* without its per-turn ``- Lead:`` line (routing changes that one)."""
+    return hashlib.sha256(_LEAD_LINE.sub("", notice).encode("utf-8")).hexdigest()
+
+
+def _notice_marker(notice: str, digest: str) -> str:
+    """The one line sent in place of an unchanged notice."""
+    from omnigent.inner.ae_roles import HELPER_NOTICE
+
+    if HELPER_NOTICE in notice:
+        preset = "helper"
+    else:
+        found = _PRESET_LINE.search(notice) or _SOLO_PRESET.search(notice)
+        preset = found.group(1) if found else "none"
+    lead = re.search(r"^- Lead: (.*?)\.?$", notice, re.MULTILINE)
+    lead_part = f"; Lead: {lead.group(1)}." if lead else "."
+    return f"Omnigent notice v{digest[:8]} still in force; preset {preset}{lead_part}"
+
+
+def _read_framework_state(bridge_dir: Path) -> dict[str, object]:
+    try:
+        state = json.loads((bridge_dir / CLAUDE_FRAMEWORK_STATE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
+def _write_framework_state(bridge_dir: Path, state: dict[str, object]) -> None:
+    path = bridge_dir / CLAUDE_FRAMEWORK_STATE_FILE
+    tmp = path.with_name(path.name + ".tmp")
+    with contextlib.suppress(OSError):
+        tmp.write_text(json.dumps(state), encoding="utf-8")
+        tmp.replace(path)
+
+
+def _end_framework_turn(bridge_dir: Path) -> None:
+    """A turn ended: a drift refresh may go out again on a later prompt."""
+    state = _read_framework_state(bridge_dir)
+    if state.get("full_in_turn"):
+        state["full_in_turn"] = False
+        _write_framework_state(bridge_dir, state)
+
+
 def _main_framework_context(argv: list[str]) -> int:
-    """Add pending framework context to one submitted prompt."""
+    """
+    Add pending framework context to one submitted prompt.
+
+    The team and roles notice goes out in full on the first prompt of a Claude session,
+    when its text changes (the ``- Lead:`` line aside) and on every
+    ``FRAMEWORK_REFRESH_EVERY``th prompt; every other prompt gets a one-line marker. A
+    drift refresh never lands in the same turn as a full send, so a prompt queued
+    mid-turn gets the marker only.
+    """
     args = _parse_evaluate_policy_args(argv)
-    sys.stdin.read()
-    path = Path(args.bridge_dir) / CLAUDE_FRAMEWORK_CONTEXT_FILE
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+    except ValueError:
+        payload = {}
+    session_id = payload.get("session_id") if isinstance(payload, dict) else None
+    bridge_dir = Path(args.bridge_dir)
+    path = bridge_dir / CLAUDE_FRAMEWORK_CONTEXT_FILE
     try:
         text = path.read_text(encoding="utf-8")
         path.unlink(missing_ok=True)
     except OSError:
         return 0
-    if text:
-        sys.stdout.write(
-            json.dumps(
+    if not text:
+        return 0
+    other, notice = _split_notice(text)
+    if notice:
+        digest = _notice_hash(notice)
+        state = _read_framework_state(bridge_dir)
+        since = state.get("prompts_since_full")
+        since = since if isinstance(since, int) and not isinstance(since, bool) else 0
+        changed = state.get("hash") != digest or state.get("session_id") != session_id
+        refresh = since + 1 >= FRAMEWORK_REFRESH_EVERY and not state.get("full_in_turn")
+        if changed or refresh:
+            with contextlib.suppress(OSError):
+                (bridge_dir / CLAUDE_FRAMEWORK_LAST_FILE).write_text(notice, encoding="utf-8")
+            _write_framework_state(
+                bridge_dir,
                 {
-                    "hookSpecificOutput": {
-                        "hookEventName": "UserPromptSubmit",
-                        "additionalContext": text,
-                    }
-                }
+                    "hash": digest,
+                    "session_id": session_id,
+                    "prompts_since_full": 0,
+                    "full_in_turn": True,
+                },
             )
+        else:
+            _write_framework_state(bridge_dir, {**state, "prompts_since_full": since + 1})
+            notice = _notice_marker(notice, digest)
+        text = f"{other}\n\n{notice}" if other else notice
+    output = {"hookEventName": "UserPromptSubmit", "additionalContext": text}
+    sys.stdout.write(json.dumps({"hookSpecificOutput": output}))
+    return 0
+
+
+def _main_framework_session_start(argv: list[str]) -> int:
+    """
+    Reset the notice gate on every ``SessionStart``; on compact or resume, resend it.
+
+    Compaction (including an auto-compaction mid-turn) and a resume can drop the notice
+    from Claude's context, so those two sources re-emit the last full block as context and
+    count it as just sent. Any other source clears the state, so the next prompt sends the
+    notice in full.
+    """
+    args = _parse_evaluate_policy_args(argv)
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+    except ValueError:
+        payload = {}
+    payload = payload if isinstance(payload, dict) else {}
+    bridge_dir = Path(args.bridge_dir)
+    (bridge_dir / CLAUDE_FRAMEWORK_STATE_FILE).unlink(missing_ok=True)
+    if payload.get("source") not in ("compact", "resume"):
+        return 0
+    try:
+        last = (bridge_dir / CLAUDE_FRAMEWORK_LAST_FILE).read_text(encoding="utf-8")
+    except OSError:
+        return 0
+    if not last:
+        return 0
+    _write_framework_state(
+        bridge_dir,
+        {
+            "hash": _notice_hash(last),
+            "session_id": payload.get("session_id"),
+            "prompts_since_full": 0,
+            "full_in_turn": False,
+        },
+    )
+    sys.stdout.write(
+        json.dumps(
+            {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": last}}
         )
+    )
     return 0
 
 

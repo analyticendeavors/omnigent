@@ -25,6 +25,7 @@ from typing import Any
 import httpx
 import pytest
 
+from omnigent.inner.ae_roles import NOTICE_PREFIX
 from omnigent.inner.executor import Executor
 from omnigent.runtime.harnesses import _HARNESS_MODULES
 from omnigent.runtime.harnesses.process_manager import HarnessProcessManager
@@ -2891,7 +2892,8 @@ def test_native_executors_keep_the_notice_out_of_visible_text(tmp_path: Path) ->
     messages = [{"role": "user", "content": content}]
     assert claude_native_executor._latest_user_text(messages, tmp_path) == "hi"
     notices = claude_native_executor._latest_framework_notices(messages)
-    assert len(notices) == 1 and notices[0].startswith("Auto collaboration is enabled")
+    assert len(notices) == 1
+    assert notices[0].startswith(f"{NOTICE_PREFIX} Auto collaboration is enabled")
     items = codex_native_executor._content_to_input_items(content, tmp_path)
     assert items == [{"type": "text", "text": "hi"}]
     context = codex_native_executor.codex_team_context(content)
