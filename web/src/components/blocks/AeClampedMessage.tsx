@@ -1,44 +1,63 @@
-// A long approval message folded to about three lines with a Show more toggle, so the
-// Approve and Reject buttons stay on screen on a phone (omnigent-ae, 2026-11-20: policy
-// messages ran 15 lines and pushed the buttons below the fold). A short message renders
-// exactly as before: no clamp, no toggle.
+// An approval message folded to about three lines with a Show more toggle, so the Approve
+// and Reject buttons stay on screen on a phone (omnigent-ae, 2026-11-20: policy messages
+// ran 15 lines and pushed the buttons below the fold). The clamp is always on while
+// collapsed; the toggle appears only when the text really overflows three lines (measured,
+// so a wide screen or a short message shows no toggle).
+//
+// The fold is visual only: the full text stays in the accessibility tree, so the toggle
+// carries no aria-expanded or aria-controls (a screen reader would otherwise hear a
+// collapsed control over text it can already read). It is a plain button, still
+// keyboard-reachable; aria-hidden is not used because it must never sit on a focusable element.
 
-import { useId, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { ElicitationMessage } from "./ElicitationMessage";
 
-/** Messages longer than this many characters, or with more than three lines, fold. */
-export const AE_CLAMP_MIN_CHARS = 200;
-const AE_CLAMP_MAX_LINES = 3;
-
-export function aeMessageNeedsClamp(message: string): boolean {
-  return message.length > AE_CLAMP_MIN_CHARS || message.split("\n").length > AE_CLAMP_MAX_LINES;
-}
-
 export function AeClampedMessage({ message }: { message: string }) {
+  const text = message.replace(/\s+$/, "");
   const [open, setOpen] = useState(false);
-  const regionId = useId();
-  if (!aeMessageNeedsClamp(message)) return <ElicitationMessage message={message} />;
+  const [overflows, setOverflows] = useState(false);
+  const [seen, setSeen] = useState(text);
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  // A new message starts folded again.
+  if (seen !== text) {
+    setSeen(text);
+    setOpen(false);
+  }
+
+  // Measured only while collapsed: an open body has no clamp to overflow.
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (!el || open) return;
+    const measure = () => setOverflows(el.scrollHeight > el.clientHeight);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [text, open]);
+
   return (
     <div className="flex flex-col gap-1">
       <div
-        id={regionId}
+        ref={bodyRef}
         data-testid="ae-clamped-message"
         data-clamped={open ? "false" : "true"}
         className={cn("break-words whitespace-pre-wrap", !open && "line-clamp-3")}
       >
-        <ElicitationMessage message={message} />
+        <ElicitationMessage message={text} />
       </div>
-      <button
-        type="button"
-        onClick={() => setOpen((was) => !was)}
-        aria-expanded={open}
-        aria-controls={regionId}
-        data-testid="ae-clamped-message-toggle"
-        className="-mx-1 w-fit rounded-md px-1 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
-      >
-        {open ? "Show less" : "Show more"}
-      </button>
+      {(overflows || open) && (
+        <button
+          type="button"
+          onClick={() => setOpen((was) => !was)}
+          data-testid="ae-clamped-message-toggle"
+          className="-mx-1 inline-flex min-h-6 w-fit items-center rounded-md px-1 py-0.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {open ? "Show less" : "Show more"}
+        </button>
+      )}
     </div>
   );
 }
