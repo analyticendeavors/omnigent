@@ -72,7 +72,9 @@ SYSTEM_PROMPT: Final = (
     f"{MAX_SUGGESTIONS} clearly different likely next messages, most likely first, "
     "one per line, each in the user's own voice and style and at most "
     f"{MAX_SUGGESTION_CHARS} characters, with no numbering, no quotes and no "
-    "explanation. Give fewer lines rather than weak ones. If no next message is "
+    'explanation. When the reply offers a phrase to say (Say "draft it" to ...), '
+    "the guess is that phrase alone (draft it), never the reply's sentence. "
+    "Give fewer lines rather than weak ones. If no next message is "
     f"clearly likely, answer {NONE_REPLY}."
 )
 # Two guesses this alike (difflib ratio, case-folded) count as one, unless the
@@ -81,6 +83,16 @@ DUPLICATE_RATIO: Final = 0.85
 _IDENTIFIER_RE: Final = re.compile(r"[\d_./]")
 # A list marker the model may add despite the prompt: "1.", "2)", "-", "*", "•".
 _LIST_MARKER_RE: Final = re.compile(r"^(?:\d+[.)]|[-*•])\s+")
+# An echoed offer from the reply ('Say "draft it" and I'll ...'): the quoted phrase is
+# the guess. Each opener needs its own closer (so "don't" stays whole), and the rest of
+# the line must be empty or speak as the assistant ("I"), so a user's own command such
+# as 'Type "npm test" into the terminal' is left alone.
+_OFFER_RE: Final = re.compile(
+    r"""^["'“‘`]?(?:say|type|reply|answer)\s+"""
+    r"""(?:"([^"]+)"|“([^”]+)”|‘([^’]+)’|'(.+?)'(?=[\s,.]|$))"""
+    r"""\s*(?:[,.]?\s*["'”’`]?$|.*\bI(?:'ll|’ll| will)?\b)""",
+    re.IGNORECASE,
+)
 
 # Environment the side call must not inherit: OmniGent's runner wiring and
 # tokens, and Claude Code's own session and suggestion switches.
@@ -177,6 +189,9 @@ def _is_none(raw: str) -> bool:
 def _clean_line(raw: str) -> str | None:
     """One output line without list marker or wrapping quotes, cut at a word to the bound."""
     line = _LIST_MARKER_RE.sub("", raw.strip())
+    offer = _OFFER_RE.match(line)
+    if offer:
+        line = next(group for group in offer.groups() if group)
     line = line.strip("\"'`“”‘’").strip()
     # A bracketed aside is the model explaining itself, not a guess.
     if not line or line.startswith(("(", "[")):

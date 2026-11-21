@@ -199,6 +199,18 @@ def test_side_call_prompt_stays_within_the_budget() -> None:
         ("Run the tests\n(The user will likely want to verify)", ["Run the tests"]),
         ("Merge PR 121\nMerge PR 122", ["Merge PR 121", "Merge PR 122"]),
         ("Run test_a.py\nRun test_b.py", ["Run test_a.py", "Run test_b.py"]),
+        (
+            "Say \"draft it\" and I'll set it back to draft so it can't be merged early.",
+            ["draft it"],
+        ),
+        ("Type \u201cship\u201d and I\u2019ll open the PR", ["ship"]),
+        ("Say \"don't merge\" and I'll hold it", ["don't merge"]),
+        ("Reply \u2018draft it\u2019 and I\u2019ll set it back", ["draft it"]),
+        ("Say 'go' and I will start", ["go"]),
+        ('"Say "draft it" and I\'ll set it back"', ["draft it"]),
+        ('Say "merge it"', ["merge it"]),
+        ('Type "npm test" into the terminal', ['Type "npm test" into the terminal']),
+        ('Say "hello" to the new teammate', ['Say "hello" to the new teammate']),
     ],
 )
 def test_clean_suggestions(raw: str, expected: list[str]) -> None:
