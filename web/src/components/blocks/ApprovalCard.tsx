@@ -71,10 +71,9 @@ import {
 } from "@/components/chat/conversationScope";
 import { AeApprovalPreview, aeFoldsApprovalPreview } from "./AeApprovalPreview";
 import { AeChoiceButtons } from "./AeChoiceButtons";
+import { AeClampedMessage } from "./AeClampedMessage";
 import { AeSlotsFullBody } from "./AeSlotsFullBody";
 import { AskUserQuestionForm, type AskUserQuestionAnswers } from "./AskUserQuestionForm";
-import { AeClampedMessage } from "./AeClampedMessage";
-import { ElicitationMessage } from "./ElicitationMessage";
 import {
   type ElicitationAnswers,
   ElicitationSchemaForm,
@@ -665,7 +664,7 @@ export function ApprovalCard({
                 )}
               </>
             ) : showGatingMessage ? (
-              <ElicitationMessage message={message} />
+              <AeClampedMessage message={message} />
             ) : null}
             {submittedAnswers !== null && (
               <ul className="flex flex-col gap-0.5">

@@ -112,3 +112,33 @@ describe("ApprovalCard long generic message", () => {
     expect(reject).toBeDefined();
   });
 });
+
+describe("ApprovalCard responded long message", () => {
+  const card = (message: string) => (
+    <ApprovalCard
+      elicitationId="elic_long_done"
+      message={message}
+      phase="tool_call"
+      policyName="some_policy"
+      contentPreview=""
+      requestedSchema={{}}
+      status="responded"
+      response={{ action: "accept" }}
+    />
+  );
+
+  it("folds the message and opens it with the toggle", () => {
+    fakeLayout(true);
+    render(card(LONG));
+    expect(screen.getByTestId("ae-clamped-message").getAttribute("data-clamped")).toBe("true");
+    fireEvent.click(screen.getByTestId("ae-clamped-message-toggle"));
+    expect(screen.getByTestId("ae-clamped-message").getAttribute("data-clamped")).toBe("false");
+  });
+
+  it("shows no toggle when the message fits", () => {
+    fakeLayout(false);
+    render(card("Claude wants to call **Bash**"));
+    expect(screen.getByText("Bash", { selector: "strong" })).toBeDefined();
+    expect(screen.queryByTestId("ae-clamped-message-toggle")).toBeNull();
+  });
+});

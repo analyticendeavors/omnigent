@@ -37,9 +37,25 @@ function renderPage(sessionId = "sess_1", elicitationId = "eli_1") {
   );
 }
 
+/** jsdom has no layout: fake the sizes the clamped message measures. */
+function fakeLayout(overflowing: boolean) {
+  Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+    configurable: true,
+    get: () => (overflowing ? 200 : 60),
+  });
+  Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+    configurable: true,
+    get() {
+      return (this as HTMLElement).className.includes("line-clamp-3") || !overflowing ? 60 : 200;
+    },
+  });
+}
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollHeight;
+  delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientHeight;
 });
 
 describe("ApprovePage states", () => {
@@ -85,6 +101,33 @@ describe("ApprovePage states", () => {
     renderPage();
     const bold = await screen.findByText("Bash", { selector: "strong" });
     expect(bold.parentElement?.textContent).toBe("Claude wants to call Bash");
+  });
+
+  it("folds a long message behind Show more and keeps Approve and Reject visible", async () => {
+    // WHY: a 15-line policy message pushed the buttons off a phone screen.
+    fakeLayout(true);
+    const message = Array.from({ length: 15 }, (_, n) => `Policy line ${n + 1}.`).join("\n");
+    vi.mocked(identity.authenticatedFetch).mockResolvedValue(
+      jsonResponse({ status: "pending", message }),
+    );
+    renderPage();
+    const toggle = await screen.findByTestId("ae-clamped-message-toggle");
+    expect(screen.getByTestId("ae-clamped-message").getAttribute("data-clamped")).toBe("true");
+    expect(toggle.textContent).toBe("Show more");
+    expect(screen.getByRole("button", { name: /Approve/ })).toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(screen.getByTestId("ae-clamped-message").getAttribute("data-clamped")).toBe("false");
+    expect(screen.getByRole("button", { name: /Reject/ })).toBeInTheDocument();
+  });
+
+  it("shows no Show more toggle when the message fits", async () => {
+    fakeLayout(false);
+    vi.mocked(identity.authenticatedFetch).mockResolvedValue(
+      jsonResponse({ status: "pending", message: "Short ask." }),
+    );
+    renderPage();
+    expect(await screen.findByText("Short ask.")).toBeInTheDocument();
+    expect(screen.queryByTestId("ae-clamped-message-toggle")).toBeNull();
   });
 
   it("shows the resolved state when the elicitation is no longer pending", async () => {

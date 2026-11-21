@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "@/lib/routing";
 import { CheckIcon, MessageCircleQuestionMark, XIcon } from "lucide-react";
-import { ElicitationMessage } from "@/components/blocks/ElicitationMessage";
+import { AeClampedMessage } from "@/components/blocks/AeClampedMessage";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { withApprovalSource } from "@/lib/aeApprovalSource";
@@ -160,7 +160,7 @@ export function ApprovePage() {
             )}
           </AlertTitle>
           <AlertDescription className="flex flex-col gap-2">
-            <ElicitationMessage message={state.data.message ?? ""} />
+            <AeClampedMessage message={state.data.message ?? ""} />
             {state.data.content_preview && (
               <pre className="max-h-64 overflow-y-auto rounded bg-muted px-2 py-1 font-mono text-sm whitespace-pre-wrap break-words">
                 {formatPreview(state.data.content_preview)}
