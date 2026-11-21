@@ -9,6 +9,12 @@
  *  desktop build that predates the `browser*` bridge is treated as unsupported,
  *  so the relay never claims an action it couldn't fulfill. */
 import { useEffect } from "react";
+import {
+  AE_BLANK_CAPTURE_ERROR,
+  aeIsBlankCapture,
+  aeTypedBrowserAction,
+  type AeTypedBrowserBridge,
+} from "@/lib/aeBrowserTypedAction";
 import { onBrowserActionRequest } from "@/lib/browserActionBus";
 import type { BrowserActionRequestEvent } from "@/lib/events";
 import { supportsBrowser } from "@/lib/nativeBridge";
@@ -23,7 +29,7 @@ import type { Session } from "@/lib/types";
 /** Subset of `window.omnigentDesktop` the relay calls (typed locally, not via
  *  nativeBridge). All optional — an older shell may predate the feature, so the
  *  relay feature-detects before calling. */
-interface BrowserDesktopBridge {
+interface BrowserDesktopBridge extends AeTypedBrowserBridge {
   browserOpenOrNavigate?: (
     conversationId: string,
     url: string,
@@ -303,13 +309,15 @@ async function dispatch(
         }
         const r = await desktop.browserScreenshot(conversationId);
         if (!r?.ok || !r.dataUrl) return { ok: false, error: r?.error ?? "No browser open" };
+        if (aeIsBlankCapture(r.dataUrl)) return { ok: false, error: AE_BLANK_CAPTURE_ERROR };
         return { ok: true, data_url: r.dataUrl };
       }
       case "snapshot": {
-        if (!desktop.browserExecute) {
+        const typed = aeTypedBrowserAction(desktop, conversationId, "snapshot", args);
+        if (!typed && !desktop.browserExecute) {
           return { ok: false, error: "this desktop shell does not support the browser pane" };
         }
-        const r = await desktop.browserExecute(conversationId, SNAPSHOT_JS);
+        const r = await (typed ?? desktop.browserExecute?.(conversationId, SNAPSHOT_JS));
         if (!r?.ok) return { ok: false, error: r?.error ?? "snapshot failed" };
         try {
           const parsed = JSON.parse(r.result ?? "{}") as Record<string, unknown>;
@@ -319,19 +327,21 @@ async function dispatch(
         }
       }
       case "click": {
-        if (!desktop.browserExecute) {
+        const typed = aeTypedBrowserAction(desktop, conversationId, "click", args);
+        if (!typed && !desktop.browserExecute) {
           return { ok: false, error: "this desktop shell does not support the browser pane" };
         }
         const js =
           `(() => { ${findElJs(args)} ` +
           `el.scrollIntoView({ block: 'center', inline: 'center' }); ` +
           `el.click(); return 'ok'; })()`;
-        const r = await desktop.browserExecute(conversationId, js);
+        const r = await (typed ?? desktop.browserExecute?.(conversationId, js));
         if (!r?.ok) return { ok: false, error: r?.error ?? "click failed" };
         return { ok: true };
       }
       case "type": {
-        if (!desktop.browserExecute) {
+        const typed = aeTypedBrowserAction(desktop, conversationId, "type", args);
+        if (!typed && !desktop.browserExecute) {
           return { ok: false, error: "this desktop shell does not support the browser pane" };
         }
         const text = String(args.text ?? "");
@@ -343,7 +353,7 @@ async function dispatch(
           `el.dispatchEvent(new Event('input', { bubbles: true })); ` +
           `el.dispatchEvent(new Event('change', { bubbles: true })); ` +
           `return 'ok'; })()`;
-        const r = await desktop.browserExecute(conversationId, js);
+        const r = await (typed ?? desktop.browserExecute?.(conversationId, js));
         if (!r?.ok) return { ok: false, error: r?.error ?? "type failed" };
         return { ok: true };
       }

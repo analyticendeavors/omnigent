@@ -745,6 +745,52 @@ describe("useBrowserAgentRelay — action dispatch", () => {
     await runAction(actionEvent("click", { selector: "x" }));
     expect((postedResult().result as { ok: boolean; error: string }).error).toBe("execute blew up");
   });
+
+  it("AE: snapshot uses the typed bridge when the shell has one, never browserExecute", async () => {
+    const browserPerformAction = vi
+      .fn()
+      .mockResolvedValue({ ok: true, result: JSON.stringify({ snapshot_id: "t1", tree: "x" }) });
+    const bridge = installBridge({ browserPerformAction });
+    await runAction(actionEvent("snapshot", { stray: 1 }));
+    expect(browserPerformAction).toHaveBeenCalledWith(CONV, "snapshot", {});
+    expect(bridge.browserExecute).not.toHaveBeenCalled();
+    expect((postedResult().result as { data: { snapshot_id: string } }).data.snapshot_id).toBe(
+      "t1",
+    );
+  });
+
+  it("AE: click and type send only the keys the shell accepts, without nulls", async () => {
+    const browserPerformAction = vi.fn().mockResolvedValue({ ok: true, result: "ok" });
+    installBridge({ browserPerformAction, browserExecute: undefined });
+    await runAction(actionEvent("type", { ref: 3, snapshot_id: "s", selector: null, text: "hi" }));
+    expect(browserPerformAction).toHaveBeenCalledWith(CONV, "type", {
+      ref: 3,
+      snapshot_id: "s",
+      text: "hi",
+    });
+    expect((postedResult().result as { ok: boolean }).ok).toBe(true);
+  });
+
+  it("AE: click surfaces the typed bridge's error", async () => {
+    installBridge({
+      browserPerformAction: vi
+        .fn()
+        .mockResolvedValue({ ok: false, error: "ref 9 not in snapshot" }),
+    });
+    await runAction(actionEvent("click", { ref: 9, text: "dropped" }));
+    expect((postedResult().result as { error: string }).error).toBe("ref 9 not in snapshot");
+  });
+
+  it("AE: screenshot reports a blank capture as an error that names the Browser pane", async () => {
+    installBridge({
+      browserScreenshot: vi.fn().mockResolvedValue({ ok: true, dataUrl: "data:image/png;base64," }),
+    });
+    await runAction(actionEvent("screenshot"));
+    const result = postedResult().result as { ok: boolean; error: string; data_url?: string };
+    expect(result.ok).toBe(false);
+    expect(result.data_url).toBeUndefined();
+    expect(result.error).toMatch(/Browser pane/);
+  });
 });
 
 describe("useBrowserAgentRelay — result POST resilience", () => {
