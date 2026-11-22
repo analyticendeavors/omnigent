@@ -23,25 +23,34 @@ export interface AeTypedBrowserBridge {
   ) => Promise<{ ok: boolean; result?: string; error?: string }>;
 }
 
-/** The argument keys the shell accepts per action; it refuses any other key. */
-const TYPED_ACTION_KEYS: Record<AeTypedBrowserAction, readonly string[]> = {
-  snapshot: [],
-  click: ["ref", "snapshot_id", "selector"],
-  type: ["ref", "snapshot_id", "selector", "text"],
-};
-
-/** Keep only the keys the shell accepts, and drop null or missing values. */
+/** Build the params the way the legacy `findElJs` reads them: a numeric `ref`
+ *  wins and carries its `snapshot_id`; any other `ref` falls back to `selector`;
+ *  `type` always sends `text`, defaulting to "". The shell refuses any other key,
+ *  a null value, and a `selector` that is not a string. */
 export function aeTypedActionParams(
   action: AeTypedBrowserAction,
   args: Record<string, unknown>,
 ): Record<string, unknown> {
   const params: Record<string, unknown> = {};
-  for (const key of TYPED_ACTION_KEYS[action]) {
-    const value = args[key];
-    if (value !== undefined && value !== null) params[key] = value;
+  if (action === "snapshot") return params;
+  if (typeof args.ref === "number") {
+    params.ref = args.ref;
+    if (typeof args.snapshot_id === "string") params.snapshot_id = args.snapshot_id;
+  } else if (typeof args.selector === "string") {
+    params.selector = args.selector;
   }
+  if (action === "type") params.text = String(args.text ?? "");
   return params;
 }
+
+/** Added to a snapshot taken by the shell's own walk (desktop 0.21 and later,
+ *  checked against upstream `v0.21.0`): it stops at the first hidden element and
+ *  reads only `children`, so the AE walk's handling (patch 0216) is missing. */
+export const AE_DESKTOP_WALK_NOTE =
+  "This tree comes from the desktop app's own page walk (desktop 0.21 and later). It does " +
+  "not enter shadow roots or iframes, leaves out dialogs rendered inside a zero-size or " +
+  "hidden portal root, and has no size cap. If an element or dialog you expect is missing, " +
+  "call browser_screenshot to see the page.";
 
 /** Run the action through the typed bridge, or return undefined when the shell
  *  has none, so the caller falls back to `browserExecute`. */

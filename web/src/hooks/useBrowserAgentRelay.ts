@@ -11,6 +11,7 @@
 import { useEffect } from "react";
 import {
   AE_BLANK_CAPTURE_ERROR,
+  AE_DESKTOP_WALK_NOTE,
   aeIsBlankCapture,
   aeTypedBrowserAction,
   type AeTypedBrowserBridge,
@@ -321,7 +322,10 @@ async function dispatch(
         if (!r?.ok) return { ok: false, error: r?.error ?? "snapshot failed" };
         try {
           const parsed = JSON.parse(r.result ?? "{}") as Record<string, unknown>;
-          return { ok: true, data: parsed };
+          return {
+            ok: true,
+            data: typed ? { ...parsed, walk_note: AE_DESKTOP_WALK_NOTE } : parsed,
+          };
         } catch (e) {
           return { ok: false, error: `snapshot parse failed: ${(e as Error).message}` };
         }

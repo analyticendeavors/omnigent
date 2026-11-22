@@ -24,7 +24,8 @@ import { readArcaHostId, writeArcaHostId } from "@/lib/arcaHost";
 
 import { emitBrowserActionRequest } from "@/lib/browserActionBus";
 import type { BrowserActionRequestEvent } from "@/lib/events";
-import { useBrowserAgentRelay } from "./useBrowserAgentRelay";
+import { SNAPSHOT_JS, useBrowserAgentRelay } from "./useBrowserAgentRelay";
+import { AE_DESKTOP_WALK_NOTE } from "@/lib/aeBrowserTypedAction";
 
 const CONV = "conv_relay";
 const renderRelay = (visibleId: string | null | undefined = CONV, client = new QueryClient()) => {
@@ -790,6 +791,73 @@ describe("useBrowserAgentRelay — action dispatch", () => {
     expect(result.ok).toBe(false);
     expect(result.data_url).toBeUndefined();
     expect(result.error).toMatch(/Browser pane/);
+  });
+
+  // The real v0.21.0 shell returns `result` as the snapshot script's JSON string
+  // (browserIpc.js stringifies anything that is not already a string).
+  const DESKTOP_021_SNAPSHOT = JSON.stringify({
+    snapshot_id: "snap-example-021",
+    url: "https://example.com/",
+    title: "Example Domain",
+    tree: '- heading "Example Domain" [ref=1]\n- link "More information..." [ref=2]',
+  });
+
+  it("AE: a 0.21 desktop (typed bridge) gets the typed snapshot plus the walk note", async () => {
+    const browserPerformAction = vi
+      .fn()
+      .mockResolvedValue({ ok: true, result: DESKTOP_021_SNAPSHOT });
+    const bridge = installBridge({ browserPerformAction });
+    await runAction(actionEvent("snapshot"));
+    expect(bridge.browserExecute).not.toHaveBeenCalled();
+    const data = (postedResult().result as { data: Record<string, unknown> }).data;
+    expect(data).toEqual({ ...JSON.parse(DESKTOP_021_SNAPSHOT), walk_note: AE_DESKTOP_WALK_NOTE });
+  });
+
+  it("AE: a 0.18 desktop (no typed bridge) runs the AE SNAPSHOT_JS with no walk note", async () => {
+    const bridge = installBridge({
+      browserExecute: vi.fn().mockResolvedValue({ ok: true, result: DESKTOP_021_SNAPSHOT }),
+    });
+    await runAction(actionEvent("snapshot"));
+    expect(bridge.browserExecute).toHaveBeenCalledWith(CONV, SNAPSHOT_JS);
+    const data = (postedResult().result as { data: Record<string, unknown> }).data;
+    expect(data).toEqual(JSON.parse(DESKTOP_021_SNAPSHOT));
+  });
+
+  it("AE: click falls back to browserExecute when the typed bridge is absent", async () => {
+    const bridge = installBridge();
+    await runAction(actionEvent("click", { ref: 4, snapshot_id: "s4" }));
+    expect(executedJs(bridge)).toContain("el.click()");
+    expect((postedResult().result as { ok: boolean }).ok).toBe(true);
+  });
+
+  it("AE: a throwing typed bridge surfaces as {ok:false}", async () => {
+    const bridge = installBridge({
+      browserPerformAction: vi.fn().mockRejectedValue(new Error("view destroyed")),
+    });
+    await runAction(actionEvent("snapshot"));
+    expect(bridge.browserExecute).not.toHaveBeenCalled();
+    expect((postedResult().result as { ok: boolean; error: string }).error).toBe("view destroyed");
+  });
+
+  it("AE: ref plus selector sends the ref and its snapshot_id only", async () => {
+    const browserPerformAction = vi.fn().mockResolvedValue({ ok: true, result: "ok" });
+    installBridge({ browserPerformAction });
+    await runAction(actionEvent("click", { ref: 2, snapshot_id: "s2", selector: "a.x" }));
+    expect(browserPerformAction).toHaveBeenCalledWith(CONV, "click", { ref: 2, snapshot_id: "s2" });
+  });
+
+  it("AE: a string ref falls back to the selector, as the legacy path does", async () => {
+    const browserPerformAction = vi.fn().mockResolvedValue({ ok: true, result: "ok" });
+    installBridge({ browserPerformAction });
+    await runAction(actionEvent("click", { ref: "2", snapshot_id: "s2", selector: "a.x" }));
+    expect(browserPerformAction).toHaveBeenCalledWith(CONV, "click", { selector: "a.x" });
+  });
+
+  it("AE: type with no text sends an empty string", async () => {
+    const browserPerformAction = vi.fn().mockResolvedValue({ ok: true, result: "ok" });
+    installBridge({ browserPerformAction });
+    await runAction(actionEvent("type", { ref: 1 }));
+    expect(browserPerformAction).toHaveBeenCalledWith(CONV, "type", { ref: 1, text: "" });
   });
 });
 
