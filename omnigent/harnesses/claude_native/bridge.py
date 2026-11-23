@@ -73,6 +73,7 @@ from omnigent.harnesses.claude_native import (
     delivery_diagnostics,
     transcript_filters,
 )
+from omnigent.harnesses.claude_native.ae_cost_carry import CLAUDE_PID_FILE
 from omnigent.harnesses.claude_native.ae_pane_progress import (
     PROGRESS_UNKNOWN,
     PaneProgressRead,
@@ -2700,10 +2701,15 @@ def build_hook_settings(
     # The account sidecar records which Claude login renders this bar
     # (empty for the default one) so usage readers can key limits by account.
     account_quoted = shlex.quote(str(bridge_dir / CLAUDE_ACCOUNT_FILE))
+    # The Claude process (this shim's parent) as pid-starttime, so the forwarder
+    # tells a relaunch from a render even when a pid namespace reuses the pid.
+    pid_quoted = shlex.quote(str(bridge_dir / CLAUDE_PID_FILE))
     # Written before the capture, so a reader never pairs a new capture with
     # the previous launch's account.
     status_command = (
-        f"p=$(cat); printf '%s' \"${{OMNIGENT_CLAUDE_ACCOUNT-}}\" > {account_quoted}.$$.tmp"
+        f'p=$(cat); printf \'%s-%s\' "$PPID" "$(stat -c %Y /proc/$PPID 2>/dev/null)"'
+        f" > {pid_quoted}.$$.tmp && mv -f {pid_quoted}.$$.tmp {pid_quoted}"
+        f"; printf '%s' \"${{OMNIGENT_CLAUDE_ACCOUNT-}}\" > {account_quoted}.$$.tmp"
         f" && mv -f {account_quoted}.$$.tmp {account_quoted}"
         f"; printf '%s' \"$p\" > {raw_quoted}.$$.tmp"
         f" && mv -f {raw_quoted}.$$.tmp {raw_quoted}"

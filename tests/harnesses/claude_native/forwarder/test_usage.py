@@ -16,6 +16,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 import omnigent.harnesses.claude_native.forwarder as forwarder
+from omnigent.harnesses.claude_native.ae_cost_carry import CostCarry
 
 
 def test_usage_from_status_state_surfaces_cumulative_cost() -> None:
@@ -445,6 +446,7 @@ async def test_forward_session_cost_splits_display_and_policy(
         }
     )
     dedupe = forwarder._ForwardDedupeState()
+    dedupe.cost_carry = CostCarry("conv_parent", seeded=True)
 
     posted: list[dict[str, Any]] = []
 
@@ -540,6 +542,7 @@ async def test_forward_session_cost_posts_status_when_no_subagents(
 
     monkeypatch.setattr(forwarder, "_session_cost_estimate", _fail_estimate)
     dedupe = forwarder._ForwardDedupeState()
+    dedupe.cost_carry = CostCarry("conv_parent", seeded=True)
     posted: list[dict[str, Any]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -594,6 +597,7 @@ async def test_forward_session_cost_backs_off_after_rate_limit(
         return httpx.Response(200, json={}, request=request)
 
     dedupe = forwarder._ForwardDedupeState()
+    dedupe.cost_carry = CostCarry("conv_parent", seeded=True)
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport, base_url="http://ap") as client:
         kwargs = {
@@ -660,6 +664,7 @@ async def test_forward_session_cost_tags_display_advance_with_model(
         }
     )
     dedupe = forwarder._ForwardDedupeState()
+    dedupe.cost_carry = CostCarry("conv_parent", seeded=True)
     posted: list[dict[str, Any]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -748,6 +753,7 @@ async def test_forward_session_cost_posts_transcript_tokens_with_cost(
         _assistant("s1", 1, 2, cr=3, side=True), encoding="utf-8"
     )
     dedupe = forwarder._ForwardDedupeState()
+    dedupe.cost_carry = CostCarry("conv_parent", seeded=True)
     posted: list[dict[str, Any]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:

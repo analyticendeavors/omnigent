@@ -21,7 +21,7 @@ import httpx
 from omnigent.debug_logging import debug_event
 from omnigent.entities.session_resources import terminal_resource_id
 from omnigent.errors import ErrorCode
-from omnigent.harnesses.claude_native import ae_resume_keep
+from omnigent.harnesses.claude_native import ae_cost_carry, ae_resume_keep
 from omnigent.harnesses.claude_native.ae_pane_progress import (
     ProgressRelayState,
     clear_progress_on_rotation,
@@ -873,6 +873,8 @@ class _ForwardDedupeState:
     # statusLine total ``S`` verbatim (matches /cost in the Claude TUI).
     # Kept to suppress duplicate posts when S hasn't advanced.
     posted_cost: float | None = None
+    # Carried cost across Claude restarts (omnigent-ae); loaded on the first cost poll.
+    cost_carry: ae_cost_carry.CostCarry | None = None
     # Session token totals tally and the last totals POSTed with the cost (omnigent-ae).
     token_tally: TranscriptTokenTally = field(default_factory=TranscriptTokenTally)
     posted_tokens: tuple[int, int, int] | None = None
@@ -3054,8 +3056,12 @@ async def _forward_session_cost(
     active_subagents = [
         entry for entry in subagent_state.subagents.values() if entry.child_conversation_id
     ]
-    # Display cost: the statusLine total S verbatim (matches /cost).
-    display_cost = status_cost
+    # Display cost: S plus the cost of earlier Claude processes (omnigent-ae).
+    if dedupe.cost_carry is None:
+        dedupe.cost_carry = ae_cost_carry.load_carry(bridge_dir, session_id)
+    display_cost = await ae_cost_carry.carried_cost(
+        client=client, carry=dedupe.cost_carry, bridge_dir=bridge_dir, status_cost=status_cost
+    )
     # Policy/budget cost: with no sub-agent it equals S; with a sub-agent
     # running it is max(S, real-time transcript estimate) so the gate sees
     # in-flight spend while S is frozen.
@@ -3079,7 +3085,7 @@ async def _forward_session_cost(
     # instead of pricing the tokens from the catalog; none before a first cost.
     tokens = _ZERO_TOKENS
     # Never post a cost below the one already posted (the server also clamps).
-    known = [c for c in (status_cost, dedupe.posted_cost) if c is not None]
+    known = [c for c in (display_cost, dedupe.posted_cost) if c is not None]
     cost_known = max(known) if known else None
     if cost_known is not None:
         tokens = await asyncio.to_thread(dedupe.token_tally.update, parent_transcript_path)
