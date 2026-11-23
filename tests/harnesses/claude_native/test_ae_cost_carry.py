@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import ctypes
+import fcntl
 import json
 import os
+import subprocess
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -14,11 +18,14 @@ import omnigent.harnesses.claude_native.forwarder as forwarder
 from omnigent.harnesses.claude_native import ae_cost_carry as carry_mod
 from omnigent.harnesses.claude_native.ae_cost_carry import (
     CARRY_FILE,
-    CLAUDE_PID_FILE,
+    LOCK_FILE,
     CostCarry,
     carried_cost,
+    carry_lock,
     load_carry,
 )
+from omnigent.harnesses.claude_native.bridge import build_hook_settings
+from omnigent.harnesses.claude_native.status import sync_raw_status_context
 
 
 def _client(total: float | None, status: int = 200) -> tuple[httpx.AsyncClient, list[str]]:
@@ -34,8 +41,8 @@ def _client(total: float | None, status: int = 200) -> tuple[httpx.AsyncClient, 
     return httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://ap"), gets
 
 
-def _set_pid(bridge: Path, pid: str) -> None:
-    (bridge / CLAUDE_PID_FILE).write_text(f"{pid}-100", encoding="utf-8")
+def _state(proc: str | None, cost: float = 0.0) -> dict[str, Any]:
+    return {"total_cost_usd": cost, "ae_proc": f"{proc}-100"} if proc else {"total_cost_usd": cost}
 
 
 def _touch_context(bridge: Path, text: str) -> None:
@@ -96,22 +103,32 @@ def test_seed_never_double_counts_the_running_process() -> None:
 
 @pytest.mark.asyncio
 async def test_missing_file_seeds_from_server_then_survives_reload(tmp_path: Path) -> None:
-    _set_pid(tmp_path, "1")
     client, gets = _client(460.0)
     async with client:
         carry = load_carry(tmp_path, "conv_a")
         assert await carried_cost(
-            client=client, carry=carry, bridge_dir=tmp_path, status_cost=2.0
+            client=client,
+            carry=carry,
+            bridge_dir=tmp_path,
+            status_cost=2.0,
+            status_state=_state("1"),
         ) == pytest.approx(460.0)
         assert await carried_cost(
-            client=client, carry=carry, bridge_dir=tmp_path, status_cost=3.0
+            client=client,
+            carry=carry,
+            bridge_dir=tmp_path,
+            status_cost=3.0,
+            status_state=_state("1"),
         ) == pytest.approx(461.0)
         assert len(gets) == 2
         reloaded = load_carry(tmp_path, "conv_a")
         assert reloaded.seeded
-        _set_pid(tmp_path, "2")
         assert await carried_cost(
-            client=client, carry=reloaded, bridge_dir=tmp_path, status_cost=0.4
+            client=client,
+            carry=reloaded,
+            bridge_dir=tmp_path,
+            status_cost=0.4,
+            status_state=_state("2"),
         ) == pytest.approx(461.4)
         assert len(gets) == 2
 
@@ -176,9 +193,9 @@ async def test_forwarder_restart_sequence_posts_a_rising_total(
     bridge.mkdir()
     parent = tmp_path / "sess.jsonl"
     parent.write_text("parent", encoding="utf-8")
-    box = {"cost": 0.0}
+    box: dict[str, Any] = {"cost": 0.0, "pid": "1"}
     monkeypatch.setattr(
-        forwarder, "read_claude_context_state", lambda _b: {"total_cost_usd": box["cost"]}
+        forwarder, "read_claude_context_state", lambda _b: _state(box["pid"], box["cost"])
     )
     dedupe = forwarder._ForwardDedupeState()
     posted: list[float] = []
@@ -195,7 +212,7 @@ async def test_forwarder_restart_sequence_posts_a_rising_total(
         transport=httpx.MockTransport(handler), base_url="http://ap"
     ) as client:
         for pid, cost in (("1", 10.0), ("1", 12.0), ("2", 0.5), ("2", 1.5), ("3", 0.2)):
-            _set_pid(bridge, pid)
+            box["pid"] = pid
             box["cost"] = cost
             await _forward(client, bridge, dedupe, parent)
     assert posted == pytest.approx([100.0, 102.0, 102.5, 103.5, 103.7])
@@ -255,6 +272,7 @@ async def test_child_read_failure_posts_nothing_and_retries(tmp_path: Path) -> N
         )
     assert not carry.seeded
     assert not (tmp_path / CARRY_FILE).exists()
+    carry.seed_retry_not_before = 0.0
     async with _tree_client(totals, ["b1", "b2"]) as client:
         total = await carried_cost(
             client=client, carry=carry, bridge_dir=tmp_path, status_cost=1.0
@@ -270,3 +288,214 @@ async def test_lead_without_children_seeds_from_its_own_total(tmp_path: Path) ->
             client=client, carry=carry, bridge_dir=tmp_path, status_cost=2.0
         )
     assert total == pytest.approx(460.0)
+
+
+# ---- review round 1 fixes -------------------------------------------------------------
+
+
+def test_identity_and_cost_come_from_one_capture(tmp_path: Path) -> None:
+    raw = tmp_path / "context_raw.json"
+    payload = {"context_window": {"context_window_size": 200000}, "cost": {"total_cost_usd": 4.0}}
+    raw.write_text("123-456\n" + json.dumps(payload), encoding="utf-8")
+    sync_raw_status_context(tmp_path, None)
+    state = json.loads((tmp_path / "context.json").read_text(encoding="utf-8"))
+    assert (state["ae_proc"], state["total_cost_usd"]) == ("123-456", 4.0)
+    # A poll between two renders sees either the old pair or the new pair, never a mix.
+    raw.write_text("999-1\n" + json.dumps(payload | {"cost": {"total_cost_usd": 0.1}}))
+    os.utime(raw, ns=(raw.stat().st_mtime_ns + 5_000_000,) * 2)
+    sync_raw_status_context(tmp_path, None)
+    state = json.loads((tmp_path / "context.json").read_text(encoding="utf-8"))
+    assert (state["ae_proc"], state["total_cost_usd"]) == ("999-1", 0.1)
+
+
+def test_capture_without_identity_still_parses(tmp_path: Path) -> None:
+    payload = {"context_window": {"context_window_size": 200000}, "cost": {"total_cost_usd": 4.0}}
+    (tmp_path / "context_raw.json").write_text(json.dumps(payload), encoding="utf-8")
+    sync_raw_status_context(tmp_path, None)
+    state = json.loads((tmp_path / "context.json").read_text(encoding="utf-8"))
+    assert "ae_proc" not in state and state["total_cost_usd"] == 4.0
+
+
+@pytest.mark.skipif(not Path("/proc/self/stat").exists(), reason="needs /proc")
+def test_shim_writes_starttime_even_when_the_command_name_has_parens(tmp_path: Path) -> None:
+    libc = ctypes.CDLL(None)
+    old = ctypes.create_string_buffer(16)
+    libc.prctl(16, old)  # PR_GET_NAME
+    libc.prctl(15, b"a) (b) c")  # PR_SET_NAME: comm with ") (" in it
+    try:
+        command = build_hook_settings(tmp_path)["statusLine"]["command"]
+        subprocess.run(["sh", "-c", command], input=b'{"x": 1}', check=True, timeout=20)
+        stat = Path("/proc/self/stat").read_text(encoding="utf-8")
+        starttime = stat.rpartition(")")[2].split()[19]
+        first, _, rest = (
+            (tmp_path / "context_raw.json").read_text(encoding="utf-8").partition("\n")
+        )
+    finally:
+        libc.prctl(15, old.value)
+    assert first == f"{os.getpid()}-{starttime}"
+    assert rest == '{"x": 1}'
+
+
+def test_unknown_proc_then_a_pid_with_a_fall_folds() -> None:
+    carry = CostCarry("c", offset=5.0, last=8.0, seeded=True)
+    carry.observe(0.5, "7-70")
+    assert (carry.offset, carry.last, carry.proc) == (13.0, 0.5, "7-70")
+    same = CostCarry("c", offset=5.0, last=8.0, seeded=True)
+    same.observe(9.0, "7-70")
+    assert (same.offset, same.last, same.proc) == (5.0, 9.0, "7-70")
+
+
+@pytest.mark.asyncio
+async def test_policy_figure_after_a_restart_is_the_carried_total(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    bridge = tmp_path / "bridge"
+    bridge.mkdir()
+    parent = tmp_path / "sess.jsonl"
+    parent.write_text("parent", encoding="utf-8")
+    monkeypatch.setattr(forwarder, "read_claude_context_state", lambda _b: _state("2", 0.5))
+    dedupe = forwarder._ForwardDedupeState()
+    dedupe.cost_carry = CostCarry(
+        "conv_parent", offset=100.0, last=10.0, proc="1-100", seeded=True
+    )
+    posted: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        posted.append(json.loads(request.content)["data"])
+        return httpx.Response(200, json={}, request=request)
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://ap"
+    ) as client:
+        await _forward(client, bridge, dedupe, parent)
+    assert posted[0]["cumulative_cost_usd"] == pytest.approx(110.5)
+    assert posted[0]["policy_cost_usd"] == pytest.approx(110.5)
+
+
+@pytest.mark.asyncio
+async def test_failed_seed_still_posts_tokens_and_backs_off(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    bridge = tmp_path / "bridge"
+    bridge.mkdir()
+    parent = tmp_path / "sess.jsonl"
+    line = {
+        "type": "assistant",
+        "requestId": "r1",
+        "message": {
+            "id": "m1",
+            "role": "assistant",
+            "model": "claude-opus-4-8",
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        },
+    }
+    parent.write_text(json.dumps(line) + "\n", encoding="utf-8")
+    monkeypatch.setattr(forwarder, "read_claude_context_state", lambda _b: _state("1", 3.0))
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(carry_mod.time, "monotonic", lambda: clock["now"])
+    dedupe = forwarder._ForwardDedupeState()
+    gets: list[str] = []
+    posted: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            gets.append(request.url.path)
+            return httpx.Response(503, request=request)
+        posted.append(json.loads(request.content)["data"])
+        return httpx.Response(200, json={}, request=request)
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://ap"
+    ) as client:
+        await _forward(client, bridge, dedupe, parent)
+        assert gets and len(posted) == 1
+        assert posted[0]["cumulative_input_tokens"] == 10
+        assert "cumulative_cost_usd" not in posted[0]
+        tried = len(gets)
+        await _forward(client, bridge, dedupe, parent)  # inside the backoff: no new read
+        assert len(gets) == tried
+        clock["now"] += 2.0
+        await _forward(client, bridge, dedupe, parent)
+        assert len(gets) > tried
+
+
+@pytest.mark.asyncio
+async def test_seed_reads_children_before_the_parent(tmp_path: Path) -> None:
+    order: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        order.append(request.url.path)
+        if request.url.path.endswith("/child_sessions"):
+            return httpx.Response(200, json={"data": [{"id": "b1"}], "has_more": False})
+        return httpx.Response(200, json={"total_cost_usd": 5.0})
+
+    carry = load_carry(tmp_path, "lead")
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://ap"
+    ) as client:
+        await carried_cost(client=client, carry=carry, bridge_dir=tmp_path, status_cost=0.0)
+    assert order == [
+        "/v1/sessions/lead/child_sessions",
+        "/v1/sessions/b1",
+        "/v1/sessions/lead",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_seed_fails_when_the_child_list_hits_the_page_cap(tmp_path: Path) -> None:
+    pages = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        pages["n"] += 1
+        body = {"data": [{"id": f"c{pages['n']}"}], "has_more": True, "last_id": f"c{pages['n']}"}
+        return httpx.Response(200, json=body)
+
+    carry = load_carry(tmp_path, "lead")
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://ap"
+    ) as client:
+        result = await carried_cost(
+            client=client, carry=carry, bridge_dir=tmp_path, status_cost=1.0
+        )
+    assert result is None and not carry.seeded and carry.seed_failures == 1
+    assert pages["n"] == 20
+
+
+@pytest.mark.asyncio
+async def test_two_writers_never_lose_an_update(tmp_path: Path) -> None:
+    carry_mod.save_carry(tmp_path, CostCarry("s", offset=0.0, last=1.0, proc="1-100", seeded=True))
+    a = load_carry(tmp_path, "s")
+    b = load_carry(tmp_path, "s")
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json={})), base_url="http://ap"
+    ) as client:
+        await carried_cost(
+            client=client, carry=a, bridge_dir=tmp_path, status_cost=6.0, status_state=_state("1")
+        )
+        # b is stale (last=1.0 in memory); it must adopt a's 6.0 rather than overwrite it.
+        total = await carried_cost(
+            client=client, carry=b, bridge_dir=tmp_path, status_cost=3.0, status_state=_state("1")
+        )
+    assert total == pytest.approx(6.0)
+    assert load_carry(tmp_path, "s").total() == pytest.approx(6.0)
+
+
+def test_carry_lock_excludes_a_second_holder(tmp_path: Path) -> None:
+    got_lock = threading.Event()
+    with carry_lock(tmp_path):
+        fd = os.open(tmp_path / LOCK_FILE, os.O_RDWR)
+        try:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            os.close(fd)
+
+        def other() -> None:
+            with carry_lock(tmp_path):
+                got_lock.set()
+
+        thread = threading.Thread(target=other)
+        thread.start()
+        assert not got_lock.wait(0.3)
+    thread.join(5)
+    assert got_lock.is_set()

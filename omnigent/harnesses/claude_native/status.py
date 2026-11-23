@@ -14,6 +14,7 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -27,6 +28,9 @@ CONTEXT_RAW_FILE = "context_raw.json"
 # Backup account name the session runs on, rewritten on every statusLine
 # render; empty for the box's default login.
 CLAUDE_ACCOUNT_FILE = "claude_account"
+# The shim's first capture line is the Claude process identity, ``<pid>-<starttime>``
+# (starttime empty where /proc is missing), so identity and cost share one atomic write.
+PROC_ID_RE = re.compile(r"[0-9]+-[0-9]*")
 
 
 def normalize_status_payload(payload: dict[str, object]) -> dict[str, object] | None:
@@ -104,13 +108,24 @@ def sync_raw_status_context(
     if sig == last_sig:
         return last_sig
     try:
-        payload = json.loads(raw_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        text = raw_path.read_text(encoding="utf-8")
+    except OSError:
+        return last_sig
+    proc_id, _, rest = text.partition("\n")
+    if PROC_ID_RE.fullmatch(proc_id):
+        text = rest
+    else:
+        proc_id = ""
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
         return last_sig
     if not isinstance(payload, dict):
         return sig
     record = normalize_status_payload(payload)
     if record is not None:
+        if proc_id:
+            record["ae_proc"] = proc_id
         _write_record_atomic(bridge_dir, record)
     return sig
 

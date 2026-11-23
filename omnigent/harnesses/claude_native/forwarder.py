@@ -3060,7 +3060,11 @@ async def _forward_session_cost(
     if dedupe.cost_carry is None:
         dedupe.cost_carry = ae_cost_carry.load_carry(bridge_dir, session_id)
     display_cost = await ae_cost_carry.carried_cost(
-        client=client, carry=dedupe.cost_carry, bridge_dir=bridge_dir, status_cost=status_cost
+        client=client,
+        carry=dedupe.cost_carry,
+        bridge_dir=bridge_dir,
+        status_cost=status_cost,
+        status_state=status_state,
     )
     # Policy/budget cost: with no sub-agent it equals S; with a sub-agent
     # running it is max(S, real-time transcript estimate) so the gate sees
@@ -3075,6 +3079,9 @@ async def _forward_session_cost(
             status_cost=status_cost,
             cost_cache=cost_cache,
         )
+    # The budget gate never reads below the carried total after a restart.
+    if display_cost is not None and policy_cost is not None:
+        policy_cost = max(policy_cost, display_cost)
     # Build the payload from whichever values are present AND have advanced.
     # Monotonic per field: never walk a total backwards — guards a transient
     # lower transcript read (e.g. just after a rotation) and suppresses
@@ -3087,13 +3094,15 @@ async def _forward_session_cost(
     # Never post a cost below the one already posted (the server also clamps).
     known = [c for c in (display_cost, dedupe.posted_cost) if c is not None]
     cost_known = max(known) if known else None
-    if cost_known is not None:
+    # While the carry is unknown (seed failed or held) tokens still post, without a cost.
+    if cost_known is not None or status_cost is not None:
         tokens = await asyncio.to_thread(dedupe.token_tally.update, parent_transcript_path)
         if tokens != (dedupe.posted_tokens or _ZERO_TOKENS):
             payload["cumulative_input_tokens"] = tokens[0]
             payload["cumulative_output_tokens"] = tokens[1]
             payload["cumulative_cache_read_input_tokens"] = tokens[2]
-            payload["cumulative_cost_usd"] = cost_known
+            if cost_known is not None:
+                payload["cumulative_cost_usd"] = cost_known
     if display_cost is not None and (
         dedupe.posted_cost is None or display_cost > dedupe.posted_cost
     ):

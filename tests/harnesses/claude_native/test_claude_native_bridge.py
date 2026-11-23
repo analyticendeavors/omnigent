@@ -9,6 +9,7 @@ import itertools
 import json
 import os
 import queue
+import re
 import select
 import shlex
 import socket
@@ -11903,7 +11904,10 @@ def test_statusline_shell_command_captures_and_chains(
         env=default_env,
     )
     assert result.returncode == 0, result.stderr
-    assert (tmp_path / CONTEXT_RAW_FILE).read_text("utf-8") == payload
+    # First line is the Claude process identity; the rest is the exact stdin.
+    proc_id, _, raw_payload = (tmp_path / CONTEXT_RAW_FILE).read_text("utf-8").partition("\n")
+    assert re.fullmatch(r"[0-9]+-[0-9]*", proc_id)
+    assert raw_payload == payload
     assert chain_out.read_text("utf-8") == payload
     # The default login records an empty account sidecar on every render.
     assert (tmp_path / CLAUDE_ACCOUNT_FILE).read_text("utf-8") == ""
@@ -11921,7 +11925,11 @@ def test_statusline_shell_command_captures_and_chains(
 
     sync_raw_status_context(tmp_path, None)
     written = json.loads((tmp_path / "context.json").read_text("utf-8"))
-    assert written == {"context_window_size": 500_000, "model": "claude-opus-4-8"}
+    assert written == {
+        "context_window_size": 500_000,
+        "model": "claude-opus-4-8",
+        "ae_proc": proc_id,
+    }
 
 
 _PRE_TOOL_USE_PAYLOAD: dict[str, object] = {
