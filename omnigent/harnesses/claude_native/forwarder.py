@@ -3094,15 +3094,13 @@ async def _forward_session_cost(
     # Never post a cost below the one already posted (the server also clamps).
     known = [c for c in (display_cost, dedupe.posted_cost) if c is not None]
     cost_known = max(known) if known else None
-    # While the carry is unknown (seed failed or held) tokens still post, without a cost.
-    if cost_known is not None or status_cost is not None:
+    if cost_known is not None:
         tokens = await asyncio.to_thread(dedupe.token_tally.update, parent_transcript_path)
         if tokens != (dedupe.posted_tokens or _ZERO_TOKENS):
             payload["cumulative_input_tokens"] = tokens[0]
             payload["cumulative_output_tokens"] = tokens[1]
             payload["cumulative_cache_read_input_tokens"] = tokens[2]
-            if cost_known is not None:
-                payload["cumulative_cost_usd"] = cost_known
+            payload["cumulative_cost_usd"] = cost_known
     if display_cost is not None and (
         dedupe.posted_cost is None or display_cost > dedupe.posted_cost
     ):

@@ -11,8 +11,9 @@ Fold rule, keyed on process identity and never on a bare fall in ``S``:
 
 * ``proc`` is ``<pid>-<starttime>`` of the Claude process that rendered the statusLine
   (field 22 of ``/proc/<pid>/stat``, read after the last ``)`` because the command name may
-  hold spaces). The statusLine shim writes it as the first line of the same atomically
-  written capture as ``S`` (``context_raw.json``); ``sync_raw_status_context`` copies it to
+  hold spaces). The statusLine shim writes it as the first line of ``ae_context_proc``, an
+  atomically written copy of the same capture as ``S`` (``context_raw.json`` itself stays
+  Claude's JSON for its other readers); ``sync_raw_status_context`` copies it to
   ``context.json`` as ``ae_proc``. Identity and cost therefore come from one read and can
   never be paired across two renders. A relaunch is a new process; a ``/clear``,
   ``/compact`` or sub-agent run stays in one.
@@ -35,7 +36,7 @@ child that grows in between can only make ``own`` slightly high, never low. Only
 sub-agents have no usage and read as zero. The ``max`` keeps the running process's ``S``,
 which the server may already hold, from counting twice. A failed or timed-out read, a child's
 included, or a child list past the page cap, posts no cost and backs the seed off
-(1 s, doubling to 30 s); tokens still post without a cost meanwhile.
+(1 s, doubling to 30 s); tokens post only with a known cost, so they wait until it recovers.
 
 Rotation (``/clear`` or ``/fork`` to a new session id): a carry file written for another
 session id starts a fresh carry for the new id, and the cost post is held until the
@@ -353,7 +354,7 @@ def _adopt_stored(bridge_dir: Path, carry: CostCarry) -> None:
     :param carry: The in-memory carry, updated in place when a seeded one is on disk.
     """
     stored = load_carry(bridge_dir, carry.session_id)
-    if stored.seeded:
+    if stored.seeded and (not carry.seeded or stored.total() >= carry.total()):
         carry.offset, carry.last, carry.proc, carry.seeded = (
             stored.offset,
             stored.last,

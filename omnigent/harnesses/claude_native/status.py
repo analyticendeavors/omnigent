@@ -28,8 +28,10 @@ CONTEXT_RAW_FILE = "context_raw.json"
 # Backup account name the session runs on, rewritten on every statusLine
 # render; empty for the box's default login.
 CLAUDE_ACCOUNT_FILE = "claude_account"
-# The shim's first capture line is the Claude process identity, ``<pid>-<starttime>``
-# (starttime empty where /proc is missing), so identity and cost share one atomic write.
+# The shim also writes ``<pid>-<starttime>\n<the same raw JSON>`` here in one atomic write
+# (starttime empty where /proc is missing), so identity and cost are read as a pair.
+# ``context_raw.json`` itself stays Claude's JSON only, for its other readers.
+CONTEXT_PROC_FILE = "ae_context_proc"
 PROC_ID_RE = re.compile(r"[0-9]+-[0-9]*")
 
 
@@ -99,7 +101,9 @@ def sync_raw_status_context(
     :returns: The new signature to carry forward (unchanged on a miss or
         an unparseable file, so the next poll retries).
     """
-    raw_path = bridge_dir / CONTEXT_RAW_FILE
+    raw_path = bridge_dir / CONTEXT_PROC_FILE
+    if not raw_path.exists():
+        raw_path = bridge_dir / CONTEXT_RAW_FILE
     try:
         stat = raw_path.stat()
     except OSError:
@@ -111,11 +115,11 @@ def sync_raw_status_context(
         text = raw_path.read_text(encoding="utf-8")
     except OSError:
         return last_sig
-    proc_id, _, rest = text.partition("\n")
-    if PROC_ID_RE.fullmatch(proc_id):
-        text = rest
-    else:
-        proc_id = ""
+    proc_id = ""
+    if raw_path.name == CONTEXT_PROC_FILE:
+        first, _, rest = text.partition("\n")
+        if PROC_ID_RE.fullmatch(first):
+            proc_id, text = first, rest
     try:
         payload = json.loads(text)
     except json.JSONDecodeError:

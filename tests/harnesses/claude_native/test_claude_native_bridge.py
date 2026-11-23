@@ -11875,6 +11875,7 @@ def test_statusline_shell_command_captures_and_chains(
     """
     from omnigent.harnesses.claude_native.status import (
         CLAUDE_ACCOUNT_FILE,
+        CONTEXT_PROC_FILE,
         CONTEXT_RAW_FILE,
         sync_raw_status_context,
     )
@@ -11904,10 +11905,11 @@ def test_statusline_shell_command_captures_and_chains(
         env=default_env,
     )
     assert result.returncode == 0, result.stderr
-    # First line is the Claude process identity; the rest is the exact stdin.
-    proc_id, _, raw_payload = (tmp_path / CONTEXT_RAW_FILE).read_text("utf-8").partition("\n")
+    # The raw file is the exact stdin; the identity pairs with a copy in the proc file.
+    assert (tmp_path / CONTEXT_RAW_FILE).read_text("utf-8") == payload
+    proc_id, _, proc_payload = (tmp_path / CONTEXT_PROC_FILE).read_text("utf-8").partition("\n")
     assert re.fullmatch(r"[0-9]+-[0-9]*", proc_id)
-    assert raw_payload == payload
+    assert proc_payload == payload
     assert chain_out.read_text("utf-8") == payload
     # The default login records an empty account sidecar on every render.
     assert (tmp_path / CLAUDE_ACCOUNT_FILE).read_text("utf-8") == ""

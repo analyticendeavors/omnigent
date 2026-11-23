@@ -23,6 +23,7 @@ from omnigent.harnesses.claude_native.ae_cost_carry import (
     carried_cost,
     carry_lock,
     load_carry,
+    save_carry,
 )
 from omnigent.harnesses.claude_native.bridge import build_hook_settings
 from omnigent.harnesses.claude_native.status import sync_raw_status_context
@@ -294,15 +295,15 @@ async def test_lead_without_children_seeds_from_its_own_total(tmp_path: Path) ->
 
 
 def test_identity_and_cost_come_from_one_capture(tmp_path: Path) -> None:
-    raw = tmp_path / "context_raw.json"
+    proc = tmp_path / "ae_context_proc"
     payload = {"context_window": {"context_window_size": 200000}, "cost": {"total_cost_usd": 4.0}}
-    raw.write_text("123-456\n" + json.dumps(payload), encoding="utf-8")
+    proc.write_text("123-456\n" + json.dumps(payload), encoding="utf-8")
     sync_raw_status_context(tmp_path, None)
     state = json.loads((tmp_path / "context.json").read_text(encoding="utf-8"))
     assert (state["ae_proc"], state["total_cost_usd"]) == ("123-456", 4.0)
     # A poll between two renders sees either the old pair or the new pair, never a mix.
-    raw.write_text("999-1\n" + json.dumps(payload | {"cost": {"total_cost_usd": 0.1}}))
-    os.utime(raw, ns=(raw.stat().st_mtime_ns + 5_000_000,) * 2)
+    proc.write_text("999-1\n" + json.dumps(payload | {"cost": {"total_cost_usd": 0.1}}))
+    os.utime(proc, ns=(proc.stat().st_mtime_ns + 5_000_000,) * 2)
     sync_raw_status_context(tmp_path, None)
     state = json.loads((tmp_path / "context.json").read_text(encoding="utf-8"))
     assert (state["ae_proc"], state["total_cost_usd"]) == ("999-1", 0.1)
@@ -327,9 +328,8 @@ def test_shim_writes_starttime_even_when_the_command_name_has_parens(tmp_path: P
         subprocess.run(["sh", "-c", command], input=b'{"x": 1}', check=True, timeout=20)
         stat = Path("/proc/self/stat").read_text(encoding="utf-8")
         starttime = stat.rpartition(")")[2].split()[19]
-        first, _, rest = (
-            (tmp_path / "context_raw.json").read_text(encoding="utf-8").partition("\n")
-        )
+        first, _, rest = (tmp_path / "ae_context_proc").read_text(encoding="utf-8").partition("\n")
+        assert (tmp_path / "context_raw.json").read_text(encoding="utf-8") == '{"x": 1}'
     finally:
         libc.prctl(15, old.value)
     assert first == f"{os.getpid()}-{starttime}"
@@ -372,8 +372,12 @@ async def test_policy_figure_after_a_restart_is_the_carried_total(
     assert posted[0]["policy_cost_usd"] == pytest.approx(110.5)
 
 
+def _held(posted: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [p for p in posted if any(k.startswith("cumulative_") for k in p)]
+
+
 @pytest.mark.asyncio
-async def test_failed_seed_still_posts_tokens_and_backs_off(
+async def test_failed_seed_holds_tokens_and_backs_off(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     bridge = tmp_path / "bridge"
@@ -408,15 +412,75 @@ async def test_failed_seed_still_posts_tokens_and_backs_off(
         transport=httpx.MockTransport(handler), base_url="http://ap"
     ) as client:
         await _forward(client, bridge, dedupe, parent)
-        assert gets and len(posted) == 1
-        assert posted[0]["cumulative_input_tokens"] == 10
-        assert "cumulative_cost_usd" not in posted[0]
+        assert gets and not _held(posted)
         tried = len(gets)
         await _forward(client, bridge, dedupe, parent)  # inside the backoff: no new read
         assert len(gets) == tried
         clock["now"] += 2.0
         await _forward(client, bridge, dedupe, parent)
         assert len(gets) > tried
+        assert not _held(posted)  # tokens wait for a known cost
+
+
+@pytest.mark.asyncio
+async def test_tokens_post_with_the_cost_once_the_seed_recovers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    bridge = tmp_path / "bridge"
+    bridge.mkdir()
+    parent = tmp_path / "sess.jsonl"
+    line = {
+        "type": "assistant",
+        "requestId": "r1",
+        "message": {
+            "id": "m1",
+            "role": "assistant",
+            "model": "claude-opus-4-8",
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        },
+    }
+    parent.write_text(json.dumps(line) + "\n", encoding="utf-8")
+    monkeypatch.setattr(forwarder, "read_claude_context_state", lambda _b: _state("1", 3.0))
+    monkeypatch.setattr(carry_mod.time, "monotonic", lambda: 1000.0)
+    dedupe = forwarder._ForwardDedupeState()
+    up = {"ok": False}
+    posted: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            if not up["ok"]:
+                return httpx.Response(503, request=request)
+            if request.url.path.endswith("/child_sessions"):
+                body: dict[str, Any] = {"data": [], "has_more": False}
+            else:
+                body = {"total_cost_usd": 50.0}
+            return httpx.Response(200, json=body, request=request)
+        posted.append(json.loads(request.content)["data"])
+        return httpx.Response(200, json={}, request=request)
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://ap"
+    ) as client:
+        await _forward(client, bridge, dedupe, parent)
+        assert not _held(posted)
+        up["ok"] = True
+        assert dedupe.cost_carry is not None
+        dedupe.cost_carry.seed_retry_not_before = 0.0
+        await _forward(client, bridge, dedupe, parent)
+    final = [p for p in posted if "cumulative_cost_usd" in p]
+    assert final[0]["cumulative_input_tokens"] == 10
+    assert final[0]["cumulative_cost_usd"] == pytest.approx(50.0)
+
+
+@pytest.mark.asyncio
+async def test_adopt_never_steps_the_carry_back(tmp_path: Path) -> None:
+    save_carry(tmp_path, CostCarry("c", offset=1.0, last=2.0, proc="1-1", seeded=True))
+    carry = CostCarry("c", offset=10.0, last=5.0, proc="1-1", seeded=True)
+    carry_mod._adopt_stored(tmp_path, carry)
+    assert (carry.offset, carry.last) == (10.0, 5.0)
+    save_carry(tmp_path, CostCarry("c", offset=20.0, last=1.0, proc="2-2", seeded=True))
+    carry_mod._adopt_stored(tmp_path, carry)
+    assert (carry.offset, carry.last, carry.proc) == (20.0, 1.0, "2-2")
 
 
 @pytest.mark.asyncio

@@ -80,7 +80,11 @@ from omnigent.harnesses.claude_native.ae_pane_progress import (
 )
 from omnigent.harnesses.claude_native.failure_telemetry import claude_failure_context
 from omnigent.harnesses.claude_native.message_display_hook import MESSAGE_DELTAS_FILE
-from omnigent.harnesses.claude_native.status import CLAUDE_ACCOUNT_FILE, CONTEXT_RAW_FILE
+from omnigent.harnesses.claude_native.status import (
+    CLAUDE_ACCOUNT_FILE,
+    CONTEXT_PROC_FILE,
+    CONTEXT_RAW_FILE,
+)
 from omnigent.harnesses.diagnostics import detect_sign_in_prompt, sign_in_next_step
 from omnigent.harnesses.kiro_native import bridge as kiro_bridge
 from omnigent.models.claude_model_vocabulary import MODEL_VOCABULARY_ENV_VARS
@@ -2697,6 +2701,7 @@ def build_hook_settings(
     # ``context.json``) and chains to whatever the user had globally so
     # claude-hud / their bar still renders.
     raw_quoted = shlex.quote(str(bridge_dir / CONTEXT_RAW_FILE))
+    proc_quoted = shlex.quote(str(bridge_dir / CONTEXT_PROC_FILE))
     # The account sidecar records which Claude login renders this bar
     # (empty for the default one) so usage readers can key limits by account.
     account_quoted = shlex.quote(str(bridge_dir / CLAUDE_ACCOUNT_FILE))
@@ -2704,12 +2709,15 @@ def build_hook_settings(
     # the previous launch's account.
     status_command = (
         # Claude's pid and starttime (field 22 of /proc/<pid>/stat, read after the last ")"
-        # because the command name may hold spaces); rides in the capture's first line.
+        # because the command name may hold spaces). The raw file stays Claude's JSON only;
+        # the identity pairs with a copy of it in the proc file.
         "p=$(cat); i=\"$PPID-$(sed 's/.*) //' /proc/$PPID/stat 2>/dev/null | cut -d' ' -f20)\""
         f"; printf '%s' \"${{OMNIGENT_CLAUDE_ACCOUNT-}}\" > {account_quoted}.$$.tmp"
         f" && mv -f {account_quoted}.$$.tmp {account_quoted}"
-        f'; printf \'%s\\n%s\' "$i" "$p" > {raw_quoted}.$$.tmp'
+        f"; printf '%s' \"$p\" > {raw_quoted}.$$.tmp"
         f" && mv -f {raw_quoted}.$$.tmp {raw_quoted}"
+        f'; printf \'%s\\n%s\' "$i" "$p" > {proc_quoted}.$$.tmp'
+        f" && mv -f {proc_quoted}.$$.tmp {proc_quoted}"
     )
     chain_command = read_user_status_line_command()
     if chain_command is not None:
