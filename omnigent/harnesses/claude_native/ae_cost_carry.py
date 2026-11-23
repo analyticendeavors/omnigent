@@ -22,11 +22,12 @@ Fold rule, keyed on process identity and never on a bare fall in ``S``:
 
 Seeding, when no carry file exists for the session (first run after a deploy, a lost
 bridge directory, a session moved host): ``offset = max(0, server_total - S)`` where
-``server_total`` is ``total_cost_usd`` from ``GET /v1/sessions/{id}``. The ``max`` keeps
-the running process's ``S``, which the server may already hold, from counting twice. That
-field is the session's subtree total (own spend plus any sub-agent children); the server
-exposes no own-only figure, so a session whose children carry priced cost seeds a little
-high, once. A failed read posts nothing and is retried on the next poll.
+``server_total`` is the session's OWN total: its ``total_cost_usd`` from
+``GET /v1/sessions/{id}`` (a subtree sum) minus the same figure for each direct child from
+``GET /v1/sessions/{id}/child_sessions`` (a child's total already covers its descendants),
+floored at zero. The ``max`` keeps the running process's ``S``, which the server may
+already hold, from counting twice. A failed read, of any child too, posts nothing and is
+retried on the next poll.
 
 Rotation (``/clear`` or ``/fork`` to a new session id): a carry file written for another
 session id starts a fresh carry for the new id, and the cost post is held until the
@@ -219,13 +220,13 @@ def save_carry(bridge_dir: Path, carry: CostCarry) -> None:
         raise
 
 
-async def _server_total(client: httpx.AsyncClient, session_id: str) -> float | None:
+async def _session_total(client: httpx.AsyncClient, session_id: str) -> float:
     """
-    Read the session's ``total_cost_usd`` from the server.
+    Read a session's ``total_cost_usd`` (its subtree total) from the server.
 
     :param client: Omnigent HTTP client.
     :param session_id: Omnigent session id, e.g. ``"conv_abc123"``.
-    :returns: The total in USD, or ``None`` when the session is unpriced.
+    :returns: The total in USD; ``0.0`` when the session is unpriced.
     :raises httpx.HTTPError: When the read fails.
     """
     resp = await client.get(f"/v1/sessions/{session_id}")
@@ -233,8 +234,55 @@ async def _server_total(client: httpx.AsyncClient, session_id: str) -> float | N
     body = resp.json()
     value = body.get("total_cost_usd") if isinstance(body, dict) else None
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
-        return None
+        return 0.0
     return float(value)
+
+
+async def _child_ids(client: httpx.AsyncClient, session_id: str) -> list[str]:
+    """
+    List the ids of a session's direct child sessions.
+
+    :param client: Omnigent HTTP client.
+    :param session_id: Parent session id, e.g. ``"conv_abc123"``.
+    :returns: Child ids, e.g. ``["conv_child1"]``.
+    :raises httpx.HTTPError: When a read fails.
+    """
+    ids: list[str] = []
+    after: str | None = None
+    for _ in range(50):
+        params: dict[str, str | int] = {"limit": 1000, "order": "asc"}
+        if after:
+            params["after"] = after
+        resp = await client.get(f"/v1/sessions/{session_id}/child_sessions", params=params)
+        resp.raise_for_status()
+        body = resp.json()
+        data = body.get("data") if isinstance(body, dict) else None
+        ids.extend(
+            c["id"] for c in data or [] if isinstance(c, dict) and isinstance(c.get("id"), str)
+        )
+        last = body.get("last_id") if isinstance(body, dict) else None
+        if not (isinstance(body, dict) and body.get("has_more") and isinstance(last, str)):
+            break
+        after = last
+    return ids
+
+
+async def _own_total(client: httpx.AsyncClient, session_id: str) -> float:
+    """
+    Read the session's OWN cost: its subtree total minus its direct children's.
+
+    Each child's total already covers its own descendants, so one level is enough.
+
+    :param client: Omnigent HTTP client.
+    :param session_id: Omnigent session id, e.g. ``"conv_abc123"``.
+    :returns: The own total in USD, floored at ``0.0``.
+    :raises httpx.HTTPError: When any read fails, so nothing is seeded from a partial sum.
+    """
+    subtree = await _session_total(client, session_id)
+    children = sum(
+        [await _session_total(client, cid) for cid in await _child_ids(client, session_id)]
+    )
+    return max(0.0, subtree - children)
 
 
 async def carried_cost(
@@ -267,7 +315,7 @@ async def carried_cost(
         carry.observe(status_cost, proc)
     else:
         try:
-            total = await _server_total(client, carry.session_id)
+            total = await _own_total(client, carry.session_id)
         except (httpx.HTTPError, ValueError):
             _logger.warning(
                 "Could not read the session total to seed the cost carry; session=%s",

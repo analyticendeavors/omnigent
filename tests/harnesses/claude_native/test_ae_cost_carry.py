@@ -106,14 +106,14 @@ async def test_missing_file_seeds_from_server_then_survives_reload(tmp_path: Pat
         assert await carried_cost(
             client=client, carry=carry, bridge_dir=tmp_path, status_cost=3.0
         ) == pytest.approx(461.0)
-        assert len(gets) == 1
+        assert len(gets) == 2
         reloaded = load_carry(tmp_path, "conv_a")
         assert reloaded.seeded
         _set_pid(tmp_path, "2")
         assert await carried_cost(
             client=client, carry=reloaded, bridge_dir=tmp_path, status_cost=0.4
         ) == pytest.approx(461.4)
-        assert len(gets) == 1
+        assert len(gets) == 2
 
 
 @pytest.mark.asyncio
@@ -199,3 +199,74 @@ async def test_forwarder_restart_sequence_posts_a_rising_total(
             box["cost"] = cost
             await _forward(client, bridge, dedupe, parent)
     assert posted == pytest.approx([100.0, 102.0, 102.5, 103.5, 103.7])
+
+
+def _tree_client(
+    totals: dict[str, float], children: list[str], *, fail: str | None = None
+) -> httpx.AsyncClient:
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/child_sessions"):
+            body: dict[str, Any] = {
+                "data": [{"id": cid} for cid in children],
+                "has_more": False,
+            }
+        else:
+            sid = path.rsplit("/", 1)[-1]
+            if sid == fail:
+                return httpx.Response(503, request=request)
+            body = {"total_cost_usd": totals[sid]}
+        return httpx.Response(200, json=body, request=request)
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://ap")
+
+
+@pytest.mark.asyncio
+async def test_seed_subtracts_each_priced_child(tmp_path: Path) -> None:
+    carry = load_carry(tmp_path, "lead")
+    client = _tree_client({"lead": 50.0, "b1": 30.0, "b2": 13.0}, ["b1", "b2"])
+    async with client:
+        total = await carried_cost(
+            client=client, carry=carry, bridge_dir=tmp_path, status_cost=1.0
+        )
+    assert total == pytest.approx(7.0)
+    assert carry.offset == pytest.approx(6.0)
+
+
+@pytest.mark.asyncio
+async def test_seed_floors_own_total_at_zero(tmp_path: Path) -> None:
+    carry = load_carry(tmp_path, "lead")
+    client = _tree_client({"lead": 10.0, "b1": 30.0}, ["b1"])
+    async with client:
+        total = await carried_cost(
+            client=client, carry=carry, bridge_dir=tmp_path, status_cost=2.0
+        )
+    assert total == pytest.approx(2.0)
+
+
+@pytest.mark.asyncio
+async def test_child_read_failure_posts_nothing_and_retries(tmp_path: Path) -> None:
+    carry = load_carry(tmp_path, "lead")
+    totals = {"lead": 50.0, "b1": 30.0, "b2": 13.0}
+    async with _tree_client(totals, ["b1", "b2"], fail="b2") as client:
+        assert (
+            await carried_cost(client=client, carry=carry, bridge_dir=tmp_path, status_cost=1.0)
+            is None
+        )
+    assert not carry.seeded
+    assert not (tmp_path / CARRY_FILE).exists()
+    async with _tree_client(totals, ["b1", "b2"]) as client:
+        total = await carried_cost(
+            client=client, carry=carry, bridge_dir=tmp_path, status_cost=1.0
+        )
+    assert total == pytest.approx(7.0)
+
+
+@pytest.mark.asyncio
+async def test_lead_without_children_seeds_from_its_own_total(tmp_path: Path) -> None:
+    carry = load_carry(tmp_path, "lead")
+    async with _tree_client({"lead": 460.0}, []) as client:
+        total = await carried_cost(
+            client=client, carry=carry, bridge_dir=tmp_path, status_cost=2.0
+        )
+    assert total == pytest.approx(460.0)
