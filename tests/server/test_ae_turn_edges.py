@@ -118,6 +118,32 @@ async def test_a_completed_idle_arrives_after_the_plain_idle(client: httpx.Async
 
 
 @pytest.mark.usefixtures("_no_runner")
+async def test_the_completed_idle_carries_the_background_shell_count(
+    client: httpx.AsyncClient,
+) -> None:
+    agent = await create_test_agent(client, name="edges-route-shells")
+    created = await client.post("/v1/sessions", json={"agent_id": agent["id"]})
+    session_id = created.json()["id"]
+    seen: list[TurnEdge] = []
+    register_turn_edge_observer(seen.append)
+
+    resp = await client.post(
+        f"/v1/sessions/{session_id}/events",
+        json={
+            "type": "external_session_status",
+            "data": {"status": "idle", "turn_completed": True, "background_task_count": 2},
+        },
+    )
+    assert resp.status_code in (200, 202, 204), resp.text
+
+    mine = [edge for edge in seen if edge.session_id == session_id]
+    assert [(e.turn_completed, e.background_task_count) for e in mine] == [
+        (False, None),
+        (True, 2),
+    ]
+
+
+@pytest.mark.usefixtures("_no_runner")
 async def test_an_idle_without_the_flag_is_not_a_completed_turn(client: httpx.AsyncClient) -> None:
     agent = await create_test_agent(client, name="edges-route-bare")
     created = await client.post("/v1/sessions", json={"agent_id": agent["id"]})

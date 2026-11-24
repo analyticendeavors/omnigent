@@ -2060,7 +2060,11 @@ def register_events_routes(
                 ae_prompt_running.note_turn_end(session_id)
             if status == "idle" and data.get("turn_completed") is True:
                 ae_turn_edges.notify_turn_edge(
-                    session_id, "idle", response_id=response_id, turn_completed=True
+                    session_id,
+                    "idle",
+                    response_id=response_id,
+                    turn_completed=True,
+                    background_task_count=bg_count,
                 )
             await note_claude_subagent_status(conv, status, conversation_store)
             if (

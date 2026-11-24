@@ -36,12 +36,15 @@ class TurnEdge:
         ``prompt`` (a claude-native UserPromptSubmit: a turn opened, no status published).
     :param response_id: The response id the edge carried, if any.
     :param turn_completed: ``True`` only for the Stop hook's idle edge.
+    :param background_task_count: Background shells still running, sent only on the
+        Stop hook's idle edge (``0`` when none); ``None`` on every other edge.
     """
 
     session_id: str
     status: str
     response_id: str | None = None
     turn_completed: bool = False
+    background_task_count: int | None = None
 
 
 TurnEdgeObserver = Callable[[TurnEdge], None]
@@ -72,11 +75,12 @@ def notify_turn_edge(
     *,
     response_id: str | None = None,
     turn_completed: bool = False,
+    background_task_count: int | None = None,
 ) -> None:
     """Hand one edge to every observer; an observer's failure never reaches the caller."""
     if not _observers:
         return
-    edge = TurnEdge(session_id, status, response_id, turn_completed)
+    edge = TurnEdge(session_id, status, response_id, turn_completed, background_task_count)
     for observer in list(_observers):
         try:
             observer(edge)
