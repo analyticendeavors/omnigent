@@ -205,6 +205,11 @@ export const AE_SETTING_HINTS = {
     hint: "Tokens (default): new input plus output, cache reads excluded. Cost: API-rate estimate. Both: each. Off: no spend shown.",
     source: "existing",
   },
+  "chat.badge_scope": {
+    label: "App icon badge counts",
+    hint: "Top-level sessions (default): working solo and parent sessions. All sessions: helpers too. Saved on this device.",
+    source: "existing",
+  },
   "chat.pin_family": {
     label: "Pin a lead's family",
     hint: "Ask (default): choose each time. Whole family: pins its open sessions too, or none if spots run short. Parent: lead only.",

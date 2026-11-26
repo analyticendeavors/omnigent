@@ -10,6 +10,7 @@ import { AeRailIcon } from "@/components/aeRail/aeRailUi";
 import { SettingsLabel } from "@/components/SettingsLabel";
 import { CardRadioGroup } from "@/components/theme/CardRadioGroup";
 import { AeSpendDisplaySetting } from "./AeSpendDisplaySetting";
+import { AeBadgeScopeSetting } from "./AeBadgeScopeSetting";
 import { AePinFamilySetting } from "./AePinFamilySetting";
 import { AeSessionListSetting } from "./AeSessionListSetting";
 import { AeSuggestionKeysSetting } from "./AeSuggestionKeysSetting";
@@ -89,6 +90,7 @@ export function AeChatSettingsSection() {
     <div data-testid="ae-chat-settings" className="flex flex-col gap-6">
       <SessionOpenViewControl />
       <AeSpendDisplaySetting />
+      <AeBadgeScopeSetting />
       <AePinFamilySetting />
       <AeTokenDefragSetting />
       <AeSuggestionKeysSetting />

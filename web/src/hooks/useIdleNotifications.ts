@@ -35,7 +35,10 @@ import { useLoadedConversations } from "@/hooks/useSidebarData";
 // re-prompted. Under the Electron desktop shell the OS notification path
 // manages permission, so that gate doesn't apply.
 
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
+import { aeBadgeCount, useAeBadgeScope } from "@/lib/aeBadgeScope";
+import { readAeHelpersCount } from "@/lib/aeSlotLimit";
 import { useNavigate } from "@/lib/routing";
 import type { Conversation } from "@/hooks/useConversations";
 import {
@@ -107,7 +110,8 @@ function isWindowFocused(): boolean {
  * value, so sessions already idle at load never fire — only a fresh
  * transition observed by this client does.
  *
- * The badge reflects the number of unread sessions — the same definition the
+ * The badge counts working sessions (omnigent-ae: `aeBadgeScope`). The tap
+ * target and text Android shows still describe unread sessions, the same definition the
  * sidebar uses: sessions with unseen activity since the user last had them
  * open (`isConversationUnseen`) plus sessions awaiting input (pending
  * elicitations). It's recomputed from the conversation list every tick (no
@@ -122,6 +126,10 @@ function isWindowFocused(): boolean {
 export function useIdleNotifications(activeConversationId?: string): void {
   const navigate = useNavigate();
   const { data } = useLoadedConversations();
+  const queryClientRef = useRef(useQueryClient());
+  const badgeScope = useAeBadgeScope();
+  const badgeScopeRef = useRef(badgeScope);
+  badgeScopeRef.current = badgeScope;
   const prevStatus = useRef<Map<string, ConversationStatus>>(new Map());
   const prevElicitations = useRef<Map<string, number>>(new Map());
   // Last badge state sent to the shell, as a `count|navigatePath|title|body` key.
@@ -204,7 +212,13 @@ export function useIdleNotifications(activeConversationId?: string): void {
   // it differs from the last one sent. No-op in a plain browser (`setBadgeCount`
   // is inert outside a native shell).
   const pushBadge = (ids: Set<string>, conversations: Conversation[]) => {
-    const count = ids.size;
+    // The number is the working-session count (device setting, omnigent-ae);
+    // the unread ids still pick the Android tap target and text.
+    const count = aeBadgeCount(
+      conversations,
+      readAeHelpersCount(queryClientRef.current),
+      badgeScopeRef.current,
+    );
     const activation = badgeActivationFor(ids, conversations);
     const key = `${count}|${activation?.navigatePath ?? ""}|${activation?.title ?? ""}|${activation?.body ?? ""}`;
     if (key === lastSentBadge.current) return;
@@ -266,6 +280,22 @@ export function useIdleNotifications(activeConversationId?: string): void {
     pushBadge(next, convs);
     // pushBadge and the focus state are refs; rerun only when the map changes.
   }, [unseenTick]);
+
+  // Changing the badge scope resends the number from the current list.
+  useEffect(() => {
+    const convs = latestConversations.current;
+    if (convs === null) return;
+    pushBadge(
+      computeUnreadBadgeIds(
+        convs,
+        activeIdRef.current,
+        windowFocusedRef.current,
+        isConversationUnseen,
+      ),
+      convs,
+    );
+    // pushBadge reads refs; rerun only when the scope changes.
+  }, [badgeScope]);
 
   useEffect(() => {
     // Still loading — don't compute a badge from an absent list (and don't

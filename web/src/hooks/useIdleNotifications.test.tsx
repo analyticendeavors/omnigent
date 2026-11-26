@@ -5,7 +5,9 @@ import {
 } from "@/hooks/useConversations";
 
 vi.mock("@/hooks/useSidebarData", () => ({ useLoadedConversations: () => useTestConversations() }));
-import { cleanup, renderHook, act } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, renderHook as renderHookBare, act } from "@testing-library/react";
+import type { ReactNode } from "react";
 
 const navigateMock = vi.fn();
 // The hook consumes `useNavigate` from the routing IoC seam (@/lib/routing),
@@ -57,6 +59,16 @@ import {
   seedReadState,
 } from "@/hooks/useUnseenConversations";
 import { useIdleNotifications } from "./useIdleNotifications";
+import { writeAeBadgeScope } from "@/lib/aeBadgeScope";
+
+// The hook reads the cached helpers-count policy, so it needs a query client.
+function renderHook<T>(callback: () => T) {
+  const client = new QueryClient();
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+  return renderHookBare(callback, { wrapper });
+}
 
 const useConvMock = vi.mocked(useConversations);
 const getPermMock = vi.mocked(getNotificationPermission);
@@ -485,9 +497,12 @@ describe("useIdleNotifications active-view suppression", () => {
   });
 });
 
+const WORKING = { "ae.status": "working" };
+
 describe("useIdleNotifications badge (native shell)", () => {
   beforeEach(() => {
     isNativeMock.mockReturnValue(true);
+    window.localStorage.clear();
   });
 
   /**
@@ -498,7 +513,7 @@ describe("useIdleNotifications badge (native shell)", () => {
    */
   function unseenConv(id: string, status: Conversation["status"] = "idle"): Conversation {
     markConversationSeen(id, 50);
-    return { ...conv(id, status), updated_at: 100 };
+    return { ...conv(id, status), updated_at: 100, labels: WORKING };
   }
 
   it("counts already-unread sessions on the first data tick (no live transition)", () => {
@@ -535,26 +550,26 @@ describe("useIdleNotifications badge (native shell)", () => {
     expect(setBadgeMock).toHaveBeenCalledWith(1, expect.objectContaining({ navigatePath: "/c/a" }));
   });
 
-  it("counts sessions awaiting input (pending elicitations)", () => {
-    // Awaiting-input sessions badge even without an unseen baseline: the
-    // agent is blocked on the user, which the sidebar flags too.
-    setConversations([conv("a", "running", 1)]);
+  it("does not count a session awaiting input as working, but keeps its tap target", () => {
+    // Blocked on an approval is not working (the Session Dashboard agrees); the
+    // Android tap target still points at the session waiting on the user.
+    setConversations([{ ...conv("a", "running", 1), labels: WORKING }]);
     renderHook(() => useIdleNotifications());
 
-    expect(setBadgeMock).toHaveBeenCalledWith(1, expect.objectContaining({ navigatePath: "/c/a" }));
+    expect(setBadgeMock).toHaveBeenCalledWith(0, expect.objectContaining({ navigatePath: "/c/a" }));
   });
 
   it("updates the badge when a watched session's turn ends", () => {
     markConversationSeen("a", 50);
-    // Still running: updated_at past the baseline doesn't count yet
-    // (isConversationUnseen ignores running sessions).
-    setConversations([{ ...conv("a", "running"), updated_at: 100 }]);
+    // Still running: updated_at past the baseline is not unread yet
+    // (isConversationUnseen ignores running sessions), but it is working.
+    setConversations([{ ...conv("a", "running"), updated_at: 100, labels: WORKING }]);
     const { rerender } = renderHook(() => useIdleNotifications());
-    expect(setBadgeMock).toHaveBeenLastCalledWith(0);
+    expect(setBadgeMock).toHaveBeenLastCalledWith(1);
 
-    setConversations([{ ...conv("a", "idle"), updated_at: 100 }]);
+    setConversations([{ ...conv("a", "idle"), updated_at: 100, labels: WORKING }]);
     rerender();
-    // The turn ended -> the session is now unseen -> badge 1.
+    // The turn ended -> unseen -> the tap target appears; the count holds at 1.
     expect(setBadgeMock).toHaveBeenLastCalledWith(
       1,
       expect.objectContaining({ navigatePath: "/c/a" }),
@@ -593,11 +608,12 @@ describe("useIdleNotifications badge (native shell)", () => {
 
   it("suppresses the actively-viewed session while the window is focused", () => {
     setWindowFocused(true);
-    // 'a' is unseen by the baseline, but the user is looking right at it.
+    // 'a' is unseen by the baseline, but the user is looking right at it: no
+    // tap target. It is still a working session, so the count holds.
     setConversations([unseenConv("a")]);
     renderHook(() => useIdleNotifications("a"));
 
-    expect(setBadgeMock).toHaveBeenCalledWith(0);
+    expect(setBadgeMock).toHaveBeenCalledWith(1);
   });
 
   it("counts the open session when the window is blurred", () => {
@@ -626,8 +642,9 @@ describe("useIdleNotifications badge (native shell)", () => {
       window.dispatchEvent(new Event("focus"));
     });
 
-    // Focusing on the open conversation marks it read -> badge clears to 0.
-    expect(setBadgeMock).toHaveBeenCalledWith(0);
+    // Focusing on the open conversation marks it read -> the tap target clears;
+    // the working count stays 1.
+    expect(setBadgeMock).toHaveBeenCalledWith(1);
   });
 
   it("keeps other unread sessions when focusing clears only the active one", () => {
@@ -646,8 +663,8 @@ describe("useIdleNotifications badge (native shell)", () => {
       window.dispatchEvent(new Event("focus"));
     });
 
-    // Focusing on 'a' suppresses only 'a'; 'b' remains unread -> badge 1.
-    expect(setBadgeMock).toHaveBeenCalledWith(1, expect.objectContaining({ navigatePath: "/c/b" }));
+    // Focusing on 'a' suppresses only 'a'; 'b' remains unread -> tap target /c/b.
+    expect(setBadgeMock).toHaveBeenCalledWith(2, expect.objectContaining({ navigatePath: "/c/b" }));
   });
 
   it("makes the single-session badge actionable + descriptive", () => {
@@ -682,10 +699,40 @@ describe("useIdleNotifications badge (native shell)", () => {
     setConversations([conv("a", "running", 1), unseenConv("b")]);
     renderHook(() => useIdleNotifications());
 
-    expect(setBadgeMock).toHaveBeenCalledWith(2, {
+    // Only 'b' is working; 'a' is blocked on its prompt.
+    expect(setBadgeMock).toHaveBeenCalledWith(1, {
       navigatePath: "/inbox",
       body: "2 sessions need your attention",
     });
+  });
+});
+
+describe("useIdleNotifications badge scope (native shell)", () => {
+  beforeEach(() => {
+    isNativeMock.mockReturnValue(true);
+    window.localStorage.clear();
+  });
+
+  const family = () => [
+    { ...conv("lead", "running"), labels: WORKING },
+    { ...conv("kid", "running"), labels: WORKING, parent_session_id: "lead" },
+    { ...conv("parked", "idle"), labels: { "ae.status": "parked" } },
+    { ...conv("gone", "running"), labels: WORKING, archived: true },
+  ];
+
+  it("counts top-level working sessions by default", () => {
+    setConversations(family());
+    renderHook(() => useIdleNotifications());
+    expect(setBadgeMock).toHaveBeenLastCalledWith(1);
+  });
+
+  it("counts working child sessions too when the scope is All, and resends on a change", () => {
+    setConversations(family());
+    renderHook(() => useIdleNotifications());
+    setBadgeMock.mockClear();
+
+    act(() => writeAeBadgeScope("all"));
+    expect(setBadgeMock).toHaveBeenLastCalledWith(2);
   });
 });
 

@@ -122,7 +122,7 @@ describe("AeChatSettingsSection", () => {
     const ids = (Object.keys(AE_SETTING_HINTS) as AeSettingHintId[]).filter((id) =>
       id.startsWith("chat."),
     );
-    expect(ids.length).toBe(4);
+    expect(ids.length).toBe(5);
     for (const id of ids) {
       const { label, hint, source } = AE_SETTING_HINTS[id];
       expect(hint.trim(), id).not.toBe("");
@@ -131,5 +131,6 @@ describe("AeChatSettingsSection", () => {
     }
     expect(page).toContain(AE_SPEND_SHORT);
     expect(page).toContain(AE_PIN_FAMILY_SHORT);
+    expect(page).toContain(AE_SETTING_HINTS["chat.badge_scope"].hint);
   });
 });

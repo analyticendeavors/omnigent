@@ -215,4 +215,22 @@ describe("AeSlotsPill", () => {
       Reflect.deleteProperty(navigator, "clearAppBadge");
     }
   });
+  it("badges every working session, children too, when the scope is All; the pill text stays top-level", () => {
+    const setAppBadge = vi.fn(async () => undefined);
+    Object.assign(navigator, { setAppBadge });
+    window.localStorage.setItem("omnigent:ae-badge-scope", "all");
+    try {
+      const qc = new QueryClient();
+      qc.setQueryData(
+        ["conversations", "", false],
+        pages([row("a"), row("sub", { parent_session_id: "a" })]),
+      );
+      renderPill(qc);
+      expect(setAppBadge).toHaveBeenLastCalledWith(2);
+      expect(screen.getByTestId("ae-slots-count").textContent).toMatch(/^1\//);
+    } finally {
+      window.localStorage.removeItem("omnigent:ae-badge-scope");
+      Reflect.deleteProperty(navigator, "setAppBadge");
+    }
+  });
 });

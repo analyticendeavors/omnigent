@@ -29,6 +29,7 @@ const CHOICES = [
   "insights.frequency",
   "insights.scope",
   "chat.spend_display",
+  "chat.badge_scope",
   "chat.pin_family",
   "family.child_prompts",
   "family.relay",
