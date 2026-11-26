@@ -778,7 +778,8 @@ describe("AeSpeakRepliesButton", () => {
         if (String(url).includes("/tts/voices")) {
           return Promise.resolve(new Response(JSON.stringify({ voices: [] }), { status: 200 }));
         }
-        calls.push(String(init?.body));
+        // Only the speech request is under test; any other request is not a second read.
+        if (String(url).endsWith("/v1/ae/tts")) calls.push(String(init?.body));
         return new Promise<Response>(() => {});
       }),
     );

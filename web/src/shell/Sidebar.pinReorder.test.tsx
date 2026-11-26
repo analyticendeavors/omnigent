@@ -196,9 +196,11 @@ describe("dropping an unpinned session onto a pinned row", () => {
 describe("unpinning from a sidebar row", () => {
   const row = (id: string) => screen.getByRole("link", { name: id }).closest("li")!;
 
-  // Sonner keeps toasts in module state across mounts.
-  afterEach(() => {
+  // Sonner keeps toasts in module state across mounts. dismiss() only starts the exit; sonner
+  // removes the toast on a timer, so wait for the toast to go or the timer fires after teardown.
+  afterEach(async () => {
     toast.dismiss();
+    await waitFor(() => expect(screen.queryByTestId("unpin-undo-toast-item")).toBeNull());
   });
 
   it.each([
