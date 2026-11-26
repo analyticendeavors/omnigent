@@ -25,27 +25,15 @@ import {
 } from "@/lib/aeSlotLimit";
 import { subscribeToQueryKeys } from "@/lib/aeQueryCacheSubscribe";
 import { syncAeAppBadge } from "@/lib/aeAppBadge";
-import { type AeBadgeScope, aeBadgeCount, useAeBadgeScope } from "@/lib/aeBadgeScope";
+import { aeCachedConversationRows, useAeBadgeCount } from "@/lib/aeBadgeScope";
 import { AE_COUNT_PILL, AE_COUNT_PILL_ALERT, AE_COUNT_PILL_QUIET } from "@/lib/aeCountPill";
 import { useLocation } from "@/lib/routing";
-import type { ConversationsInfiniteData } from "@/lib/sessionListCache";
 import { cn } from "@/lib/utils";
 import { PrimaryNavLink } from "@/shell/PrimaryNavLink";
 
-function cachedRows(queryClient: QueryClient) {
-  return queryClient
-    .getQueriesData<ConversationsInfiniteData>({ queryKey: ["conversations"] })
-    .flatMap(([, data]) => data?.pages.flatMap((page) => page.data) ?? []);
-}
-
 /** Slots held across every cached `["conversations", ...]` list, deduped by id. */
 export function readAeSlotCount(queryClient: QueryClient): number {
-  return countAeSlots(cachedRows(queryClient), readAeHelpersCount(queryClient));
-}
-
-/** The app icon badge number: the slot count, or every working session when the device setting says so. */
-export function readAeBadgeCount(queryClient: QueryClient, scope: AeBadgeScope): number {
-  return aeBadgeCount(cachedRows(queryClient), readAeHelpersCount(queryClient), scope);
+  return countAeSlots(aeCachedConversationRows(queryClient), readAeHelpersCount(queryClient));
 }
 
 /** Subscribes to the list and helpers-count queries; the snapshot is a number, so React skips unchanged counts. */
@@ -60,18 +48,6 @@ export function useAeSlotCount(): number {
   return useSyncExternalStore(subscribe, read, read);
 }
 
-/** Same subscription as `useAeSlotCount`, counted by the badge scope. */
-function useAeBadgeCount(scope: AeBadgeScope): number {
-  const queryClient = useQueryClient();
-  const subscribe = useCallback(
-    (onChange: () => void) =>
-      subscribeToQueryKeys(queryClient, [["conversations"], AE_HELPERS_COUNT_QUERY_KEY], onChange),
-    [queryClient],
-  );
-  const read = useCallback(() => readAeBadgeCount(queryClient, scope), [queryClient, scope]);
-  return useSyncExternalStore(subscribe, read, read);
-}
-
 export interface AeSlotsPillProps {
   onNavigate?: (event: MouseEvent<HTMLAnchorElement>) => void;
 }
@@ -79,7 +55,7 @@ export interface AeSlotsPillProps {
 export function AeSlotsPill({ onNavigate }: AeSlotsPillProps) {
   useAeHelpersCount();
   const count = useAeSlotCount();
-  const badge = useAeBadgeCount(useAeBadgeScope());
+  const badge = useAeBadgeCount();
   const limit = useAeSlotLimit();
   const full = count >= limit;
   const { pathname } = useLocation();

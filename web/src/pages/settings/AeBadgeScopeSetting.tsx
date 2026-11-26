@@ -17,7 +17,7 @@ const CARDS: Record<AeBadgeScope, { label: string; title: string }> = {
     label: "Top-level sessions",
     title: "The badge counts working solo and parent sessions, as the Session Dashboard does.",
   },
-  all: { label: "All sessions", title: "The badge also counts working helper sessions." },
+  all: { label: "All sessions", title: "The badge also counts working child and helper sessions." },
 };
 
 export function AeBadgeScopeSetting() {

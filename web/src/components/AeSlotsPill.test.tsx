@@ -3,6 +3,7 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Conversation } from "@/hooks/useConversations";
+import { writeAeBadgeScope } from "@/lib/aeBadgeScope";
 import { AE_PARKING_LOT_PATH } from "@/lib/aeLabels";
 import { AE_HELPERS_COUNT_QUERY_KEY, AE_SLOT_LIMIT_QUERY_KEY } from "@/lib/aeSlotLimit";
 import type { ConversationsInfiniteData } from "@/lib/sessionListCache";
@@ -228,6 +229,26 @@ describe("AeSlotsPill", () => {
       renderPill(qc);
       expect(setAppBadge).toHaveBeenLastCalledWith(2);
       expect(screen.getByTestId("ae-slots-count").textContent).toMatch(/^1\//);
+    } finally {
+      window.localStorage.removeItem("omnigent:ae-badge-scope");
+      Reflect.deleteProperty(navigator, "setAppBadge");
+    }
+  });
+
+  it("re-syncs the icon badge when the scope changes while mounted", () => {
+    const setAppBadge = vi.fn(async () => undefined);
+    Object.assign(navigator, { setAppBadge });
+    window.localStorage.removeItem("omnigent:ae-badge-scope");
+    try {
+      const qc = new QueryClient();
+      qc.setQueryData(
+        ["conversations", "", false],
+        pages([row("a"), row("sub", { parent_session_id: "a" })]),
+      );
+      renderPill(qc);
+      expect(setAppBadge).toHaveBeenLastCalledWith(1);
+      act(() => writeAeBadgeScope("all"));
+      expect(setAppBadge).toHaveBeenLastCalledWith(2);
     } finally {
       window.localStorage.removeItem("omnigent:ae-badge-scope");
       Reflect.deleteProperty(navigator, "setAppBadge");

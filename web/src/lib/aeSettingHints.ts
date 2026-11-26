@@ -207,7 +207,7 @@ export const AE_SETTING_HINTS = {
   },
   "chat.badge_scope": {
     label: "App icon badge counts",
-    hint: "Top-level sessions (default): working solo and parent sessions. All sessions: helpers too. Saved on this device.",
+    hint: "Top-level sessions (default): working solo and parent sessions. All sessions: working child and helper sessions too. Saved on this device.",
     source: "existing",
   },
   "chat.pin_family": {

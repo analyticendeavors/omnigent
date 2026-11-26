@@ -3,8 +3,12 @@
 // "top-level" (default) is the number the Session Dashboard pill shows; "all"
 // adds working helper and child sessions. Device-local.
 
-import { useSyncExternalStore } from "react";
+import { type QueryClient, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useSyncExternalStore } from "react";
 import { aeStatusOf, countAeSlots, isAeSlot } from "@/lib/aeLabels";
+import { subscribeToQueryKeys } from "@/lib/aeQueryCacheSubscribe";
+import { AE_HELPERS_COUNT_QUERY_KEY, readAeHelpersCount } from "@/lib/aeSlotLimit";
+import type { ConversationsInfiniteData } from "@/lib/sessionListCache";
 import type { Conversation } from "@/hooks/useConversations";
 
 const STORAGE_KEY = "omnigent:ae-badge-scope";
@@ -39,7 +43,8 @@ export function writeAeBadgeScope(value: AeBadgeScope): void {
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   const onStorage = (event: StorageEvent) => {
-    if (event.key === STORAGE_KEY) listener();
+    // A null key means another tab cleared all of localStorage.
+    if (event.key === STORAGE_KEY || event.key === null) listener();
   };
   window.addEventListener("storage", onStorage);
   return () => {
@@ -75,4 +80,37 @@ export function aeBadgeCount(
     }
   }
   return held.size;
+}
+
+/** Every cached `["conversations", ...]` list's rows, flattened (callers dedupe by id). */
+export function aeCachedConversationRows(queryClient: QueryClient) {
+  return queryClient
+    .getQueriesData<ConversationsInfiniteData>({ queryKey: ["conversations"] })
+    .flatMap(([, data]) => data?.pages.flatMap((page) => page.data) ?? []);
+}
+
+/** The app icon badge number from the query cache, by the device's scope. */
+export function readAeBadgeCount(queryClient: QueryClient, scope: AeBadgeScope): number {
+  return aeBadgeCount(
+    aeCachedConversationRows(queryClient),
+    readAeHelpersCount(queryClient),
+    scope,
+  );
+}
+
+/**
+ * The one badge number for every client: the Home Screen app (AeSlotsPill) and the
+ * native shells (useIdleNotifications) both read it here, so they cannot differ.
+ * Re-reads when the list, the helpers-count policy or the scope changes.
+ */
+export function useAeBadgeCount(): number {
+  const queryClient = useQueryClient();
+  const scope = useAeBadgeScope();
+  const subscribeToCounts = useCallback(
+    (onChange: () => void) =>
+      subscribeToQueryKeys(queryClient, [["conversations"], AE_HELPERS_COUNT_QUERY_KEY], onChange),
+    [queryClient],
+  );
+  const read = useCallback(() => readAeBadgeCount(queryClient, scope), [queryClient, scope]);
+  return useSyncExternalStore(subscribeToCounts, read, read);
 }

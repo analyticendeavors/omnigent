@@ -26,4 +26,20 @@ describe("AeBadgeScopeSetting", () => {
     fireEvent.click(screen.getByTestId("ae-badge-scope-all"));
     expect(readAeBadgeScope()).toBe("all");
   });
+
+  it("is a labelled radio group with the saved choice checked, and arrow keys select", () => {
+    render(<AeBadgeScopeSetting />);
+    expect(screen.getByRole("radiogroup", { name: "App icon badge counts" })).toBeInTheDocument();
+    const top = screen.getByRole("radio", { name: /Top-level sessions/ });
+    const all = screen.getByRole("radio", { name: /All sessions/ });
+    expect(top).toHaveAttribute("aria-checked", "true");
+    expect(all).toHaveAttribute("aria-checked", "false");
+
+    fireEvent.keyDown(top, { key: "ArrowRight" });
+    expect(readAeBadgeScope()).toBe("all");
+    expect(screen.getByRole("radio", { name: /All sessions/ })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
 });

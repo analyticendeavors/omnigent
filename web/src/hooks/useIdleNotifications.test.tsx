@@ -60,10 +60,12 @@ import {
 } from "@/hooks/useUnseenConversations";
 import { useIdleNotifications } from "./useIdleNotifications";
 import { writeAeBadgeScope } from "@/lib/aeBadgeScope";
+import { AE_HELPERS_COUNT_QUERY_KEY } from "@/lib/aeSlotLimit";
 
-// The hook reads the cached helpers-count policy, so it needs a query client.
+// The badge number comes from the query cache (the same reader the Session
+// Dashboard row uses), so the hook needs a client holding the list.
+let client = new QueryClient();
 function renderHook<T>(callback: () => T) {
-  const client = new QueryClient();
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
@@ -123,6 +125,12 @@ function conv(id: string, status: Conversation["status"], pendingElicitations = 
 
 /** Shape a conversations list into the useConversations return value. */
 function setConversations(list: Conversation[]): void {
+  act(() => {
+    client.setQueryData(["conversations", "", false], {
+      pages: [{ data: list, first_id: null, last_id: null, has_more: false }],
+      pageParams: [undefined],
+    });
+  });
   useConvMock.mockReturnValue({
     data: { pages: [{ data: list }] },
   } as unknown as ReturnType<typeof useConversations>);
@@ -134,6 +142,7 @@ function setWindowFocused(focused: boolean): void {
 }
 
 beforeEach(() => {
+  client = new QueryClient();
   // Fake only the timers the settle uses, leaving Date/microtasks/etc. real so
   // React's act scheduling and the preview promise keep working.
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -732,6 +741,52 @@ describe("useIdleNotifications badge scope (native shell)", () => {
     setBadgeMock.mockClear();
 
     act(() => writeAeBadgeScope("all"));
+    expect(setBadgeMock).toHaveBeenLastCalledWith(2);
+  });
+
+  it("does not resend when a scope change leaves the count unchanged", () => {
+    setConversations([{ ...conv("lead", "running"), labels: WORKING }]);
+    renderHook(() => useIdleNotifications());
+    expect(setBadgeMock).toHaveBeenLastCalledWith(1);
+    setBadgeMock.mockClear();
+
+    act(() => writeAeBadgeScope("all"));
+    expect(setBadgeMock).not.toHaveBeenCalled();
+  });
+
+  it("follows the helpers-count policy: resolving after the first tick, then a live change", () => {
+    const helper = {
+      ...conv("helper", "running"),
+      labels: { "ae.status": "working", "ae.orch": "lead" },
+    };
+    setConversations([{ ...conv("lead", "running"), labels: WORKING }, helper]);
+    renderHook(() => useIdleNotifications());
+    // The policy has not resolved: it reads as off, helpers are not counted.
+    expect(setBadgeMock).toHaveBeenLastCalledWith(1);
+
+    act(() => client.setQueryData(AE_HELPERS_COUNT_QUERY_KEY, true));
+    expect(setBadgeMock).toHaveBeenLastCalledWith(2);
+
+    act(() => client.setQueryData(AE_HELPERS_COUNT_QUERY_KEY, false));
+    expect(setBadgeMock).toHaveBeenLastCalledWith(1);
+  });
+
+  it("counts a session that only another cached list holds, as the Dashboard row does", () => {
+    setConversations([{ ...conv("lead", "running"), labels: WORKING }]);
+    act(() => {
+      client.setQueryData(["conversations", "", true], {
+        pages: [
+          {
+            data: [{ ...conv("other", "running"), labels: WORKING }],
+            first_id: null,
+            last_id: null,
+            has_more: false,
+          },
+        ],
+        pageParams: [undefined],
+      });
+    });
+    renderHook(() => useIdleNotifications());
     expect(setBadgeMock).toHaveBeenLastCalledWith(2);
   });
 });
