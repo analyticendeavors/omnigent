@@ -24,7 +24,7 @@ describe("aeGroupShells", () => {
 
   it("keeps different commands apart, in first-seen order", () => {
     const groups = aeGroupShells([{ command: "sleep 1" }, { command: "sleep 2" }]);
-    expect(groups.map((g) => g.key)).toEqual(["sleep 1", "sleep 2"]);
+    expect(groups.map((g) => g.label)).toEqual(["sleep 1", "sleep 2"]);
   });
 
   it("lets the description win over the command", () => {
@@ -42,5 +42,30 @@ describe("aeGroupShells", () => {
       { command: "until [ -f b ]; do sleep 5; done" },
     ]);
     expect(groups).toHaveLength(2);
+  });
+
+  it("labels a merged loop group with its shared condition", () => {
+    const [g] = aeGroupShells([loop("a"), loop("b")]);
+    expect(g.label).toBe("until [ -z \"$(pgrep -f 'scripts/fit-check.mjs')\" ]");
+  });
+
+  it("only merges loops whose body is a bare sleep", () => {
+    const two = (a: string, b: string) => aeGroupShells([{ command: a }, { command: b }]);
+    expect(
+      two("while true; do ./poll-a.sh; sleep 5; done", "while true; do ./poll-b.sh; done"),
+    ).toHaveLength(2);
+    expect(
+      two("until false; do ./deploy.sh; done", "until false; do ./backup.sh; done"),
+    ).toHaveLength(2);
+    expect(
+      two(
+        "until grep -q '; do alpha' f; do sleep 5; done",
+        "until grep -q '; do beta' f; do sleep 5; done",
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("keeps a description and a command with the same text apart", () => {
+    expect(aeGroupShells([{ description: "sleep 1" }, { command: "sleep 1" }])).toHaveLength(2);
   });
 });

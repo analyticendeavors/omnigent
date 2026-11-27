@@ -407,6 +407,24 @@ describe("chat status line", () => {
     expect(screen.getAllByTestId("ae-activity-shell-chip")).toHaveLength(3);
   });
 
+  it("resets the expanded list when the session changes", () => {
+    const shells = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ id: `s${i}`, command: `sleep ${i + 1}` }));
+    setup({ backgroundTaskCount: 4, backgroundTasks: shells(4) });
+    wrap(<AeSessionActivityLine showsWorking />);
+    fireEvent.click(screen.getByTestId("ae-activity-shell-more"));
+    expect(screen.getAllByTestId("ae-activity-shell-chip")).toHaveLength(4);
+    act(() => {
+      useChatStore.setState({
+        conversationId: "conv_other",
+        backgroundTaskCount: 10,
+        backgroundTasks: shells(10),
+      });
+    });
+    expect(screen.getAllByTestId("ae-activity-shell-chip")).toHaveLength(3);
+    expect(screen.getByTestId("ae-activity-shell-more")).toHaveTextContent("+7 more");
+  });
+
   it("lists every member of a merged shell chip in its popover", () => {
     const loop = (id: string, tail: string) => ({
       id,

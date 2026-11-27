@@ -279,8 +279,16 @@ function shellLabel(task: BackgroundTaskInfo): string {
 }
 
 /** A shell chip opens the full description and command, as the composer pill did. */
-function ShellChip({ task, group }: { task: BackgroundTaskInfo; group?: BackgroundTaskInfo[] }) {
-  const label = shellLabel(task);
+function ShellChip({
+  task,
+  group,
+  groupLabel,
+}: {
+  task: BackgroundTaskInfo;
+  group?: BackgroundTaskInfo[];
+  groupLabel?: string;
+}) {
+  const label = groupLabel ?? shellLabel(task);
   const count = group?.length ?? 1;
   const command = task.command?.trim();
   return (
@@ -304,7 +312,7 @@ function ShellChip({ task, group }: { task: BackgroundTaskInfo; group?: Backgrou
       >
         <div className="flex flex-col gap-1">
           <span className="text-sm text-foreground [overflow-wrap:anywhere]">{label}</span>
-          {command && command !== label && (
+          {command && command !== label && count === 1 && (
             <span className="whitespace-pre-wrap font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
               {command}
             </span>
@@ -421,8 +429,11 @@ export function AeSessionActivityLine({ showsWorking }: { showsWorking: boolean 
               <AgentChip key={agent.id} agent={agent} now={now} />
             ))}
             <AeShellChips
+              key={data.conversationId}
               shells={data.shells}
-              renderChip={(task, group) => <ShellChip task={task} group={group} />}
+              renderChip={(task, group, groupLabel) => (
+                <ShellChip task={task} group={group} groupLabel={groupLabel} />
+              )}
             />
           </div>
         )}
