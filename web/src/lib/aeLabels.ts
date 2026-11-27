@@ -11,6 +11,7 @@
 
 import type { Conversation } from "@/hooks/useConversations";
 import { aeIsHelper } from "@/lib/aeFamily";
+import { isAeMasterChat } from "@/lib/aeMasterChat";
 
 export const AE_NAMESPACE = "ae.";
 
@@ -131,11 +132,13 @@ type AeSlotRow = Pick<
 /**
  * Whether a row holds a slot: `ae.status=working`, not archived, not a
  * sub-agent (sub-agents run inside their parent's slot), and neither blocked
- * on an approval nor failed. Mirrors `ae_omni_policies.sessions.working_sessions`.
+ * on an approval nor failed, and not the master chat (`ae.master`). Mirrors
+ * `ae_omni_policies.sessions.working_sessions`.
  */
 export function isAeSlot(conversation: AeSlotRow): boolean {
   return (
     aeStatusOf(conversation.labels) === "working" &&
+    !isAeMasterChat(conversation) &&
     !conversation.archived &&
     (conversation.parent_session_id ?? null) === null &&
     (conversation.pending_elicitations_count ?? 0) === 0 &&

@@ -81,6 +81,11 @@ describe("slots", () => {
     expect(isAeSlot({ labels: { "ae.status": "parked" } })).toBe(false);
   });
 
+  it("holds no slot for the master chat, like the server", () => {
+    expect(isAeSlot({ labels: { "ae.status": "working", "ae.master": "1" } })).toBe(false);
+    expect(isAeSlot({ labels: { "ae.status": "working", "ae.master": "" } })).toBe(true);
+  });
+
   it("holds no slot while blocked on an approval or failed, like the server", () => {
     expect(isAeSlot({ ...working("a"), pending_elicitations_count: 1 })).toBe(false);
     expect(isAeSlot({ ...working("a"), pending_elicitations_count: 0 })).toBe(true);
