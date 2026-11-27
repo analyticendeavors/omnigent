@@ -12,6 +12,8 @@ import { AeTablerSvg } from "@/lib/aeTablerIcon";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import type { ApprovalSummary } from "@/lib/aeApprovalSummary";
+import { scrub } from "@/lib/aeApprovalSummaryTools";
+import { useAeAiSummary } from "@/hooks/useAeAiSummary";
 import { cn } from "@/lib/utils";
 import { AeApprovalPreview } from "./AeApprovalPreview";
 import { AeClampedMessage } from "./AeClampedMessage";
@@ -49,6 +51,9 @@ export function AeApprovalSummary({
   const { risk, kind, text, cwd, code, danger, truncated } = summary;
   const [moreOpen, setMoreOpen] = useState(false);
   const moreId = useId();
+  // Haiku's plain-English rewrite of a line no agent wrote. It leads; the derived line stays
+  // visible under it, so a line steered by crafted arguments is never the only description.
+  const aiText = useAeAiSummary(summary);
   const isEdit = kind === "edit";
   // The first line of the command stays visible, so the agent's own words are never the only
   // thing on a card whose code is folded.
@@ -60,6 +65,14 @@ export function AeApprovalSummary({
     >
       {peek}
     </code>
+  ) : null;
+  const aiLine = aiText ? (
+    <span className="flex flex-col" data-testid="approval-ai-summary">
+      <span className="text-base text-foreground" data-testid="approval-ai-text">
+        {scrub(aiText)}
+      </span>
+      <span className="text-xs text-muted-foreground">AI summary</span>
+    </span>
   ) : null;
   const agentLine = summary.agentText ? (
     <span className="text-sm text-muted-foreground" data-testid="approval-agent-says">
@@ -87,8 +100,14 @@ export function AeApprovalSummary({
         {requester}
         <div className="flex flex-wrap items-center gap-2">
           <span aria-hidden className="size-2 shrink-0 rounded-full bg-success" />
-          <span className="min-w-0 flex-1 text-ui" data-testid="approval-summary-text">
-            {text}
+          <span className="flex min-w-0 flex-1 flex-col">
+            {aiLine}
+            <span
+              className={cn("text-ui", aiText && "text-sm text-muted-foreground")}
+              data-testid="approval-summary-text"
+            >
+              {text}
+            </span>
           </span>
           <Button
             size="sm"
@@ -167,8 +186,12 @@ export function AeApprovalSummary({
       </AlertTitle>
       <AlertDescription className="flex flex-col gap-2">
         {requester}
+        {aiLine}
         <span
-          className={cn("text-base text-foreground", summary.fullMessage && "truncate")}
+          className={cn(
+            aiText ? "text-sm text-muted-foreground" : "text-base text-foreground",
+            summary.fullMessage && "truncate",
+          )}
           data-testid="approval-summary-text"
         >
           {text}
