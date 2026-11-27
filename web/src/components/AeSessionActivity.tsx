@@ -317,7 +317,9 @@ function ShellChip({
               {command}
             </span>
           )}
-          {task.status && <span className="text-xs text-muted-foreground">{task.status}</span>}
+          {task.status && count === 1 && (
+            <span className="text-xs text-muted-foreground">{task.status}</span>
+          )}
           {group && group.length > 1 && <AeShellGroupMembers tasks={group} />}
         </div>
       </PopoverContent>

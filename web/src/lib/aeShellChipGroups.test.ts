@@ -65,6 +65,13 @@ describe("aeGroupShells", () => {
     ).toHaveLength(2);
   });
 
+  it("does not cut at a `; do ` inside a quoted string", () => {
+    const a = "until grep '; do sleep 5; done' a; do sleep 5; done";
+    const b = "until grep '; do sleep 5; done' b; do sleep 5; done";
+    expect(aeGroupShells([{ command: a }, { command: b }])).toHaveLength(2);
+    expect(aeGroupShells([{ command: a }, { command: a }])).toHaveLength(1);
+  });
+
   it("keeps a description and a command with the same text apart", () => {
     expect(aeGroupShells([{ description: "sleep 1" }, { command: "sleep 1" }])).toHaveLength(2);
   });

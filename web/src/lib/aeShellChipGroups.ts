@@ -22,6 +22,10 @@ export function aeShellLabel(task: BackgroundTaskInfo): string {
 const WAIT_LOOP_START = /^(?:until |while |timeout\s+\d+\s+bash\s+-c\s+'while)/;
 const SLEEP_BODY = /^sleep \d+(?:\.\d+)?$/;
 
+function hasOpenQuote(s: string): boolean {
+  return (s.split("'").length - 1) % 2 === 1 || (s.split('"').length - 1) % 2 === 1;
+}
+
 /**
  * The whitespace-collapsed text a chip shows. A wait loop (`until`, `while`,
  * `timeout N bash -c 'while`) whose body is only `sleep <n>` is cut at its
@@ -32,7 +36,8 @@ export function aeShellGroupText(task: BackgroundTaskInfo): string {
   const text = aeShellLabel(task).replace(/\s+/g, " ");
   if (!task.description?.trim() && WAIT_LOOP_START.test(text)) {
     const cut = text.indexOf("; do ");
-    if (cut > 0) {
+    // A quote left open before the cut means the `; do ` sits inside a string.
+    if (cut > 0 && !hasOpenQuote(text.slice(0, cut))) {
       const rest = text.slice(cut + 5);
       const end = rest.indexOf("; done");
       if (end >= 0 && SLEEP_BODY.test(rest.slice(0, end).trim())) return text.slice(0, cut);

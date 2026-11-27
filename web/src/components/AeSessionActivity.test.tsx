@@ -441,6 +441,60 @@ describe("chat status line", () => {
     expect(members).toHaveTextContent("echo second");
   });
 
+  it("labels a merged chip with the shared condition and prints each member's status", () => {
+    const loop = (id: string, tail: string, status: string) => ({
+      id,
+      status,
+      command: `until [ -f x ]; do sleep 5; done; ${tail}`,
+    });
+    setup({
+      backgroundTaskCount: 2,
+      backgroundTasks: [loop("w1", "echo first", "running"), loop("w2", "echo second", "failed")],
+    });
+    wrap(<AeSessionActivityLine showsWorking />);
+    const chip = screen.getByTestId("ae-activity-shell-chip");
+    expect(chip).toHaveTextContent("until [ -f x ]");
+    expect(chip).not.toHaveTextContent("echo first");
+    fireEvent.click(chip);
+    const items = screen.getByTestId("ae-activity-shell-members").querySelectorAll("li");
+    expect(items[0]).toHaveTextContent("echo first");
+    expect(items[0]).toHaveTextContent("(running)");
+    expect(items[1]).toHaveTextContent("echo second");
+    expect(items[1]).toHaveTextContent("(failed)");
+    // The member list owns statuses; no single status line under the label.
+    expect(screen.queryByText("running")).toBeNull();
+    expect(screen.queryByText("failed")).toBeNull();
+  });
+
+  it("shows a single shell's status line", () => {
+    setup({
+      backgroundTaskCount: 1,
+      backgroundTasks: [{ id: "s1", command: "sleep 120", status: "running" }],
+    });
+    wrap(<AeSessionActivityLine showsWorking />);
+    fireEvent.click(screen.getByTestId("ae-activity-shell-chip"));
+    expect(screen.getByText("running")).toBeInTheDocument();
+  });
+
+  it("collapses again when groups shrink to three and grow back past it", () => {
+    const shells = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ id: `s${i}`, command: `sleep ${i + 1}` }));
+    setup({ backgroundTaskCount: 5, backgroundTasks: shells(5) });
+    wrap(<AeSessionActivityLine showsWorking />);
+    fireEvent.click(screen.getByTestId("ae-activity-shell-more"));
+    expect(screen.getAllByTestId("ae-activity-shell-chip")).toHaveLength(5);
+    act(() => {
+      useChatStore.setState({ backgroundTaskCount: 3, backgroundTasks: shells(3) });
+    });
+    expect(screen.queryByTestId("ae-activity-shell-more")).toBeNull();
+    expect(screen.getAllByTestId("ae-activity-shell-chip")).toHaveLength(3);
+    act(() => {
+      useChatStore.setState({ backgroundTaskCount: 6, backgroundTasks: shells(6) });
+    });
+    expect(screen.getAllByTestId("ae-activity-shell-chip")).toHaveLength(3);
+    expect(screen.getByTestId("ae-activity-shell-more")).toHaveTextContent("+3 more");
+  });
+
   it("opens a shell chip's details", () => {
     setup({
       backgroundTaskCount: 1,
