@@ -427,12 +427,9 @@ export function ApprovalCard({
     !isMultiChoice
       ? parseAeSlotsFull(message)
       : null;
-  const binaryButtons = (
-    <div className="flex flex-wrap gap-2 pt-1">
-      <Button size="sm" onClick={() => submitBinary("accept")} componentId="approval.approve">
-        <CheckIcon className="mr-1 size-3.5" />
-        Approve
-      </Button>
+  // The options beyond Approve and Reject; the summary card's read row offers them behind More.
+  const binaryExtras = (
+    <>
       {codexPersistModes.includes("session") && (
         <Button
           size="sm"
@@ -491,6 +488,15 @@ export function ApprovalCard({
           Approve &amp; don't ask again for {rememberTarget}
         </Button>
       )}
+    </>
+  );
+  const binaryButtons = (
+    <div className="flex flex-wrap gap-2 pt-1">
+      <Button size="sm" onClick={() => submitBinary("accept")} componentId="approval.approve">
+        <CheckIcon className="mr-1 size-3.5" />
+        Approve
+      </Button>
+      {binaryExtras}
       <Button
         size="sm"
         variant="outline"
@@ -502,6 +508,17 @@ export function ApprovalCard({
       </Button>
     </div>
   );
+  const codexExtras = execPolicyAmendment ? (
+    <Button
+      size="sm"
+      variant="outline"
+      onClick={() => submitExecPolicyAmendment(execPolicyAmendment)}
+      componentId="approval.approve_command_remember"
+    >
+      <CheckIcon className="mr-1 size-3.5" />
+      Approve and remember
+    </Button>
+  ) : null;
   const codexCommandButtons = (
     <div className="flex flex-wrap items-center gap-2 pt-1" data-testid="codex-command-actions">
       <Button
@@ -512,17 +529,7 @@ export function ApprovalCard({
         <CheckIcon className="mr-1 size-3.5" />
         Approve
       </Button>
-      {execPolicyAmendment && (
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => submitExecPolicyAmendment(execPolicyAmendment)}
-          componentId="approval.approve_command_remember"
-        >
-          <CheckIcon className="mr-1 size-3.5" />
-          Approve and remember
-        </Button>
-      )}
+      {codexExtras}
       <Button size="sm" variant="outline" onClick={() => submitBinary("decline")}>
         <XIcon className="mr-1 size-3.5" />
         Reject
@@ -715,6 +722,7 @@ export function ApprovalCard({
         onApprove={() => submitBinary("accept")}
         onReject={() => submitBinary("decline")}
         buttons={isCodexCommandApproval ? codexCommandButtons : binaryButtons}
+        extras={isCodexCommandApproval ? codexExtras : binaryExtras}
         hasMore={Boolean(
           allowAutoMode ||
           allowAllEdits ||

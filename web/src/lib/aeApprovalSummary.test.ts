@@ -22,8 +22,8 @@ const RISK_CASES: [string, ApprovalRisk][] = [
   ["find . -fprint out.txt", "write"],
   ["find . -newer x -foo", "write"],
   // quoting and backslashes hide a flag from the checks (H1)
-  ['find . "-delete"', "write"],
-  ["find . -\\delete", "write"],
+  ['find . "-delete"', "destructive"],
+  ["find . -\\delete", "destructive"],
   ["find . -maxdepth 0 '-exec' touch pwned {} +", "write"],
   ["git diff '--output=../x'", "write"],
   ["git diff --output=x", "write"],
@@ -71,6 +71,18 @@ const RISK_CASES: [string, ApprovalRisk][] = [
   ["kill -KILL 12", "destructive"],
   ["kill -s KILL 12", "destructive"],
   ["docker run --rm img", "write"],
+  // quote and backslash obfuscation does not hide a delete (N1)
+  ["\\rm -rf x", "destructive"],
+  ["r\\m -rf x", "destructive"],
+  ["'r'm -rf x", "destructive"],
+  ["r''m x", "destructive"],
+  // a force push by refspec (N2)
+  ["git push origin +main", "destructive"],
+  ["git push origin +HEAD:main", "destructive"],
+  // a revision suffix is plain, ~user is not (N4)
+  ["git diff HEAD~1 -- web", "read"],
+  ["git log main~3..main", "read"],
+  ["ls ~root", "write"],
   ["cat a > b", "write"],
   ["echo hi | tee out.txt", "write"],
   ["echo $(whoami)", "write"],

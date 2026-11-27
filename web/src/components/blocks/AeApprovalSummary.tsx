@@ -25,7 +25,9 @@ interface AeApprovalSummaryProps {
   onReject: () => void;
   /** The standard button row: the write card's buttons, the read row's "More" panel. */
   buttons: ReactNode;
-  /** Whether `buttons` offers anything beyond Approve and Reject (remember, auto mode, ...). */
+  /** Only the options beyond Approve and Reject (remember, auto mode, ...): the read row's More panel. */
+  extras?: ReactNode;
+  /** Whether `extras` offers anything beyond Approve and Reject (remember, auto mode, ...). */
   hasMore?: boolean;
   /** The sub-agent requester line, when the prompt was mirrored up. */
   requester?: ReactNode;
@@ -38,6 +40,7 @@ export function AeApprovalSummary({
   onApprove,
   onReject,
   buttons,
+  extras,
   hasMore = false,
   requester,
   className,
@@ -117,10 +120,10 @@ export function AeApprovalSummary({
                 node={AE_ICON_CHEVRON_RIGHT}
                 className={cn("size-3.5 shrink-0 transition-transform", moreOpen && "rotate-90")}
               />
-              More
+              More options
             </button>
-            <div id={moreId} hidden={!moreOpen}>
-              {buttons}
+            <div id={moreId} hidden={!moreOpen} className="flex flex-wrap gap-2">
+              {extras}
             </div>
           </div>
         )}
@@ -202,6 +205,9 @@ export function AeApprovalSummary({
 }
 
 function firstLine(code: string): string {
-  const line = code.split("\n")[0].trim();
-  return line.length > PEEK_CHARS ? `${line.slice(0, PEEK_CHARS - 1)}…` : line;
+  const lines = code.split("\n").filter((l) => l.trim() !== "");
+  const first = (lines[0] ?? "").trim();
+  const cut = first.length > PEEK_CHARS ? `${first.slice(0, PEEK_CHARS - 1)}…` : first;
+  const more = lines.length - 1;
+  return more > 0 ? `${cut} (+${more} more ${more === 1 ? "line" : "lines"})` : cut;
 }

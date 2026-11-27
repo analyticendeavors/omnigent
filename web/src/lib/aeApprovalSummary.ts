@@ -48,7 +48,7 @@ const DESTRUCTIVE: readonly (readonly [RegExp, string])[] = [
   [/\bgit\s+restore\b/, "discards work"],
   [/\bgit\s+stash\s+(?:drop|clear)\b/, "discards work"],
   [
-    /\bgit\s+push\b[^;&|\n]*\s(?:-[a-zA-Z]*f[a-zA-Z]*|--force(?:-with-lease)?|--delete|-d|\+\S|:\S+)(?=[\s=]|$)/,
+    /\bgit\s+push\b[^;&|\n]*\s(?:-[a-zA-Z]*f[a-zA-Z]*|--force(?:-with-lease)?|--delete|-d|\+\S+|:\S+)(?=[\s=]|$)/,
     "rewrites remote",
   ],
   [/\bgit\s+branch\b[^;&|\n]*\s-[a-zA-Z]*D/, "deletes a branch"],
@@ -87,12 +87,17 @@ const FIND_FLAGS = new Set([
 ]); // prettier-ignore
 // A token with no quote, backslash, glob, expansion or redirect character, so the shell
 // passes it on exactly as written and the flag checks below see what really runs.
-const SAFE_TOKEN = /^(?:~(?:\/[A-Za-z0-9_./:=,@%+-]*)?|[A-Za-z0-9_./:=,@%+-]+)$/;
+// `~` is allowed as a leading `~/` and as a revision suffix (`HEAD~1`), never as `~user`.
+const SAFE_TOKEN = /^(?:~(?:\/[A-Za-z0-9_./:=,@%+-]*)?|(?:[A-Za-z0-9_./:=,@%+-]|~\d)+)$/;
 const SED_PRINT = /^\$?\d*(?:,(?:\d+|\$))?p$/;
 
 function dangerOf(command: string): string | null {
   const norm = command.replace(GIT_GLOBALS, "git ");
-  for (const [pattern, label] of DESTRUCTIVE) if (pattern.test(norm)) return label;
+  // Also try the command with quotes and backslashes removed: `\rm`, `r''m` and `'r'm` run rm.
+  const bare = norm.replace(/['"\\]/g, "");
+  for (const [pattern, label] of DESTRUCTIVE) {
+    if (pattern.test(norm) || pattern.test(bare)) return label;
+  }
   return null;
 }
 

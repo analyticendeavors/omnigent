@@ -75,11 +75,12 @@ describe("AeApprovalSummary through ApprovalCard", () => {
     expect(screen.getByText("Approval required")).toBeDefined();
   });
 
-  it("keeps the remember options on a read row behind a More disclosure", () => {
+  it("keeps only the extra options on a read row behind a More options disclosure", () => {
     renderCard(bash({ command: "git status", description: "Show git status" }), {
       rememberScope: { tool: "Bash" },
     });
     const toggle = screen.getByTestId("ae-approval-more-toggle");
+    expect(toggle.textContent).toBe("More options");
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     const panel = document.getElementById(toggle.getAttribute("aria-controls") ?? "");
     expect(panel?.hidden).toBe(true);
@@ -87,6 +88,10 @@ describe("AeApprovalSummary through ApprovalCard", () => {
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
     expect(panel?.hidden).toBe(false);
     expect(screen.getByTestId("approval-card-remember")).toBeDefined();
+    // Approve and Reject appear once, on the row.
+    expect(screen.getAllByRole("button", { name: /^Approve: / })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /^Reject/ })).toHaveLength(1);
+    expect(panel?.querySelectorAll("button")).toHaveLength(1);
   });
 
   it("shows no More disclosure on a read row with nothing extra to offer", () => {
@@ -98,9 +103,13 @@ describe("AeApprovalSummary through ApprovalCard", () => {
     const long = `echo ${"a".repeat(120)}`;
     renderCard(bash({ command: `${long}\nsecond line`, description: "Say a lot" }));
     const peek = screen.getByTestId("approval-command-peek");
-    expect(peek.textContent).toHaveLength(80);
-    expect(peek.textContent?.endsWith("…")).toBe(true);
+    expect(peek.textContent).toBe(`${long.slice(0, 79)}… (+1 more line)`);
     expect(peek.textContent).not.toContain("second line");
+  });
+
+  it("says how many more lines a multi-line command has", () => {
+    renderCard(bash({ command: "echo ok\nmv a b\n\nmv c d", description: "Do things" }));
+    expect(screen.getByTestId("approval-command-peek").textContent).toBe("echo ok (+2 more lines)");
   });
 
   it("marks a cut-off command and offers approve once or reject only", () => {
