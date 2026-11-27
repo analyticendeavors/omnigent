@@ -450,7 +450,6 @@ describe("ApprovalCard — approve & don't ask again (persistent allow rule)", (
         rememberScope={{ tool: "WebFetch", host: "github.com" }}
       />,
     );
-    fireEvent.click(screen.getByTestId("ae-approval-more-toggle"));
     const rememberButton = screen.getByRole("button", {
       name: /don't ask again for github\.com/i,
     });
@@ -459,7 +458,7 @@ describe("ApprovalCard — approve & don't ask again (persistent allow rule)", (
     expect(rememberButton.getAttribute("title")).toBe(
       "Won't ask again for github.com for the rest of this session",
     );
-    expect(screen.getByRole("button", { name: /^approve: fetch/i })).toBeDefined();
+    expect(screen.getByRole("button", { name: /^approve$/i })).toBeDefined();
     expect(screen.getByRole("button", { name: /reject/i })).toBeDefined();
 
     // No hint (edit tool / ExitPlanMode / AskUserQuestion) → no button.

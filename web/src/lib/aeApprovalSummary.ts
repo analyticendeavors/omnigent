@@ -10,9 +10,12 @@
 
 import {
   askerLabel,
+  deriveAgyLine,
   deriveCodexLine,
   deriveToolLine,
   plainMessage,
+  scrub,
+  type ToolLine,
 } from "./aeApprovalSummaryTools";
 
 export type ApprovalRisk = "read" | "write" | "destructive";
@@ -23,8 +26,10 @@ export interface ApprovalSummary {
   source: "agent" | "derived" | "generic";
   risk: ApprovalRisk;
   kind: "command" | "edit" | "tool";
-  /** Card heading override, e.g. "Change files". */
+  /** Card heading override, e.g. "Github: merge pull request". */
   title?: string;
+  /** The agent's own reason on a tool card, shown under the derived line as "Agent says". */
+  agentText?: string;
   /** Working directory (Codex) or the edited file's folder (Claude edits). */
   cwd?: string;
   /** The command, or the diff or content of an edit. */
@@ -327,13 +332,18 @@ function summarizeTool(tool: string, input: ParsedInput): ApprovalSummary {
   if (command && !tool.startsWith("mcp__")) {
     return summarizeCommand(command, str(fields.description), input.truncated);
   }
-  const line = deriveToolLine(tool, fields);
+  return fromLine(deriveToolLine(tool, fields), prettyArgs(input));
+}
+
+function fromLine(line: ToolLine, code: string): ApprovalSummary {
   return {
     text: line.text,
     source: line.source,
     risk: line.risk,
     kind: "tool",
-    code: prettyArgs(input),
+    code,
+    ...(line.title ? { title: line.title } : {}),
+    ...(line.agentText ? { agentText: line.agentText } : {}),
     ...(line.danger ? { danger: line.danger } : {}),
   };
 }
@@ -350,12 +360,27 @@ function generic(input: ApprovalSummaryInput, tool?: string, code?: string): App
   };
 }
 
+// A relayed MCP server's own ask ("<server> asks: ...") carries text that server chose, so
+// its preview is never read as a tool call; the quiet read row is not for it.
+const MCP_ASK = /^[^\n:]{1,80} asks(?::|$)/;
+
 /**
  * The summary for a pending approval; null only for a question, plan, form, choice, the slot
- * cap or an external link. Order: the agent's own words, a line built from the tool and its
- * arguments, then a generic line naming who asks.
+ * cap or an external link. Order: the agent's own words (commands only), a line built from the
+ * tool and its arguments, then a generic line naming who asks. Every line is scrubbed of
+ * secret-shaped text, so the Inbox row and the toast cannot leak one.
  */
 export function summarizeApproval(input: ApprovalSummaryInput): ApprovalSummary | null {
+  const s = summarizeRaw(input);
+  if (!s) return null;
+  return {
+    ...s,
+    text: scrub(s.text),
+    ...(s.agentText ? { agentText: scrub(s.agentText) } : {}),
+  };
+}
+
+function summarizeRaw(input: ApprovalSummaryInput): ApprovalSummary | null {
   const codex = input.codexCommand;
   if (codex) {
     const reason = str(codex.reason);
@@ -366,8 +391,10 @@ export function summarizeApproval(input: ApprovalSummaryInput): ApprovalSummary 
     };
   }
   const preview = input.contentPreview.trim();
-  const wrapped = parseToolPreview(preview);
+  const untrusted = MCP_ASK.test(input.message ?? "");
+  const wrapped = untrusted ? null : parseToolPreview(preview);
   if (isNotApproval(input, wrapped?.tool)) return null;
+  if (untrusted) return generic(input, undefined, preview === "" ? undefined : preview);
   if (wrapped) {
     const { tool, input: tin } = wrapped;
     if (tool === "Edit" || tool === "MultiEdit" || tool === "Write" || tool === "NotebookEdit") {
@@ -376,16 +403,20 @@ export function summarizeApproval(input: ApprovalSummaryInput): ApprovalSummary 
     }
     return summarizeTool(tool, tin);
   }
+  const bare = parseBody(preview);
   if (input.phase === "agy_permission") {
-    const m = /^Antigravity wants to run: (.+)$/s.exec(input.message ?? "");
-    if (m) {
+    const action = str(bare?.fields.action);
+    const target = str(bare?.fields.target);
+    if (bare && action !== "command")
+      return fromLine(deriveAgyLine(action, target), prettyArgs(bare));
+    const cmd = target ?? /^Antigravity wants to run: (.+)$/s.exec(input.message ?? "")?.[1];
+    if (cmd) {
       return {
-        ...summarizeCommand(m[1], undefined, false),
+        ...summarizeCommand(cmd, undefined, false),
         text: "Antigravity wants to run a command",
       };
     }
   }
-  const bare = parseBody(preview);
   if (bare) {
     const cmd = str(bare.fields.command);
     if (cmd) {
@@ -393,20 +424,7 @@ export function summarizeApproval(input: ApprovalSummaryInput): ApprovalSummary 
       return { ...summarizeCommand(cmd, undefined, bare.truncated), text: said ?? "Run a command" };
     }
     const line = deriveCodexLine(input.phase, bare.fields);
-    if (line) {
-      const edits =
-        input.phase === "codex_file_change_approval" ||
-        input.phase === "codex_apply_patch_approval";
-      return {
-        text: line.text,
-        source: line.source,
-        risk: line.risk,
-        kind: "tool",
-        code: prettyArgs(bare),
-        ...(edits ? { title: "Change files" } : {}),
-        ...(line.danger ? { danger: line.danger } : {}),
-      };
-    }
+    if (line) return fromLine(line, prettyArgs(bare));
     return generic(input, undefined, prettyArgs(bare));
   }
   const named = /^([A-Za-z_][\w.-]*)\(/.exec(preview)?.[1];

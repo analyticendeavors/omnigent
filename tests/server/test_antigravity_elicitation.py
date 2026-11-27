@@ -5,6 +5,8 @@ Pure-function tests — no HTTP or runtime needed.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from omnigent.server.routes._antigravity_elicitation import (
@@ -252,6 +254,10 @@ class TestToElicitationParamsPermission:
         params = to_elicitation_params(_PERMISSION_PENDING)
         extra = params.model_extra or {}
         assert extra.get("trajectory_id") == "traj-xyz"
+
+    def test_preview_carries_action_and_target(self) -> None:
+        params = to_elicitation_params(_PERMISSION_PENDING)
+        assert json.loads(params.content_preview or "") == {"action": "command", "target": "pwd"}
 
 
 # ── to_interaction_payload: ask_question ────────────────────────────

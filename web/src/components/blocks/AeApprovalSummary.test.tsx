@@ -72,8 +72,23 @@ describe("AeApprovalSummary through ApprovalCard", () => {
 
   it("summarizes a tool it has no special case for and folds its arguments", () => {
     renderCard('WebFetch({"url":"https://x.test/a?q=1"})');
-    expect(screen.getByTestId("approval-summary-text").textContent).toBe("Fetch x.test/a");
+    expect(screen.getByTestId("approval-summary-text").textContent).toBe(
+      "Fetch x.test/a (sends query data)",
+    );
     expect(screen.getByRole("button", { name: "Show details" })).toBeDefined();
+  });
+
+  it("names the tool on the card and puts the agent's reason on its own line", () => {
+    renderCard(
+      `mcp__github__merge_pull_request(${JSON.stringify({ id: 7, reason: "List the open pull requests" })})`,
+    );
+    expect(screen.getByText("Github: merge pull request")).toBeDefined();
+    expect(screen.getByTestId("approval-summary-text").textContent).toBe(
+      "Merge pull request via github (id: 7)",
+    );
+    expect(screen.getByTestId("approval-agent-says").textContent).toBe(
+      "Agent says: List the open pull requests",
+    );
   });
 
   it("keeps only the extra options on a read row behind a More options disclosure", () => {

@@ -17,6 +17,7 @@ Two functions are exported:
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -163,13 +164,20 @@ def _agy_permission_params(
     :returns: ``ElicitationRequestParams`` for a binary command-approval card.
     """
     command: str | None = None
+    action: str | None = None
+    target: str | None = None
     if isinstance(spec, dict):
         resource = spec.get("resource")
         if isinstance(resource, dict):
-            target = resource.get("target")
-            if isinstance(target, str) and target:
-                command = target
+            raw_action = resource.get("action")
+            raw_target = resource.get("target")
+            if isinstance(raw_action, str) and raw_action:
+                action = raw_action
+            if isinstance(raw_target, str) and raw_target:
+                target = raw_target
+                command = raw_target
 
+    preview = json.dumps({"action": action, "target": target}, ensure_ascii=False)
     message = "Antigravity wants to run a command"
     if command:
         message = f"Antigravity wants to run: {command}"
@@ -190,6 +198,8 @@ def _agy_permission_params(
         url=None,
         phase="agy_permission",
         policy_name="agy_native_permission",
+        # The card reads the action and target to tell a command from a file write or a fetch.
+        content_preview=preview[:1024],
         **extras,
     )
 

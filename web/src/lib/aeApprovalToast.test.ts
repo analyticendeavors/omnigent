@@ -22,6 +22,27 @@ describe("cachedApprovalSummaryText", () => {
     expect(cachedApprovalSummaryText(qc, row)).toBe("Show git status");
   });
 
+  it("shows the derived line for an MCP tool, never the agent's reason or a secret", () => {
+    const qc = new QueryClient();
+    qc.setQueryData(["inbox-elicitations", "c1", 1, 5], {
+      pendingElicitations: [
+        {
+          elicitation_id: "e3",
+          params: {
+            ...elicitation.params,
+            message: "Claude wants to call **mcp__github__merge_pull_request**",
+            content_preview: `mcp__github__merge_pull_request(${JSON.stringify({
+              id: 7,
+              reason: "List the open pull requests",
+              token: ["ghp", "_abc12345"].join(""),
+            })})`,
+          },
+        },
+      ],
+    });
+    expect(cachedApprovalSummaryText(qc, row)).toBe("Merge pull request via github (id: 7)");
+  });
+
   it("returns null when the cached snapshot is for another row state or absent", () => {
     const qc = new QueryClient();
     expect(cachedApprovalSummaryText(qc, row)).toBeNull();

@@ -60,6 +60,11 @@ export function AeApprovalSummary({
       {peek}
     </code>
   ) : null;
+  const agentLine = summary.agentText ? (
+    <span className="text-sm text-muted-foreground" data-testid="approval-agent-says">
+      Agent says: {summary.agentText}
+    </span>
+  ) : null;
   const codeLabel = isEdit ? "diff" : kind === "tool" ? "details" : "command";
   const codeBlock = code ? (
     <AeApprovalPreview
@@ -105,6 +110,7 @@ export function AeApprovalSummary({
           </Button>
         </div>
         {peekLine}
+        {agentLine}
         {codeBlock}
         {hasMore && (
           <div className="flex flex-col gap-1">
@@ -163,6 +169,7 @@ export function AeApprovalSummary({
         <span className="text-base text-foreground" data-testid="approval-summary-text">
           {text}
         </span>
+        {agentLine}
         {peekLine}
         {((destructive && danger) || truncated || cwd) && (
           <span className="flex flex-wrap items-center gap-2 text-sm">
