@@ -78,12 +78,18 @@ describe("slots", () => {
     expect(isAeSlot(working("a"))).toBe(true);
     expect(isAeSlot({ ...working("a"), archived: true })).toBe(false);
     expect(isAeSlot({ ...working("a"), parent_session_id: "parent" })).toBe(false);
-    expect(isAeSlot({ labels: { "ae.status": "parked" } })).toBe(false);
+    expect(isAeSlot({ id: "a", labels: { "ae.status": "parked" } })).toBe(false);
   });
 
-  it("holds no slot for the master chat, like the server", () => {
-    expect(isAeSlot({ labels: { "ae.status": "working", "ae.master": "1" } })).toBe(false);
-    expect(isAeSlot({ labels: { "ae.status": "working", "ae.master": "" } })).toBe(true);
+  it("holds no slot for the master chat, found by its id like the server", () => {
+    expect(isAeSlot(working("m"), "m")).toBe(false);
+    expect(isAeSlot(working("m"), "other")).toBe(true);
+    expect(isAeSlot(working("m"), null)).toBe(true);
+    // A stale ae.master label is an ordinary row now: only the registry's id counts.
+    expect(isAeSlot({ id: "x", labels: { "ae.status": "working", "ae.master": "1" } }, "m")).toBe(
+      true,
+    );
+    expect(countAeSlots([working("m"), working("c")], false, "m")).toBe(1);
   });
 
   it("holds no slot while blocked on an approval or failed, like the server", () => {

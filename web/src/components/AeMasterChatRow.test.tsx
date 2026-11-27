@@ -18,17 +18,23 @@ function Where() {
 
 function renderRow(path = "/") {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={[path]}>
-        <AeMasterChatRow />
-        <Routes>
-          <Route path="*" element={<Where />} />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>,
-  );
+  return {
+    qc,
+    ...render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={[path]}>
+          <AeMasterChatRow />
+          <Routes>
+            <Route path="*" element={<Where />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ),
+  };
 }
+
+const gets = () =>
+  mocks.fetch.mock.calls.filter(([, init]) => (init as RequestInit)?.method === "GET");
 
 function answerGet(body: unknown, status = 200) {
   mocks.fetch.mockImplementation((_url: string, init?: RequestInit) =>
@@ -123,5 +129,47 @@ describe("AeMasterChatRow", () => {
     expect(screen.getByTestId("where").textContent).toBe("/");
     fireEvent.click(link);
     await waitFor(() => expect(mocks.toastError).toHaveBeenCalledTimes(2));
+  });
+
+  it("does not read again when the cached conversation rows change", async () => {
+    answerGet({ session_id: "conv_m", waiting: 2 });
+    const { qc } = renderRow();
+    await waitFor(() => expect(gets()).toHaveLength(1));
+    qc.setQueryData(["conversations", "list"], { pages: [{ data: [] }], pageParams: [] });
+    await new Promise((resolve) => {
+      setTimeout(resolve, 60);
+    });
+    expect(gets()).toHaveLength(1);
+  });
+
+  it("reads again after a successful POST", async () => {
+    mocks.fetch.mockImplementation((_url: string, init?: RequestInit) =>
+      init?.method === "POST"
+        ? json(200, { session_id: "conv_new", created: true })
+        : json(200, { session_id: null, waiting: 0 }),
+    );
+    renderRow();
+    await waitFor(() => expect(gets()).toHaveLength(1));
+    fireEvent.click(screen.getByRole("link", { name: /Master chat/ }));
+    await waitFor(() => expect(gets()).toHaveLength(2));
+  });
+
+  it("keeps the earlier id when a later read fails with a 502", async () => {
+    answerGet({ session_id: "conv_m", waiting: 1 });
+    const { qc } = renderRow();
+    await waitFor(() =>
+      expect(screen.getByTestId("ae-master-chat-row").getAttribute("href")).toBe("/c/conv_m"),
+    );
+    answerGet({ error: { message: "bad gateway" } }, 502);
+    await qc.invalidateQueries({ queryKey: ["ae", "master-chat"] });
+    await waitFor(() => expect(gets()).toHaveLength(2));
+    expect(screen.getByTestId("ae-master-chat-row").getAttribute("href")).toBe("/c/conv_m");
+  });
+
+  it("reads a 404 as no master chat", async () => {
+    answerGet({ detail: "Not Found" }, 404);
+    renderRow();
+    await waitFor(() => expect(gets()).toHaveLength(1));
+    expect(screen.getByTestId("ae-master-chat-row").getAttribute("href")).not.toMatch(/^\/c\//);
   });
 });

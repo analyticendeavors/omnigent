@@ -21,6 +21,7 @@ import {
   aeStatusOf,
   isAeSlot,
 } from "@/lib/aeLabels";
+import { readAeMasterChatId } from "@/lib/aeMasterChat";
 import { aeIsHelper, familySlotChain, familySlotKey } from "@/lib/aeFamily";
 import {
   readAeHelpersCount,
@@ -214,11 +215,12 @@ export async function checkAeSlotRoom(
   const seen = new Set<string>([sessionId]);
   const working: Conversation[] = [];
   const allRows = cachedRows(queryClient);
+  const masterId = readAeMasterChatId(queryClient);
   const byId = new Map(allRows.map((row) => [row.id, row] as const));
   for (const row of allRows) {
     if (seen.has(row.id)) continue;
     seen.add(row.id);
-    if (isAeSlot(row)) working.push(row);
+    if (isAeSlot(row, masterId)) working.push(row);
   }
   const limit = readAeSlotLimit(queryClient);
   const helpers = readAeHelpersCount(queryClient);
