@@ -10,6 +10,8 @@ import { summarizeApproval } from "./aeApprovalSummary";
 import { parseEvent } from "./sse";
 import type { Session } from "./types";
 
+const MAX_TOAST_CHARS = 120;
+
 export function cachedApprovalSummaryText(
   queryClient: QueryClient,
   row: Pick<Conversation, "id" | "pending_elicitations_count" | "updated_at">,
@@ -24,7 +26,10 @@ export function cachedApprovalSummaryText(
   for (let i = pending.length - 1; i >= 0; i--) {
     const evt = parseEvent("response.elicitation_request", pending[i]);
     if (evt === null || evt.type !== "elicitation_request") continue;
-    return summarizeApproval(evt)?.text ?? null;
+    const text = summarizeApproval(evt)?.text ?? null;
+    return text !== null && text.length > MAX_TOAST_CHARS
+      ? `${text.slice(0, MAX_TOAST_CHARS - 1)}…`
+      : text;
   }
   return null;
 }

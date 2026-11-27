@@ -157,7 +157,9 @@ describe("ApprovalCard — binary approve/reject", () => {
 
     expect(screen.getByText("Run a command")).toBeDefined();
     expect(screen.getByText("Run the focused pytest suite.")).toBeDefined();
-    expect(screen.getByText("/bin/zsh -lc '.venv/bin/python -m pytest -q'")).toBeDefined();
+    expect(
+      screen.getAllByText("/bin/zsh -lc '.venv/bin/python -m pytest -q'").length,
+    ).toBeGreaterThan(0);
     expect(screen.getByText("/Users/example/project")).toBeDefined();
     expect(screen.queryByText(/thread_123/)).toBeNull();
     expect(screen.queryByText(/commandActions/)).toBeNull();

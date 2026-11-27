@@ -4,8 +4,8 @@
 // time; the owner wanted it folded by default and opened only when needed. A request-phase ask (the
 // rabbit-hole check, the slot cap) repeats the message just sent, so its code folds. Every
 // other phase shows what the agent is about to do (a response), so that code stays in
-// view whoever wrote the policy. A Claude tool call (pre_tool_use) folds too since
-// 2026-11-27: the plain-English line above it says what it does.
+// view whoever wrote the policy. A summarized tool call folds through AeApprovalSummary
+// (2026-11-27), which passes `fold` itself.
 
 import { useId, useState } from "react";
 import { AE_ICON_CHEVRON_RIGHT } from "@/lib/aeAgentsIcons";
@@ -17,7 +17,7 @@ const PREVIEW_CLASS =
 
 /** Whether a card folds its code: the ask gates the person's own message. */
 export function aeFoldsApprovalPreview(phase: string): boolean {
-  return phase === "request" || phase === "pre_tool_use";
+  return phase === "request";
 }
 
 export function AeApprovalPreview({

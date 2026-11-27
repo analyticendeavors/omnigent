@@ -6,7 +6,10 @@ import { AeApprovalPreview, aeFoldsApprovalPreview } from "./AeApprovalPreview";
 const REQUEST = '{"text": "keep going on the export", "session": "conv_1"}';
 
 function previewOf(text: RegExp | string): HTMLElement {
-  const pre = screen.getByText(text).closest("pre");
+  const pre = screen
+    .getAllByText(text)
+    .map((el) => el.closest("pre"))
+    .find((el) => el !== null);
   if (!pre) throw new Error("no code box");
   return pre;
 }
@@ -35,7 +38,7 @@ describe("AeApprovalPreview", () => {
   it("folds only an ask that gates the person's own message", () => {
     expect(aeFoldsApprovalPreview("request")).toBe(true);
     expect(aeFoldsApprovalPreview("tool_call")).toBe(false);
-    expect(aeFoldsApprovalPreview("pre_tool_use")).toBe(true);
+    expect(aeFoldsApprovalPreview("pre_tool_use")).toBe(false);
     expect(aeFoldsApprovalPreview("response")).toBe(false);
     expect(aeFoldsApprovalPreview("")).toBe(false);
   });
@@ -89,5 +92,16 @@ describe("ApprovalCard code under the message", () => {
     });
     expect(screen.getByRole("button", { name: "Show command" })).toBeDefined();
     expect(previewOf(/git push origin main/).hidden).toBe(true);
+  });
+
+  it("keeps a native tool prompt's command in view when it cannot be summarized", () => {
+    card({
+      message: "Claude wants to call **Bash**",
+      phase: "pre_tool_use",
+      policyName: "claude_native_permission",
+      preview: 'Bash({"command": 42})',
+    });
+    expect(screen.queryByTestId("ae-approval-details-toggle")).toBeNull();
+    expect(previewOf(/"command": 42/).hidden).toBe(false);
   });
 });

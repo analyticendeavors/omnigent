@@ -697,7 +697,16 @@ export function ApprovalCard({
   }
 
   // AE: a Bash, edit or Codex command ask leads with a plain-English line and sizes by risk.
-  const aeSummary = summarizeApproval({ phase, contentPreview, codexCommand });
+  const aeSummary =
+    isAskUserQuestion ||
+    isExitPlanMode ||
+    isMultiChoice ||
+    isSchemaForm ||
+    aeChoice ||
+    isExternalUrl ||
+    slotsFull
+      ? null
+      : summarizeApproval({ phase, contentPreview, codexCommand });
   if (aeSummary) {
     return (
       <AeApprovalSummary
@@ -706,6 +715,13 @@ export function ApprovalCard({
         onApprove={() => submitBinary("accept")}
         onReject={() => submitBinary("decline")}
         buttons={isCodexCommandApproval ? codexCommandButtons : binaryButtons}
+        hasMore={Boolean(
+          allowAutoMode ||
+          allowAllEdits ||
+          rememberTarget ||
+          codexPersistModes.length > 0 ||
+          execPolicyAmendment,
+        )}
         requester={requesterLine}
         className={className}
       />

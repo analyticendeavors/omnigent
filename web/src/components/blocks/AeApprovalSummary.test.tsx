@@ -31,7 +31,8 @@ describe("AeApprovalSummary through ApprovalCard", () => {
     const submit = renderCard(bash({ command: "git status", description: "Show git status" }));
     expect(screen.getByTestId("approval-card").getAttribute("data-risk")).toBe("read");
     expect(screen.getByText("Show git status")).toBeDefined();
-    fireEvent.click(screen.getByRole("button", { name: /approve/i }));
+    expect(screen.getByRole("button", { name: "Reject: Show git status" })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Approve: Show git status" }));
     expect(submit).toHaveBeenCalledWith("elic_sum", "accept", undefined, expect.anything());
   });
 
@@ -71,6 +72,57 @@ describe("AeApprovalSummary through ApprovalCard", () => {
 
   it("falls back to today's card for a tool it does not summarize", () => {
     renderCard('WebFetch({"url":"https://x.test"})');
+    expect(screen.getByText("Approval required")).toBeDefined();
+  });
+
+  it("keeps the remember options on a read row behind a More disclosure", () => {
+    renderCard(bash({ command: "git status", description: "Show git status" }), {
+      rememberScope: { tool: "Bash" },
+    });
+    const toggle = screen.getByTestId("ae-approval-more-toggle");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    const panel = document.getElementById(toggle.getAttribute("aria-controls") ?? "");
+    expect(panel?.hidden).toBe(true);
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(panel?.hidden).toBe(false);
+    expect(screen.getByTestId("approval-card-remember")).toBeDefined();
+  });
+
+  it("shows no More disclosure on a read row with nothing extra to offer", () => {
+    renderCard(bash({ command: "git status" }));
+    expect(screen.queryByTestId("ae-approval-more-toggle")).toBeNull();
+  });
+
+  it("always shows the command's first line, cut at 80 characters", () => {
+    const long = `echo ${"a".repeat(120)}`;
+    renderCard(bash({ command: `${long}\nsecond line`, description: "Say a lot" }));
+    const peek = screen.getByTestId("approval-command-peek");
+    expect(peek.textContent).toHaveLength(80);
+    expect(peek.textContent?.endsWith("…")).toBe(true);
+    expect(peek.textContent).not.toContain("second line");
+  });
+
+  it("marks a cut-off command and offers approve once or reject only", () => {
+    renderCard(`Bash({"command": "ls && rm`, {
+      rememberScope: { tool: "Bash" },
+      allowAutoMode: true,
+    });
+    expect(screen.getByTestId("approval-cutoff-tag").textContent).toBe("command cut off");
+    expect(screen.getByRole("button", { name: "Approve once" })).toBeDefined();
+    expect(screen.queryByTestId("approval-card-remember")).toBeNull();
+    expect(screen.queryByRole("button", { name: /auto mode/i })).toBeNull();
+  });
+
+  it("keeps a schema form when a tool prompt also carries a form schema", () => {
+    renderCard(bash({ command: "ls" }), {
+      requestedSchema: {
+        type: "object",
+        properties: { reason: { type: "string" } },
+        required: ["reason"],
+      },
+    });
+    expect(screen.queryByTestId("approval-command-peek")).toBeNull();
     expect(screen.getByText("Approval required")).toBeDefined();
   });
 });

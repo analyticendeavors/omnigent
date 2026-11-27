@@ -5,13 +5,17 @@
 // danger, the code open, and no remember option. The approve and reject handlers and the
 // write card's button row come from ApprovalCard; nothing here decides a verdict.
 
-import type { ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { CheckIcon, XIcon } from "lucide-react";
+import { AE_ICON_CHEVRON_RIGHT } from "@/lib/aeAgentsIcons";
+import { AeTablerSvg } from "@/lib/aeTablerIcon";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import type { ApprovalSummary } from "@/lib/aeApprovalSummary";
 import { cn } from "@/lib/utils";
 import { AeApprovalPreview } from "./AeApprovalPreview";
+
+const PEEK_CHARS = 80;
 
 interface AeApprovalSummaryProps {
   summary: ApprovalSummary;
@@ -19,8 +23,10 @@ interface AeApprovalSummaryProps {
   policyLabel?: string;
   onApprove: () => void;
   onReject: () => void;
-  /** The write card's usual button row; read and destructive cards ignore it. */
+  /** The standard button row: the write card's buttons, the read row's "More" panel. */
   buttons: ReactNode;
+  /** Whether `buttons` offers anything beyond Approve and Reject (remember, auto mode, ...). */
+  hasMore?: boolean;
   /** The sub-agent requester line, when the prompt was mirrored up. */
   requester?: ReactNode;
   className?: string;
@@ -32,11 +38,25 @@ export function AeApprovalSummary({
   onApprove,
   onReject,
   buttons,
+  hasMore = false,
   requester,
   className,
 }: AeApprovalSummaryProps) {
-  const { risk, kind, text, cwd, code, danger } = summary;
+  const { risk, kind, text, cwd, code, danger, truncated } = summary;
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreId = useId();
   const isEdit = kind === "edit";
+  // The first line of the command stays visible, so the agent's own words are never the only
+  // thing on a card whose code is folded.
+  const peek = !isEdit && risk !== "destructive" && code ? firstLine(code) : null;
+  const peekLine = peek ? (
+    <code
+      className="block truncate font-mono text-xs whitespace-nowrap text-muted-foreground"
+      data-testid="approval-command-peek"
+    >
+      {peek}
+    </code>
+  ) : null;
   const codeLabel = isEdit ? "diff" : "command";
   const codeBlock = code ? (
     <AeApprovalPreview
@@ -61,21 +81,57 @@ export function AeApprovalSummary({
           <span className="min-w-0 flex-1 text-ui" data-testid="approval-summary-text">
             {text}
           </span>
-          <Button size="sm" onClick={onApprove} componentId="approval.approve">
+          <Button
+            size="sm"
+            onClick={onApprove}
+            aria-label={`Approve: ${text}`}
+            componentId="approval.approve"
+          >
             <CheckIcon className="mr-1 size-3.5" />
             Approve
           </Button>
-          <Button size="sm" variant="outline" onClick={onReject} componentId="approval.reject">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onReject}
+            aria-label={`Reject: ${text}`}
+            componentId="approval.reject"
+          >
             <XIcon className="mr-1 size-3.5" />
             Reject
           </Button>
         </div>
+        {peekLine}
         {codeBlock}
+        {hasMore && (
+          <div className="flex flex-col gap-1">
+            <button
+              type="button"
+              onClick={() => setMoreOpen((was) => !was)}
+              aria-expanded={moreOpen}
+              aria-controls={moreId}
+              data-testid="ae-approval-more-toggle"
+              className="-mx-1 flex w-fit items-center gap-1 rounded-md px-1 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <AeTablerSvg
+                node={AE_ICON_CHEVRON_RIGHT}
+                className={cn("size-3.5 shrink-0 transition-transform", moreOpen && "rotate-90")}
+              />
+              More
+            </button>
+            <div id={moreId} hidden={!moreOpen}>
+              {buttons}
+            </div>
+          </div>
+        )}
       </Alert>
     );
   }
 
   const destructive = risk === "destructive";
+  // A command the server cut off may hide a destructive tail, so it gets the same
+  // approve-once-or-reject buttons as a destructive one.
+  const approveOnce = destructive || truncated === true;
   return (
     <Alert
       data-testid="approval-card"
@@ -103,7 +159,8 @@ export function AeApprovalSummary({
         <span className="text-base text-foreground" data-testid="approval-summary-text">
           {text}
         </span>
-        {(danger || cwd) && (
+        {peekLine}
+        {((destructive && danger) || truncated || cwd) && (
           <span className="flex flex-wrap items-center gap-2 text-sm">
             {destructive && danger && (
               <span
@@ -113,11 +170,19 @@ export function AeApprovalSummary({
                 {danger}
               </span>
             )}
+            {truncated && (
+              <span
+                className="rounded bg-muted px-1.5 py-0.5 font-semibold text-foreground"
+                data-testid="approval-cutoff-tag"
+              >
+                command cut off
+              </span>
+            )}
             {cwd && <code className="rounded bg-muted px-1 py-0.5 font-mono">{cwd}</code>}
           </span>
         )}
         {codeBlock}
-        {destructive ? (
+        {approveOnce ? (
           <div className="flex flex-wrap gap-2 pt-1">
             <Button size="sm" onClick={onApprove} componentId="approval.approve_once">
               <CheckIcon className="mr-1 size-3.5" />
@@ -134,4 +199,9 @@ export function AeApprovalSummary({
       </AlertDescription>
     </Alert>
   );
+}
+
+function firstLine(code: string): string {
+  const line = code.split("\n")[0].trim();
+  return line.length > PEEK_CHARS ? `${line.slice(0, PEEK_CHARS - 1)}…` : line;
 }

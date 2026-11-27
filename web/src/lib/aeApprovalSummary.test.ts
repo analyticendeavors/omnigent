@@ -14,9 +14,63 @@ const RISK_CASES: [string, ApprovalRisk][] = [
   ["sed -n '1,20p' a.txt", "read"],
   ["sed -i 's/a/b/' a.txt", "write"],
   ["sed -n 'w out.txt' a.txt", "write"],
-  ["find . -name '*.ts'", "read"],
-  ["find . -delete", "write"],
-  ["find . -exec rm {} ;", "write"],
+  ["find . -name foo -type f", "read"],
+  ["find . -name '*.ts'", "write"],
+  ["find . -delete", "destructive"],
+  ["find . -exec rm {} ;", "destructive"],
+  ["find . -exec touch x {} +", "write"],
+  ["find . -fprint out.txt", "write"],
+  ["find . -newer x -foo", "write"],
+  // quoting and backslashes hide a flag from the checks (H1)
+  ['find . "-delete"', "write"],
+  ["find . -\\delete", "write"],
+  ["find . -maxdepth 0 '-exec' touch pwned {} +", "write"],
+  ["git diff '--output=../x'", "write"],
+  ["git diff --output=x", "write"],
+  ["rg x '--pre=./evil'", "write"],
+  ["rg x --pre=./evil", "write"],
+  ["git -c core.pager=evil log", "write"],
+  ["git --git-dir=x log", "write"],
+  ["git log --ext-diff", "write"],
+  ["git -C ~/repo status", "read"],
+  ["git branch", "read"],
+  ["git branch --list", "read"],
+  // sed is a line print or nothing (H2)
+  ["sed -n 1,5p f", "read"],
+  ["sed -n '$p' f", "read"],
+  ["sed -n 's/.*/touch pwned/ep' f", "write"],
+  ["sed -n 1wout f", "write"],
+  ["sed -n -Ei 1q f", "write"],
+  ["sed -n -f evil.sed f", "write"],
+  ["sed -n 's/x/id/e' a", "write"],
+  ["sed -n 3p -i f", "write"],
+  // a partial fd duplication is a file name (M1), an input redirect is not plain (L2)
+  ["cat /dev/null >&2024-report.md", "write"],
+  ["echo hi >&2foo", "write"],
+  ["ls 2>&1", "read"],
+  ["ls 2>/dev/null", "read"],
+  ["cat < secrets.txt", "write"],
+  ["cat $HOME/x", "write"],
+  ["ls *", "write"],
+  // destructive tier (M3)
+  ["rm file", "destructive"],
+  ["git checkout -- .", "destructive"],
+  ["git checkout .", "destructive"],
+  ["git restore src", "destructive"],
+  ["git stash drop", "destructive"],
+  ["git stash clear", "destructive"],
+  ["git push --delete origin old", "destructive"],
+  ["git push origin :old", "destructive"],
+  ["git reset --keep HEAD~1", "destructive"],
+  ["git reset --merge", "destructive"],
+  ["git -c x=y reset --hard", "destructive"],
+  ["git -C ~/repo push --force", "destructive"],
+  ["git --git-dir=x clean -fd", "destructive"],
+  ["shred -u secret", "destructive"],
+  ["truncate -s 0 log", "destructive"],
+  ["kill -KILL 12", "destructive"],
+  ["kill -s KILL 12", "destructive"],
+  ["docker run --rm img", "write"],
   ["cat a > b", "write"],
   ["echo hi | tee out.txt", "write"],
   ["echo $(whoami)", "write"],
@@ -76,10 +130,30 @@ describe("summarizeApproval", () => {
     expect(s).toMatchObject({ risk: "destructive", danger: "discards work" });
   });
 
-  it("never trusts a cut-off command as read-only", () => {
+  it("never trusts a cut-off command as read-only and marks it cut off", () => {
     const cut = `Bash({"command": "ls -la && echo done", "description": "List fi`;
     const s = summarizeApproval(ask(cut));
-    expect(s).toMatchObject({ text: "List fi", risk: "write", code: "ls -la && echo done" });
+    expect(s).toMatchObject({
+      text: "List fi",
+      risk: "write",
+      code: "ls -la && echo done",
+      truncated: true,
+    });
+    expect(summarizeApproval(ask(bash({ command: "ls" })))?.truncated).toBeUndefined();
+  });
+
+  it("marks a cut-off edit's diff and gives a cut-off MultiEdit no diff", () => {
+    const edit = summarizeApproval(
+      ask(`Edit({"file_path": "a/B.tsx", "old_string": "x", "new_string": "yy`),
+    );
+    expect(edit?.code).toMatch(/\(preview cut off\)$/);
+    const multi = summarizeApproval(
+      ask(
+        `MultiEdit({"file_path": "a/B.tsx", "edits": [{"old_string": "a", "new_string": "b"}, {"old_string": "c", "new_string": "d`,
+      ),
+    );
+    expect(multi).toMatchObject({ text: "Edit 2 places in B.tsx", risk: "write" });
+    expect(multi?.code).toBeUndefined();
   });
 
   it("summarizes an Edit from the input", () => {

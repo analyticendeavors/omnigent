@@ -28,4 +28,23 @@ describe("cachedApprovalSummaryText", () => {
     qc.setQueryData(["inbox-elicitations", "c1", 0, 4], { pendingElicitations: [elicitation] });
     expect(cachedApprovalSummaryText(qc, row)).toBeNull();
   });
+
+  it("cuts a long summary to 120 characters", () => {
+    const qc = new QueryClient();
+    const long = "x".repeat(300);
+    qc.setQueryData(["inbox-elicitations", "c1", 1, 5], {
+      pendingElicitations: [
+        {
+          elicitation_id: "e2",
+          params: {
+            ...elicitation.params,
+            content_preview: `Bash(${JSON.stringify({ command: "ls", description: long })})`,
+          },
+        },
+      ],
+    });
+    const text = cachedApprovalSummaryText(qc, row);
+    expect(text).toHaveLength(120);
+    expect(text?.endsWith("…")).toBe(true);
+  });
 });

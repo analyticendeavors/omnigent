@@ -22,6 +22,8 @@ export interface ApprovalSummary {
   code?: string;
   /** Short reason a destructive command is red, e.g. "discards work". */
   danger?: string;
+  /** The command preview was cut off, so its tail is unseen. */
+  truncated?: boolean;
 }
 
 export interface ApprovalSummaryInput {
@@ -30,24 +32,35 @@ export interface ApprovalSummaryInput {
   codexCommand?: { command: string; cwd: string | null; reason: string | null } | null;
 }
 
+// Git's global options (`-c k=v`, `-C path`, ...) sit between `git` and the subcommand; drop
+// them before matching a subcommand so `git -c x=y reset --hard` is still caught.
+const GIT_GLOBALS =
+  /\bgit(?:\s+(?:-[Cc]\s+\S+|--(?:git-dir|work-tree|namespace)(?:=|\s+)\S+|--exec-path(?:=\S+)?|--no-pager|--bare|-P))+\s+/g;
+const CMD_START = String.raw`(?:^|[\s;&|('"\x60/])`;
+
 const DESTRUCTIVE: readonly (readonly [RegExp, string])[] = [
-  [/\brm\b[^;&|\n]*\s(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)(?=\s|$)/, "deletes files"],
-  [/\bgit\s+(?:-C\s+\S+\s+)?reset\b[^;&|\n]*--hard/, "discards work"],
+  [new RegExp(`${CMD_START}rm(?=\\s|$)`), "deletes files"],
+  [/\bfind\b[^;&|\n]*\s-(?:delete|(?:exec|execdir|ok|okdir)\s+\S*rm)(?=\s|$)/, "deletes files"],
+  [new RegExp(`${CMD_START}(?:shred|truncate)(?=\\s|$)`), "overwrites files"],
+  [/\bgit\s+reset\b[^;&|\n]*\s--(?:hard|keep|merge)\b/, "discards work"],
+  [/\bgit\s+clean\b[^;&|\n]*\s(?:-[a-zA-Z]*f[a-zA-Z]*|--force)(?=\s|$)/, "discards work"],
+  [/\bgit\s+checkout\b[^;&|\n]*(?:\s--|\s\.)(?=\s|$)/, "discards work"],
+  [/\bgit\s+restore\b/, "discards work"],
+  [/\bgit\s+stash\s+(?:drop|clear)\b/, "discards work"],
   [
-    /\bgit\s+(?:-C\s+\S+\s+)?clean\b[^;&|\n]*\s(?:-[a-zA-Z]*f[a-zA-Z]*|--force)(?=\s|$)/,
-    "discards work",
-  ],
-  [
-    /\bgit\s+(?:-C\s+\S+\s+)?push\b[^;&|\n]*\s(?:-[a-zA-Z]*f[a-zA-Z]*|--force(?:-with-lease)?|\+\S)(?=[\s=]|$)/,
+    /\bgit\s+push\b[^;&|\n]*\s(?:-[a-zA-Z]*f[a-zA-Z]*|--force(?:-with-lease)?|--delete|-d|\+\S|:\S+)(?=[\s=]|$)/,
     "rewrites remote",
   ],
-  [/\bgit\s+(?:-C\s+\S+\s+)?branch\b[^;&|\n]*\s-[a-zA-Z]*D/, "deletes a branch"],
+  [/\bgit\s+branch\b[^;&|\n]*\s-[a-zA-Z]*D/, "deletes a branch"],
   [/\b(?:curl|wget)\b[^\n]*\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b/, "runs a downloaded script"],
   [/\bsudo\b/, "runs as admin"],
   [/\b(?:chmod|chown)\s+(?:-[a-zA-Z]*R|--recursive)/, "changes permissions"],
   [/\bmkfs\b|\bdd\s+if=/, "overwrites a disk"],
   [/\b(?:DROP\s+(?:TABLE|DATABASE)|TRUNCATE)\b/i, "drops data"],
-  [/\bkill\s+-9\b|\bpkill\b|\bkillall\b/, "kills processes"],
+  [
+    /\bkill\s+(?:-9|-KILL|-SIGKILL|-s\s+(?:KILL|SIGKILL|9))\b|\bpkill\b|\bkillall\b/,
+    "kills processes",
+  ],
   [
     /(?:>>?|\btee\b|\bcp\b|\bmv\b|\bln\b|\bsed\s+-i|\bchmod\b|\bchown\b)[^;&|\n]*(?:\/etc(?:\/|\b)|~\/\.ssh|\$HOME\/\.ssh|\/\.ssh\/)/,
     "touches system files",
@@ -59,37 +72,65 @@ const READ_COMMANDS = new Set([
   "stat", "du", "df", "file", "jq", "cd",
 ]); // prettier-ignore
 const READ_GIT = new Set(["status", "log", "diff", "show", "branch"]);
-const READ_GIT_BRANCH_ARGS = new Set([
-  "-a", "-r", "-v", "-vv", "--list", "-l", "--show-current", "--all", "--remotes",
+const READ_GIT_BRANCH_ARGS = new Set(["-a", "-r", "-v", "-vv", "--list"]);
+const GIT_BLOCKED_ARGS = [
+  "--output",
+  "--ext-diff",
+  "--textconv",
+  "--exec-path",
+  "--git-dir",
+  "--work-tree",
+];
+const FIND_FLAGS = new Set([
+  "-name", "-iname", "-path", "-ipath", "-type", "-maxdepth", "-mindepth", "-mtime", "-mmin",
+  "-newer", "-size", "-print", "-not", "-o", "-a", "-empty", "-regex", "-iregex",
 ]); // prettier-ignore
+// A token with no quote, backslash, glob, expansion or redirect character, so the shell
+// passes it on exactly as written and the flag checks below see what really runs.
+const SAFE_TOKEN = /^(?:~(?:\/[A-Za-z0-9_./:=,@%+-]*)?|[A-Za-z0-9_./:=,@%+-]+)$/;
+const SED_PRINT = /^\$?\d*(?:,(?:\d+|\$))?p$/;
 
 function dangerOf(command: string): string | null {
-  for (const [pattern, label] of DESTRUCTIVE) if (pattern.test(command)) return label;
+  const norm = command.replace(GIT_GLOBALS, "git ");
+  for (const [pattern, label] of DESTRUCTIVE) if (pattern.test(norm)) return label;
   return null;
 }
 
+/** `sed -n <line or range>p <files>` and nothing else: no write, execute or script-file forms. */
+function sedIsRead(tokens: string[]): boolean {
+  const [, flag, script, ...files] = tokens;
+  if (flag !== "-n" || script === undefined) return false;
+  const quoted = /^(['"])(.*)\1$/.exec(script);
+  const body = quoted ? quoted[2] : script;
+  if (quoted?.[1] !== "'" && body.includes("$")) return false; // the shell would expand it
+  return SED_PRINT.test(body) && files.every((f) => SAFE_TOKEN.test(f) && !f.startsWith("-"));
+}
+
+function gitIsRead(rest: string[]): boolean {
+  let i = 0;
+  while (i < rest.length && rest[i].startsWith("-")) {
+    if (rest[i] === "-C") i += 2;
+    else if (rest[i] === "--no-pager") i += 1;
+    else return false;
+  }
+  const sub = rest[i];
+  const args = rest.slice(i + 1);
+  if (sub === undefined || !READ_GIT.has(sub)) return false;
+  if (args.some((a) => a === "-c" || GIT_BLOCKED_ARGS.some((b) => a.startsWith(b)))) return false;
+  return sub !== "branch" || args.every((a) => READ_GIT_BRANCH_ARGS.has(a));
+}
+
 function segmentIsRead(segment: string): boolean {
-  const words = segment.trim().split(/\s+/);
-  let head = words[0] ?? "";
-  let rest = words.slice(1);
-  if (head === "git") {
-    if (rest[0] === "-C") rest = rest.slice(2);
-    head = rest[0] ?? "";
-    rest = rest.slice(1);
-    if (!READ_GIT.has(head) || rest.some((a) => a.startsWith("--output"))) return false;
-    return head !== "branch" || rest.every((a) => READ_GIT_BRANCH_ARGS.has(a));
-  }
-  if (head === "sed") {
-    return (
-      rest[0] === "-n" &&
-      !rest.some((w) => /^(-i\S*|--in-place\S*|--file\S*)$/.test(w)) &&
-      !/(?:^|[^A-Za-z])[wWe](?:\s|\/|$)/.test(rest.slice(1).join(" "))
-    );
-  }
+  const tokens = segment.trim().split(/\s+/);
+  if (tokens[0] === "sed") return sedIsRead(tokens);
+  if (!tokens.every((t) => SAFE_TOKEN.test(t))) return false;
+  const [head, ...rest] = tokens;
+  if (head === "git") return gitIsRead(rest);
   if (!READ_COMMANDS.has(head)) return false;
-  if (head === "find")
-    return !rest.some((a) => /^-(delete|exec|execdir|ok|okdir|fprint\w*|fls)$/.test(a));
-  if (head === "rg") return !rest.some((a) => a.startsWith("--pre"));
+  if (head === "find") return rest.every((a) => !a.startsWith("-") || FIND_FLAGS.has(a));
+  if (head === "rg")
+    return !rest.some((a) => a.startsWith("--pre") || a.startsWith("--hostname-bin"));
+  if (head === "file") return !rest.some((a) => /^(-[a-zA-Z]*C|--compile)/.test(a));
   return true;
 }
 
@@ -99,8 +140,11 @@ function segmentIsRead(segment: string): boolean {
  */
 export function classifyRisk(command: string): ApprovalRisk {
   if (dangerOf(command) !== null) return "destructive";
-  // Harmless fd redirects (`2>&1`, `2>/dev/null`) are not output writes.
-  const plain = command.replace(/\d?>&\d|\d?>\s*\/dev\/null/g, "");
+  // Only a complete fd duplication (`2>&1`) or a write to /dev/null is harmless; any other
+  // `>` is an output write, and `>&2024-report.md` is a file named 2024-report.md.
+  const plain = command
+    .replace(/\d?>&(?:\d+|-)(?=\s|$|[;&|])/g, "")
+    .replace(/\d?>\s*\/dev\/null(?=\s|$|[;&|])/g, "");
   if (/>|\btee\b|\$\(|`|<\(/.test(plain)) return "write";
   const segments = plain.split(/&&|\|\||[;&|\n]/).filter((s) => s.trim() !== "");
   if (segments.length === 0) return "write";
@@ -111,6 +155,8 @@ interface ParsedInput {
   fields: Record<string, unknown>;
   /** The preview was cut off, so values may be partial. */
   truncated: boolean;
+  /** The preview body as received, for counting keys a cut-off scan cannot rebuild. */
+  raw: string;
 }
 
 function unescapeJsonString(raw: string): string {
@@ -131,7 +177,10 @@ function parseToolPreview(preview: string): { tool: string; input: ParsedInput }
   try {
     const parsed: unknown = JSON.parse(body);
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return { tool: m[1], input: { fields: parsed as Record<string, unknown>, truncated: false } };
+      return {
+        tool: m[1],
+        input: { fields: parsed as Record<string, unknown>, truncated: false, raw: body },
+      };
     }
     return null;
   } catch {
@@ -140,7 +189,7 @@ function parseToolPreview(preview: string): { tool: string; input: ParsedInput }
     for (let hit = re.exec(body); hit !== null; hit = re.exec(body)) {
       fields[hit[1]] = unescapeJsonString(hit[2]);
     }
-    return { tool: m[1], input: { fields, truncated: true } };
+    return { tool: m[1], input: { fields, truncated: true, raw: body } };
   }
 }
 
@@ -174,6 +223,7 @@ function summarizeCommand(
     cwd,
     code: command,
     ...(danger ? { danger } : {}),
+    ...(truncated ? { truncated: true } : {}),
   };
 }
 
@@ -189,12 +239,21 @@ function summarizeEdit(tool: string, input: ParsedInput): ApprovalSummary | null
     return {
       ...base,
       text: truncated ? `Write ${name}` : `Write ${name} (${lineCount(content)} lines)`,
-      code: content,
+      code: truncated ? `${content}\n(preview cut off)` : content,
     };
   }
   if (tool === "NotebookEdit") {
     const src = str(fields.new_source) ?? "";
-    return { ...base, text: `Edit notebook ${name}`, code: src };
+    return {
+      ...base,
+      text: `Edit notebook ${name}`,
+      code: truncated ? `${src}\n(preview cut off)` : src,
+    };
+  }
+  if (truncated && tool === "MultiEdit") {
+    // A cut-off scan cannot rebuild the edits array, so say how many places and show no diff.
+    const places = Math.max(1, (input.raw.match(/"old_string"\s*:/g) ?? []).length);
+    return { ...base, text: `Edit ${places} places in ${name}` };
   }
   const pairs: [string, string][] = Array.isArray(fields.edits)
     ? (fields.edits as Record<string, unknown>[]).map((e) => [
@@ -212,7 +271,7 @@ function summarizeEdit(tool: string, input: ParsedInput): ApprovalSummary | null
   return {
     ...base,
     text: truncated ? `Edit ${name}` : `Edit ${name}: replace ${removed} lines with ${added}`,
-    code: diff,
+    code: truncated ? `${diff}\n(preview cut off)` : diff,
   };
 }
 
