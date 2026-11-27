@@ -23,6 +23,7 @@ import {
   useAeHelpersCount,
   useAeSlotLimit,
 } from "@/lib/aeSlotLimit";
+import { AE_MASTER_CHAT_QUERY_KEY, readAeMasterChatId } from "@/lib/aeMasterChat";
 import { subscribeToQueryKeys } from "@/lib/aeQueryCacheSubscribe";
 import { syncAeAppBadge } from "@/lib/aeAppBadge";
 import { aeCachedConversationRows, useAeBadgeCount } from "@/lib/aeBadgeScope";
@@ -33,7 +34,11 @@ import { PrimaryNavLink } from "@/shell/PrimaryNavLink";
 
 /** Slots held across every cached `["conversations", ...]` list, deduped by id. */
 export function readAeSlotCount(queryClient: QueryClient): number {
-  return countAeSlots(aeCachedConversationRows(queryClient), readAeHelpersCount(queryClient));
+  return countAeSlots(
+    aeCachedConversationRows(queryClient),
+    readAeHelpersCount(queryClient),
+    readAeMasterChatId(queryClient),
+  );
 }
 
 /** Subscribes to the list and helpers-count queries; the snapshot is a number, so React skips unchanged counts. */
@@ -41,7 +46,11 @@ export function useAeSlotCount(): number {
   const queryClient = useQueryClient();
   const subscribe = useCallback(
     (onChange: () => void) =>
-      subscribeToQueryKeys(queryClient, [["conversations"], AE_HELPERS_COUNT_QUERY_KEY], onChange),
+      subscribeToQueryKeys(
+        queryClient,
+        [["conversations"], AE_HELPERS_COUNT_QUERY_KEY, AE_MASTER_CHAT_QUERY_KEY],
+        onChange,
+      ),
     [queryClient],
   );
   const read = useCallback(() => readAeSlotCount(queryClient), [queryClient]);

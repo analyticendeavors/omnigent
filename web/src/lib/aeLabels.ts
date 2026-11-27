@@ -126,19 +126,19 @@ export function aeDisplayStatus(
 /** The row fields the slot count reads. */
 type AeSlotRow = Pick<
   Conversation,
-  "labels" | "archived" | "parent_session_id" | "pending_elicitations_count" | "status"
+  "id" | "labels" | "archived" | "parent_session_id" | "pending_elicitations_count" | "status"
 >;
 
 /**
  * Whether a row holds a slot: `ae.status=working`, not archived, not a
  * sub-agent (sub-agents run inside their parent's slot), and neither blocked
- * on an approval nor failed, and not the master chat (`ae.master`). Mirrors
- * `ae_omni_policies.sessions.working_sessions`.
+ * on an approval nor failed, and not the master chat (the id the server's registry
+ * holds, `masterId`). Mirrors `ae_omni_policies.sessions.working_sessions`.
  */
-export function isAeSlot(conversation: AeSlotRow): boolean {
+export function isAeSlot(conversation: AeSlotRow, masterId: string | null = null): boolean {
   return (
     aeStatusOf(conversation.labels) === "working" &&
-    !isAeMasterChat(conversation) &&
+    !isAeMasterChat(conversation, masterId) &&
     !conversation.archived &&
     (conversation.parent_session_id ?? null) === null &&
     (conversation.pending_elicitations_count ?? 0) === 0 &&
@@ -169,14 +169,15 @@ export function pickAeLabels(labels: unknown): Record<string, string> {
  * each working helper holds one of its own. Mirrors `ae_omni_policies.sessions.held_keys`.
  */
 export function countAeSlots(
-  conversations: Iterable<AeSlotRow & Pick<Conversation, "id">>,
+  conversations: Iterable<AeSlotRow>,
   helpersCount = false,
+  masterId: string | null = null,
 ): number {
   const rows = [...conversations];
   const byId = new Map(rows.map((row) => [row.id, row] as const));
   const held = new Set<string>();
   for (const row of rows) {
-    if (isAeSlot(row) && (helpersCount || !aeIsHelper(row, byId))) held.add(row.id);
+    if (isAeSlot(row, masterId) && (helpersCount || !aeIsHelper(row, byId))) held.add(row.id);
   }
   return held.size;
 }

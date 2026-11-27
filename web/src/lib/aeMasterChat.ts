@@ -1,21 +1,18 @@
-// The owner's master chat (omnigent-ae, 2026-11-27): the label that marks it, and the two
-// `/v1/ae/master-chat` routes behind the sidebar's "Master chat" row (AeMasterChatRow).
-// `GET` answers the session id (or null) and how many sessions wait on the owner; `POST` finds
-// the session or creates it. The server rules live in `ae_omni_policies.router`
-// (`master_chat_view`, `master_chat_open`); the master chat holds no working slot there
-// (`sessions.working_sessions`) and `isAeSlot` in `aeLabels.ts` mirrors that.
+// The owner's master chat (omnigent-ae, 2026-11-27): the two `/v1/ae/master-chat` routes behind
+// the sidebar's "Master chat" row (AeMasterChatRow). `GET` answers the session id (or null) and
+// how many sessions wait on the owner; `POST` finds the session or creates it. The server keeps
+// the id in its own registry (`ae_omni_policies.master_chat`), never in a label; the id read here
+// is the one every client rule compares against (`isAeMasterChat`). The master chat holds no
+// working slot there (`sessions.working_sessions`) and `isAeSlot` in `aeLabels.ts` mirrors that.
 
-import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
-import { subscribeToQueryKeys } from "@/lib/aeQueryCacheSubscribe";
+import { type QueryClient, useQuery } from "@tanstack/react-query";
 import { authenticatedFetch } from "@/lib/identity";
 
-export const AE_MASTER_KEY = "ae.master";
 export const AE_MASTER_CHAT_QUERY_KEY = ["ae", "master-chat"] as const;
 
 const REFETCH_MS = 60_000;
-/** Conversation-list changes refetch the count at most this often. */
-const LIST_REFETCH_GAP_MS = 5_000;
+/** The server caches its answer this long, so asking sooner only reads the cache. */
+const STALE_MS = 5_000;
 
 export interface AeMasterChat {
   /** The caller's open master chat, or null before the first click. */
@@ -24,15 +21,24 @@ export interface AeMasterChat {
   waiting: number | null;
 }
 
-/** A conversation row labelled as the master chat. */
-export function isAeMasterChat(row: { labels?: Record<string, string> | null }): boolean {
-  return Boolean(row.labels?.[AE_MASTER_KEY]?.trim());
+/** Whether a row is the master chat: its id is the one the server's registry holds. */
+export function isAeMasterChat(row: { id: string }, masterId: string | null | undefined): boolean {
+  return Boolean(masterId) && row.id === masterId;
 }
 
-/** `GET /v1/ae/master-chat`; an older server (404) or any failure reads as nothing known. */
+/** The master chat id the last `GET` read, from the query cache (null until one has). */
+export function readAeMasterChatId(queryClient: QueryClient): string | null {
+  return queryClient.getQueryData<AeMasterChat>(AE_MASTER_CHAT_QUERY_KEY)?.sessionId ?? null;
+}
+
+/**
+ * `GET /v1/ae/master-chat`. An older server (404) reads as no master chat; any other failure
+ * throws, so the query keeps the id it already has instead of dropping it for a moment.
+ */
 export async function fetchAeMasterChat(): Promise<AeMasterChat> {
   const res = await authenticatedFetch("/v1/ae/master-chat", { method: "GET" });
-  if (!res.ok) return { sessionId: null, waiting: null };
+  if (res.status === 404) return { sessionId: null, waiting: null };
+  if (!res.ok) throw new Error(`Reading the master chat failed (${res.status}).`);
   const body = (await res.json()) as { session_id?: unknown; waiting?: unknown };
   return {
     sessionId: typeof body.session_id === "string" ? body.session_id : null,
@@ -62,33 +68,19 @@ export function refreshAeMasterChat(queryClient: QueryClient): Promise<void> {
 }
 
 /**
- * The master chat's id and the waiting count: read every 60 s and on window focus, and again
- * (at most once in 5 s) when the cached conversation rows change, since a session moving to
- * review or blocked changes the count.
+ * The master chat's id and the waiting count: read every 60 s and on window focus, and after a
+ * click creates it (`refreshAeMasterChat`). It does not follow the conversation list: the list
+ * changes on every streamed event, and one read per event is a read the server would only
+ * answer from its cache.
  */
 export function useAeMasterChat(): AeMasterChat {
-  const queryClient = useQueryClient();
   const { data } = useQuery({
     queryKey: AE_MASTER_CHAT_QUERY_KEY,
     queryFn: fetchAeMasterChat,
     refetchInterval: REFETCH_MS,
     refetchOnWindowFocus: true,
-    staleTime: LIST_REFETCH_GAP_MS,
+    staleTime: STALE_MS,
     retry: false,
   });
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const unsubscribe = subscribeToQueryKeys(queryClient, [["conversations"]], () => {
-      if (timer !== null) return;
-      timer = setTimeout(() => {
-        timer = null;
-        void refreshAeMasterChat(queryClient);
-      }, LIST_REFETCH_GAP_MS);
-    });
-    return () => {
-      unsubscribe();
-      if (timer !== null) clearTimeout(timer);
-    };
-  }, [queryClient]);
   return data ?? { sessionId: null, waiting: null };
 }
