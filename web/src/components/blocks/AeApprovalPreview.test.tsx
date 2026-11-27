@@ -35,7 +35,7 @@ describe("AeApprovalPreview", () => {
   it("folds only an ask that gates the person's own message", () => {
     expect(aeFoldsApprovalPreview("request")).toBe(true);
     expect(aeFoldsApprovalPreview("tool_call")).toBe(false);
-    expect(aeFoldsApprovalPreview("pre_tool_use")).toBe(false);
+    expect(aeFoldsApprovalPreview("pre_tool_use")).toBe(true);
     expect(aeFoldsApprovalPreview("response")).toBe(false);
     expect(aeFoldsApprovalPreview("")).toBe(false);
   });
@@ -80,14 +80,14 @@ describe("ApprovalCard code under the message", () => {
     expect(previewOf(/git push --force origin main/).hidden).toBe(false);
   });
 
-  it("keeps a native tool prompt's command in view", () => {
+  it("folds a native tool prompt's command behind a summary line", () => {
     card({
       message: "Claude wants to call **Bash**",
       phase: "pre_tool_use",
       policyName: "claude_native_permission",
       preview: 'Bash({"command": "git push origin main"})',
     });
-    expect(screen.queryByTestId("ae-approval-details-toggle")).toBeNull();
-    expect(previewOf(/git push origin main/).hidden).toBe(false);
+    expect(screen.getByRole("button", { name: "Show command" })).toBeDefined();
+    expect(previewOf(/git push origin main/).hidden).toBe(true);
   });
 });

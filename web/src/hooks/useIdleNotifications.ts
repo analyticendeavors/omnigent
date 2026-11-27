@@ -36,6 +36,8 @@ import { useLoadedConversations } from "@/hooks/useSidebarData";
 // manages permission, so that gate doesn't apply.
 
 import { useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { cachedApprovalSummaryText } from "@/lib/aeApprovalToast";
 import { useAeBadgeCount } from "@/lib/aeBadgeScope";
 import { useNavigate } from "@/lib/routing";
 import type { Conversation } from "@/hooks/useConversations";
@@ -123,6 +125,7 @@ function isWindowFocused(): boolean {
  */
 export function useIdleNotifications(activeConversationId?: string): void {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { data } = useLoadedConversations();
   // The working-session count, the same number AeSlotsPill puts on the web app's icon.
   const badgeCount = useAeBadgeCount();
@@ -397,10 +400,15 @@ export function useIdleNotifications(activeConversationId?: string): void {
           clearTimeout(pending);
           timers.delete(conversation.id);
         }
-        notify(conversation, ELICITATION_BODY, navigate);
+        // AE: the approval's plain-English line when the Inbox snapshot is cached.
+        notify(
+          conversation,
+          cachedApprovalSummaryText(queryClient, conversation) ?? ELICITATION_BODY,
+          navigate,
+        );
       }
     }
-  }, [data, navigate, activeConversationId]);
+  }, [data, navigate, activeConversationId, queryClient]);
 }
 
 /**

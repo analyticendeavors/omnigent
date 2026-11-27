@@ -290,6 +290,28 @@ describe("InboxPage approval items", () => {
     expect(toggle.textContent).not.toContain("**");
   });
 
+  it("previews a Bash approval as its plain-English line in the collapsed row", async () => {
+    // WHY: the row leads with the agent's own description, not the gating message.
+    const row = conversation({ id: "sess_1" });
+    vi.mocked(conversationsHook.useConversations).mockReturnValue(conversationsStub([row]));
+    vi.mocked(sessionsApi.getSession).mockResolvedValue({
+      pendingElicitations: [
+        rawElicitation("eli_1", "Claude wants to call **Bash**", {
+          phase: "pre_tool_use",
+          content_preview: 'Bash({"command":"git status","description":"Show git status"})',
+        }),
+      ],
+    } as unknown as Awaited<ReturnType<typeof sessionsApi.getSession>>);
+    renderPage();
+
+    const item = await screen.findByTestId("inbox-item");
+    const toggle = within(item).getByRole("button", { name: /My Session/ });
+    fireEvent.click(toggle);
+    await waitFor(() => expect(item).toHaveAttribute("data-expanded", "false"));
+    expect(within(toggle).getByText("Show git status")).toBeInTheDocument();
+    expect(toggle.textContent).not.toContain("Claude wants to call");
+  });
+
   it("previews a policy prompt's command verbatim in the collapsed row", async () => {
     // WHY: only the bridges' `**<tool>**` message is formatted; a balanced `**`
     // inside a command the user is approving must not be read as emphasis.

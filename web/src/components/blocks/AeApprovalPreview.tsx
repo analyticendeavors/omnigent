@@ -3,8 +3,9 @@
 // check the owner reads the sentence at the top, and the JSON under it is noise most of the
 // time; the owner wanted it folded by default and opened only when needed. A request-phase ask (the
 // rabbit-hole check, the slot cap) repeats the message just sent, so its code folds. Every
-// other phase shows what the agent is about to do (a tool call's command, a response), so
-// that code stays in view whoever wrote the policy.
+// other phase shows what the agent is about to do (a response), so that code stays in
+// view whoever wrote the policy. A Claude tool call (pre_tool_use) folds too since
+// 2026-11-27: the plain-English line above it says what it does.
 
 import { useId, useState } from "react";
 import { AE_ICON_CHEVRON_RIGHT } from "@/lib/aeAgentsIcons";
@@ -16,11 +17,21 @@ const PREVIEW_CLASS =
 
 /** Whether a card folds its code: the ask gates the person's own message. */
 export function aeFoldsApprovalPreview(phase: string): boolean {
-  return phase === "request";
+  return phase === "request" || phase === "pre_tool_use";
 }
 
-export function AeApprovalPreview({ text, fold }: { text: string; fold: boolean }) {
-  const [open, setOpen] = useState(false);
+export function AeApprovalPreview({
+  text,
+  fold,
+  label = "details",
+  startOpen = false,
+}: {
+  text: string;
+  fold: boolean;
+  label?: string;
+  startOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(startOpen);
   const regionId = useId();
   if (!fold) return <pre className={PREVIEW_CLASS}>{text}</pre>;
   return (
@@ -37,7 +48,7 @@ export function AeApprovalPreview({ text, fold }: { text: string; fold: boolean 
           node={AE_ICON_CHEVRON_RIGHT}
           className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")}
         />
-        {open ? "Hide details" : "Show details"}
+        {open ? `Hide ${label}` : `Show ${label}`}
       </button>
       <pre id={regionId} hidden={!open} className={PREVIEW_CLASS}>
         {text}

@@ -155,8 +155,7 @@ describe("ApprovalCard — binary approve/reject", () => {
       />,
     );
 
-    expect(screen.getByText("Command approval")).toBeDefined();
-    expect(screen.getByText("Codex wants to run this command.")).toBeDefined();
+    expect(screen.getByText("Run a command")).toBeDefined();
     expect(screen.getByText("Run the focused pytest suite.")).toBeDefined();
     expect(screen.getByText("/bin/zsh -lc '.venv/bin/python -m pytest -q'")).toBeDefined();
     expect(screen.getByText("/Users/example/project")).toBeDefined();
@@ -215,7 +214,7 @@ describe("ApprovalCard — approve & switch to auto mode", () => {
     message: "Claude wants to call **Bash**",
     phase: "pre_tool_use",
     policyName: "claude_native_permission",
-    contentPreview: 'Bash({"command":"git status"})',
+    contentPreview: 'Bash({"command":"touch x"})',
     requestedSchema: {},
     status: "pending" as const,
     response: null,
@@ -1785,7 +1784,7 @@ describe("ApprovalCard — gating message emphasis", () => {
     elicitationId: "elic_emphasis",
     phase: "pre_tool_use",
     policyName: "claude_native_permission",
-    contentPreview: 'Bash({"command":"touch /tmp/probe"})',
+    contentPreview: 'Grep({"pattern":"probe"})',
     requestedSchema: {},
   } as const;
 

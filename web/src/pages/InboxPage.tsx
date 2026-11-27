@@ -82,6 +82,7 @@ import {
   writeInboxFilter,
   type InboxFilter,
 } from "@/lib/inboxFilterPreferences";
+import { summarizeApproval } from "@/lib/aeApprovalSummary";
 import { withApprovalSource } from "@/lib/aeApprovalSource";
 import { latestOutputPreview } from "@/lib/lastAssistantText";
 import { relativeTime } from "@/lib/relativeTime";
@@ -336,6 +337,7 @@ export function InboxPage() {
       // "Claude Code" / "Codex", never the internal agent name. Hidden when
       // it would just repeat the title (untitled native sessions).
       const agentLabel = getConversationAgentType(item.row);
+      const aeSummary = summarizeApproval(item.elicitation);
       return (
         <InboxCard
           key={entry.key}
@@ -344,7 +346,9 @@ export function InboxPage() {
           kindLabel={item.elicitation.askUserQuestion ? "Question" : "Approval needed"}
           title={title}
           preview={
-            item.elicitation.message ? (
+            aeSummary ? (
+              <span>{aeSummary.text}</span>
+            ) : item.elicitation.message ? (
               <ElicitationMessage message={item.elicitation.message} />
             ) : undefined
           }

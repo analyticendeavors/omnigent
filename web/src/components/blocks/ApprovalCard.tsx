@@ -47,6 +47,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useDescendantSession } from "@/hooks/useChildSessions";
+import { summarizeApproval } from "@/lib/aeApprovalSummary";
 import { withApprovalSource } from "@/lib/aeApprovalSource";
 import { aeChoiceField, aeShortChoiceLabels } from "@/lib/aeChoiceButtons";
 import { parseAeSlotsFull } from "@/lib/aeSlotsFull";
@@ -70,6 +71,7 @@ import {
   useScopedConversationId,
 } from "@/components/chat/conversationScope";
 import { AeApprovalPreview, aeFoldsApprovalPreview } from "./AeApprovalPreview";
+import { AeApprovalSummary } from "./AeApprovalSummary";
 import { AeChoiceButtons } from "./AeChoiceButtons";
 import { AeClampedMessage } from "./AeClampedMessage";
 import { AeSlotsFullBody } from "./AeSlotsFullBody";
@@ -691,6 +693,22 @@ export function ApprovalCard({
           </AlertDescription>
         )}
       </Alert>
+    );
+  }
+
+  // AE: a Bash, edit or Codex command ask leads with a plain-English line and sizes by risk.
+  const aeSummary = summarizeApproval({ phase, contentPreview, codexCommand });
+  if (aeSummary) {
+    return (
+      <AeApprovalSummary
+        summary={aeSummary}
+        policyLabel={policyLabel}
+        onApprove={() => submitBinary("accept")}
+        onReject={() => submitBinary("decline")}
+        buttons={isCodexCommandApproval ? codexCommandButtons : binaryButtons}
+        requester={requesterLine}
+        className={className}
+      />
     );
   }
 
