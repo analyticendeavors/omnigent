@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import type { ApprovalSummary } from "@/lib/aeApprovalSummary";
 import { cn } from "@/lib/utils";
 import { AeApprovalPreview } from "./AeApprovalPreview";
+import { AeClampedMessage } from "./AeClampedMessage";
 
 const PEEK_CHARS = 80;
 
@@ -166,9 +167,13 @@ export function AeApprovalSummary({
       </AlertTitle>
       <AlertDescription className="flex flex-col gap-2">
         {requester}
-        <span className="text-base text-foreground" data-testid="approval-summary-text">
+        <span
+          className={cn("text-base text-foreground", summary.fullMessage && "truncate")}
+          data-testid="approval-summary-text"
+        >
           {text}
         </span>
+        {summary.fullMessage && <AeClampedMessage message={summary.fullMessage} />}
         {agentLine}
         {peekLine}
         {((destructive && danger) || truncated || cwd) && (

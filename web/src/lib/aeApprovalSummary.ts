@@ -38,6 +38,8 @@ export interface ApprovalSummary {
   danger?: string;
   /** The command preview was cut off, so its tail is unseen. */
   truncated?: boolean;
+  /** A long generic or policy message in full; the card folds it under the one-line `text`. */
+  fullMessage?: string;
 }
 
 export interface ApprovalSummaryInput {
@@ -350,6 +352,9 @@ function fromLine(line: ToolLine, code: string): ApprovalSummary {
   };
 }
 
+// More than one line, or longer than the one-line summary keeps.
+const LONG_MESSAGE = /^[\s\S]*\S[\s\S]*\n[\s\S]*\S|^[\s\S]{161,}/;
+
 function generic(input: ApprovalSummaryInput, tool?: string, code?: string): ApprovalSummary {
   const who = askerLabel(input.policyName ?? "", input.phase);
   const said = plainMessage(input.message);
@@ -358,6 +363,9 @@ function generic(input: ApprovalSummaryInput, tool?: string, code?: string): App
     source: said ? "derived" : "generic",
     risk: "write",
     kind: "tool",
+    ...(said && LONG_MESSAGE.test(input.message ?? "")
+      ? { fullMessage: input.message?.trim() }
+      : {}),
     ...(code ? { code } : {}),
   };
 }
@@ -378,6 +386,7 @@ export function summarizeApproval(input: ApprovalSummaryInput): ApprovalSummary 
   return {
     ...s,
     text: scrub(s.text),
+    ...(s.fullMessage ? { fullMessage: scrub(s.fullMessage) } : {}),
     ...(s.agentText ? { agentText: scrub(s.agentText) } : {}),
   };
 }
