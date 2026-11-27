@@ -36,6 +36,7 @@ import {
   aeShowsNoOutputHint,
   type AeSessionProgress,
 } from "@/lib/aeSessionProgress";
+import { AeShellChips, AeShellCountBadge, AeShellGroupMembers } from "@/components/AeShellChips";
 import { AeTablerSvg } from "@/lib/aeTablerIcon";
 import type { AeTablerIconNode } from "@/lib/aeTablerIconData";
 import type { BackgroundTaskInfo } from "@/lib/types";
@@ -278,8 +279,9 @@ function shellLabel(task: BackgroundTaskInfo): string {
 }
 
 /** A shell chip opens the full description and command, as the composer pill did. */
-function ShellChip({ task }: { task: BackgroundTaskInfo }) {
+function ShellChip({ task, group }: { task: BackgroundTaskInfo; group?: BackgroundTaskInfo[] }) {
   const label = shellLabel(task);
+  const count = group?.length ?? 1;
   const command = task.command?.trim();
   return (
     <Popover modal={false}>
@@ -291,6 +293,7 @@ function ShellChip({ task }: { task: BackgroundTaskInfo }) {
         >
           <AeTablerSvg node={AE_ACTIVITY_ICONS.terminal} className="size-3.5 shrink-0" />
           <span className="truncate">{label}</span>
+          {count > 1 && <AeShellCountBadge count={count} />}
         </button>
       </PopoverTrigger>
       <PopoverContent
@@ -307,6 +310,7 @@ function ShellChip({ task }: { task: BackgroundTaskInfo }) {
             </span>
           )}
           {task.status && <span className="text-xs text-muted-foreground">{task.status}</span>}
+          {group && group.length > 1 && <AeShellGroupMembers tasks={group} />}
         </div>
       </PopoverContent>
     </Popover>
@@ -416,9 +420,10 @@ export function AeSessionActivityLine({ showsWorking }: { showsWorking: boolean 
             {data.agents.map((agent) => (
               <AgentChip key={agent.id} agent={agent} now={now} />
             ))}
-            {data.shells.map((task, i) => (
-              <ShellChip key={task.id ?? `shell-${i}`} task={task} />
-            ))}
+            <AeShellChips
+              shells={data.shells}
+              renderChip={(task, group) => <ShellChip task={task} group={group} />}
+            />
           </div>
         )}
       </StatusRow>

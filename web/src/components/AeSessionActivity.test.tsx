@@ -362,6 +362,67 @@ describe("chat status line", () => {
     expect(screen.queryByTestId("background-task-pill")).toBeNull();
   });
 
+  it("folds many shells: three chips, a +N more toggle, merged duplicates", () => {
+    const loop = (id: string, tail: string) => ({
+      id,
+      command: `until [ -z "$(pgrep -f 'scripts/fit-check.mjs')" ]; do sleep 5; done; ${tail}`,
+    });
+    const tasks = [
+      loop("w1", "a"),
+      loop("w2", "b"),
+      loop("w3", "c"),
+      loop("w4", "d"),
+      ...Array.from({ length: 11 }, (_, i) => ({ id: `s${i}`, command: `sleep ${i + 1}` })),
+    ];
+    setup(
+      {
+        sessionStatus: "idle",
+        lastEventAt: NOW - 120_000,
+        backgroundTaskCount: 15,
+        backgroundTasks: tasks,
+      },
+      {
+        children: [
+          child("c1", "Build rail container", NOW / 1000 - 480),
+          child("c2", "Build popover", NOW / 1000 - 360),
+        ],
+      },
+    );
+    wrap(<AeSessionActivityLine showsWorking />);
+    expect(screen.getByTestId("ae-activity-line")).toHaveTextContent(
+      "Waiting on 2 agents and 15 background shells",
+    );
+    expect(screen.getAllByTestId("ae-activity-agent-chip")).toHaveLength(2);
+    // 12 groups: the 4 loops merge, 11 distinct sleeps.
+    expect(screen.getAllByTestId("ae-activity-shell-chip")).toHaveLength(3);
+    expect(screen.getByTestId("ae-activity-shell-count")).toHaveTextContent("×4");
+    const more = screen.getByTestId("ae-activity-shell-more");
+    expect(more).toHaveTextContent("+9 more");
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(more);
+    expect(screen.getAllByTestId("ae-activity-shell-chip")).toHaveLength(12);
+    expect(more).toHaveTextContent("Show less");
+    expect(more).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(more);
+    expect(screen.getAllByTestId("ae-activity-shell-chip")).toHaveLength(3);
+  });
+
+  it("lists every member of a merged shell chip in its popover", () => {
+    const loop = (id: string, tail: string) => ({
+      id,
+      command: `until [ -f x ]; do sleep 5; done; ${tail}`,
+    });
+    setup({
+      backgroundTaskCount: 2,
+      backgroundTasks: [loop("w1", "echo first"), loop("w2", "echo second")],
+    });
+    wrap(<AeSessionActivityLine showsWorking />);
+    fireEvent.click(screen.getByTestId("ae-activity-shell-chip"));
+    const members = screen.getByTestId("ae-activity-shell-members");
+    expect(members).toHaveTextContent("echo first");
+    expect(members).toHaveTextContent("echo second");
+  });
+
   it("opens a shell chip's details", () => {
     setup({
       backgroundTaskCount: 1,
