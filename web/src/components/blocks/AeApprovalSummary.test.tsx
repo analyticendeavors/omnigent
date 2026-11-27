@@ -70,9 +70,10 @@ describe("AeApprovalSummary through ApprovalCard", () => {
     expect(screen.getByRole("button", { name: "Hide diff" })).toBeDefined();
   });
 
-  it("falls back to today's card for a tool it does not summarize", () => {
-    renderCard('WebFetch({"url":"https://x.test"})');
-    expect(screen.getByText("Approval required")).toBeDefined();
+  it("summarizes a tool it has no special case for and folds its arguments", () => {
+    renderCard('WebFetch({"url":"https://x.test/a?q=1"})');
+    expect(screen.getByTestId("approval-summary-text").textContent).toBe("Fetch x.test/a");
+    expect(screen.getByRole("button", { name: "Show details" })).toBeDefined();
   });
 
   it("keeps only the extra options on a read row behind a More options disclosure", () => {

@@ -209,11 +209,22 @@ describe("summarizeApproval", () => {
     });
   });
 
-  it("returns null for other tools and phases", () => {
-    expect(summarizeApproval(ask('WebFetch({"url":"https://x"})'))).toBeNull();
+  it("returns null for questions, plans, forms and links", () => {
+    expect(summarizeApproval(ask('AskUserQuestion({"questions":[]})'))).toBeNull();
+    expect(summarizeApproval(ask('ExitPlanMode({"plan":"x"})'))).toBeNull();
     expect(
-      summarizeApproval({ phase: "request", contentPreview: bash({ command: "ls" }) }),
+      summarizeApproval({ phase: "codex_request_user_input", contentPreview: "{}" }),
     ).toBeNull();
-    expect(summarizeApproval(ask("not a tool call"))).toBeNull();
+    expect(summarizeApproval({ phase: "agy_ask_question", contentPreview: "" })).toBeNull();
+    expect(
+      summarizeApproval({
+        ...ask("x"),
+        requestedSchema: { properties: { a: { type: "string" } } },
+      }),
+    ).toBeNull();
+    expect(summarizeApproval({ ...ask("x"), url: "https://login.example.com/oauth" })).toBeNull();
+    expect(
+      summarizeApproval({ phase: "request", contentPreview: "", policyName: "ae_slot_cap" }),
+    ).toBeNull();
   });
 });

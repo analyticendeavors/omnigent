@@ -79,7 +79,7 @@ describe("ApprovalCard code under the message", () => {
       policyName: "confirm_git_push",
       preview: '{"command": "git push --force origin main"}',
     });
-    expect(screen.queryByTestId("ae-approval-details-toggle")).toBeNull();
+    expect(screen.getByText("Confirm before pushing.")).toBeDefined();
     expect(previewOf(/git push --force origin main/).hidden).toBe(false);
   });
 
@@ -94,14 +94,14 @@ describe("ApprovalCard code under the message", () => {
     expect(previewOf(/git push origin main/).hidden).toBe(true);
   });
 
-  it("keeps a native tool prompt's command in view when it cannot be summarized", () => {
+  it("folds a native tool prompt's arguments when its command is unusable", () => {
     card({
       message: "Claude wants to call **Bash**",
       phase: "pre_tool_use",
       policyName: "claude_native_permission",
       preview: 'Bash({"command": 42})',
     });
-    expect(screen.queryByTestId("ae-approval-details-toggle")).toBeNull();
-    expect(previewOf(/"command": 42/).hidden).toBe(false);
+    expect(screen.getByRole("button", { name: "Show details" })).toBeDefined();
+    expect(previewOf(/"command": 42/).hidden).toBe(true);
   });
 });

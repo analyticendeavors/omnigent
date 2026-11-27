@@ -703,7 +703,7 @@ export function ApprovalCard({
     );
   }
 
-  // AE: a Bash, edit or Codex command ask leads with a plain-English line and sizes by risk.
+  // AE: every approval, from any harness, leads with a plain-English line.
   const aeSummary =
     isAskUserQuestion ||
     isExitPlanMode ||
@@ -713,7 +713,15 @@ export function ApprovalCard({
     isExternalUrl ||
     slotsFull
       ? null
-      : summarizeApproval({ phase, contentPreview, codexCommand });
+      : summarizeApproval({
+          phase,
+          contentPreview,
+          codexCommand,
+          message,
+          policyName,
+          url,
+          requestedSchema,
+        });
   if (aeSummary) {
     return (
       <AeApprovalSummary

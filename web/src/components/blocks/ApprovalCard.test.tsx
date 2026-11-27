@@ -123,7 +123,9 @@ describe("ApprovalCard — binary approve/reject", () => {
       />,
     );
     expect(screen.getByText(/approve_shell_commands/)).toBeDefined();
-    expect(screen.getByText(/tool_call/)).toBeDefined();
+    expect(screen.getByTestId("approval-summary-text").textContent).toBe(
+      "Approve running rm -rf /tmp/cache?",
+    );
   });
 
   it("renders Codex command approvals from structured extras instead of raw JSON", () => {
@@ -448,6 +450,7 @@ describe("ApprovalCard — approve & don't ask again (persistent allow rule)", (
         rememberScope={{ tool: "WebFetch", host: "github.com" }}
       />,
     );
+    fireEvent.click(screen.getByTestId("ae-approval-more-toggle"));
     const rememberButton = screen.getByRole("button", {
       name: /don't ask again for github\.com/i,
     });
@@ -456,7 +459,7 @@ describe("ApprovalCard — approve & don't ask again (persistent allow rule)", (
     expect(rememberButton.getAttribute("title")).toBe(
       "Won't ask again for github.com for the rest of this session",
     );
-    expect(screen.getByRole("button", { name: /^approve$/i })).toBeDefined();
+    expect(screen.getByRole("button", { name: /^approve: fetch/i })).toBeDefined();
     expect(screen.getByRole("button", { name: /reject/i })).toBeDefined();
 
     // No hint (edit tool / ExitPlanMode / AskUserQuestion) → no button.
@@ -1799,8 +1802,7 @@ describe("ApprovalCard — gating message emphasis", () => {
     );
     let card = screen.getByTestId("approval-card");
     expect(card.textContent).not.toContain("**");
-    expect(within(card).getByText("Bash", { selector: "strong" })).toBeDefined();
-    expect(within(card).getByText(/Claude wants to call/)).toBeDefined();
+    expect(within(card).getByText("Search for probe")).toBeDefined();
 
     rerender(
       <ApprovalCard
@@ -1824,6 +1826,7 @@ describe("ApprovalCard — gating message emphasis", () => {
         {...props}
         phase="tool_call"
         policyName="approve_shell_commands"
+        contentPreview=""
         message={message}
         status="pending"
         response={null}
@@ -2013,7 +2016,7 @@ describe("ApprovalCard — slots full ask", () => {
       />,
     );
     expect(screen.getByText("Is this still on topic?")).toBeDefined();
-    expect(screen.getByRole("button", { name: /^approve/i })).toBeDefined();
+    expect(screen.getByRole("button", { name: /^approve$/i })).toBeDefined();
     expect(screen.getByRole("button", { name: /reject/i })).toBeDefined();
     expect(screen.queryByTestId("ae-slots-full")).toBeNull();
   });
@@ -2032,7 +2035,7 @@ describe("ApprovalCard — slots full ask", () => {
       />,
     );
     expect(screen.queryByTestId("ae-slots-full")).toBeNull();
-    expect(screen.getByRole("button", { name: /^approve/i })).toBeDefined();
+    expect(screen.getByRole("button", { name: /^approve$/i })).toBeDefined();
     rerender(
       <ApprovalCard
         elicitationId="elic_form"

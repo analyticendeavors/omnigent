@@ -8,14 +8,23 @@
 // The content preview is cut by the server (300 chars for the claude-sdk hook), so JSON
 // often arrives truncated. A truncated command is never trusted as read-only.
 
+import {
+  askerLabel,
+  deriveCodexLine,
+  deriveToolLine,
+  plainMessage,
+} from "./aeApprovalSummaryTools";
+
 export type ApprovalRisk = "read" | "write" | "destructive";
 
 export interface ApprovalSummary {
   text: string;
   /** Whose words `text` is: the agent's own description, or built from the input. */
-  source: "agent" | "derived";
+  source: "agent" | "derived" | "generic";
   risk: ApprovalRisk;
-  kind: "command" | "edit";
+  kind: "command" | "edit" | "tool";
+  /** Card heading override, e.g. "Change files". */
+  title?: string;
   /** Working directory (Codex) or the edited file's folder (Claude edits). */
   cwd?: string;
   /** The command, or the diff or content of an edit. */
@@ -30,6 +39,13 @@ export interface ApprovalSummaryInput {
   phase: string;
   contentPreview: string;
   codexCommand?: { command: string; cwd: string | null; reason: string | null } | null;
+  /** The rest of the elicitation, so a question or form is never summarized as an approval. */
+  message?: string;
+  policyName?: string;
+  url?: string | null;
+  requestedSchema?: Record<string, unknown>;
+  askUserQuestion?: Record<string, unknown> | null;
+  exitPlanMode?: Record<string, unknown> | null;
 }
 
 // Git's global options (`-c k=v`, `-C path`, ...) sit between `git` and the subcommand; drop
@@ -172,20 +188,12 @@ function unescapeJsonString(raw: string): string {
   }
 }
 
-/** Parse `ToolName({...})` or a bare JSON object; pull string fields out of a cut-off body. */
-function parseToolPreview(preview: string): { tool: string; input: ParsedInput } | null {
-  const m = /^([A-Za-z_][\w.-]*)\((.*)$/s.exec(preview.trim());
-  if (!m) return null;
-  let body = m[2];
-  if (body.endsWith(")")) body = body.slice(0, -1);
+function parseBody(body: string): ParsedInput | null {
   if (body[0] !== "{") return null;
   try {
     const parsed: unknown = JSON.parse(body);
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return {
-        tool: m[1],
-        input: { fields: parsed as Record<string, unknown>, truncated: false, raw: body },
-      };
+      return { fields: parsed as Record<string, unknown>, truncated: false, raw: body };
     }
     return null;
   } catch {
@@ -194,8 +202,18 @@ function parseToolPreview(preview: string): { tool: string; input: ParsedInput }
     for (let hit = re.exec(body); hit !== null; hit = re.exec(body)) {
       fields[hit[1]] = unescapeJsonString(hit[2]);
     }
-    return { tool: m[1], input: { fields, truncated: true, raw: body } };
+    return { fields, truncated: true, raw: body };
   }
+}
+
+/** Parse `ToolName({...})` or a bare JSON object; pull string fields out of a cut-off body. */
+function parseToolPreview(preview: string): { tool: string; input: ParsedInput } | null {
+  const m = /^([A-Za-z_][\w.-]*)\((.*)$/s.exec(preview.trim());
+  if (!m) return null;
+  let body = m[2];
+  if (body.endsWith(")")) body = body.slice(0, -1);
+  const input = parseBody(body);
+  return input ? { tool: m[1], input } : null;
 }
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v !== "" ? v : undefined);
@@ -280,7 +298,63 @@ function summarizeEdit(tool: string, input: ParsedInput): ApprovalSummary | null
   };
 }
 
-/** The summary for a pending approval, or null when this kind of ask is not summarized. */
+const QUESTION_PHASES = new Set(["codex_request_user_input", "agy_ask_question"]);
+const QUESTION_TOOLS = new Set(["AskUserQuestion", "ExitPlanMode"]);
+
+/** Questions, plans, forms, choices, the slot cap and external links are not approvals. */
+function isNotApproval(input: ApprovalSummaryInput, tool?: string): boolean {
+  if (QUESTION_PHASES.has(input.phase) || (tool !== undefined && QUESTION_TOOLS.has(tool))) {
+    return true;
+  }
+  if (input.askUserQuestion || input.exitPlanMode) return true;
+  if (typeof input.url === "string" && input.url !== "" && !input.url.startsWith("/approve/")) {
+    return true;
+  }
+  const props = input.requestedSchema?.properties;
+  if (props && typeof props === "object" && Object.keys(props).length > 0) return true;
+  return input.phase === "request" && /^(ae_)?slot_cap$/.test(input.policyName ?? "");
+}
+
+function prettyArgs(input: ParsedInput): string {
+  return input.truncated
+    ? `${input.raw}\n(preview cut off)`
+    : JSON.stringify(input.fields, null, 2);
+}
+
+function summarizeTool(tool: string, input: ParsedInput): ApprovalSummary {
+  const { fields } = input;
+  const command = str(fields.command);
+  if (command && !tool.startsWith("mcp__")) {
+    return summarizeCommand(command, str(fields.description), input.truncated);
+  }
+  const line = deriveToolLine(tool, fields);
+  return {
+    text: line.text,
+    source: line.source,
+    risk: line.risk,
+    kind: "tool",
+    code: prettyArgs(input),
+    ...(line.danger ? { danger: line.danger } : {}),
+  };
+}
+
+function generic(input: ApprovalSummaryInput, tool?: string, code?: string): ApprovalSummary {
+  const who = askerLabel(input.policyName ?? "", input.phase);
+  const said = plainMessage(input.message);
+  return {
+    text: said ?? (tool ? `${who} wants to use ${tool}` : `${who} wants approval`),
+    source: said ? "derived" : "generic",
+    risk: "write",
+    kind: "tool",
+    ...(code ? { code } : {}),
+  };
+}
+
+/**
+ * The summary for a pending approval; null only for a question, plan, form, choice, the slot
+ * cap or an external link. Order: the agent's own words, a line built from the tool and its
+ * arguments, then a generic line naming who asks.
+ */
 export function summarizeApproval(input: ApprovalSummaryInput): ApprovalSummary | null {
   const codex = input.codexCommand;
   if (codex) {
@@ -291,17 +365,50 @@ export function summarizeApproval(input: ApprovalSummaryInput): ApprovalSummary 
       source: reason ? "agent" : "derived",
     };
   }
-  if (input.phase !== "pre_tool_use") return null;
-  const parsed = parseToolPreview(input.contentPreview);
-  if (!parsed) return null;
-  const { tool, input: tin } = parsed;
-  if (tool === "Bash") {
-    const command = str(tin.fields.command);
-    if (!command) return null;
-    return summarizeCommand(command, str(tin.fields.description), tin.truncated);
+  const preview = input.contentPreview.trim();
+  const wrapped = parseToolPreview(preview);
+  if (isNotApproval(input, wrapped?.tool)) return null;
+  if (wrapped) {
+    const { tool, input: tin } = wrapped;
+    if (tool === "Edit" || tool === "MultiEdit" || tool === "Write" || tool === "NotebookEdit") {
+      const edit = summarizeEdit(tool, tin);
+      if (edit) return edit;
+    }
+    return summarizeTool(tool, tin);
   }
-  if (tool === "Edit" || tool === "MultiEdit" || tool === "Write" || tool === "NotebookEdit") {
-    return summarizeEdit(tool, tin);
+  if (input.phase === "agy_permission") {
+    const m = /^Antigravity wants to run: (.+)$/s.exec(input.message ?? "");
+    if (m) {
+      return {
+        ...summarizeCommand(m[1], undefined, false),
+        text: "Antigravity wants to run a command",
+      };
+    }
   }
-  return null;
+  const bare = parseBody(preview);
+  if (bare) {
+    const cmd = str(bare.fields.command);
+    if (cmd) {
+      const said = plainMessage(input.message);
+      return { ...summarizeCommand(cmd, undefined, bare.truncated), text: said ?? "Run a command" };
+    }
+    const line = deriveCodexLine(input.phase, bare.fields);
+    if (line) {
+      const edits =
+        input.phase === "codex_file_change_approval" ||
+        input.phase === "codex_apply_patch_approval";
+      return {
+        text: line.text,
+        source: line.source,
+        risk: line.risk,
+        kind: "tool",
+        code: prettyArgs(bare),
+        ...(edits ? { title: "Change files" } : {}),
+        ...(line.danger ? { danger: line.danger } : {}),
+      };
+    }
+    return generic(input, undefined, prettyArgs(bare));
+  }
+  const named = /^([A-Za-z_][\w.-]*)\(/.exec(preview)?.[1];
+  return generic(input, named, preview === "" ? undefined : preview);
 }

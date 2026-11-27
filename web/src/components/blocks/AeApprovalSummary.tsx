@@ -51,7 +51,7 @@ export function AeApprovalSummary({
   const isEdit = kind === "edit";
   // The first line of the command stays visible, so the agent's own words are never the only
   // thing on a card whose code is folded.
-  const peek = !isEdit && risk !== "destructive" && code ? firstLine(code) : null;
+  const peek = kind === "command" && risk !== "destructive" && code ? firstLine(code) : null;
   const peekLine = peek ? (
     <code
       className="block truncate font-mono text-xs whitespace-nowrap text-muted-foreground"
@@ -60,7 +60,7 @@ export function AeApprovalSummary({
       {peek}
     </code>
   ) : null;
-  const codeLabel = isEdit ? "diff" : "command";
+  const codeLabel = isEdit ? "diff" : kind === "tool" ? "details" : "command";
   const codeBlock = code ? (
     <AeApprovalPreview
       text={code}
@@ -154,7 +154,8 @@ export function AeApprovalSummary({
             destructive ? "bg-destructive" : "bg-yellow-600 dark:bg-yellow-400",
           )}
         />
-        {isEdit ? "Edit a file" : "Run a command"}
+        {summary.title ??
+          (isEdit ? "Edit a file" : kind === "tool" ? "Tool request" : "Run a command")}
         {policyLabel && <span className="text-muted-foreground text-sm">· {policyLabel}</span>}
       </AlertTitle>
       <AlertDescription className="flex flex-col gap-2">

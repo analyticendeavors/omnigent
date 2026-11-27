@@ -284,9 +284,7 @@ describe("InboxPage approval items", () => {
     fireEvent.click(toggle);
     await waitFor(() => expect(item).toHaveAttribute("data-expanded", "false"));
     expect(screen.queryByTestId("approval-card")).not.toBeInTheDocument();
-    // The collapsed row previews the same gating message with its bold tool
-    // name, not the raw `**Bash**` markers.
-    expect(within(toggle).getByText("Bash", { selector: "strong" })).toBeInTheDocument();
+    // The collapsed row previews the plain-English line, not the raw `**Bash**` markers.
     expect(toggle.textContent).not.toContain("**");
   });
 
