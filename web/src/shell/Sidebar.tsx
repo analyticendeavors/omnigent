@@ -240,6 +240,7 @@ import { ExtensionPrimaryNavigation } from "@/extensions/ExtensionPrimaryNavigat
 import { AeConversationStatusIcon } from "@/components/AeStatusIcon";
 import { aeIsWideMarker, aeWideMarkerReserve } from "@/components/AeSessionActivity";
 import { useAeProjectMarker, useAeSessionRowState } from "@/hooks/aeSessionActivityHooks";
+import { AeMasterChatRow } from "@/components/AeMasterChatRow";
 import { AeSlotsPill } from "@/components/AeSlotsPill";
 import { AeStatusMenu } from "@/shell/AeStatusMenu";
 import { AeSplitMenuItem } from "@/shell/AeSplitMenuItem";
@@ -1212,6 +1213,7 @@ function SidebarImpl({
             </div>
 
             <div className="flex flex-col gap-px px-2 pt-2 pb-0" data-testid="sidebar-primary-nav">
+              <AeMasterChatRow onNavigate={onNavClick} />
               {/* "New session" routes to the home composer ("/"), which now owns
             session creation end-to-end (host/workspace/worktree chips +
             send). Rendered as a Link so cmd/middle-click opens it in a new
