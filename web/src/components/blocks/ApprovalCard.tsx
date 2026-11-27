@@ -230,6 +230,8 @@ interface ApprovalCardProps {
   rememberScope?: RememberScope | null;
   /** Codex-native MCP persistence scopes advertised by the request. */
   codexPersistModes?: CodexPersistMode[];
+  /** The server-stamped tool name; `mcp:<server>` marks a relayed MCP server ask. */
+  toolName?: string | null;
   /**
    * Verdict submitter override. Defaults to `chatStore.submitApproval`
    * (the in-chat path: optimistic block flip + resolve POST + rollback).
@@ -262,6 +264,7 @@ export function ApprovalCard({
   allowAutoMode,
   rememberScope,
   codexPersistModes = EMPTY_CODEX_PERSIST_MODES,
+  toolName,
   onSubmit,
   requester,
   className,
@@ -721,6 +724,7 @@ export function ApprovalCard({
           policyName,
           url,
           requestedSchema,
+          toolName,
         });
   if (aeSummary) {
     return (
@@ -909,6 +913,7 @@ export function ElicitationCard({
       allowAutoMode={item.allowAutoMode}
       rememberScope={item.rememberScope}
       codexPersistModes={item.codexPersistModes}
+      toolName={item.toolName}
       onSubmit={onSubmit}
       requester={requester}
     />

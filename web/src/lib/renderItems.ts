@@ -157,6 +157,7 @@ export type RenderItem =
       allowAutoMode?: boolean;
       rememberScope?: RememberScope | null;
       codexPersistModes?: CodexPersistMode[];
+      toolName?: string | null;
     };
 
 /** A bubble cluster. The page maps over these. */
@@ -1675,6 +1676,7 @@ function buildAssistantItems(
         allowAutoMode: b.allowAutoMode,
         rememberScope: b.rememberScope,
         codexPersistModes: b.codexPersistModes,
+        toolName: b.toolName,
       });
       i += 1;
       continue;

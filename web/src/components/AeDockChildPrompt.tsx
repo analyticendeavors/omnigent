@@ -58,6 +58,7 @@ export function AeDockChildPrompt({ item }: { item: AeDockChildPrompt }) {
         allowAutoMode={block.allowAutoMode}
         rememberScope={block.rememberScope}
         codexPersistModes={block.codexPersistModes}
+        toolName={block.toolName}
         className="border-0 bg-transparent p-0"
       />
     </div>

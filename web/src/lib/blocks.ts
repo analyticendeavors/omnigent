@@ -736,6 +736,7 @@ export interface ElicitationBlock {
   rememberScope?: RememberScope | null;
   /** Codex-native MCP approval persistence modes advertised by the request. */
   codexPersistModes?: CodexPersistMode[];
+  toolName?: string | null;
 }
 
 /** Union of all block types. */

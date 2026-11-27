@@ -289,6 +289,8 @@ export interface ElicitationRequest {
   rememberScope?: RememberScope | null;
   /** Codex-native MCP approval persistence modes advertised by the request. */
   codexPersistModes?: CodexPersistMode[];
+  /** The server-stamped tool name; `mcp:<server>` marks a relayed MCP server ask. */
+  toolName?: string | null;
 }
 
 /**

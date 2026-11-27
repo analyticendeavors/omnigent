@@ -375,6 +375,7 @@ export function InboxPage() {
             allowAutoMode={item.elicitation.allowAutoMode}
             rememberScope={item.elicitation.rememberScope}
             codexPersistModes={item.elicitation.codexPersistModes}
+            toolName={item.elicitation.toolName}
             onSubmit={makeSubmit(item)}
             requester={
               item.resolveSessionId !== item.row.id

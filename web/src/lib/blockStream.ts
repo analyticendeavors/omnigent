@@ -940,6 +940,7 @@ function* processEvent(state: ReducerState, event: StreamEvent): Generator<AnyBl
         allowAutoMode: event.allowAutoMode,
         rememberScope: event.rememberScope,
         codexPersistModes: event.codexPersistModes,
+        toolName: event.toolName,
       } satisfies ElicitationBlock;
       return;
     }

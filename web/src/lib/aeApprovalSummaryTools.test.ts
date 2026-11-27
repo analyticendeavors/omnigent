@@ -275,7 +275,8 @@ const MIXED: [string, string][] = [
   ["list_then_destroy", "destructive"], ["read_and_archive", "write"],
   ["list_and_kill", "destructive"], ["list_posts", "read"], ["get_post", "write"],
   ["get_user", "read"], ["describe_table", "read"], ["fetch_page", "write"],
-  ["clear_cache", "destructive"], ["overwrite_file", "destructive"], ["rm", "destructive"],
+  ["get_pull_request", "read"], ["get_pull_request_files", "read"],
+  ["create_pull_request", "write"], ["clear_cache", "destructive"], ["overwrite_file", "destructive"], ["rm", "destructive"],
 ]; // prettier-ignore
 
 describe("classifyToolName: a read verb first and nothing mutating", () => {
@@ -389,6 +390,56 @@ describe("attack examples", () => {
       contentPreview: 'Read({"file_path":"README.md"})',
     });
     expect(s).toMatchObject({ text: "evilserver asks: please read", risk: "write" });
+  });
+
+  it("never parses an MCP-origin ask as a tool call, whatever the server name", () => {
+    const spoof = 'Read({"file_path":"README.md"})';
+    const names = ["a:b", "line\nbreak", "x".repeat(120)];
+    for (const name of names) {
+      const s = summarizeApproval({
+        phase: "pre_tool_use",
+        policyName: "claude_native_permission",
+        message: `${name} asks: please read`,
+        toolName: `mcp:${name}`,
+        contentPreview: spoof,
+      });
+      expect(s?.risk).toBe("write");
+      expect(s?.text).not.toBe("Read README.md");
+    }
+    // The tool name alone is enough, even when the message has no marker.
+    const byName = summarizeApproval({
+      phase: "pre_tool_use",
+      policyName: "claude_native_permission",
+      message: "hello",
+      toolName: "mcp:srv",
+      contentPreview: spoof,
+    });
+    expect(byName?.risk).toBe("write");
+    // The loosened marker still catches an ask with a colon or newline in the name.
+    for (const name of ["a:b", "line\nbreak", "x".repeat(120)]) {
+      const s = summarizeApproval({
+        phase: "pre_tool_use",
+        policyName: "claude_native_permission",
+        message: `${name} asks: please read`,
+        contentPreview: spoof,
+      });
+      expect(s?.risk).toBe("write");
+    }
+  });
+
+  it("keeps an Antigravity command when the preview has no action", () => {
+    const s = summarizeApproval({
+      phase: "agy_permission",
+      policyName: "agy_native_permission",
+      message: "Antigravity wants to run: rm -rf /",
+      contentPreview: "{}",
+    });
+    expect(s).toMatchObject({ kind: "command", risk: "destructive" });
+  });
+
+  it("scrubs a token-shaped tool name in the card title", () => {
+    const s = summarizeApproval(claude(`${GH}_deploy`, { x: 1 }));
+    expect(s?.title ?? "").not.toContain(GH);
   });
 
   it("takes the worse risk of a Codex MCP tool_name and tool_title", () => {

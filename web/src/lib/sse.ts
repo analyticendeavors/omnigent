@@ -1118,6 +1118,7 @@ export function parseEvent(rawType: string, data: Record<string, unknown>): Stre
       allowAutoMode,
       rememberScope,
       codexPersistModes,
+      toolName: typeof p.tool_name === "string" && p.tool_name ? p.tool_name : null,
     } satisfies ElicitationRequest;
   }
 

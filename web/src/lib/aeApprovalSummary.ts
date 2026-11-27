@@ -46,6 +46,8 @@ export interface ApprovalSummaryInput {
   codexCommand?: { command: string; cwd: string | null; reason: string | null } | null;
   /** The rest of the elicitation, so a question or form is never summarized as an approval. */
   message?: string;
+  /** `mcp:<server>` when a relayed MCP server asked; never parsed as a tool call. */
+  toolName?: string | null;
   policyName?: string;
   url?: string | null;
   requestedSchema?: Record<string, unknown>;
@@ -362,7 +364,7 @@ function generic(input: ApprovalSummaryInput, tool?: string, code?: string): App
 
 // A relayed MCP server's own ask ("<server> asks: ...") carries text that server chose, so
 // its preview is never read as a tool call; the quiet read row is not for it.
-const MCP_ASK = /^[^\n:]{1,80} asks(?::|$)/;
+const MCP_ASK = /^[\s\S]{1,200}? asks(?::|$)/;
 
 /**
  * The summary for a pending approval; null only for a question, plan, form, choice, the slot
@@ -391,7 +393,7 @@ function summarizeRaw(input: ApprovalSummaryInput): ApprovalSummary | null {
     };
   }
   const preview = input.contentPreview.trim();
-  const untrusted = MCP_ASK.test(input.message ?? "");
+  const untrusted = (input.toolName ?? "").startsWith("mcp:") || MCP_ASK.test(input.message ?? "");
   const wrapped = untrusted ? null : parseToolPreview(preview);
   if (isNotApproval(input, wrapped?.tool)) return null;
   if (untrusted) return generic(input, undefined, preview === "" ? undefined : preview);
@@ -407,7 +409,7 @@ function summarizeRaw(input: ApprovalSummaryInput): ApprovalSummary | null {
   if (input.phase === "agy_permission") {
     const action = str(bare?.fields.action);
     const target = str(bare?.fields.target);
-    if (bare && action !== "command")
+    if (bare && action && action !== "command")
       return fromLine(deriveAgyLine(action, target), prettyArgs(bare));
     const cmd = target ?? /^Antigravity wants to run: (.+)$/s.exec(input.message ?? "")?.[1];
     if (cmd) {

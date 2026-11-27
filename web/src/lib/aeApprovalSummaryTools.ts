@@ -73,7 +73,7 @@ const DESTRUCTIVE_WORDS: Record<string, string> = {
   overwrite: "overwrites data",
 };
 // A name with one of these talks to the network, so it is never a quiet read.
-const NETWORK_WORDS = new Set(["fetch", "http", "https", "url", "urls", "web", "request", "curl"]);
+const NETWORK_WORDS = new Set(["fetch", "http", "https", "url", "urls", "web", "curl"]);
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v !== "" ? v : undefined);
 const cut = (s: string, max: number): string => (s.length > max ? `${s.slice(0, max - 1)}…` : s);
@@ -287,7 +287,7 @@ export function deriveToolLine(tool: string, fields: Fields): ToolLine {
   const line = (text: string, c: Class): ToolLine => ({
     text,
     ...(agentText ? { agentText } : {}),
-    title: inWords(tool),
+    title: scrub(inWords(tool)),
     source: "derived",
     risk: c.risk,
     ...(c.danger ? { danger: c.danger } : {}),
