@@ -7,6 +7,7 @@ import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useSyncExternalStore } from "react";
 import { aeStatusOf, countAeSlots, isAeSlot } from "@/lib/aeLabels";
 import { subscribeToQueryKeys } from "@/lib/aeQueryCacheSubscribe";
+import { AE_MASTER_CHAT_QUERY_KEY, readAeMasterChatId } from "@/lib/aeMasterChat";
 import { AE_HELPERS_COUNT_QUERY_KEY, readAeHelpersCount } from "@/lib/aeSlotLimit";
 import type { ConversationsInfiniteData } from "@/lib/sessionListCache";
 import type { Conversation } from "@/hooks/useConversations";
@@ -71,11 +72,12 @@ export function aeBadgeCount(
   rows: Iterable<BadgeRow>,
   helpersCount: boolean,
   scope: AeBadgeScope,
+  masterId: string | null = null,
 ): number {
-  if (scope === "top-level") return countAeSlots(rows, helpersCount);
+  if (scope === "top-level") return countAeSlots(rows, helpersCount, masterId);
   const held = new Set<string>();
   for (const row of rows) {
-    if (aeStatusOf(row.labels) === "working" && isAeSlot({ ...row, parent_session_id: null })) {
+    if (aeStatusOf(row.labels) === "working" && isAeSlot({ ...row, parent_session_id: null }, masterId)) {
       held.add(row.id);
     }
   }
@@ -95,6 +97,7 @@ export function readAeBadgeCount(queryClient: QueryClient, scope: AeBadgeScope):
     aeCachedConversationRows(queryClient),
     readAeHelpersCount(queryClient),
     scope,
+    readAeMasterChatId(queryClient),
   );
 }
 
@@ -108,7 +111,11 @@ export function useAeBadgeCount(): number {
   const scope = useAeBadgeScope();
   const subscribeToCounts = useCallback(
     (onChange: () => void) =>
-      subscribeToQueryKeys(queryClient, [["conversations"], AE_HELPERS_COUNT_QUERY_KEY], onChange),
+      subscribeToQueryKeys(
+        queryClient,
+        [["conversations"], AE_HELPERS_COUNT_QUERY_KEY, AE_MASTER_CHAT_QUERY_KEY],
+        onChange,
+      ),
     [queryClient],
   );
   const read = useCallback(() => readAeBadgeCount(queryClient, scope), [queryClient, scope]);
