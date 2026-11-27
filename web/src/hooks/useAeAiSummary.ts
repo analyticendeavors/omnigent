@@ -76,6 +76,8 @@ export function useAeAiSummary(summary: ApprovalSummary): string | null {
       gcTime: 10 * 60 * 1000,
       retry: false,
       refetchOnWindowFocus: false,
+      // A failed ask is not repeated when the card remounts (a scroll, a tab switch).
+      retryOnMount: false,
     },
     client,
   );

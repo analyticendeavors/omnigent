@@ -74,6 +74,17 @@ describe("useAeAiSummary", () => {
     expect(mocks.fetch).toHaveBeenCalledTimes(1);
   });
 
+  it("does not ask again when a failed card remounts", async () => {
+    mocks.fetch.mockImplementation(async () => json({ error: "down" }, 503));
+    const first = renderHook(() => useAeAiSummary(summary()), { wrapper });
+    await waitFor(() => expect(mocks.fetch).toHaveBeenCalledTimes(1));
+    await tick();
+    first.unmount();
+    renderHook(() => useAeAiSummary(summary()), { wrapper });
+    await tick();
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("never calls the service for an agent-written line", async () => {
     const { result } = renderHook(() => useAeAiSummary(summary({ source: "agent" })), { wrapper });
     await tick();

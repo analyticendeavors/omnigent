@@ -66,9 +66,15 @@ export function AeApprovalSummary({
       {peek}
     </code>
   ) : null;
+  // On a destructive card the derived line stays the main line and the AI sentence sits under
+  // it, muted: a sentence steered by crafted arguments must not lead on the red card.
+  const aiFirst = risk !== "destructive";
   const aiLine = aiText ? (
     <span className="flex flex-col" data-testid="approval-ai-summary">
-      <span className="text-base text-foreground" data-testid="approval-ai-text">
+      <span
+        className={aiFirst ? "text-base text-foreground" : "text-sm text-muted-foreground"}
+        data-testid="approval-ai-text"
+      >
         {scrub(aiText)}
       </span>
       <span className="text-xs text-muted-foreground">AI summary</span>
@@ -186,16 +192,17 @@ export function AeApprovalSummary({
       </AlertTitle>
       <AlertDescription className="flex flex-col gap-2">
         {requester}
-        {aiLine}
+        {aiFirst && aiLine}
         <span
           className={cn(
-            aiText ? "text-sm text-muted-foreground" : "text-base text-foreground",
+            aiText && aiFirst ? "text-sm text-muted-foreground" : "text-base text-foreground",
             summary.fullMessage && "truncate",
           )}
           data-testid="approval-summary-text"
         >
           {text}
         </span>
+        {!aiFirst && aiLine}
         {summary.fullMessage && <AeClampedMessage message={summary.fullMessage} />}
         {agentLine}
         {peekLine}

@@ -56,6 +56,18 @@ describe("AI summary on an approval card", () => {
     expect(screen.getByTestId("approval-summary-text").textContent).toBe("Run a command");
   });
 
+  it("keeps the derived line first on a destructive card, with the AI line muted under it", async () => {
+    mocks.fetch.mockImplementation(async () => json({ text: "Tidies the build folder." }));
+    renderCard(`Bash(${JSON.stringify({ command: "rm -rf build" })})`);
+    await waitFor(() => expect(screen.getByTestId("approval-ai-text")).toBeDefined());
+    const derivedLine = screen.getByTestId("approval-summary-text");
+    const ai = screen.getByTestId("approval-ai-summary");
+    expect(derivedLine.className).toContain("text-foreground");
+    expect(derivedLine.compareDocumentPosition(ai) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByTestId("approval-ai-text").className).toContain("text-muted-foreground");
+    expect(screen.getByText("AI summary")).toBeDefined();
+  });
+
   it("scrubs a secret-shaped AI reply", async () => {
     mocks.fetch.mockResolvedValue(json({ text: "Sends ghp_abcdefgh12345678 to the host." }));
     renderCard(derived);
