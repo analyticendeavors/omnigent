@@ -88,8 +88,10 @@ describe("shared query options", () => {
     mocks.fetch.mockReset();
     mocks.fetch.mockImplementation(() => Promise.resolve(new Response("{}", { status: 500 })));
     await act(async () => {
-      await refreshAeMasterChat(qc);
+      // Advance before awaiting: with retries back, their backoff then runs and the count shows it.
+      const done = refreshAeMasterChat(qc);
       await vi.advanceTimersByTimeAsync(30_000);
+      await done;
     });
     expect(gets()).toHaveLength(1);
   });

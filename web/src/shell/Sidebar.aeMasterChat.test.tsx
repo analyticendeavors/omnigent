@@ -55,6 +55,7 @@ import { SidebarDataProvider } from "@/hooks/useSidebarData";
 import { CapabilitiesProvider } from "@/lib/CapabilitiesContext";
 import { resetAeFamilyClosedCache } from "@/lib/aeFamilyClosed";
 import { resetAeFamilyFoldsCache } from "@/lib/aeFamilyTree";
+import { AE_MASTER_CHAT_QUERY_KEY } from "@/lib/aeMasterChat";
 import { FALLBACK_SERVER_INFO } from "@/lib/capabilities";
 import { conversation, conversationPage } from "@/test/sidebarMockHelpers";
 import { Sidebar } from "./Sidebar";
@@ -90,7 +91,7 @@ function renderSidebar(onClose = vi.fn()) {
     </QueryClientProvider>
   );
   const view = render(ui());
-  return Object.assign(view, { rerenderSidebar: () => view.rerender(ui()) });
+  return Object.assign(view, { qc, rerenderSidebar: () => view.rerender(ui()) });
 }
 
 const MASTER = sid("Master chat");
@@ -162,7 +163,7 @@ describe.each(["default", "family"])("master chat hidden in the %s grouping", (g
 describe("one master chat refetch timer in the real sidebar", () => {
   afterEach(() => vi.useRealTimers());
 
-  it("reads once on mount, holds one timer for the row, and reads once more after 60 seconds", async () => {
+  it("reads once on mount, keeps one refetch timer on the query, and reads once more after 60 seconds", async () => {
     vi.useFakeTimers();
     // Answer in microtasks only, so a read finishes without a fake timer having to run.
     mocks.fetch.mockImplementation((url: string) =>
@@ -176,15 +177,8 @@ describe("one master chat refetch timer in the real sidebar", () => {
           : { ok: false, status: 404, json: () => Promise.resolve({}) },
       ),
     );
-    const intervals = vi.spyOn(globalThis, "setInterval");
-    const cleared = vi.spyOn(globalThis, "clearInterval");
-    const liveTimers = () =>
-      intervals.mock.calls
-        .map(([, ms], i) => (ms === 60_000 ? intervals.mock.results[i]?.value : undefined))
-        .filter((id) => id !== undefined && !cleared.mock.calls.some(([gone]) => gone === id))
-        .length;
     setView({ grouping: "default" });
-    renderSidebar();
+    const { qc } = renderSidebar();
     const masterGets = () =>
       mocks.fetch.mock.calls.filter(
         ([url, init]) =>
@@ -195,9 +189,13 @@ describe("one master chat refetch timer in the real sidebar", () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(masterGets()).toHaveLength(1);
-    // Two 60 second timers are live with the real sidebar: the master chat row's and one the
-    // sidebar already had. A list site calling useAeMasterChat() again would make three.
-    expect(liveTimers()).toBe(2);
+    // The row and the list site both watch the query, and only the row's observer carries a
+    // refetch timer: a list site calling useAeMasterChat() again would add a second one. The
+    // count of reads cannot show that, because react-query joins interval reads on one query.
+    const observers =
+      qc.getQueryCache().find({ queryKey: AE_MASTER_CHAT_QUERY_KEY })?.observers ?? [];
+    expect(observers.length).toBeGreaterThanOrEqual(2);
+    expect(observers.filter((o) => o.options.refetchInterval)).toHaveLength(1);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(60_000);
     });
