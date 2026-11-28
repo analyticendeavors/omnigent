@@ -8,7 +8,12 @@ vi.mock("@/lib/identity", () => ({ authenticatedFetch: mocks.fetch }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn() } }));
 
 import { AeMasterChatRow } from "@/components/AeMasterChatRow";
-import { isAeMasterChat, useAeMasterChatId } from "./aeMasterChat";
+import {
+  isAeMasterChat,
+  refreshAeMasterChat,
+  useAeMasterChat,
+  useAeMasterChatId,
+} from "./aeMasterChat";
 
 function IdReader() {
   useAeMasterChatId();
@@ -60,5 +65,32 @@ describe("one refetch timer", () => {
       await vi.advanceTimersByTimeAsync(60_000);
     });
     expect(gets()).toHaveLength(2);
+  });
+});
+
+function Row() {
+  useAeMasterChat();
+  return null;
+}
+
+describe("shared query options", () => {
+  it("does not retry a failing reread when the id reader renders after the row", async () => {
+    const qc = new QueryClient(); // the app's default retry, which the row's options override
+    render(
+      <QueryClientProvider client={qc}>
+        <Row />
+        <IdReader />
+      </QueryClientProvider>,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    mocks.fetch.mockReset();
+    mocks.fetch.mockImplementation(() => Promise.resolve(new Response("{}", { status: 500 })));
+    await act(async () => {
+      await refreshAeMasterChat(qc);
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(gets()).toHaveLength(1);
   });
 });
