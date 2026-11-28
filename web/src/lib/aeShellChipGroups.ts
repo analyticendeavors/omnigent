@@ -22,8 +22,33 @@ export function aeShellLabel(task: BackgroundTaskInfo): string {
 const WAIT_LOOP_START = /^(?:until |while |timeout\s+\d+\s+bash\s+-c\s+'while)/;
 const SLEEP_BODY = /^sleep \d+(?:\.\d+)?$/;
 
-function hasOpenQuote(s: string): boolean {
-  return (s.split("'").length - 1) % 2 === 1 || (s.split('"').length - 1) % 2 === 1;
+const TIMEOUT_BASH_PREFIX = /^timeout\s+\d+\s+bash\s+-c\s+'/;
+
+/**
+ * First index at or after `from` where `needle` starts outside any quotes, or -1.
+ * A backslash escapes the next character outside single quotes. With `endAtQuote`,
+ * an unquoted `'` closes the scanned script and ends the search.
+ */
+function indexOutsideQuotes(text: string, needle: string, from: number, endAtQuote: boolean) {
+  let quote: "'" | '"' | null = null;
+  for (let i = from; i < text.length; i++) {
+    const c = text[i];
+    if (quote === "'") {
+      if (c === "'") quote = null;
+    } else if (c === "\\") {
+      i += 1;
+    } else if (quote === '"') {
+      if (c === '"') quote = null;
+    } else if (text.startsWith(needle, i)) {
+      return i;
+    } else if (c === "'") {
+      if (endAtQuote) return -1;
+      quote = c;
+    } else if (c === '"') {
+      quote = c;
+    }
+  }
+  return -1;
 }
 
 /**
@@ -35,12 +60,13 @@ function hasOpenQuote(s: string): boolean {
 export function aeShellGroupText(task: BackgroundTaskInfo): string {
   const text = aeShellLabel(task).replace(/\s+/g, " ");
   if (!task.description?.trim() && WAIT_LOOP_START.test(text)) {
-    const cut = text.indexOf("; do ");
-    // A quote left open before the cut means the `; do ` sits inside a string.
-    if (cut > 0 && !hasOpenQuote(text.slice(0, cut))) {
-      const rest = text.slice(cut + 5);
-      const end = rest.indexOf("; done");
-      if (end >= 0 && SLEEP_BODY.test(rest.slice(0, end).trim())) return text.slice(0, cut);
+    const prefix = TIMEOUT_BASH_PREFIX.exec(text)?.[0].length;
+    const start = prefix ?? 0;
+    const cut = indexOutsideQuotes(text, "; do ", start, prefix !== undefined);
+    if (cut > 0) {
+      const body = cut + 5;
+      const end = indexOutsideQuotes(text, "; done", body, prefix !== undefined);
+      if (end >= 0 && SLEEP_BODY.test(text.slice(body, end).trim())) return text.slice(0, cut);
     }
   }
   return text;

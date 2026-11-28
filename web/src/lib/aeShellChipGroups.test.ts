@@ -65,11 +65,47 @@ describe("aeGroupShells", () => {
     ).toHaveLength(2);
   });
 
-  it("does not cut at a `; do ` inside a quoted string", () => {
-    const a = "until grep '; do sleep 5; done' a; do sleep 5; done";
-    const b = "until grep '; do sleep 5; done' b; do sleep 5; done";
-    expect(aeGroupShells([{ command: a }, { command: b }])).toHaveLength(2);
-    expect(aeGroupShells([{ command: a }, { command: a }])).toHaveLength(1);
+  const W = "; do sleep 5; done";
+  it.each([
+    [
+      "timeout bash -c form",
+      [
+        `timeout 30 bash -c 'while [ ! -f x ]${W}'; echo a`,
+        `timeout 30 bash -c 'while [ ! -f x ]${W}'; echo b`,
+      ],
+      [2],
+    ],
+    [
+      "escaped quote keeps the quoted delimiter inside the string",
+      [`until grep "foo\\"${W}" a${W}`, `until grep "foo\\"${W}" b${W}`],
+      [1, 1],
+    ],
+    [
+      "apostrophe inside double quotes",
+      [`until grep -q "don't" f${W}; tail1`, `until grep -q "don't" f${W}; tail2`],
+      [2],
+    ],
+    [
+      "nested quotes in the condition",
+      [
+        `until [ -z "$(pgrep -f 'x.mjs')" ]${W}; one`,
+        `until [ -z "$(pgrep -f 'x.mjs')" ]${W}; two`,
+      ],
+      [2],
+    ],
+    [
+      "quoted delimiter then a real one, same condition",
+      [`until grep '${W}' a${W}; one`, `until grep '${W}' a${W}; two`],
+      [2],
+    ],
+    [
+      "quoted delimiter then a real one, different quoted strings",
+      [`until grep '${W}' a${W}`, `until grep '${W}' b${W}`],
+      [1, 1],
+    ],
+  ])("%s", (_name, commands, counts) => {
+    const groups = aeGroupShells(commands.map((command) => ({ command })));
+    expect(groups.map((g) => g.count)).toEqual(counts);
   });
 
   it("keeps a description and a command with the same text apart", () => {
