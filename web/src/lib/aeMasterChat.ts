@@ -74,6 +74,17 @@ export function refreshAeMasterChat(queryClient: QueryClient): Promise<void> {
 }
 
 /**
+ * The options both hooks share. react-query keeps the options of whichever observer rendered
+ * last, so they must agree on the key, the reader, `retry` and `staleTime`.
+ */
+const MASTER_CHAT_QUERY = {
+  queryKey: AE_MASTER_CHAT_QUERY_KEY,
+  queryFn: fetchAeMasterChat,
+  staleTime: STALE_MS,
+  retry: false,
+} as const;
+
+/**
  * The master chat's id and the waiting count: read every 60 s and on window focus, and after a
  * click creates it (`refreshAeMasterChat`). It does not follow the conversation list: the list
  * changes on every streamed event, and one read per event is a read the server would only
@@ -81,12 +92,9 @@ export function refreshAeMasterChat(queryClient: QueryClient): Promise<void> {
  */
 export function useAeMasterChat(): AeMasterChat {
   const { data } = useQuery({
-    queryKey: AE_MASTER_CHAT_QUERY_KEY,
-    queryFn: fetchAeMasterChat,
+    ...MASTER_CHAT_QUERY,
     refetchInterval: REFETCH_MS,
     refetchOnWindowFocus: true,
-    staleTime: STALE_MS,
-    retry: false,
   });
   return data ?? { sessionId: null, waiting: null };
 }
@@ -97,8 +105,7 @@ export function useAeMasterChat(): AeMasterChat {
  */
 export function useAeMasterChatId(): string | null {
   const { data } = useQuery({
-    queryKey: AE_MASTER_CHAT_QUERY_KEY,
-    queryFn: fetchAeMasterChat,
+    ...MASTER_CHAT_QUERY,
     enabled: false,
     select: (chat: AeMasterChat) => chat.sessionId,
   });

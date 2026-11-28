@@ -2,9 +2,8 @@
 // its own row at the top, so it must not also be a row in the Default or Families grouping.
 // A pinned ordinary row stays. The id comes from GET /v1/ae/master-chat, never from a label.
 
-
 import type * as IdentityModule from "@/lib/identity";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/hooks/useScopeCache", () => import("@/test/mockScopeCache"));
@@ -94,7 +93,6 @@ function renderSidebar(onClose = vi.fn()) {
   return Object.assign(view, { rerenderSidebar: () => view.rerender(ui()) });
 }
 
-
 const MASTER = sid("Master chat");
 const PINNED = row("Pinned one", 30, { "omnigent.pinned": "1" });
 const ROWS = [
@@ -158,5 +156,51 @@ describe.each(["default", "family"])("master chat hidden in the %s grouping", (g
     renderSidebar();
     await waitFor(() => expect(mocks.fetch).toHaveBeenCalled());
     expect(listed()).toContain(MASTER);
+  });
+});
+
+describe("one master chat refetch timer in the real sidebar", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("reads once on mount, holds one timer for the row, and reads once more after 60 seconds", async () => {
+    vi.useFakeTimers();
+    // Answer in microtasks only, so a read finishes without a fake timer having to run.
+    mocks.fetch.mockImplementation((url: string) =>
+      Promise.resolve(
+        String(url).includes("/v1/ae/master-chat")
+          ? {
+              ok: true,
+              status: 200,
+              json: () => Promise.resolve({ session_id: MASTER, waiting: 0 }),
+            }
+          : { ok: false, status: 404, json: () => Promise.resolve({}) },
+      ),
+    );
+    const intervals = vi.spyOn(globalThis, "setInterval");
+    const cleared = vi.spyOn(globalThis, "clearInterval");
+    const liveTimers = () =>
+      intervals.mock.calls
+        .map(([, ms], i) => (ms === 60_000 ? intervals.mock.results[i]?.value : undefined))
+        .filter((id) => id !== undefined && !cleared.mock.calls.some(([gone]) => gone === id))
+        .length;
+    setView({ grouping: "default" });
+    renderSidebar();
+    const masterGets = () =>
+      mocks.fetch.mock.calls.filter(
+        ([url, init]) =>
+          String(url).includes("/v1/ae/master-chat") &&
+          ((init as RequestInit | undefined)?.method ?? "GET") === "GET",
+      );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(masterGets()).toHaveLength(1);
+    // Two 60 second timers are live with the real sidebar: the master chat row's and one the
+    // sidebar already had. A list site calling useAeMasterChat() again would make three.
+    expect(liveTimers()).toBe(2);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(masterGets()).toHaveLength(2);
   });
 });
