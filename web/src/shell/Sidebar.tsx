@@ -241,7 +241,7 @@ import { AeConversationStatusIcon } from "@/components/AeStatusIcon";
 import { aeIsWideMarker, aeWideMarkerReserve } from "@/components/AeSessionActivity";
 import { useAeProjectMarker, useAeSessionRowState } from "@/hooks/aeSessionActivityHooks";
 import { AeMasterChatRow } from "@/components/AeMasterChatRow";
-import { isAeMasterChat, useAeMasterChat } from "@/lib/aeMasterChat";
+import { isAeMasterChat, useAeMasterChatId } from "@/lib/aeMasterChat";
 import { AeSlotsPill } from "@/components/AeSlotsPill";
 import { AeStatusMenu } from "@/shell/AeStatusMenu";
 import { AeSplitMenuItem } from "@/shell/AeSplitMenuItem";
@@ -1553,7 +1553,7 @@ function ProjectFolder({
   }, [expanded, name, watchedRows, registerFolder]);
   useEffect(() => () => registerFolder(name, null), [expanded, name, registerFolder]);
   const pinnedSet = useMemo(() => new Set(pinnedConversationIds), [pinnedConversationIds]);
-  const masterId = useAeMasterChat().sessionId;
+  const masterId = useAeMasterChatId();
   const aeFolderOrder = useAeFolderOrder();
   const conversations = useMemo(() => {
     // Union the folder's own pages with its members from the globally-loaded
@@ -2005,7 +2005,7 @@ function ConversationList({
   // sessions render in their own group at the bottom (below "Shared with
   // me"); a pinned-then-archived session shows under Archived, not Pinned.
   const pinnedSet = useMemo(() => new Set(pinnedConversationIds), [pinnedConversationIds]);
-  const masterId = useAeMasterChat().sessionId; // it has its own row at the top, not a list row
+  const masterId = useAeMasterChatId(); // it has its own row at the top, not a list row
   const loadedSections = useMemo(() => {
     // Merge the server pinned set in, so a pinned session outside the loaded
     // paginated window still renders. Dedupe by id: a pinned session is usually

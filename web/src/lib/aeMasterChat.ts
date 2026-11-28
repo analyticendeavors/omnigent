@@ -21,9 +21,15 @@ export interface AeMasterChat {
   waiting: number | null;
 }
 
-/** Whether a row is the master chat: its id is the one the server's registry holds. */
-export function isAeMasterChat(row: { id: string }, masterId: string | null | undefined): boolean {
-  return Boolean(masterId) && row.id === masterId;
+/**
+ * Whether a row is the master chat: its id is the one the server's registry holds, and it is not
+ * archived (an archived one is an ordinary row at once, before the next read drops the id).
+ */
+export function isAeMasterChat(
+  row: { id: string; archived?: boolean },
+  masterId: string | null | undefined,
+): boolean {
+  return Boolean(masterId) && row.id === masterId && row.archived !== true;
 }
 
 /** The master chat id the last `GET` read, from the query cache (null until one has). */
@@ -83,4 +89,18 @@ export function useAeMasterChat(): AeMasterChat {
     retry: false,
   });
   return data ?? { sessionId: null, waiting: null };
+}
+
+/**
+ * Only the master chat's id, for the lists that hide it. It follows the cache the row's
+ * `useAeMasterChat` fills and never fetches or sets a timer of its own.
+ */
+export function useAeMasterChatId(): string | null {
+  const { data } = useQuery({
+    queryKey: AE_MASTER_CHAT_QUERY_KEY,
+    queryFn: fetchAeMasterChat,
+    enabled: false,
+    select: (chat: AeMasterChat) => chat.sessionId,
+  });
+  return data ?? null;
 }
